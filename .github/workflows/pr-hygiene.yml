@@ -39,6 +39,7 @@ jobs:
           fi
 
       - name: PR body links an issue
+        if: github.actor != 'dependabot[bot]'
         env:
           BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -47,7 +48,11 @@ jobs:
             exit 1
           fi
 
+      # Dependabot PRs never link an issue (there is no per-bump issue to link) and a
+      # routine dependency bump has no documentation impact by construction - both
+      # checks above are about human-authored process, not applicable to automation.
       - name: Documentation impact is declared
+        if: github.actor != 'dependabot[bot]'
         env:
           BODY: ${{ github.event.pull_request.body }}
           BASE: ${{ github.event.pull_request.base.ref }}
