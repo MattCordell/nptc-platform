@@ -1,0 +1,200 @@
+# Backlog: P0 - Seeding transform (PRD SS12, acceptance SS17.1).
+#
+# Schema documented once in docs/backlog/foundation.yaml.
+#
+# P0's output (the defect report) gates the cutover release, and clearing it
+# is RCPA-QAP editorial time, not developer time (PRD SS3, SS11.1, SS15.2) - so
+# P0 ships first and standalone, ahead of the rest of the catalogue.
+
+- id: P0-1
+  title: "Transform CLI skeleton, --report-only, determinism and idempotency harness"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-70, FR-73]
+  summary: >
+    The CLI entrypoint: --report-only by default (no mutation without an explicit flag),
+    and a test harness proving that running the transform twice on the same input
+    produces byte-identical output (idempotency) and that output does not depend on
+    filesystem iteration order or dict ordering (determinism).
+  checklist:
+    - "CLI skeleton with --report-only as the default mode"
+    - "Determinism harness: two runs on the same input diff byte-identical"
+    - "Idempotency harness: re-running against already-processed output is a no-op"
+  docs:
+    - "docs/operations/runbooks/transform.md: CLI usage and flags"
+  acceptance:
+    - "transform --report-only exits 0 and writes no files outside the report directory"
+    - "Running the transform twice on the same fixture produces byte-identical reports"
+
+- id: P0-2
+  title: "Workbook reader, cell-type capture, invisible-character detection"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-70]
+  summary: >
+    Reads the SPIA workbook cell-by-cell, capturing the original cell type (not just its
+    string value) and flagging invisible/non-printing Unicode characters (PRD Annex
+    A.1-A.3) so they surface as defects rather than silently round-tripping.
+  checklist:
+    - "Workbook reader preserving original cell type per column"
+    - "Invisible/non-printing character detection with cell references"
+    - "Fixture rows covering each Annex A.1-A.3 invisible-character case"
+  docs:
+    - "docs/operations/runbooks/transform.md: what counts as an invisible-character defect"
+  acceptance:
+    - "Every Annex A.1-A.3 fixture case is flagged with a cell reference"
+    - "A clean cell with no invisible characters produces no finding"
+
+- id: P0-3
+  title: "Three-band classification engine"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-71]
+  summary: >
+    Classifies each row into the three defect bands the PRD defines, so downstream
+    reporting (P0-8) can group findings by severity rather than emit one flat list.
+  checklist:
+    - "Band classification rules implemented against the PRD's three-band definition"
+    - "Fixture rows for a representative case in each band"
+  docs:
+    - "docs/operations/runbooks/transform.md: what each band means and what action it implies"
+  acceptance:
+    - "Every fixture row is assigned exactly one band"
+    - "Band assignment is stable across repeated runs (determinism)"
+
+- id: P0-4
+  title: "Terminology client interface, stub, and Ontoserver implementation"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, area/terminology, phase/p0, priority/must, type/feature]
+  requirements: [FR-53, NFR-37]
+  summary: >
+    A terminology client contract in shared/ (FR-74: one implementation, used by both
+    backend/ and transform/), a stub implementation for tests that asserts no network
+    access (NFR-37), and a real Ontoserver-backed implementation for the transform CLI.
+  checklist:
+    - "TerminologyClient protocol in shared/"
+    - "Stub implementation with canned responses, no network"
+    - "Ontoserver HTTP implementation (ValueSet/$expand, CodeSystem/$lookup, $subsumes)"
+  docs:
+    - "docs/operations/configuration.md: Ontoserver base URL and auth env vars"
+  acceptance:
+    - "transform/tests run entirely against the stub client with no network access (NFR-37)"
+    - "The Ontoserver implementation and the stub satisfy the same contract test suite"
+
+- id: P0-5
+  title: "Batch terminology validation and hierarchy check"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, area/terminology, phase/p0, priority/must, type/feature]
+  requirements: [FR-52, FR-84, FR-99, FR-74]
+  tests: [NFR-38.13]
+  summary: >
+    Resolve code status for the whole workbook in chunked ECL expansions rather than
+    per-code $validate-code, and detect codes outside <<71388002 in a single batch call.
+  checklist:
+    - "Chunked ValueSet/$expand status resolution, chunk size configurable (default 300)"
+    - "429 responses honour Retry-After with exponential backoff; bounded concurrency"
+    - "Single-call (codes) MINUS <<71388002 violation check"
+    - "Subsumed concepts with a non-(procedure) tag raise a warning, not an error"
+  docs:
+    - "docs/adr/: chunk size and concurrency defaults, with the tuning evidence"
+    - "docs/operations/configuration.md: NPTC_TX_CHUNK_SIZE, NPTC_TX_MAX_CONCURRENCY"
+    - "docs/operations/runbooks/transform.md: interpreting hierarchy violations"
+  acceptance:
+    - "A sweep of N codes issues ceil(N/chunk) expansion requests, asserted by call count"
+    - "The subsumption check issues exactly one request, asserted by call count"
+    - "Runs to completion against the stub client with no network access (NFR-37)"
+
+- id: P0-6
+  title: "Designation reconciliation report, four outcomes"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, area/terminology, phase/p0, priority/must, type/feature]
+  requirements: [FR-97]
+  summary: >
+    Compares the workbook's designation against the terminology server's current
+    preferred term and classifies the comparison into the four outcomes the PRD defines
+    (match, drift, server-only, workbook-only), rather than a flat equal/not-equal check.
+  checklist:
+    - "Reconciliation comparing workbook designation to server PT per code"
+    - "All four outcome classes implemented with fixture coverage"
+  docs:
+    - "docs/operations/runbooks/transform.md: what each reconciliation outcome means"
+  acceptance:
+    - "Each of the four outcome classes is exercised by at least one fixture row"
+
+- id: P0-7
+  title: "Misspelling and semantic-drift heuristics"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-79, FR-75]
+  summary: >
+    Heuristics flagging likely misspellings and semantic drift in designations,
+    including the "Has specimen" inspection and specimen synonym table Annex A.9 shows
+    are required to avoid false positives on legitimate specimen-type designations.
+  checklist:
+    - "Misspelling heuristic with a tunable edit-distance threshold"
+    - "Semantic-drift heuristic (designation text vs. code's own hierarchy)"
+    - "Has specimen inspection with the Annex A.9 specimen synonym table"
+  docs:
+    - "docs/operations/runbooks/transform.md: heuristic thresholds and false-positive handling"
+  acceptance:
+    - "The Annex A.9 specimen synonym cases produce no false-positive misspelling finding"
+    - "A deliberately misspelled fixture designation is flagged"
+
+- id: P0-8
+  title: "Machine- and human-readable defect reports with cell references"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-72]
+  summary: >
+    Renders every finding from P0-2/P0-3/P0-6/P0-7 into both a machine-readable report
+    (for the import dataset, P0-9) and a human-readable report grouped by defect class,
+    each finding carrying its originating cell reference so an RCPA-QAP editor can find
+    it in the source workbook without re-deriving it.
+  checklist:
+    - "Machine-readable report (JSON/CSV) grouped by defect class"
+    - "Human-readable report (Markdown/HTML) with the same grouping"
+    - "Every finding carries a workbook cell reference"
+  docs:
+    - "docs/operations/runbooks/transform.md: report formats and how to action each defect class"
+  acceptance:
+    - "Every finding in the machine-readable report has a corresponding entry in the human-readable one"
+    - "Every finding carries a cell reference resolvable back to the source workbook"
+
+- id: P0-9
+  title: "Import dataset emission and synthetic baseline release"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-76]
+  summary: >
+    Emits the cleaned import dataset the backend's initial data load consumes, and a
+    synthetic (non-real-data) baseline release fixture used by later phases' tests and
+    demos so they do not depend on the real SPIA workbook being available.
+  checklist:
+    - "Import dataset emission (the transform's terminal output)"
+    - "Synthetic 50-row baseline release fixture, checked in under transform/tests/fixtures/"
+  docs:
+    - "docs/operations/runbooks/transform.md: import dataset format"
+  acceptance:
+    - "The import dataset validates against its own schema"
+    - "The synthetic baseline fixture contains no real SPIA data"
+
+- id: P0-10
+  title: "Shared SCTID library: string-only, Verhoeff check digit"
+  milestone: "P0 — Seeding transform"
+  labels: [area/transform, phase/p0, priority/must, type/feature]
+  requirements: [FR-06]
+  summary: >
+    The single SCTID implementation shared/ exists to provide (FR-74): string-only
+    representation everywhere (never a numeric type, the defect class this whole
+    platform exists to eliminate), format validation against ^\d{6,18}$, and Verhoeff
+    check-digit verification.
+  checklist:
+    - "SCTID type: string-only, no implicit numeric coercion anywhere in its API"
+    - "^\\d{6,18}$ format validation"
+    - "Verhoeff check-digit algorithm with known-good and known-bad test vectors"
+  docs:
+    - "none: internal library, self-documenting via its own tests and docstrings"
+  acceptance:
+    - "A 17-digit and an 18-digit synthetic SCTID both validate correctly"
+    - "A SCTID with a corrupted check digit is rejected"
+    - "No code path in shared/, backend/ or transform/ stores or passes a SCTID as a numeric type"
