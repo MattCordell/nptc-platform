@@ -1,0 +1,46 @@
+name: CodeQL
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+  push:
+    branches: [main]
+  schedule:
+    # Weekly rather than only on push/PR, so a query-pack update surfaces a
+    # finding even in a week nobody touches the code (NFR-25).
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Python and JS/TS are both interpreted: CodeQL extracts source
+        # directly, no autobuild/manual-build step needed (that's only for
+        # compiled languages - Java, C++, C#, Go).
+        language: [python, javascript-typescript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@85689a103d1234521562bbb736b2c4a31c9a85d5 # v4.37.5
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@85689a103d1234521562bbb736b2c4a31c9a85d5 # v4.37.5
+        with:
+          category: "/language:${{ matrix.language }}"
