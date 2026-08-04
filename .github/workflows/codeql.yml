@@ -23,6 +23,11 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # The analyze step queries the Actions API for workflow-run metadata
+      # while processing SARIF results; without this it fails with
+      # "Resource not accessible by integration" after the scan itself
+      # completes successfully (caught by actually running this workflow).
+      actions: read
     strategy:
       fail-fast: false
       matrix:
