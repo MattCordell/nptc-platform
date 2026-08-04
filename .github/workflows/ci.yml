@@ -70,11 +70,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Caching deliberately off: astral-sh/setup-uv's cache-save runs as a
+      # separate *post*-job step, after our own steps below - including the
+      # one that blocks network egress. A cache save needs the network, so
+      # leaving this on hangs the job. Not worth it for a job this fast.
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          enable-cache: false
 
       - name: Install workspace
         run: uv sync --all-packages --locked
@@ -94,6 +97,13 @@ jobs:
 
       - name: Run transform + shared tests with no network access
         run: uv run pytest transform/tests shared/tests
+
+      # Restore egress unconditionally (even if the test step above failed)
+      # so any later step - and every action's own post-job cleanup, which
+      # runs after all of these in reverse order - has network again.
+      - name: Restore network egress
+        if: always()
+        run: sudo iptables -P OUTPUT ACCEPT
 
   frontend:
     name: Frontend (lint, typecheck, test, build)
