@@ -28,7 +28,7 @@ useful, not the regulatory framework around it.
 
 ## Adding a hazard
 
-Open an issue labelled `type/bug` with severity "Critical — clinical safety hazard" (see
+Open an issue with Issue Type "Bug" and severity "Critical — clinical safety hazard" (see
 the bug report template), and add a row here once its mitigation is agreed, in the same
 PR that implements or designs the mitigation. See the documentation-impact table in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).

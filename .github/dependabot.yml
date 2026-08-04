@@ -11,7 +11,7 @@ updates:
     groups:
       python-minor-and-patch:
         update-types: ["minor", "patch"]
-    labels: ["area/infra", "dependencies"]
+    labels: ["infra", "dependencies"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -21,7 +21,7 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
-    labels: ["area/frontend", "dependencies"]
+    labels: ["frontend", "dependencies"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -31,7 +31,7 @@ updates:
     groups:
       actions-minor-and-patch:
         update-types: ["minor", "patch"]
-    labels: ["area/ci", "dependencies"]
+    labels: ["ci", "dependencies"]
 
   # Placeholder: no Dockerfile exists yet (deploy/ and its container images
   # land with Foundation issue F-7 and phase P4/P5). Directory is a
@@ -44,4 +44,4 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    labels: ["area/infra", "dependencies"]
+    labels: ["infra", "dependencies"]

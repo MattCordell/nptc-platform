@@ -2,7 +2,8 @@ name: Backlog task
 description: >-
   A unit of implementation work. If this is already defined in docs/backlog/, edit the
   YAML in a PR instead — this template is for work discovered outside that process.
-labels: ["type/feature"]
+# No default label - set the native Issue Type (usually "Feature" or "Task") in
+# the form sidebar instead.
 body:
   - type: markdown
     attributes:

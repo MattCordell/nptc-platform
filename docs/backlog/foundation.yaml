@@ -14,9 +14,15 @@
 #                this process. Omit for an item backlog_sync.py should create.
 #   title        Issue title.
 #   milestone    Must match a milestone title backlog_sync.py ensures exists.
-#   labels       Applied in full. backlog_sync.py reconciles additions, not
-#                removals - a label you add here and remove later is left on
-#                the issue until removed by hand.
+#                Also the phase - there is deliberately no separate phase/*
+#                label, that would just duplicate the milestone.
+#   issue_type   GitHub's native Issue Type: Task / Bug / Feature (org setting,
+#                see ISSUE_TYPES in backlog_sync.py - "Epic" also exists there
+#                but predates this project and is deliberately unused).
+#   labels       Applied in full for anything backlog_sync.py's LABEL_TAXONOMY
+#                covers (priority/*, area names, status/*, governance/open-issue);
+#                a label an issue carries from outside that taxonomy (e.g. a
+#                default GitHub label like "bug") is left alone either way.
 #   requirements FR-nn/NFR-nn this item implements. Empty list for a pure
 #                chore. Cross-checked against docs/requirements/requirements.yaml
 #                by scripts/traceability_check.py.
@@ -36,7 +42,8 @@
   github_issue: 4
   title: "Repository layout, Python/Node tooling, pre-commit"
   milestone: "Foundation"
-  labels: [area/infra, phase/foundation, priority/must, type/chore]
+  issue_type: Task
+  labels: [infra, priority/must]
   requirements: [FR-74]
   summary: >
     Establish the monorepo layout and local tooling every later issue builds on: a uv
@@ -63,7 +70,8 @@
   github_issue: 5
   title: "Core CI: lint, typecheck, test, coverage"
   milestone: "Foundation"
-  labels: [phase/foundation, priority/must, type/chore]
+  issue_type: Task
+  labels: [priority/must]
   requirements: [NFR-37, NFR-39]
   summary: >
     A ci.yml workflow that lints, typechecks and tests the Python workspace and the
@@ -88,7 +96,8 @@
   github_issue: 6
   title: "Supply chain: Dependabot, CodeQL, audits, gitleaks"
   milestone: "Foundation"
-  labels: [area/ci, phase/foundation, priority/must, type/chore, area/security]
+  issue_type: Task
+  labels: [ci, priority/must, security]
   requirements: [NFR-25, NFR-26]
   summary: >
     Supply-chain automation: dependabot.yml (uv, npm, github-actions, and docker once
@@ -112,7 +121,8 @@
   github_issue: 7
   title: "Governance docs, issue/PR templates, CODEOWNERS, branch ruleset"
   milestone: "Foundation"
-  labels: [phase/foundation, priority/must, type/docs]
+  issue_type: Task
+  labels: [priority/must]
   requirements: []
   summary: >
     Governance and contribution surface: Apache-2.0 LICENSE/NOTICE (SNOMED CT and SPIA
@@ -137,7 +147,8 @@
   github_issue: 8
   title: "Requirements register and traceability check"
   milestone: "Foundation"
-  labels: [phase/foundation, priority/must, type/chore, area/docs]
+  issue_type: Task
+  labels: [docs, priority/must]
   requirements: [NFR-38]
   summary: >
     docs/requirements/requirements.yaml (one entry per FR-nn/NFR-nn extracted from the
@@ -161,7 +172,8 @@
   github_issue: 9
   title: "Backlog YAML schema, backlog_sync.py, label/milestone bootstrap"
   milestone: "Foundation"
-  labels: [area/infra, phase/foundation, priority/must, type/chore, area/docs]
+  issue_type: Task
+  labels: [infra, docs, priority/must]
   requirements: []
   summary: >
     The backlog itself: one YAML file per phase under docs/backlog/, each item carrying
@@ -189,7 +201,8 @@
   github_issue: 10
   title: "Compose skeleton: Postgres + Keycloak, .env.example, branch ruleset applied"
   milestone: "Foundation"
-  labels: [area/infra, phase/foundation, priority/must, type/chore]
+  issue_type: Task
+  labels: [infra, priority/must]
   requirements: [NFR-41, NFR-42, NFR-26]
   summary: >
     PostgreSQL 16 and Keycloak brought up healthy from a clean volume via

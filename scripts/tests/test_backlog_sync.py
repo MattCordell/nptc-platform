@@ -38,7 +38,8 @@ def test_load_backlog_items_parses_a_simple_item() -> None:
         - id: F-1
           title: "Example"
           milestone: "Foundation"
-          labels: [phase/foundation, priority/must]
+          issue_type: Task
+          labels: [priority/must]
           requirements: [FR-74]
           docs: ["none: nothing to document"]
         """,
@@ -47,10 +48,11 @@ def test_load_backlog_items_parses_a_simple_item() -> None:
     assert errors == []
     assert len(items) == 1
     assert items[0].id == "F-1"
+    assert items[0].issue_type == "Task"
     assert items[0].requirements == ("FR-74",)
 
 
-def test_load_backlog_items_flattens_children_and_inherits_milestone_and_labels() -> None:
+def test_load_backlog_items_flattens_children_and_inherits_milestone_labels_and_type() -> None:
     _write(
         bs.BACKLOG_DIR,
         "p1.yaml",
@@ -58,7 +60,8 @@ def test_load_backlog_items_flattens_children_and_inherits_milestone_and_labels(
         - id: P1-6
           title: "Property registry"
           milestone: "P1 — Core catalogue"
-          labels: [area/registry, phase/p1]
+          issue_type: Feature
+          labels: [registry, priority/must]
           docs: ["docs/adr/: registry design"]
           children:
             - id: P1-6.1
@@ -75,7 +78,8 @@ def test_load_backlog_items_flattens_children_and_inherits_milestone_and_labels(
     assert set(by_id) == {"P1-6", "P1-6.1", "P1-6.2"}
     assert by_id["P1-6.1"].parent_id == "P1-6"
     assert by_id["P1-6.1"].milestone == "P1 — Core catalogue"
-    assert by_id["P1-6.1"].labels == ("area/registry", "phase/p1")
+    assert by_id["P1-6.1"].issue_type == "Feature"
+    assert by_id["P1-6.1"].labels == ("registry", "priority/must")
 
 
 def test_load_backlog_items_flags_missing_docs_field() -> None:
@@ -86,6 +90,7 @@ def test_load_backlog_items_flags_missing_docs_field() -> None:
         - id: F-1
           title: "Example"
           milestone: "Foundation"
+          issue_type: Task
         """,
     )
     _, errors = bs.load_backlog_items()
@@ -100,6 +105,7 @@ def test_load_backlog_items_flags_none_doc_mixed_with_real_entries() -> None:
         - id: F-1
           title: "Example"
           milestone: "Foundation"
+          issue_type: Task
           docs: ["none: nothing to document", "README.md: also this"]
         """,
     )
@@ -115,6 +121,7 @@ def test_load_backlog_items_flags_bad_requirement_id() -> None:
         - id: F-1
           title: "Example"
           milestone: "Foundation"
+          issue_type: Task
           requirements: ["FR-7A"]
           docs: ["none: n/a"]
         """,
@@ -131,11 +138,43 @@ def test_load_backlog_items_flags_unknown_milestone() -> None:
         - id: F-1
           title: "Example"
           milestone: "P9 — Does not exist"
+          issue_type: Task
           docs: ["none: n/a"]
         """,
     )
     _, errors = bs.load_backlog_items()
     assert any("P9" in error for error in errors)
+
+
+def test_load_backlog_items_flags_unknown_issue_type() -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        - id: F-1
+          title: "Example"
+          milestone: "Foundation"
+          issue_type: Epic
+          docs: ["none: n/a"]
+        """,
+    )
+    _, errors = bs.load_backlog_items()
+    assert any("Epic" in error and "issue_type" in error for error in errors)
+
+
+def test_load_backlog_items_flags_missing_issue_type() -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        - id: F-1
+          title: "Example"
+          milestone: "Foundation"
+          docs: ["none: n/a"]
+        """,
+    )
+    _, errors = bs.load_backlog_items()
+    assert any("missing issue_type" in error for error in errors)
 
 
 def test_load_backlog_items_flags_duplicate_id_across_files() -> None:
@@ -146,6 +185,7 @@ def test_load_backlog_items_flags_duplicate_id_across_files() -> None:
         - id: F-1
           title: "First"
           milestone: "Foundation"
+          issue_type: Task
           docs: ["none: n/a"]
         """,
     )
@@ -156,6 +196,7 @@ def test_load_backlog_items_flags_duplicate_id_across_files() -> None:
         - id: F-1
           title: "Duplicate"
           milestone: "Foundation"
+          issue_type: Task
           docs: ["none: n/a"]
         """,
     )
@@ -171,7 +212,8 @@ def _item(**overrides: object) -> bs.BacklogItem:
         "id": "F-1",
         "title": "Example",
         "milestone": "Foundation",
-        "labels": ("phase/foundation",),
+        "issue_type": "Task",
+        "labels": ("priority/must",),
         "requirements": (),
         "tests": (),
         "summary": "",
@@ -184,6 +226,20 @@ def _item(**overrides: object) -> bs.BacklogItem:
     }
     defaults.update(overrides)
     return bs.BacklogItem(**defaults)
+
+
+def _existing(**overrides: object) -> bs.ExistingIssue:
+    defaults: dict[str, object] = {
+        "number": 42,
+        "database_id": 1,
+        "body": "",
+        "labels": frozenset(),
+        "milestone": "Foundation",
+        "issue_type": "Task",
+        "state": "OPEN",
+    }
+    defaults.update(overrides)
+    return bs.ExistingIssue(**defaults)
 
 
 def test_render_body_includes_the_hidden_marker() -> None:
@@ -216,17 +272,13 @@ def test_plan_sync_creates_an_issue_for_a_new_item() -> None:
     assert errors == []
     assert [a.kind for a in actions] == ["create"]
     assert actions[0].detail["title"] == "Example"
+    assert actions[0].detail["issue_type"] == "Task"
 
 
 def test_plan_sync_adopts_by_explicit_github_issue_number() -> None:
     item = _item(github_issue=4)
-    existing = bs.ExistingIssue(
-        number=4,
-        database_id=1001,
-        body=bs.render_body(item),
-        labels=frozenset({"phase/foundation"}),
-        milestone="Foundation",
-        state="OPEN",
+    existing = _existing(
+        number=4, database_id=1001, body=bs.render_body(item), labels=frozenset(item.labels)
     )
     actions, errors = bs.plan_sync([item], {4: existing}, {})
     assert errors == []
@@ -241,45 +293,68 @@ def test_plan_sync_errors_when_github_issue_does_not_exist() -> None:
 
 def test_plan_sync_matches_by_hidden_marker() -> None:
     item = _item()
-    existing = bs.ExistingIssue(
-        number=42,
-        database_id=2002,
-        body=bs.render_body(item),
-        labels=frozenset({"phase/foundation"}),
-        milestone="Foundation",
-        state="OPEN",
-    )
+    existing = _existing(body=bs.render_body(item), labels=frozenset(item.labels))
     actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
     assert errors == []
     assert actions == []
 
 
 def test_plan_sync_flags_only_missing_labels() -> None:
-    item = _item(labels=("phase/foundation", "priority/must"))
-    existing = bs.ExistingIssue(
-        number=42,
-        database_id=1,
-        body=bs.render_body(item),
-        labels=frozenset({"phase/foundation", "extra/one"}),
-        milestone="Foundation",
-        state="OPEN",
+    item = _item(labels=("priority/must", "infra"))
+    existing = _existing(body=bs.render_body(item), labels=frozenset({"priority/must"}))
+    actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
+    assert errors == []
+    set_labels = [a for a in actions if a.kind == "set_labels"]
+    assert len(set_labels) == 1
+    assert set(set_labels[0].detail["labels"]) == {"priority/must", "infra"}
+
+
+def test_plan_sync_preserves_a_foreign_label_not_in_the_taxonomy() -> None:
+    """A hand-added label outside LABEL_TAXONOMY (e.g. the default 'bug' label, or
+    something a human added in the GitHub UI) must survive a set_labels reconcile."""
+    item = _item(labels=("priority/must",))
+    existing = _existing(body=bs.render_body(item), labels=frozenset({"priority/must", "bug"}))
+    actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
+    assert errors == []
+    assert [a for a in actions if a.kind == "set_labels"] == []
+
+
+def test_plan_sync_drops_a_stale_taxonomy_label_no_longer_desired() -> None:
+    """A label that IS in our taxonomy but is no longer in the item's desired set
+    gets dropped."""
+    item = _item(labels=("priority/must",))
+    existing = _existing(
+        body=bs.render_body(item), labels=frozenset({"priority/must", "priority/should"})
     )
     actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
     assert errors == []
-    add_actions = [a for a in actions if a.kind == "add_labels"]
-    assert len(add_actions) == 1
-    assert add_actions[0].detail["labels"] == ["priority/must"]
+    set_labels = [a for a in actions if a.kind == "set_labels"]
+    assert len(set_labels) == 1
+    assert set(set_labels[0].detail["labels"]) == {"priority/must"}
+
+
+def test_plan_sync_drops_a_retired_phase_or_area_label_not_in_the_current_taxonomy() -> None:
+    """phase/*, area/* and type/* labels predate the Issue Types migration and are
+    no longer in LABEL_TAXONOMY at all - they must still be recognised as ours to
+    prune, not mistaken for a foreign label a human added."""
+    item = _item(labels=("priority/must", "infra"))
+    existing = _existing(
+        body=bs.render_body(item),
+        labels=frozenset(
+            {"priority/must", "infra", "phase/foundation", "area/infra", "type/chore"}
+        ),
+    )
+    actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
+    assert errors == []
+    set_labels = [a for a in actions if a.kind == "set_labels"]
+    assert len(set_labels) == 1
+    assert set(set_labels[0].detail["labels"]) == {"priority/must", "infra"}
 
 
 def test_plan_sync_flags_milestone_drift() -> None:
     item = _item(milestone="P0 — Seeding transform")
-    existing = bs.ExistingIssue(
-        number=42,
-        database_id=1,
-        body=bs.render_body(item),
-        labels=frozenset(item.labels),
-        milestone="Foundation",
-        state="OPEN",
+    existing = _existing(
+        body=bs.render_body(item), labels=frozenset(item.labels), milestone="Foundation"
     )
     actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
     assert errors == []
@@ -288,17 +363,22 @@ def test_plan_sync_flags_milestone_drift() -> None:
     assert set_milestone[0].detail["milestone"] == "P0 — Seeding transform"
 
 
+def test_plan_sync_flags_issue_type_drift() -> None:
+    item = _item(issue_type="Feature")
+    existing = _existing(
+        body=bs.render_body(item), labels=frozenset(item.labels), issue_type="Task"
+    )
+    actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
+    assert errors == []
+    set_type = [a for a in actions if a.kind == "set_type"]
+    assert len(set_type) == 1
+    assert set_type[0].detail["issue_type"] == "Feature"
+
+
 def test_plan_sync_flags_stale_body() -> None:
     item = _item(summary="Updated summary.")
     stale_body = bs.render_body(_item(summary="Old summary."))
-    existing = bs.ExistingIssue(
-        number=42,
-        database_id=1,
-        body=stale_body,
-        labels=frozenset(item.labels),
-        milestone="Foundation",
-        state="OPEN",
-    )
+    existing = _existing(body=stale_body, labels=frozenset(item.labels))
     actions, errors = bs.plan_sync([item], {42: existing}, {"F-1": 42})
     assert errors == []
     assert any(a.kind == "update_body" for a in actions)
@@ -318,21 +398,11 @@ def test_plan_sync_emits_ensure_sub_issue_for_a_new_child() -> None:
 def test_plan_sync_skips_ensure_sub_issue_when_already_linked() -> None:
     parent = _item(id="P1-6")
     child = _item(id="P1-6.1", parent_id="P1-6")
-    parent_issue = bs.ExistingIssue(
-        number=100,
-        database_id=1000,
-        body=bs.render_body(parent),
-        labels=frozenset(parent.labels),
-        milestone="Foundation",
-        state="OPEN",
+    parent_issue = _existing(
+        number=100, database_id=1000, body=bs.render_body(parent), labels=frozenset(parent.labels)
     )
-    child_issue = bs.ExistingIssue(
-        number=101,
-        database_id=1001,
-        body=bs.render_body(child),
-        labels=frozenset(child.labels),
-        milestone="Foundation",
-        state="OPEN",
+    child_issue = _existing(
+        number=101, database_id=1001, body=bs.render_body(child), labels=frozenset(child.labels)
     )
     by_number = {100: parent_issue, 101: child_issue}
     by_marker = {"P1-6": 100, "P1-6.1": 101}
@@ -345,21 +415,11 @@ def test_plan_sync_skips_ensure_sub_issue_when_already_linked() -> None:
 def test_plan_sync_still_flags_ensure_sub_issue_when_link_missing() -> None:
     parent = _item(id="P1-6")
     child = _item(id="P1-6.1", parent_id="P1-6")
-    parent_issue = bs.ExistingIssue(
-        number=100,
-        database_id=1000,
-        body=bs.render_body(parent),
-        labels=frozenset(parent.labels),
-        milestone="Foundation",
-        state="OPEN",
+    parent_issue = _existing(
+        number=100, database_id=1000, body=bs.render_body(parent), labels=frozenset(parent.labels)
     )
-    child_issue = bs.ExistingIssue(
-        number=101,
-        database_id=1001,
-        body=bs.render_body(child),
-        labels=frozenset(child.labels),
-        milestone="Foundation",
-        state="OPEN",
+    child_issue = _existing(
+        number=101, database_id=1001, body=bs.render_body(child), labels=frozenset(child.labels)
     )
     by_number = {100: parent_issue, 101: child_issue}
     by_marker = {"P1-6": 100, "P1-6.1": 101}
@@ -375,9 +435,9 @@ def test_plan_sync_still_flags_ensure_sub_issue_when_link_missing() -> None:
 
 
 def test_plan_labels_returns_only_missing_names() -> None:
-    existing = set(bs.LABEL_TAXONOMY) - {"phase/p0", "area/audit"}
+    existing = set(bs.LABEL_TAXONOMY) - {"priority/may", "audit"}
     missing = bs.plan_labels(existing)
-    assert set(missing) == {"phase/p0", "area/audit"}
+    assert set(missing) == {"priority/may", "audit"}
 
 
 def test_plan_milestones_returns_only_missing_titles() -> None:

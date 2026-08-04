@@ -12,7 +12,8 @@
 - id: P1-1
   title: "Database foundation: Alembic, pg_trgm/unaccent, roles, testcontainers"
   milestone: "P1 — Core catalogue"
-  labels: [area/db, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [db, priority/must]
   requirements: [NFR-39, NFR-22]
   summary: >
     The database baseline every other P1 item builds on: Alembic migrations, the
@@ -35,7 +36,8 @@
 - id: P1-2
   title: "Audit log"
   milestone: "P1 — Core catalogue"
-  labels: [area/audit, area/db, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [audit, db, priority/must]
   requirements: [NFR-08, NFR-09, NFR-10, NFR-11, NFR-12, NFR-13]
   tests: [NFR-38.5]
   summary: >
@@ -85,7 +87,8 @@
 - id: P1-3
   title: "Identity and Keycloak"
   milestone: "P1 — Core catalogue"
-  labels: [area/auth, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [auth, priority/must]
   requirements: [NFR-01, NFR-02, NFR-03, NFR-04, NFR-05, NFR-06, NFR-07]
   summary: >
     Authentication end to end: Keycloak realm as code, the OIDC PKCE flow, the internal
@@ -131,7 +134,8 @@
 - id: P1-4
   title: "Permission framework"
   milestone: "P1 — Core catalogue"
-  labels: [area/auth, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [auth, priority/must]
   requirements: [FR-44, NFR-20]
   summary: >
     Authorisation checked against permissions, not role names (CONTRIBUTING.md's own
@@ -151,7 +155,8 @@
 - id: P1-5
   title: "Catalogue entity and designations"
   milestone: "P1 — Core catalogue"
-  labels: [area/db, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [db, priority/must]
   requirements: [FR-03, FR-04, FR-05, FR-06, FR-07, FR-08, FR-38, FR-82]
   tests: [NFR-38.4, NFR-38.8]
   summary: >
@@ -203,7 +208,8 @@
 - id: P1-6
   title: "Property registry"
   milestone: "P1 — Core catalogue"
-  labels: [area/registry, area/db, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [registry, db, priority/must]
   requirements: [FR-09, FR-10, FR-11, FR-12, FR-13, FR-77]
   tests: [NFR-38.6]
   summary: >
@@ -261,7 +267,8 @@
 - id: P1-7
   title: "Local code systems: Discipline and Subgroup, advisory SNOMED map"
   milestone: "P1 — Core catalogue"
-  labels: [area/registry, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [registry, priority/must]
   requirements: [FR-90, FR-91, FR-92]
   summary: >
     Two locally-defined code systems (Discipline, Subgroup) that do not exist in
@@ -278,7 +285,8 @@
 - id: P1-8
   title: "Search: full-text and trigram, facets, stable URLs, finding indicator"
   milestone: "P1 — Core catalogue"
-  labels: [area/api, area/db, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [api, db, priority/must]
   requirements: [FR-14, FR-15, FR-16, FR-17, FR-18, FR-19]
   tests: [NFR-38.2]
   summary: >
@@ -300,7 +308,8 @@
 - id: P1-9
   title: "Public read API, OpenAPI 3.1, anonymous rate limiting"
   milestone: "P1 — Core catalogue"
-  labels: [area/api, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [api, priority/must]
   requirements: [FR-20, FR-21, FR-22, FR-98, NFR-24]
   summary: >
     The public, unauthenticated read API over the catalogue, documented as OpenAPI
@@ -321,7 +330,8 @@
 - id: P1-10
   title: "Frontend shell: routing, generated client, accessible component baseline"
   milestone: "P1 — Core catalogue"
-  labels: [area/frontend, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [frontend, priority/must]
   requirements: []
   summary: >
     The frontend application shell: routing, an API client generated from
@@ -341,7 +351,8 @@
 - id: P1-11
   title: "Admin editing UI"
   milestone: "P1 — Core catalogue"
-  labels: [area/frontend, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [frontend, priority/must]
   requirements: [FR-36, FR-37, FR-38, FR-39]
   summary: >
     The screens a Reviewer/Administrator uses to edit catalogue entries: designation
@@ -378,7 +389,8 @@
 - id: P1-12
   title: "Terms of use and privacy"
   milestone: "P1 — Core catalogue"
-  labels: [area/auth, phase/p1, priority/must, type/feature]
+  issue_type: Feature
+  labels: [auth, priority/must]
   requirements: [NFR-14, NFR-15, NFR-16, NFR-45, NFR-46, NFR-47]
   tests: [NFR-38.15]
   summary: >
