@@ -1,0 +1,44 @@
+name: Bug report
+description: Something built already does not behave as specified.
+labels: ["type/bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: Cite the requirement ID if there is one (FR-nn / NFR-nn).
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: >-
+        Does this touch a clinical safety hazard (docs/governance/hazard-log.md),
+        an authorisation boundary, or the audit log? Say so below if it does.
+      options:
+        - "Low — cosmetic or inconvenient"
+        - "Medium — wrong result, workaround exists"
+        - "High — data integrity, authorisation, or audit"
+        - "Critical — clinical safety hazard"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context

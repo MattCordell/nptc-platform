@@ -1,0 +1,29 @@
+name: Spike / investigation
+description: >-
+  Time-boxed investigation needed before a real backlog item can be written or
+  estimated — e.g. the stack-selection spike, or evaluating an Ontoserver behaviour.
+labels: ["type/spike"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question to answer
+      description: What decision is blocked on this, and who is waiting on it?
+    validations:
+      required: true
+  - type: input
+    id: timebox
+    attributes:
+      label: Time-box
+      placeholder: e.g. 1 day
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected output
+      description: >-
+        An ADR, a backlog item, a go/no-go — state the artefact this produces so the
+        spike has a definition of done.
+    validations:
+      required: true
