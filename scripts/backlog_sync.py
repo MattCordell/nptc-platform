@@ -756,6 +756,7 @@ def apply_plan(
     client: GhClient,
     items: list[BacklogItem],
     by_number: dict[int, ExistingIssue],
+    by_marker: dict[str, int],
     label_actions: list[str],
     milestone_actions: list[str],
     milestone_numbers: dict[str, int],
@@ -786,7 +787,7 @@ def apply_plan(
         # rely on resolved[item.id] uniformly, whether this item already had an
         # issue or gets one from a "create" action later in this same loop body.
         if item.id not in resolved:
-            number = resolve_issue_number(item, by_number, {})
+            number = resolve_issue_number(item, by_number, by_marker)
             if number is not None:
                 resolved[item.id] = number
                 resolved_issues[item.id] = by_number[number]
@@ -928,6 +929,7 @@ def main() -> int:
             client,
             items,
             by_number,
+            by_marker,
             label_actions,
             milestone_actions,
             milestone_numbers,
