@@ -1525,4 +1525,3 @@ Two limitations remain, and both are stated rather than glossed:
 | 6.4 | (not addressed) | Every code binding MUST be subsumed by `71388002` \|Procedure\| | A structural check catches an observable entity or clinical finding bound as a request code, which a textual check cannot. Verified: all 50 sample codes comply. |
 | 4 | Users, provisional users, administrators | Adds Reviewer and Observer, with an authoritative permission matrix | Without Reviewer, giving a working group member triage access means granting release publication and user management. Without Observer, giving someone visibility means granting them the ability to contribute. |
 | 8.5 | (not addressed) | Internal comments for Administrators and Reviewers only, append-only | The working group needs a deliberation record. A public comment thread needs a moderation owner, and there is not one. |
-

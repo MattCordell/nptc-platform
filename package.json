@@ -1,0 +1,15 @@
+{
+  "name": "nptc-platform",
+  "private": true,
+  "version": "0.0.0",
+  "description": "NPTC Catalogue Maintenance Platform - workspace root (not published)",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "dev": "pnpm --filter nptc-frontend dev",
+    "build": "pnpm --filter nptc-frontend build",
+    "test": "pnpm --filter nptc-frontend test",
+    "lint": "pnpm --filter nptc-frontend lint",
+    "typecheck": "pnpm --filter nptc-frontend typecheck",
+    "format:check": "pnpm --filter nptc-frontend format:check"
+  }
+}
