@@ -32,6 +32,7 @@ jobs:
   markdownlint:
     name: markdownlint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +45,7 @@ jobs:
   link-check:
     name: lychee link check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +68,7 @@ jobs:
   traceability:
     name: Requirements traceability
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +100,7 @@ jobs:
   backlog-sync-dry-run:
     name: backlog_sync.py --dry-run
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read

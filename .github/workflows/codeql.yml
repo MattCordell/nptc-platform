@@ -1,17 +1,23 @@
 name: CodeQL
 
 on:
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".github/ISSUE_TEMPLATE/**"
   push:
     branches: [main]
   schedule:
-    # Weekly rather than only on push/PR (NFR-25) - a query-pack update
-    # surfaces a finding even in a week nobody touches the code.
-    - cron: "17 3 * * 1"
+    # Daily rather than only on push to main (NFR-25) - a query-pack update
+    # surfaces a finding even on a day nobody touches the code, and this repo
+    # doesn't run CodeQL per-PR (see below), so this is also the main way
+    # findings on in-progress branches get caught before they land.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    # Per-PR CodeQL was dropped (2026-08-04) to stop paying its full cost on
+    # every push during active development - the daily schedule now covers
+    # regular detection. Trigger this manually on a specific branch/PR when
+    # you want assurance before merging something security-sensitive.
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -20,6 +26,7 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       # The analyze step queries the Actions API for workflow-run metadata

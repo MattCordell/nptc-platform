@@ -31,7 +31,7 @@ pipeline belong with those services, not here.
 |---|---|---|
 | Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 |
 | Container image scanning before publication | `.github/workflows/images.yml` | NFR-25 |
-| Static analysis (CodeQL) on every PR and weekly | `.github/workflows/codeql.yml` | — |
+| Static analysis (CodeQL) daily, on push to main, and on demand | `.github/workflows/codeql.yml` | — |
 | Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 |
 | Dependency updates | `.github/dependabot.yml` | NFR-25 |
 | No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 |
@@ -67,7 +67,7 @@ and OpenSSF Scorecard aren't active yet.** All three need GitHub Advanced Securi
 run against a private repository, and this one doesn't have it enabled — confirmed by
 running each, not assumed from the docs (CodeQL's own upload step fails outright with
 "Advanced Security must be enabled for this repository to use code scanning").
-`codeql.yml` still runs the actual scan on every PR and weekly, with `upload: never` and
+`codeql.yml` still runs the actual scan daily and on push to main (plus on demand), with `upload: never` and
 findings summarised into the job's own step summary instead of the Security tab.
 `security.yml` runs the open-source gitleaks CLI directly against git history on every
 PR and daily. Both are real controls, just not surfaced through GitHub's own UI. Revisit
