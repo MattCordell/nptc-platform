@@ -23,7 +23,7 @@ is built. See PRD §"Reading guide".
 
 ## Workflow
 
-```
+```text
 issue  ->  branch  ->  local tests green  ->  PR  ->  review  ->  squash merge
 ```
 
@@ -33,7 +33,7 @@ issue  ->  branch  ->  local tests green  ->  PR  ->  review  ->  squash merge
 **Commits:** [Conventional Commits](https://www.conventionalcommits.org/). The PR *title*
 must be one; individual commits are squashed, so they matter less.
 
-```
+```text
 feat(registry): add datatype handler registry
 
 Implements FR-77 so a new datatype is one handler module plus tests

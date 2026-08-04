@@ -13,6 +13,8 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "pre-commit>=4.0",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
 ]
 
 # --- uv workspace -----------------------------------------------------------
@@ -67,7 +69,7 @@ disallow_untyped_defs = false
 
 # --- pytest ----------------------------------------------------------------
 [tool.pytest.ini_options]
-testpaths = ["backend/tests", "transform/tests", "shared/tests"]
+testpaths = ["backend/tests", "transform/tests", "shared/tests", "scripts/tests"]
 # importlib import mode: backend/transform/shared each have their own tests/ tree
 # with no __init__.py, and more than one of them is allowed to contain a file
 # with the same basename (e.g. test_scaffolding.py) without colliding.
