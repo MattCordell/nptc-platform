@@ -1,0 +1,39 @@
+NPTC Catalogue Maintenance Platform
+Copyright 2026 Commonwealth Scientific and Industrial Research Organisation (CSIRO)
+
+This product includes software developed at the Australian e-Health Research Centre
+(AEHRC), Health and Digital Solutions Innovation, CSIRO.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the full
+terms.
+
+---
+
+Third-party content and separately licensed material
+----------------------------------------------------
+
+SNOMED CT
+  This repository contains NO SNOMED CT content. The platform resolves SNOMED CT
+  concepts at runtime from a FHIR terminology server (Ontoserver) and stores only
+  the identifiers and designations required to operate the catalogue.
+
+  SNOMED CT is distributed by SNOMED International and, in Australia, by the
+  National Clinical Terminology Service (NCTS) as SNOMED CT-AU. Use of SNOMED CT
+  requires an appropriate licence from those bodies. The Apache-2.0 licence covering
+  this software grants no rights whatsoever to SNOMED CT content.
+
+  Test fixtures in this repository that reference SNOMED CT identifiers do so as
+  bare identifiers for validation purposes and do not redistribute SNOMED CT content.
+
+SPIA Requesting terminology
+  The Standardised Pathology Informatics in Australia (SPIA) Requesting terminology
+  is maintained and published by the Royal College of Pathologists of Australasia
+  Quality Assurance Programs (RCPA-QAP) and is subject to RCPA copyright. This
+  repository contains no SPIA catalogue content. Any sample or fixture data derived
+  from the published workbook is used with RCPA-QAP's knowledge for the purpose of
+  building the platform that maintains it.
+
+Third-party dependencies
+  Runtime and build dependencies are declared in the lock files under backend/,
+  transform/ and frontend/ and retain their own licences. No third-party source is
+  vendored into this repository.

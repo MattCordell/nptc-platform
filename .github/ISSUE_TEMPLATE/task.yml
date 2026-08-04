@@ -1,0 +1,59 @@
+name: Backlog task
+description: >-
+  A unit of implementation work. If this is already defined in docs/backlog/, edit the
+  YAML in a PR instead — this template is for work discovered outside that process.
+labels: ["type/feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most implementation work should already be tracked in `docs/backlog/*.yaml` and
+        synced here by `backlog_sync.py`. Use this form for work that turned up during
+        development and does not yet have a backlog entry — then add it to the YAML in
+        the PR that closes this issue, so the two stay in sync.
+  - type: input
+    id: requirements
+    attributes:
+      label: Requirement IDs
+      description: "e.g. FR-25, FR-26. Leave blank only for pure chores/tooling."
+      placeholder: FR-nn, NFR-nn
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - Foundation
+        - "P0 — Seeding transform"
+        - "P1 — Core catalogue"
+        - "P2 — Contribution"
+        - "P3 — Validation"
+        - "P4 — Release and export"
+        - "P5 — Hardening"
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What needs to be done, and why
+      description: One or two paragraphs. Cite the PRD section if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete and testable, one per line.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation impact
+      description: >-
+        Which documents this touches (see the table in CONTRIBUTING.md), or "none" with
+        a one-line reason.
+    validations:
+      required: true

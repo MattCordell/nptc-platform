@@ -1,0 +1,19 @@
+# Code owners for aehrc/nptc-platform
+#
+# Review is currently advisory: `main` does not require an approval, because GitHub
+# does not permit self-approval and this is a single-committer repository. See
+# CONTRIBUTING.md and docs/operations/repo-configuration.md.
+#
+# When a second developer joins, set required approvals to 1 and enable
+# "require review from Code Owners" on the ruleset. This file is then load-bearing.
+
+*                       @MattCordell
+
+# Specification and governance changes need the document owner's eyes even once
+# ownership of the code broadens.
+/docs/prd/              @MattCordell
+/docs/requirements/     @MattCordell
+/docs/governance/       @MattCordell
+/SECURITY.md            @MattCordell
+/LICENSE                @MattCordell
+/NOTICE                 @MattCordell

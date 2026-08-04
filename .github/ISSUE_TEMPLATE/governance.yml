@@ -1,0 +1,27 @@
+name: Governance / open issue
+description: >-
+  A decision for RCPA-QAP, the TSWG or the Steering Committee, not for the development
+  team. See PRD §15.1 for the open issues this repository already tracks (OI-1, OI-6,
+  OI-7, OI-15).
+labels: ["governance/open-issue"]
+body:
+  - type: textarea
+    id: issue
+    attributes:
+      label: The decision needed
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner
+      description: Who is the decision-maker — RCPA-QAP, TSWG, Steering Committee, privacy officer?
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact if left unresolved
+      description: Does this block any build work, or only production adoption?
+    validations:
+      required: true
