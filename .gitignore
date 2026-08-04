@@ -40,7 +40,10 @@ Thumbs.db
 # Ad hoc exports (FR-78) and release artefacts are runtime output, not repo content.
 /exports/
 /releases/
-docs/requirements/traceability.md
+# NOTE: docs/requirements/traceability.md is generated but IS committed, the
+# same way docs/api/openapi.json is: CI (F-5) regenerates it and fails the
+# build if that differs from what's committed, so it's always current and
+# still browsable on GitHub without downloading a CI artefact.
 
 # --- Local override files ---
 docker-compose.override.yml
