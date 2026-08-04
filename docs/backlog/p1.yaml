@@ -1,0 +1,397 @@
+# Backlog: P1 - Core catalogue.
+#
+# Schema documented once in docs/backlog/foundation.yaml.
+#
+# Five items here (marked with a `children:` list) are genuinely multi-week and
+# get GitHub native sub-issues so progress is legible without an artificial
+# parent everywhere else (plan SS3.1): P1-2, P1-3, P1-5, P1-6, P1-11.
+#
+# Dependency chain, for scheduling: P1-1 -> P1-2 -> P1-4. P1-3 and P1-6 are
+# independent of P1-2 and of each other.
+
+- id: P1-1
+  title: "Database foundation: Alembic, pg_trgm/unaccent, roles, testcontainers"
+  milestone: "P1 — Core catalogue"
+  labels: [area/db, phase/p1, priority/must, type/feature]
+  requirements: [NFR-39, NFR-22]
+  summary: >
+    The database baseline every other P1 item builds on: Alembic migrations, the
+    pg_trgm and unaccent extensions (needed by P1-8's search), a least-privilege role
+    model (the app role gets no UPDATE/DELETE on audit tables - foundation for P1-2),
+    and a testcontainers-backed integration test harness.
+  checklist:
+    - "Alembic wired to the SQLAlchemy models, first migration committed"
+    - "pg_trgm and unaccent extensions enabled via migration"
+    - "Least-privilege roles: app role has no UPDATE/DELETE grant on audit tables"
+    - "testcontainers Postgres 16 fixture for integration tests"
+    - "Parameterised queries throughout - no string-built SQL anywhere in the codebase (NFR-22)"
+  docs:
+    - "docs/architecture/data-model.md: schema baseline and role model"
+    - "docs/operations/upgrade.md: migration process"
+  acceptance:
+    - "alembic upgrade head runs clean against a fresh database"
+    - "The app role's grants are asserted by an integration test, not just documented"
+
+- id: P1-2
+  title: "Audit log"
+  milestone: "P1 — Core catalogue"
+  labels: [area/audit, area/db, phase/p1, priority/must, type/feature]
+  requirements: [NFR-08, NFR-09, NFR-10, NFR-11, NFR-12, NFR-13]
+  tests: [NFR-38.5]
+  summary: >
+    An append-only audit log: every state-changing write emits a field-level
+    before/after record, chained by hash so tampering is detectable, and the log itself
+    cannot be altered or deleted even by an administrator (NFR-08-13). Split into four
+    children because the DB privilege model, the hash chain, the diffing, and the
+    verification tool are each separately testable and separately reviewable.
+  docs:
+    - "docs/architecture/data-model.md: audit table shape and hash-chain design"
+    - "docs/operations/runbooks/: verify_audit_chain.py usage"
+  children:
+    - id: P1-2.1
+      title: "Audit DB privilege model: append-only, no UPDATE/DELETE for the app role"
+      requirements: [NFR-08]
+      checklist:
+        - "Migration granting INSERT-only to the app role on the audit table"
+        - "Integration test asserting UPDATE and DELETE are rejected at the DB level"
+      docs:
+        - "docs/architecture/data-model.md: privilege model"
+    - id: P1-2.2
+      title: "Hash chain linking each audit record to its predecessor"
+      requirements: [NFR-09, NFR-10]
+      checklist:
+        - "Each record's hash covers its own fields plus the previous record's hash"
+        - "A tampered historical row breaks the chain from that point forward"
+      docs:
+        - "docs/architecture/data-model.md: hash chain construction"
+    - id: P1-2.3
+      title: "Field-level before/after diffing on every write path"
+      requirements: [NFR-08, NFR-11]
+      checklist:
+        - "Diffing helper used by every mutating endpoint, not reimplemented per-endpoint"
+        - "Test asserting a representative write path emits a correct before/after diff"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+    - id: P1-2.4
+      title: "verify_audit_chain.py command"
+      requirements: [NFR-12, NFR-13]
+      tests: [NFR-38.5]
+      checklist:
+        - "scripts/verify_audit_chain.py walking the full chain and reporting the first break"
+        - "Test fixture with a deliberately corrupted chain, asserting the break is detected and located"
+      docs:
+        - "docs/operations/runbooks/: verify_audit_chain.py usage and what a break means"
+
+- id: P1-3
+  title: "Identity and Keycloak"
+  milestone: "P1 — Core catalogue"
+  labels: [area/auth, phase/p1, priority/must, type/feature]
+  requirements: [NFR-01, NFR-02, NFR-03, NFR-04, NFR-05, NFR-06, NFR-07]
+  summary: >
+    Authentication end to end: Keycloak realm as code, the OIDC PKCE flow, the internal
+    user/user_identity model linking a platform user to its OIDC subject, and
+    server-side token verification. Split into four children because realm-as-code, the
+    OIDC flow, the internal user model, and token verification are four distinct
+    surfaces with their own failure modes.
+  docs:
+    - "docs/operations/configuration.md: Keycloak realm import and OIDC env vars"
+  children:
+    - id: P1-3.1
+      title: "Keycloak realm as code (deploy/keycloak/realm/), imported on compose up"
+      requirements: [NFR-03]
+      checklist:
+        - "Realm JSON committed, imported automatically by the Keycloak container on startup"
+      docs:
+        - "docs/operations/configuration.md: realm import mechanics"
+    - id: P1-3.2
+      title: "OIDC PKCE login flow (frontend initiation, backend callback)"
+      requirements: [NFR-01, NFR-02]
+      checklist:
+        - "Frontend redirects to Keycloak with PKCE; backend exchanges the code for tokens"
+      docs:
+        - "none: covered by configuration.md in the parent item"
+    - id: P1-3.3
+      title: "Internal user and user_identity model linked to the OIDC subject"
+      requirements: [NFR-04, NFR-05, NFR-17]
+      checklist:
+        - "user table with a stable internal ID; user_identity linking it to the OIDC sub claim"
+        - "Re-authenticating as the same OIDC subject resolves to the same internal user"
+        - "Account closure pseudonymises the user record rather than deleting it (NFR-17)"
+      docs:
+        - "docs/architecture/data-model.md: user / user_identity relationship"
+    - id: P1-3.4
+      title: "Server-side JWT verification: signature, issuer, audience, expiry"
+      requirements: [NFR-06, NFR-07]
+      checklist:
+        - "Backend verifies signature against Keycloak's JWKS, plus issuer/audience/expiry"
+        - "A tampered or expired token is rejected server-side regardless of client behaviour"
+      docs:
+        - "none: covered by configuration.md in the parent item"
+
+- id: P1-4
+  title: "Permission framework"
+  milestone: "P1 — Core catalogue"
+  labels: [area/auth, phase/p1, priority/must, type/feature]
+  requirements: [FR-44, NFR-20]
+  summary: >
+    Authorisation checked against permissions, not role names (CONTRIBUTING.md's own
+    "things that will be pushed back on" list), with a reusable negative-authorisation
+    test harness so every endpoint's forbidden case is exercised the same way rather
+    than reinvented per-endpoint.
+  checklist:
+    - "Permission model: named permissions, not role-name string comparisons"
+    - "Reusable negative-authorisation test harness (assert-forbidden helper)"
+    - "Every existing write endpoint using the framework, none checking a role name directly"
+  docs:
+    - "docs/architecture/: permission framework design, and why role-name checks were rejected (ADR)"
+  acceptance:
+    - "grep across backend/src finds no authorisation check comparing against a role name literal"
+    - "Every mutating endpoint has a negative-case test using the shared harness"
+
+- id: P1-5
+  title: "Catalogue entity and designations"
+  milestone: "P1 — Core catalogue"
+  labels: [area/db, phase/p1, priority/must, type/feature]
+  requirements: [FR-03, FR-04, FR-05, FR-06, FR-07, FR-08, FR-38, FR-82]
+  tests: [NFR-38.4, NFR-38.8]
+  summary: >
+    The catalogue entity itself: business_key identity, row_version optimistic
+    locking, designations (preferred term, synonyms, definitions), code bindings
+    stored exactly as served by the terminology server (FR-82 - no re-derivation of the
+    display term), and two-severity collision detection. Split into four children
+    because the entity, designations, code bindings and collision detection each
+    carry their own mandated tests.
+  docs:
+    - "docs/architecture/data-model.md: entity, designation and code-binding shape"
+  children:
+    - id: P1-5.1
+      title: "Catalogue entity: business_key identity, row_version optimistic locking"
+      requirements: [FR-03, FR-04]
+      checklist:
+        - "business_key stable across edits; row_version incremented on every write"
+        - "Concurrent conflicting writes surface a conflict, not a silent last-write-wins"
+      docs:
+        - "docs/architecture/data-model.md: optimistic locking"
+    - id: P1-5.2
+      title: "Designations: preferred/synonym/definition, language, changelog note validation"
+      requirements: [FR-05, FR-38, FR-85]
+      checklist:
+        - "Designation model with kind, language and a required changelog note on edit"
+        - "An edit with no changelog note is rejected"
+        - "Preferred-term length is computed, not stored or editable (FR-85, FR-24)"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+    - id: P1-5.3
+      title: "Code bindings stored as served (FR-82)"
+      requirements: [FR-06, FR-07, FR-82, FR-83]
+      checklist:
+        - "Code binding stores the SCTID (string, via shared/) and the display term exactly as served"
+        - "No code path re-derives or re-normalises the display term after storage"
+        - "Semantic tag removal happens only in the export renderer (FR-83), never here"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+    - id: P1-5.4
+      title: "Two-severity collision detection"
+      requirements: [FR-08]
+      tests: [NFR-38.4, NFR-38.8]
+      checklist:
+        - "Warning-severity collision: same designation text, different entity, different code"
+        - "Blocking-severity collision: same code bound to two entities"
+      docs:
+        - "docs/architecture/data-model.md: the two collision severities and what each blocks"
+
+- id: P1-6
+  title: "Property registry"
+  milestone: "P1 — Core catalogue"
+  labels: [area/registry, area/db, phase/p1, priority/must, type/feature]
+  requirements: [FR-09, FR-10, FR-11, FR-12, FR-13, FR-77]
+  tests: [NFR-38.6]
+  summary: >
+    The highest-risk item in the PRD (SS6.5): a generic property model (definitions
+    plus JSONB values) validated per-property by JSON Schema, dispatched by datatype
+    through a registry (FR-77) rather than a switch statement scattered through the
+    codebase, with automatic filterable-property indexing and a no-deletion,
+    key-immutable deprecation model.
+  docs:
+    - "docs/adr/: property registry design, and the datatype-handler-registry alternative considered"
+    - "docs/architecture/data-model.md: PropertyDefinition / PropertyValue shape"
+  children:
+    - id: P1-6.1
+      title: "PropertyDefinition model and JSONB PropertyValue storage"
+      requirements: [FR-09, FR-10]
+      checklist:
+        - "PropertyDefinition table: key, datatype, schema reference"
+        - "PropertyValue stored as JSONB, one row per (entity, property)"
+      docs:
+        - "docs/architecture/data-model.md: PropertyDefinition / PropertyValue"
+    - id: P1-6.2
+      title: "Per-property JSON Schema validation"
+      requirements: [FR-09, FR-88, FR-89]
+      checklist:
+        - "A PropertyValue write is validated against its PropertyDefinition's JSON Schema before commit"
+        - "An invalid value is rejected with a field-level error, not a generic 500"
+        - "Specimen: coded property, cardinality 0..*, bound to a value set rooted at 123038009 (FR-88)"
+        - "Specimen: the value 'Any' is rejected as an invalid specimen code (FR-89)"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+    - id: P1-6.3
+      title: "Datatype handler registry (FR-77)"
+      requirements: [FR-77]
+      checklist:
+        - "Handler registry: one module per datatype, no datatype switch outside it"
+        - "End-to-end test adding a synthetic new datatype via a single handler module"
+      docs:
+        - "docs/adr/: datatype handler registry design"
+    - id: P1-6.4
+      title: "Automatic index generation for filterable properties (FR-13)"
+      requirements: [FR-13]
+      checklist:
+        - "A property flagged filterable gets its index created automatically, not by hand-written migration"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+    - id: P1-6.5
+      title: "Deprecation-not-deletion (FR-11) and key immutability (FR-12)"
+      requirements: [FR-11, FR-12]
+      checklist:
+        - "Deprecating a PropertyDefinition marks it deprecated; existing values are retained, not deleted"
+        - "A PropertyDefinition's key cannot be changed once created"
+      docs:
+        - "none: covered by data-model.md in the parent item"
+
+- id: P1-7
+  title: "Local code systems: Discipline and Subgroup, advisory SNOMED map"
+  milestone: "P1 — Core catalogue"
+  labels: [area/registry, phase/p1, priority/must, type/feature]
+  requirements: [FR-90, FR-91, FR-92]
+  summary: >
+    Two locally-defined code systems (Discipline, Subgroup) that do not exist in
+    SNOMED CT, plus an advisory (non-authoritative) mapping from each local code to
+    the nearest SNOMED CT concept, kept separate from the code bindings in P1-5.
+  checklist:
+    - "Discipline and Subgroup local code system tables"
+    - "Advisory SNOMED map, explicitly non-authoritative and excluded from validation sweeps"
+  docs:
+    - "docs/architecture/data-model.md: local code systems and the advisory map"
+  acceptance:
+    - "The advisory map is never treated as a code binding by the validation sweep (P3)"
+
+- id: P1-8
+  title: "Search: full-text and trigram, facets, stable URLs, finding indicator"
+  milestone: "P1 — Core catalogue"
+  labels: [area/api, area/db, phase/p1, priority/must, type/feature]
+  requirements: [FR-14, FR-15, FR-16, FR-17, FR-18, FR-19]
+  tests: [NFR-38.2]
+  summary: >
+    Search over designations combining Postgres full-text search with pg_trgm
+    (fuzzy/typo-tolerant matching, using the extension enabled in P1-1), facets over
+    registry properties (P1-6), stable/shareable result URLs, and a visible indicator
+    when an entry has an open validation finding.
+  checklist:
+    - "FTS + trigram combined ranking over designations"
+    - "Facets driven by filterable PropertyDefinitions (P1-6.4), not hardcoded"
+    - "Search result and entry URLs are stable and shareable"
+    - "Open-finding indicator surfaced in search results"
+  docs:
+    - "docs/architecture/: search design (ranking, facet derivation)"
+  acceptance:
+    - "A search for a designation with one deliberate typo returns the intended entry"
+    - "Search performs acceptably at the 20,000-entry ceiling (NFR-32, verified fully at P5)"
+
+- id: P1-9
+  title: "Public read API, OpenAPI 3.1, anonymous rate limiting"
+  milestone: "P1 — Core catalogue"
+  labels: [area/api, phase/p1, priority/must, type/feature]
+  requirements: [FR-20, FR-21, FR-22, FR-98, NFR-24]
+  summary: >
+    The public, unauthenticated read API over the catalogue, documented as OpenAPI
+    3.1 (external consumers depend on this per FR-20 - openapi.yml's breaking-change
+    label exists because of this endpoint), with rate limiting for anonymous callers.
+  checklist:
+    - "Public read endpoints: entries, designations, search, properties"
+    - "OpenAPI 3.1 document generated from the routes, committed to docs/api/"
+    - "Every response carrying a SNOMED label states which designation it is and whether the tag is stripped (FR-98)"
+    - "Anonymous rate limiting with a documented limit and a clear 429 response (per-IP layer of NFR-24)"
+  docs:
+    - "docs/api/openapi.json: regenerated (enforced by openapi.yml)"
+    - "docs/architecture/: public API surface and rate-limit policy"
+  acceptance:
+    - "openapi.yml's diff-against-committed-document check passes"
+    - "An anonymous caller exceeding the rate limit receives 429 with a Retry-After header"
+
+- id: P1-10
+  title: "Frontend shell: routing, generated client, accessible component baseline"
+  milestone: "P1 — Core catalogue"
+  labels: [area/frontend, phase/p1, priority/must, type/feature]
+  requirements: []
+  summary: >
+    The frontend application shell: routing, an API client generated from
+    docs/api/openapi.json via openapi-typescript (so the frontend cannot silently drift
+    from the backend contract), and a baseline of accessible components later screens
+    build from rather than each reinventing focus management and labelling.
+  checklist:
+    - "Routing skeleton and layout shell"
+    - "Generated API client wired to CI (regenerate-and-diff, mirroring openapi.yml)"
+    - "Baseline accessible components: keyboard-operable, labelled, sensible focus order"
+  docs:
+    - "docs/architecture/: frontend shell structure and the client-generation step"
+  acceptance:
+    - "The generated client fails CI if run against a stale openapi.json"
+    - "The baseline components pass an automated accessibility check (full a11y pass is P5)"
+
+- id: P1-11
+  title: "Admin editing UI"
+  milestone: "P1 — Core catalogue"
+  labels: [area/frontend, phase/p1, priority/must, type/feature]
+  requirements: [FR-36, FR-37, FR-38, FR-39]
+  summary: >
+    The screens a Reviewer/Administrator uses to edit catalogue entries: designation
+    and code-binding edit forms enforcing the required changelog note (FR-39), conflict
+    presentation when an optimistic-lock conflict (P1-5.1) occurs, and bulk reclassify.
+    Split into three children because it is multi-screen and bulk operations/conflict
+    presentation are each separately testable.
+  docs:
+    - "docs/user/: Reviewer/Administrator editing guide"
+  children:
+    - id: P1-11.1
+      title: "Entry edit screens: designations, code bindings, properties"
+      requirements: [FR-36, FR-37]
+      checklist:
+        - "Edit forms for designations, code bindings and registry properties"
+      docs:
+        - "docs/user/: entry editing walkthrough"
+    - id: P1-11.2
+      title: "Changelog note validation on every edit (FR-39)"
+      requirements: [FR-39]
+      checklist:
+        - "Every edit form requires a non-empty changelog note before submit is enabled"
+      docs:
+        - "none: covered by the parent item's user guide"
+    - id: P1-11.3
+      title: "Bulk reclassify with conflict presentation"
+      requirements: [FR-38]
+      checklist:
+        - "Bulk reclassify operation across a selection of entries"
+        - "An optimistic-lock conflict (P1-5.1) is presented for resolution, not silently overwritten"
+      docs:
+        - "docs/user/: bulk reclassify and conflict resolution"
+
+- id: P1-12
+  title: "Terms of use and privacy"
+  milestone: "P1 — Core catalogue"
+  labels: [area/auth, phase/p1, priority/must, type/feature]
+  requirements: [NFR-14, NFR-15, NFR-16, NFR-45, NFR-46, NFR-47]
+  tests: [NFR-38.15]
+  summary: >
+    Versioned terms-of-use and privacy notices, an acceptance record per user per
+    version (so re-acceptance is required when terms change), and a collection notice
+    shown wherever personal information is first gathered.
+  checklist:
+    - "Versioned terms/privacy documents with an effective-date model"
+    - "Acceptance record: user, version, timestamp"
+    - "Re-acceptance required when the current version changes"
+    - "Collection notice at every point personal information is first gathered"
+  docs:
+    - "docs/governance/: terms and privacy version history"
+    - "docs/user/: what a user sees and when re-acceptance is required"
+  acceptance:
+    - "A user who has accepted version N is prompted again after version N+1 is published"

@@ -115,12 +115,12 @@ def test_collect_test_markers_finds_module_level_pytestmark() -> None:
     assert "NFR-08" in refs
 
 
-def test_collect_backlog_references_returns_false_when_no_yaml_files() -> None:
+def test_collect_backlog_references_returns_no_phases_when_no_yaml_files() -> None:
     tc.BACKLOG_DIR.mkdir()
     (tc.BACKLOG_DIR / "README.md").write_text("placeholder\n", encoding="utf-8")
-    refs, exists = tc.collect_backlog_references()
+    refs, backlogged_phases = tc.collect_backlog_references()
     assert refs == {}
-    assert exists is False
+    assert backlogged_phases == set()
 
 
 def test_collect_backlog_references_recurses_into_children() -> None:
@@ -137,8 +137,8 @@ def test_collect_backlog_references_recurses_into_children() -> None:
         ),
         encoding="utf-8",
     )
-    refs, exists = tc.collect_backlog_references()
-    assert exists is True
+    refs, backlogged_phases = tc.collect_backlog_references()
+    assert backlogged_phases == {"p1"}
     assert refs["FR-09"][0].endswith("p1.yaml#P1-6")
     assert refs["FR-11"][0].endswith("p1.yaml#P1-6.1")
 
@@ -147,7 +147,7 @@ def test_run_checks_flags_unknown_id_in_test_marker() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "planned", ""),
     }
-    errors = tc.run_checks(requirements, {"FR-99": ["a.py:1"]}, {}, backlog_exists=False)
+    errors = tc.run_checks(requirements, {"FR-99": ["a.py:1"]}, {}, backlogged_phases=set())
     assert any("FR-99" in error and "not in requirements.yaml" in error for error in errors)
 
 
@@ -155,17 +155,27 @@ def test_run_checks_flags_implemented_without_test() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "implemented", ""),
     }
-    errors = tc.run_checks(requirements, {}, {}, backlog_exists=False)
+    errors = tc.run_checks(requirements, {}, {}, backlogged_phases=set())
     assert any("FR-01" in error and "no test carries" in error for error in errors)
 
 
-def test_run_checks_flags_must_without_backlog_item_only_when_backlog_exists() -> None:
+def test_run_checks_flags_must_without_backlog_item_only_for_a_backlogged_phase() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "planned", ""),
     }
-    assert tc.run_checks(requirements, {}, {}, backlog_exists=False) == []
-    errors_with_backlog = tc.run_checks(requirements, {}, {}, backlog_exists=True)
+    assert tc.run_checks(requirements, {}, {}, backlogged_phases=set()) == []
+    errors_with_backlog = tc.run_checks(requirements, {}, {}, backlogged_phases={"p1"})
     assert any("no backlog item" in error for error in errors_with_backlog)
+
+
+def test_run_checks_does_not_flag_a_must_in_a_phase_not_backlogged_yet() -> None:
+    """A MUST in P2 shouldn't fail CI just because docs/backlog/p2.yaml doesn't exist
+    yet - only Foundation/P0/P1 are backlogged so far (Foundation issue F-6)."""
+    requirements = {
+        "FR-30": tc.Requirement("FR-30", "MUST", "p2", "t", "planned", ""),
+    }
+    errors = tc.run_checks(requirements, {}, {}, backlogged_phases={"foundation", "p0", "p1"})
+    assert errors == []
 
 
 def test_run_checks_passes_a_fully_covered_requirement() -> None:
@@ -176,7 +186,7 @@ def test_run_checks_passes_a_fully_covered_requirement() -> None:
         requirements,
         {"FR-01": ["backend/tests/test_x.py:5"]},
         {"FR-01": ["backlog/p1.yaml#P1-1"]},
-        backlog_exists=True,
+        backlogged_phases={"p1"},
     )
     assert errors == []
 

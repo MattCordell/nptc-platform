@@ -125,27 +125,36 @@ def _walk_backlog_item(
         _walk_backlog_item(child, file_label, references)
 
 
-def collect_backlog_references() -> tuple[dict[str, list[str]], bool]:
+def collect_backlog_references() -> tuple[dict[str, list[str]], set[str]]:
+    """Returns (requirement id -> backlog item locations, phases with a backlog file).
+
+    The second value - e.g. {"foundation", "p0", "p1"} once foundation.yaml, p0.yaml
+    and p1.yaml exist - is what scopes the MUST-has-a-backlog-item check below: a
+    MUST requirement in a phase that has not been backlogged yet (P2-P5 today) is
+    not a defect, it just hasn't been written yet.
+    """
     backlog_files = sorted(BACKLOG_DIR.glob("*.yaml")) if BACKLOG_DIR.is_dir() else []
     if not backlog_files:
         # docs/backlog/ exists from Foundation issue F-1 scaffolding (a README
         # placeholder only) well before it holds any backlog YAML (F-6), so
         # presence of the directory itself is not a useful signal here.
-        return {}, False
+        return {}, set()
 
     references: dict[str, list[str]] = {}
+    backlogged_phases: set[str] = set()
     for path in backlog_files:
         items = yaml.safe_load(path.read_text(encoding="utf-8")) or []
         for item in items:
             _walk_backlog_item(item, _display_path(path), references)
-    return references, True
+        backlogged_phases.add(path.stem)
+    return references, backlogged_phases
 
 
 def run_checks(
     requirements: dict[str, Requirement],
     test_refs: dict[str, list[str]],
     backlog_refs: dict[str, list[str]],
-    backlog_exists: bool,
+    backlogged_phases: set[str],
 ) -> list[str]:
     errors: list[str] = []
 
@@ -170,9 +179,13 @@ def run_checks(
                 f'@pytest.mark.req("{req.id}")'
             )
 
-    if backlog_exists:
+    if backlogged_phases:
         for req in requirements.values():
-            if req.priority == "MUST" and req.id not in backlog_refs:
+            if (
+                req.priority == "MUST"
+                and req.phase in backlogged_phases
+                and req.id not in backlog_refs
+            ):
                 errors.append(f"{req.id}: MUST-priority requirement has no backlog item")
     else:
         print(
@@ -224,9 +237,9 @@ def render_report(
 def main() -> int:
     requirements, schema_errors = load_requirements()
     test_refs = collect_test_markers()
-    backlog_refs, backlog_exists = collect_backlog_references()
+    backlog_refs, backlogged_phases = collect_backlog_references()
 
-    errors = schema_errors + run_checks(requirements, test_refs, backlog_refs, backlog_exists)
+    errors = schema_errors + run_checks(requirements, test_refs, backlog_refs, backlogged_phases)
 
     TRACEABILITY_REPORT.write_text(
         render_report(requirements, test_refs, backlog_refs), encoding="utf-8", newline="\n"
