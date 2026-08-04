@@ -24,6 +24,24 @@ not know about it and won't keep it in step with `docs/backlog/*.yaml`.
 
 ## Branch protection ruleset
 
+**Currently blocked, not yet applied.** Branch protection (both the modern
+rulesets API below and classic branch protection) requires GitHub Team or
+Enterprise Cloud for a private repository owned by an organisation — the
+`aehrc` org is on the Free plan. Attempting the command below returns:
+
+```text
+{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.", ...}
+```
+
+This repo stays private until TSWG clears visibility (see `README.md`), so
+the fix is an org billing decision (upgrade `aehrc` to Team/Enterprise), not
+a configuration change. Until one of those happens, `main` has no branch
+protection: direct pushes, force pushes and merges without green CI are all
+technically possible, and this is a real gap to be aware of, not a
+theoretical one. Re-run the command below (and flip the F-7/F-4 backlog
+checklist boxes it corresponds to, via `backlog_sync.py --apply`) the moment
+either condition changes.
+
 Applied once, by hand, via `gh api` (rulesets aren't file-based config, so
 there's nothing for `backlog_sync.py` or any other script to own here).
 
