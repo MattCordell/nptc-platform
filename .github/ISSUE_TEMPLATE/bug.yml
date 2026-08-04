@@ -1,6 +1,6 @@
 name: Bug report
 description: Something built already does not behave as specified.
-labels: ["type/bug"]
+# No default label - set the native "Bug" Issue Type in the form sidebar instead.
 body:
   - type: textarea
     id: expected

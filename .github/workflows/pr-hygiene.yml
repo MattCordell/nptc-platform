@@ -69,13 +69,13 @@ jobs:
           fi
 
       - name: Backlog checklist updated on feature PRs
-        if: contains(github.event.pull_request.labels.*.name, 'type/feature')
+        if: contains(github.event.pull_request.labels.*.name, 'feature')
         env:
           BASE: ${{ github.event.pull_request.base.ref }}
         run: |
           changed_backlog=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/backlog/**')
           if [ -z "$changed_backlog" ]; then
-            echo "::error::This PR is labelled type/feature but touches nothing under"
+            echo "::error::This PR is labelled feature but touches nothing under"
             echo "docs/backlog/** - tick the issue's checklist in the same PR that does the work."
             exit 1
           fi

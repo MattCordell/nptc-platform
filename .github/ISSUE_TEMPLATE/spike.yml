@@ -2,7 +2,9 @@ name: Spike / investigation
 description: >-
   Time-boxed investigation needed before a real backlog item can be written or
   estimated — e.g. the stack-selection spike, or evaluating an Ontoserver behaviour.
-labels: ["type/spike"]
+# "spike" is a plain cross-cutting label (no native Issue Type for this) - set
+# the native "Task" Issue Type in the form sidebar alongside it.
+labels: ["spike"]
 body:
   - type: textarea
     id: question

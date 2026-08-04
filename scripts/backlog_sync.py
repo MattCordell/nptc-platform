@@ -57,47 +57,51 @@ KNOWN_MILESTONES = [
     "Governance",
 ]
 
-# The full label taxonomy (plan SS3.4), bootstrapped regardless of which labels
-# today's backlog items actually use, so a future phase's backlog PR never has to
-# remember to create its own labels. name -> (description, colour).
+# The label taxonomy, bootstrapped regardless of which labels today's backlog items
+# actually use, so a future phase's backlog PR never has to remember to create its
+# own labels. name -> (description, colour).
+#
+# What/type and phase are deliberately NOT labels: GitHub's native Issue Types
+# (see ISSUE_TYPES below) cover "what kind of work is this", and the issue's
+# milestone already carries the phase - a phase/* label would just duplicate it.
+# `priority/*` stays a plain label for now: GitHub has no native issue-level
+# priority field (only a Projects-v2 custom field, a bigger adoption this repo
+# hasn't made yet).
 LABEL_TAXONOMY: dict[str, tuple[str, str]] = {
-    "phase/foundation": ("Foundation work: repo layout, CI, governance, tooling", "c2e0c6"),
-    "phase/p0": ("P0 - Seeding transform", "c2e0c6"),
-    "phase/p1": ("P1 - Core catalogue", "c2e0c6"),
-    "phase/p2": ("P2 - Contribution", "c2e0c6"),
-    "phase/p3": ("P3 - Validation", "c2e0c6"),
-    "phase/p4": ("P4 - Release and export", "c2e0c6"),
-    "phase/p5": ("P5 - Hardening", "c2e0c6"),
-    "phase/governance": ("Cross-cutting governance / open issues, no fixed phase", "c2e0c6"),
     "priority/must": ("PRD scheduling priority: MUST", "b60205"),
     "priority/should": ("PRD scheduling priority: SHOULD", "d93f0b"),
     "priority/may": ("PRD scheduling priority: MAY", "fbca04"),
-    "type/feature": ("User-facing behaviour change", "0e8a16"),
-    "type/chore": ("Tooling, infra or process work with no user-facing behaviour", "fef2c0"),
-    "type/docs": ("Documentation-only change", "fef2c0"),
-    "type/test": ("Test-only change", "fef2c0"),
-    "type/spike": ("Time-boxed investigation, not a committed implementation", "d4c5f9"),
-    "type/bug": ("Something isn't working", "d73a4a"),
-    "type/security": ("Security-relevant change", "d73a4a"),
-    "area/api": ("Backend HTTP API", "5319e7"),
-    "area/db": ("Database schema and migrations", "5319e7"),
-    "area/frontend": ("React/TypeScript client", "5319e7"),
-    "area/transform": ("The P0 seeding transform CLI", "5319e7"),
-    "area/terminology": ("SNOMED CT / Ontoserver integration", "5319e7"),
-    "area/auth": ("Authentication and identity", "5319e7"),
-    "area/audit": ("Audit logging", "5319e7"),
-    "area/registry": ("Property registry", "5319e7"),
-    "area/export": ("Release exports (CSV, FHIR, SPIA spreadsheet)", "5319e7"),
-    "area/infra": ("CI, deployment, containers, tooling", "5319e7"),
-    "area/ci": ("GitHub Actions workflows", "5319e7"),
-    "area/docs": ("Documentation and its tooling", "5319e7"),
-    "area/a11y": ("Accessibility", "5319e7"),
-    "area/security": ("Security controls, scanning, audits", "5319e7"),
+    "api": ("Backend HTTP API", "5319e7"),
+    "db": ("Database schema and migrations", "5319e7"),
+    "frontend": ("React/TypeScript client", "5319e7"),
+    "transform": ("The P0 seeding transform CLI", "5319e7"),
+    "terminology": ("SNOMED CT / Ontoserver integration", "5319e7"),
+    "auth": ("Authentication and identity", "5319e7"),
+    "audit": ("Audit logging", "5319e7"),
+    "registry": ("Property registry", "5319e7"),
+    "export": ("Release exports (CSV, FHIR, SPIA spreadsheet)", "5319e7"),
+    "infra": ("CI, deployment, containers, tooling", "5319e7"),
+    "ci": ("GitHub Actions workflows", "5319e7"),
+    "docs": ("Documentation and its tooling", "5319e7"),
+    "a11y": ("Accessibility", "5319e7"),
+    "security": ("Security-relevant, cross-cutting across Bug/Task/Feature", "d73a4a"),
+    "spike": ("Time-boxed investigation, not a committed implementation", "d4c5f9"),
+    # PR-only: pr-hygiene.yml checks for this on the *pull request* itself (not an
+    # issue) to enforce the backlog checklist being updated in the same PR. PRs
+    # have no native Issue Type, so this stays a plain label rather than moving to
+    # ISSUE_TYPES; backlog_sync.py never applies it to an issue.
+    "feature": ("This PR implements backlog work - see pr-hygiene.yml", "0e8a16"),
     "status/blocked": ("Blocked on something outside this issue", "e4e669"),
     "status/needs-decision": ("Needs a decision before work can proceed", "e4e669"),
     "status/needs-rcpa-input": ("Needs RCPA-QAP editorial input", "e4e669"),
     "governance/open-issue": ("One of the PRD's numbered open issues (OI-n)", "5319e7"),
 }
+
+# GitHub's native Issue Types for the aehrc org (org settings, not repo-managed - this
+# script can set an issue's type but not create a new one). "Epic" also exists there
+# but predates this project and is deliberately unused (plan SS3.1: flat issues, no
+# epic vocabulary).
+ISSUE_TYPES = {"Task", "Bug", "Feature"}
 
 
 # --- Schema, parsing, validation --------------------------------------------------
@@ -108,6 +112,7 @@ class BacklogItem:
     id: str
     title: str
     milestone: str
+    issue_type: str
     labels: tuple[str, ...]
     requirements: tuple[str, ...]
     tests: tuple[str, ...]
@@ -158,6 +163,15 @@ def _flatten(
         elif milestone not in KNOWN_MILESTONES:
             errors.append(f"{item_id}: milestone {milestone!r} is not one of {KNOWN_MILESTONES}")
 
+        issue_type = raw.get("issue_type") or (parent.issue_type if parent else None)
+        if not issue_type:
+            errors.append(f"{item_id}: missing issue_type")
+            issue_type = ""
+        elif issue_type not in ISSUE_TYPES:
+            errors.append(
+                f"{item_id}: issue_type {issue_type!r} is not one of {sorted(ISSUE_TYPES)}"
+            )
+
         labels = _as_tuple(raw.get("labels")) or (parent.labels if parent else ())
 
         for rid in raw.get("requirements") or []:
@@ -181,6 +195,7 @@ def _flatten(
             id=str(item_id),
             title=str(raw.get("title", "")),
             milestone=milestone,
+            issue_type=issue_type,
             labels=labels,
             requirements=_as_tuple(raw.get("requirements")),
             tests=_as_tuple(raw.get("tests")),
@@ -263,7 +278,29 @@ class ExistingIssue:
     body: str
     labels: frozenset[str]
     milestone: str | None
+    issue_type: str | None
     state: str
+
+
+# Prefixes backlog_sync.py used to manage before the Issue Types / area-prefix
+# migration. A label matching one of these is ours to prune even though it is no
+# longer in LABEL_TAXONOMY at all (the taxonomy only lists what we manage *now*).
+RETIRED_LABEL_PREFIXES = ("phase/", "area/", "type/")
+
+
+def _is_managed_label(name: str) -> bool:
+    return name in LABEL_TAXONOMY or name.startswith(RETIRED_LABEL_PREFIXES)
+
+
+def _reconciled_labels(existing_labels: frozenset[str], desired_labels: set[str]) -> set[str]:
+    """The full label set an issue should end up with: our own desired set, plus
+    whatever labels it already carries that we don't manage at all - past or
+    present (a default GitHub label like "bug", or anything added by hand) - those
+    are left alone. Anything we do manage (LABEL_TAXONOMY today, or a retired
+    phase/*, area/*, type/* label from before this migration) that isn't desired
+    is dropped."""
+    foreign = {label for label in existing_labels if not _is_managed_label(label)}
+    return foreign | desired_labels
 
 
 @dataclass(frozen=True)
@@ -322,6 +359,7 @@ def plan_sync(
                         "body": desired_body,
                         "labels": sorted(desired_labels),
                         "milestone": item.milestone,
+                        "issue_type": item.issue_type,
                     },
                 )
             )
@@ -331,15 +369,20 @@ def plan_sync(
         if existing.body.strip() != desired_body.strip():
             actions.append(Action("update_body", item.id, {"number": number, "body": desired_body}))
 
-        missing_labels = desired_labels - existing.labels
-        if missing_labels:
+        reconciled = _reconciled_labels(existing.labels, desired_labels)
+        if reconciled != set(existing.labels):
             actions.append(
-                Action("add_labels", item.id, {"number": number, "labels": sorted(missing_labels)})
+                Action("set_labels", item.id, {"number": number, "labels": sorted(reconciled)})
             )
 
         if existing.milestone != item.milestone:
             actions.append(
                 Action("set_milestone", item.id, {"number": number, "milestone": item.milestone})
+            )
+
+        if existing.issue_type != item.issue_type:
+            actions.append(
+                Action("set_type", item.id, {"number": number, "issue_type": item.issue_type})
             )
 
     numbers_by_id = resolve_all_issue_numbers(items, by_number, by_marker)
@@ -422,6 +465,7 @@ class GhClient:
                 body=body,
                 labels=frozenset(label["name"] for label in raw.get("labels", [])),
                 milestone=(raw.get("milestone") or {}).get("title"),
+                issue_type=(raw.get("type") or {}).get("name"),
                 state=raw["state"],
             )
             by_number[issue.number] = issue
@@ -451,9 +495,19 @@ class GhClient:
         return int(raw["number"])
 
     def create_issue(
-        self, title: str, body: str, labels: list[str], milestone_number: int | None
+        self,
+        title: str,
+        body: str,
+        labels: list[str],
+        milestone_number: int | None,
+        issue_type: str,
     ) -> ExistingIssue:
-        payload: dict[str, Any] = {"title": title, "body": body, "labels": labels}
+        payload: dict[str, Any] = {
+            "title": title,
+            "body": body,
+            "labels": labels,
+            "type": issue_type,
+        }
         if milestone_number is not None:
             payload["milestone"] = milestone_number
         raw = _gh_send("POST", "repos/:owner/:repo/issues", payload)
@@ -463,17 +517,23 @@ class GhClient:
             body=raw.get("body") or "",
             labels=frozenset(labels),
             milestone=None,
+            issue_type=issue_type,
             state="OPEN",
         )
 
     def update_body(self, number: int, body: str) -> None:
         _gh_send("PATCH", f"repos/:owner/:repo/issues/{number}", {"body": body})
 
-    def add_labels(self, number: int, labels: list[str]) -> None:
-        _gh_send("POST", f"repos/:owner/:repo/issues/{number}/labels", {"labels": labels})
+    def set_labels(self, number: int, labels: list[str]) -> None:
+        # PUT replaces the issue's full label set - the desired list passed in must
+        # already include any foreign (non-taxonomy) labels the caller wants kept.
+        _gh_send("PUT", f"repos/:owner/:repo/issues/{number}/labels", {"labels": labels})
 
     def set_milestone(self, number: int, milestone_number: int) -> None:
         _gh_send("PATCH", f"repos/:owner/:repo/issues/{number}", {"milestone": milestone_number})
+
+    def set_issue_type(self, number: int, issue_type: str) -> None:
+        _gh_send("PATCH", f"repos/:owner/:repo/issues/{number}", {"type": issue_type})
 
     def fetch_sub_issue_ids(self, parent_number: int) -> set[int]:
         raw = _gh_get(f"repos/:owner/:repo/issues/{parent_number}/sub_issues") or []
@@ -505,14 +565,20 @@ def print_plan(
             print(f"  + create issue for {action.item_id}: {action.detail['title']!r}")
         elif action.kind == "update_body":
             print(f"  ~ update body of #{action.detail['number']} ({action.item_id})")
-        elif action.kind == "add_labels":
+        elif action.kind == "set_labels":
             print(
-                f"  ~ add labels {action.detail['labels']} to #{action.detail['number']} ({action.item_id})"
+                f"  ~ set labels of #{action.detail['number']} ({action.item_id}) "
+                f"to {action.detail['labels']}"
             )
         elif action.kind == "set_milestone":
             print(
                 f"  ~ set milestone of #{action.detail['number']} ({action.item_id}) "
                 f"to {action.detail['milestone']!r}"
+            )
+        elif action.kind == "set_type":
+            print(
+                f"  ~ set issue type of #{action.detail['number']} ({action.item_id}) "
+                f"to {action.detail['issue_type']!r}"
             )
         elif action.kind == "ensure_sub_issue":
             print(
@@ -549,17 +615,20 @@ def apply_plan(
                     action.detail["body"],
                     action.detail["labels"],
                     milestone_numbers.get(action.detail["milestone"]),
+                    action.detail["issue_type"],
                 )
                 resolved[item.id] = issue.number
                 resolved_issues[item.id] = issue
             elif action.kind == "update_body":
                 client.update_body(action.detail["number"], action.detail["body"])
-            elif action.kind == "add_labels":
-                client.add_labels(action.detail["number"], action.detail["labels"])
+            elif action.kind == "set_labels":
+                client.set_labels(action.detail["number"], action.detail["labels"])
             elif action.kind == "set_milestone":
                 client.set_milestone(
                     action.detail["number"], milestone_numbers[action.detail["milestone"]]
                 )
+            elif action.kind == "set_type":
+                client.set_issue_type(action.detail["number"], action.detail["issue_type"])
         if item.id not in resolved:
             number = resolve_issue_number(item, by_number, {})
             if number is not None:
