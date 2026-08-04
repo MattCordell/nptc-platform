@@ -304,7 +304,7 @@ def test_plan_sync_flags_stale_body() -> None:
     assert any(a.kind == "update_body" for a in actions)
 
 
-def test_plan_sync_emits_ensure_sub_issue_for_a_child() -> None:
+def test_plan_sync_emits_ensure_sub_issue_for_a_new_child() -> None:
     parent = _item(id="P1-6")
     child = _item(id="P1-6.1", parent_id="P1-6")
     actions, errors = bs.plan_sync([parent, child], {}, {})
@@ -313,6 +313,62 @@ def test_plan_sync_emits_ensure_sub_issue_for_a_child() -> None:
     assert len(sub_issue_actions) == 1
     assert sub_issue_actions[0].item_id == "P1-6.1"
     assert sub_issue_actions[0].detail["parent_id"] == "P1-6"
+
+
+def test_plan_sync_skips_ensure_sub_issue_when_already_linked() -> None:
+    parent = _item(id="P1-6")
+    child = _item(id="P1-6.1", parent_id="P1-6")
+    parent_issue = bs.ExistingIssue(
+        number=100,
+        database_id=1000,
+        body=bs.render_body(parent),
+        labels=frozenset(parent.labels),
+        milestone="Foundation",
+        state="OPEN",
+    )
+    child_issue = bs.ExistingIssue(
+        number=101,
+        database_id=1001,
+        body=bs.render_body(child),
+        labels=frozenset(child.labels),
+        milestone="Foundation",
+        state="OPEN",
+    )
+    by_number = {100: parent_issue, 101: child_issue}
+    by_marker = {"P1-6": 100, "P1-6.1": 101}
+    linked_sub_issues = {100: {1001}}
+    actions, errors = bs.plan_sync([parent, child], by_number, by_marker, linked_sub_issues)
+    assert errors == []
+    assert [a for a in actions if a.kind == "ensure_sub_issue"] == []
+
+
+def test_plan_sync_still_flags_ensure_sub_issue_when_link_missing() -> None:
+    parent = _item(id="P1-6")
+    child = _item(id="P1-6.1", parent_id="P1-6")
+    parent_issue = bs.ExistingIssue(
+        number=100,
+        database_id=1000,
+        body=bs.render_body(parent),
+        labels=frozenset(parent.labels),
+        milestone="Foundation",
+        state="OPEN",
+    )
+    child_issue = bs.ExistingIssue(
+        number=101,
+        database_id=1001,
+        body=bs.render_body(child),
+        labels=frozenset(child.labels),
+        milestone="Foundation",
+        state="OPEN",
+    )
+    by_number = {100: parent_issue, 101: child_issue}
+    by_marker = {"P1-6": 100, "P1-6.1": 101}
+    actions, errors = bs.plan_sync(
+        [parent, child], by_number, by_marker, linked_sub_issues={100: set()}
+    )
+    assert errors == []
+    assert len(actions) == 1
+    assert actions[0].kind == "ensure_sub_issue"
 
 
 # --- plan_labels / plan_milestones -------------------------------------------------

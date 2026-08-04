@@ -281,11 +281,24 @@ def resolve_issue_number(
     return by_marker.get(item.id)
 
 
+def resolve_all_issue_numbers(
+    items: list[BacklogItem], by_number: dict[int, ExistingIssue], by_marker: dict[str, int]
+) -> dict[str, int]:
+    numbers: dict[str, int] = {}
+    for item in items:
+        number = resolve_issue_number(item, by_number, by_marker)
+        if number is not None:
+            numbers[item.id] = number
+    return numbers
+
+
 def plan_sync(
     items: list[BacklogItem],
     by_number: dict[int, ExistingIssue],
     by_marker: dict[str, int],
+    linked_sub_issues: dict[int, set[int]] | None = None,
 ) -> tuple[list[Action], list[str]]:
+    linked_sub_issues = linked_sub_issues or {}
     actions: list[Action] = []
     errors: list[str] = []
 
@@ -329,8 +342,19 @@ def plan_sync(
                 Action("set_milestone", item.id, {"number": number, "milestone": item.milestone})
             )
 
+    numbers_by_id = resolve_all_issue_numbers(items, by_number, by_marker)
     for item in items:
-        if item.parent_id is not None:
+        if item.parent_id is None:
+            continue
+        parent_number = numbers_by_id.get(item.parent_id)
+        child_number = numbers_by_id.get(item.id)
+        already_linked = (
+            parent_number is not None
+            and child_number is not None
+            and child_number in by_number
+            and by_number[child_number].database_id in linked_sub_issues.get(parent_number, set())
+        )
+        if not already_linked:
             actions.append(Action("ensure_sub_issue", item.id, {"parent_id": item.parent_id}))
 
     return actions, errors
@@ -576,11 +600,21 @@ def main() -> int:
         by_number, by_marker = client.fetch_issues()
         label_names = client.fetch_label_names()
         milestone_numbers = client.fetch_milestones()
+
+        numbers_by_id = resolve_all_issue_numbers(items, by_number, by_marker)
+        parent_numbers = {
+            numbers_by_id[item.parent_id]
+            for item in items
+            if item.parent_id is not None and item.parent_id in numbers_by_id
+        }
+        linked_sub_issues = {
+            number: client.fetch_sub_issue_ids(number) for number in parent_numbers
+        }
     except GhError as exc:
         print(f"backlog_sync: {exc}", file=sys.stderr)
         return 1
 
-    actions, plan_errors = plan_sync(items, by_number, by_marker)
+    actions, plan_errors = plan_sync(items, by_number, by_marker, linked_sub_issues)
     if plan_errors:
         print(f"backlog_sync: {len(plan_errors)} problem(s):", file=sys.stderr)
         for error in plan_errors:
