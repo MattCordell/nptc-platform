@@ -144,7 +144,7 @@
     - "[x] Issue templates (task, bug, spike, governance) and PR template"
     - "[x] CODEOWNERS"
     - "[x] ADR-0001: stack decision and rejected alternatives"
-    - "Branch ruleset on main applied (lands in F-7, after the bootstrap PRs)"
+    - "Branch ruleset on main applied (lands in F-7, after the bootstrap PRs) - blocked, see F-7"
   docs:
     - "none: this issue is itself the documentation baseline"
   acceptance:
@@ -223,12 +223,17 @@
     gh commands used to configure the branch ruleset, labels and milestones. This is
     also where the branch protection ruleset on main is finally switched on -
     deliberately last, so the bootstrap PRs before it don't fight a ruleset that would
-    block the very PRs that create the process it enforces.
+    block the very PRs that create the process it enforces. The ruleset itself is
+    currently blocked: `gh api repos/aehrc/nptc-platform/rulesets` returns 403 ("Upgrade
+    to GitHub Pro or make this repository public") because branch protection on a
+    private repo needs GitHub Team/Enterprise for an org (the `aehrc` org is on Free),
+    and the repo stays private until TSWG clears visibility - so this item stays open
+    until one of those changes.
   checklist:
-    - "deploy/compose.yml (+ overlays) bringing Postgres 16 and Keycloak up healthy"
-    - "deploy/.env.example with no real values"
-    - "docs/operations/repo-configuration.md: gh commands for ruleset, labels, milestones"
-    - "Branch protection ruleset applied to main via gh api"
+    - "[x] deploy/compose.yml (+ overlays) bringing Postgres 16 and Keycloak up healthy"
+    - "[x] deploy/.env.example with no real values"
+    - "[x] docs/operations/repo-configuration.md: gh commands for ruleset, labels, milestones"
+    - "Branch protection ruleset applied to main via gh api - blocked, see below"
   docs:
     - "docs/operations/repo-configuration.md: new, records the exact gh commands for the ruleset/labels/milestones"
     - "docs/operations/README.md: updated to stop pointing at repo-configuration.md as forthcoming"

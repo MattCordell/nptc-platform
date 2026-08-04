@@ -2,17 +2,12 @@ name: CI
 
 on:
   pull_request:
-    # A pure documentation PR doesn't need the full Python/Node test matrix -
-    # docs.yml (Foundation issue F-5) covers those. A PR that touches both
-    # source and docs (the common case, per the documentation clause in
-    # CONTRIBUTING.md) still runs everything below, because paths-ignore only
-    # skips a workflow when *every* changed path matches.
+  push:
+    branches: [main]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
       - ".github/ISSUE_TEMPLATE/**"
-  push:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,8 +17,47 @@ permissions:
   contents: read
 
 jobs:
+  # Deliberately triggers on every PR (no paths-ignore on pull_request above),
+  # unlike push. The branch ruleset (F-7) requires this workflow's `required`
+  # job to pass on every PR - a trigger-level path filter would make GitHub
+  # wait forever for a check that never runs on a docs-only PR, since GitHub
+  # does not treat "workflow didn't trigger" as a passing required check. Job
+  # level filtering below gets the same cost saving without that deadlock.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter
+        id: filter
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          # 'every': a file counts as matching only if it satisfies every
+          # listed pattern, where a '!'-prefixed pattern requires a
+          # non-match - so this is "matches '**' AND is not under docs/,
+          # *.md or .github/ISSUE_TEMPLATE/". The default quantifier
+          # ('some') instead treats '!' patterns as literal, so '**' alone
+          # matched everything, negations included (verified on PR #77).
+          predicate-quantifier: every
+          filters: |
+            code:
+              - "**"
+              - "!docs/**"
+              - "!**/*.md"
+              - "!.github/ISSUE_TEMPLATE/**"
+
   python:
     name: Python (lint, typecheck, test)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -66,6 +100,8 @@ jobs:
 
   transform-offline:
     name: Transform test suite (no network egress - NFR-37)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -109,6 +145,8 @@ jobs:
 
   frontend:
     name: Frontend (lint, typecheck, test, build)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -145,3 +183,29 @@ jobs:
 
       - name: vite build
         run: pnpm build
+
+  # Branch ruleset (F-7) requires this job, not the three above directly - a
+  # PR that legitimately skips one of them (job-level `if`, not the workflow
+  # trigger) still needs a check that actually runs and reports success. This
+  # job always runs and passes unless a needed job actually failed or was
+  # cancelled; "skipped" is treated as pass.
+  required:
+    name: Required (CI)
+    if: always()
+    needs: [changes, python, transform-offline, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail if a required job failed
+        run: |
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.python.result }}" \
+            "${{ needs.transform-offline.result }}" \
+            "${{ needs.frontend.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::A required job did not succeed (result: $result)"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed or were correctly skipped."

@@ -33,12 +33,10 @@ updates:
         update-types: ["minor", "patch"]
     labels: ["ci", "dependencies"]
 
-  # Placeholder: no Dockerfile exists yet (deploy/ and its container images
-  # land with Foundation issue F-7 and phase P4/P5). Directory is a
-  # provisional guess and MUST be corrected in whichever PR adds the first
-  # Dockerfile, alongside converting this comment into a real entry if the
-  # eventual layout differs (e.g. per-service Dockerfiles under backend/,
-  # frontend/ rather than a shared deploy/ directory).
+  # Tracks image tags in deploy/compose.yml (Foundation issue F-7). No
+  # Dockerfile of our own exists yet - that lands with the backend/frontend
+  # container images in P4/P5 - but Dependabot's docker ecosystem also scans
+  # compose files in this directory for base image updates.
   - package-ecosystem: "docker"
     directory: "/deploy"
     schedule:
