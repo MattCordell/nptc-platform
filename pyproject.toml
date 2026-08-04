@@ -1,0 +1,83 @@
+[project]
+name = "nptc-platform"
+version = "0.0.0"
+description = "NPTC Catalogue Maintenance Platform - workspace root (not published)"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+readme = "README.md"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pre-commit>=4.0",
+]
+
+# --- uv workspace -----------------------------------------------------------
+# One venv and one lockfile cover backend/, transform/ and shared/. transform/
+# depends on shared/ only (per ADR-0001: no second, divergent validation
+# implementation - FR-74), so it never pulls in FastAPI/SQLAlchemy.
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["backend", "transform", "shared"]
+
+# --- Ruff --------------------------------------------------------------------
+# Deliberately no [tool.ruff] in backend/transform/shared's own pyproject.toml:
+# ruff walks up from each file to the nearest pyproject.toml that *contains* a
+# [tool.ruff] table, so this root config is what applies everywhere. Run from
+# the repo root (`ruff check .`, `ruff format .`), not from inside a package.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["backend/src", "transform/src", "shared/src"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle / pyflakes
+    "I",             # isort
+    "UP",            # pyupgrade
+    "B",             # flake8-bugbear
+    "C4",            # flake8-comprehensions
+    "SIM",           # flake8-simplify
+    "RUF",           # ruff-specific
+]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nptc", "nptc_transform", "nptc_shared"]
+
+# --- mypy ----------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+mypy_path = ["backend/src", "transform/src", "shared/src"]
+packages = ["nptc", "nptc_transform", "nptc_shared"]
+strict = true
+warn_unreachable = true
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# --- pytest ----------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "transform/tests", "shared/tests"]
+# importlib import mode: backend/transform/shared each have their own tests/ tree
+# with no __init__.py, and more than one of them is allowed to contain a file
+# with the same basename (e.g. test_scaffolding.py) without colliding.
+addopts = "-ra --strict-markers --import-mode=importlib"
+markers = [
+    # Traceability (docs/requirements/, scripts/traceability_check.py, F-5):
+    # @pytest.mark.req("FR-07") links a test to the requirement it verifies.
+    "req(id): the FR-nn/NFR-nn requirement ID this test verifies",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["backend/src", "transform/src", "shared/src"]

@@ -1,0 +1,21 @@
+# Normalise line endings on checkin; let Git decide checkout behaviour per platform
+# for most text, but force LF for the file types that break tooling (or, per the
+# project's own PowerShell scripts, must round-trip identically) when CRLF-mangled.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.xlsx binary
+*.woff binary
+*.woff2 binary
+
+# PowerShell scripts are edited on Windows and must stay ASCII/PS 5.1-compatible
+# (see CONTRIBUTING.md / global user preferences) — CRLF is the native and expected
+# ending here, unlike everything else in the repo.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+
+# Lock files: don't let Git's own diffing mangle them, and don't diff them by default.
+uv.lock -diff
+pnpm-lock.yaml -diff

@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+.venv*/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+dist/
+build/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+frontend/coverage/
+.pnpm-store/
+*.tsbuildinfo
+
+# --- Env and secrets ---
+# .env.example is the only committed dotenv file; every other .env* is local.
+.env
+.env.*
+!deploy/.env.example
+
+# --- Editors and OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Generated / local data, never source ---
+# Ad hoc exports (FR-78) and release artefacts are runtime output, not repo content.
+/exports/
+/releases/
+# NOTE: docs/requirements/traceability.md is generated but IS committed, the
+# same way docs/api/openapi.json is: CI (F-5) regenerates it and fails the
+# build if that differs from what's committed, so it's always current and
+# still browsable on GitHub without downloading a CI artefact.
+
+# --- Local override files ---
+docker-compose.override.yml
+*.local.yml

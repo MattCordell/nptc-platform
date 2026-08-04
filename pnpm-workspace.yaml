@@ -1,0 +1,9 @@
+packages:
+  - "frontend"
+
+# pnpm's build-script allowlist (blocks postinstall scripts by default as a
+# supply-chain safeguard - NFR-25/26). esbuild's postinstall only fetches its
+# own prebuilt native binary for the current platform; it is a well-known,
+# widely-audited dependency of vite/vitest and is safe to allow.
+allowBuilds:
+  esbuild: true

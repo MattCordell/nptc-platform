@@ -1,0 +1,23 @@
+[project]
+name = "nptc-transform"
+version = "0.0.0"
+description = "P0 seeding transform: converts the published SPIA workbook into a validated import dataset or a defect report (PRD section 12)."
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1",
+    "typer>=0.13",
+    "nptc-shared",
+]
+
+[project.scripts]
+nptc-transform = "nptc_transform.cli:app"
+
+[tool.uv.sources]
+nptc-shared = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nptc_transform"]

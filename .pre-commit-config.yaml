@@ -1,0 +1,61 @@
+# Fast, local checks that run before every commit. CI (F-2) re-runs the
+# authoritative, slower versions of these (full mypy, full test suite,
+# integration tests) - pre-commit exists to catch mistakes before they reach a
+# PR, not to replace CI.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # SPIA export cells must never carry trailing whitespace (FR-63,
+        # NFR-38.2) - fixtures under transform/tests/fixtures/ are the one
+        # deliberate exception, since some encode the very defect being tested.
+        exclude: ^transform/tests/fixtures/
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        # PowerShell scripts are CRLF by convention (see .gitattributes /
+        # CONTRIBUTING.md); everything else in the repo is LF.
+        exclude: \.(ps1|psm1)$
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # mypy needs the workspace's own resolved environment (SQLAlchemy /
+      # Pydantic plugins, first-party packages), which the pre-commit-managed
+      # mirror hooks don't have easy access to - run it via uv instead.
+      - id: mypy
+        name: mypy (uv run)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: frontend-lint
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && corepack pnpm exec eslint .'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+
+      - id: frontend-format
+        name: prettier --check (frontend)
+        entry: bash -c 'cd frontend && corepack pnpm exec prettier --check .'
+        language: system
+        files: ^frontend/
+        pass_filenames: false
