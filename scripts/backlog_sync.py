@@ -356,8 +356,14 @@ def plan_sync(
 ) -> tuple[list[Action], list[str]]:
     """`project_priorities` maps issue number -> its current Priority field value on
     the Projects-v2 board (None if the issue is on the board with the field unset).
-    A number's absence means the issue isn't on the board at all yet."""
+    A number's absence means the issue isn't on the board at all yet.
+
+    Passing None for the whole dict (the default) - as opposed to an empty dict,
+    which means "the board is reachable and has nothing on it yet" - skips Priority
+    syncing entirely. main() does this when Projects-v2 access isn't available
+    (e.g. CI's default GITHUB_TOKEN, which cannot reach Projects v2 at all)."""
     linked_sub_issues = linked_sub_issues or {}
+    sync_priority = project_priorities is not None
     project_priorities = project_priorities or {}
     actions: list[Action] = []
     errors: list[str] = []
@@ -387,7 +393,8 @@ def plan_sync(
                 )
             )
             # A brand-new issue can't already be on the project board.
-            actions.append(Action("set_priority", item.id, {"priority": item.priority}))
+            if sync_priority:
+                actions.append(Action("set_priority", item.id, {"priority": item.priority}))
             continue
 
         existing = by_number[number]
@@ -410,7 +417,9 @@ def plan_sync(
                 Action("set_type", item.id, {"number": number, "issue_type": item.issue_type})
             )
 
-        if number not in project_priorities or project_priorities[number] != item.priority:
+        if sync_priority and (
+            number not in project_priorities or project_priorities[number] != item.priority
+        ):
             actions.append(
                 Action("set_priority", item.id, {"number": number, "priority": item.priority})
             )
@@ -751,11 +760,15 @@ def apply_plan(
     milestone_actions: list[str],
     milestone_numbers: dict[str, int],
     actions: list[Action],
-    project_id: str,
-    priority_field_id: str,
+    project_id: str | None,
+    priority_field_id: str | None,
     priority_option_ids: dict[str, str],
     project_items: dict[int, dict[str, Any]],
 ) -> None:
+    # project_id/priority_field_id are None only when Projects-v2 access was
+    # unavailable (see main()), in which case plan_sync never emitted a
+    # "set_priority" action, so the branch below never actually runs with them
+    # unset.
     for name in label_actions:
         client.create_label(name)
 
@@ -800,6 +813,9 @@ def apply_plan(
             elif action.kind == "set_type":
                 client.set_issue_type(action.detail["number"], action.detail["issue_type"])
             elif action.kind == "set_priority":
+                assert project_id is not None and priority_field_id is not None, (
+                    "plan_sync only emits set_priority when project state was fetched"
+                )
                 number = resolved[item.id]
                 existing_item = project_items.get(number)
                 if existing_item is not None:
@@ -859,15 +875,34 @@ def main() -> int:
         linked_sub_issues = {
             number: client.fetch_sub_issue_ids(number) for number in parent_numbers
         }
+    except GhError as exc:
+        print(f"backlog_sync: {exc}", file=sys.stderr)
+        return 1
 
+    # Projects-v2 (the Priority field) requires a PAT or GitHub App token with the
+    # 'project' scope - CI's default GITHUB_TOKEN cannot reach it at all, with no
+    # `permissions:` setting able to grant it. Degrade gracefully rather than fail
+    # the whole sync: skip Priority syncing (project_priorities stays None, which
+    # plan_sync treats as "don't touch priority") and say why.
+    project_id: str | None = None
+    priority_field_id: str | None = None
+    priority_option_ids: dict[str, str] = {}
+    project_items: dict[int, dict[str, Any]] = {}
+    project_priorities: dict[int, str | None] | None = None
+    try:
         owner_login = client.repo_owner_login()
         project_id = client.ensure_project(owner_login)
         priority_field_id, priority_option_ids = client.ensure_priority_field(project_id)
         project_items = client.fetch_project_priorities(project_id)
         project_priorities = {number: entry["priority"] for number, entry in project_items.items()}
     except GhError as exc:
-        print(f"backlog_sync: {exc}", file=sys.stderr)
-        return 1
+        print(
+            f"warning: Projects-v2 (Priority) sync unavailable - {exc}\n"
+            "warning: skipping Priority sync. Expected when running with the default "
+            "GITHUB_TOKEN (e.g. in CI); run locally with a PAT carrying the 'project' "
+            "scope (gh auth refresh -s project) to sync priorities.",
+            file=sys.stderr,
+        )
 
     actions, plan_errors = plan_sync(
         items, by_number, by_marker, linked_sub_issues, project_priorities

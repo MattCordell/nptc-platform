@@ -315,12 +315,21 @@ def test_render_body_renders_real_docs_as_a_checklist() -> None:
 
 
 def test_plan_sync_creates_an_issue_and_sets_priority_for_a_new_item() -> None:
-    actions, errors = bs.plan_sync([_item()], {}, {})
+    actions, errors = bs.plan_sync([_item()], {}, {}, project_priorities={})
     assert errors == []
     assert [a.kind for a in actions] == ["create", "set_priority"]
     assert actions[0].detail["title"] == "Example"
     assert actions[0].detail["issue_type"] == "Task"
     assert actions[1].detail["priority"] == "MUST"
+
+
+def test_plan_sync_skips_priority_entirely_when_project_priorities_is_none() -> None:
+    """None (the default - distinct from {}) means Projects-v2 access wasn't
+    available at all (e.g. CI's default GITHUB_TOKEN) - priority is left alone
+    rather than treated as "everything needs adding"."""
+    actions, errors = bs.plan_sync([_item()], {}, {})
+    assert errors == []
+    assert [a.kind for a in actions] == ["create"]
 
 
 def test_plan_sync_adopts_by_explicit_github_issue_number() -> None:
