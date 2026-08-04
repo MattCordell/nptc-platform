@@ -32,7 +32,7 @@ pipeline belong with those services, not here.
 | Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 |
 | Container image scanning before publication | `.github/workflows/images.yml` | NFR-25 |
 | Static analysis (CodeQL) on every PR and weekly | `.github/workflows/codeql.yml` | — |
-| Secret scanning in CI, plus GitHub push protection | `.github/workflows/security.yml` | NFR-26 |
+| Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 |
 | Dependency updates | `.github/dependabot.yml` | NFR-25 |
 | No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 |
 | Server-side authorisation on every request, tested for the negative case | `backend/src/nptc/auth/` | NFR-20, FR-80, FR-81 |
@@ -61,3 +61,15 @@ rather than left to be discovered.
 **Public read access is intentional.** Approved catalogue content is served to
 unauthenticated users by design (PRD §4.1) — a national standard behind a login would
 defeat its purpose. Submissions, user identities and internal comments are not public.
+
+**GitHub's native secret scanning, code scanning (CodeQL's Security tab integration)
+and OpenSSF Scorecard aren't active yet.** All three need GitHub Advanced Security to
+run against a private repository, and this one doesn't have it enabled — confirmed by
+running each, not assumed from the docs (CodeQL's own upload step fails outright with
+"Advanced Security must be enabled for this repository to use code scanning").
+`codeql.yml` still runs the actual scan on every PR and weekly, with `upload: never` and
+findings summarised into the job's own step summary instead of the Security tab.
+`security.yml` runs the open-source gitleaks CLI directly against git history on every
+PR and daily. Both are real controls, just not surfaced through GitHub's own UI. Revisit
+all three once the repository goes public (see the licence decision in README.md) or Advanced
+Security is enabled first.
