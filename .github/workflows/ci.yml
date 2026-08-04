@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+    # A pure documentation PR doesn't need the full Python/Node test matrix -
+    # docs.yml (Foundation issue F-5) covers those. A PR that touches both
+    # source and docs (the common case, per the documentation clause in
+    # CONTRIBUTING.md) still runs everything below, because paths-ignore only
+    # skips a workflow when *every* changed path matches.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (lint, typecheck, test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install workspace (backend, transform, shared)
+        run: uv sync --all-packages --locked
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: mypy --strict
+        run: uv run mypy
+
+      # Coverage floor: 80%. Revisit as real modules replace the Foundation
+      # scaffolding - see backend/src/nptc/__init__.py for what's still stubbed.
+      - name: pytest with coverage
+        run: >
+          uv run pytest
+          --cov --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=80
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14
+
+  transform-offline:
+    name: Transform test suite (no network egress - NFR-37)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Caching deliberately off: astral-sh/setup-uv's cache-save runs as a
+      # separate *post*-job step, after our own steps below - including the
+      # one that blocks network egress. A cache save needs the network, so
+      # leaving this on hangs the job. Not worth it for a job this fast.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+
+      - name: Install workspace
+        run: uv sync --all-packages --locked
+
+      # NFR-37: "The test suite MUST run with no network access. Ontoserver
+      # is stubbed via the FR-53 interface." This blocks all outbound traffic
+      # except loopback and already-established connections (so the runner's
+      # own control-plane connection survives) - proving the transform and
+      # shared test suites need none of it, rather than merely asserting they
+      # don't in prose. Runs after checkout and `uv sync`, which both need
+      # real network access.
+      - name: Block outbound network egress
+        run: |
+          sudo iptables -P OUTPUT DROP
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+      - name: Run transform + shared tests with no network access
+        run: uv run pytest transform/tests shared/tests
+
+      # Restore egress unconditionally (even if the test step above failed)
+      # so any later step - and every action's own post-job cleanup, which
+      # runs after all of these in reverse order - has network again.
+      - name: Restore network egress
+        if: always()
+        run: sudo iptables -P OUTPUT ACCEPT
+
+  frontend:
+    name: Frontend (lint, typecheck, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: eslint
+        run: pnpm lint
+
+      - name: prettier --check
+        run: pnpm format:check
+
+      - name: tsc --noEmit
+        run: pnpm typecheck
+
+      - name: vitest
+        run: pnpm test
+
+      - name: vite build
+        run: pnpm build

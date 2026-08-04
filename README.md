@@ -1,5 +1,9 @@
 # NPTC Catalogue Maintenance Platform
 
+[![CI](https://github.com/aehrc/nptc-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aehrc/nptc-platform/actions/workflows/ci.yml)
+[![PR hygiene](https://github.com/aehrc/nptc-platform/actions/workflows/pr-hygiene.yml/badge.svg)](https://github.com/aehrc/nptc-platform/actions/workflows/pr-hygiene.yml)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+
 A web platform for maintaining the **National Pathology Test Catalogue** — the SPIA
 Requesting terminology curated by RCPA-QAP and published downstream by the National
 Clinical Terminology Service (NCTS) as a SNOMED CT reference set and FHIR ValueSet.
