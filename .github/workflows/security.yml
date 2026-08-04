@@ -9,12 +9,12 @@ name: Security
 
 on:
   pull_request:
+  push:
+    branches: [main]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
       - ".github/ISSUE_TEMPLATE/**"
-  push:
-    branches: [main]
   schedule:
     # Daily, not just on push/PR (NFR-25) - a new advisory against an
     # unchanged dependency should surface on its own, not wait for the next
@@ -29,8 +29,42 @@ permissions:
   contents: read
 
 jobs:
+  # See the matching `changes` job in ci.yml for why this triggers on every
+  # PR (no paths-ignore on pull_request above) and filters at job level
+  # instead - the branch ruleset (F-7) requires the `required` job below to
+  # actually run on every PR, which a trigger-level path filter would break.
+  changes:
+    name: Detect changed paths
+    # Only meaningful for pull_request - push already has its own paths-ignore
+    # above, and schedule has no base ref to diff against and must always run
+    # the full daily audit regardless of what last changed.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter
+        id: filter
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          filters: |
+            code:
+              - "**"
+              - "!docs/**"
+              - "!**/*.md"
+              - "!.github/ISSUE_TEMPLATE/**"
+
   python-audit:
     name: pip-audit (production dependencies)
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -52,6 +86,8 @@ jobs:
 
   frontend-audit:
     name: pnpm audit (production dependencies)
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -79,6 +115,8 @@ jobs:
 
   gitleaks:
     name: gitleaks (secret scanning)
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -106,3 +144,25 @@ jobs:
 
       - name: Scan git history
         run: ./gitleaks detect --source . --redact -v
+
+  # Branch ruleset (F-7) requires this job - see the matching job in ci.yml.
+  required:
+    name: Required (Security)
+    if: always()
+    needs: [changes, python-audit, frontend-audit, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail if a required job failed
+        run: |
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.python-audit.result }}" \
+            "${{ needs.frontend-audit.result }}" \
+            "${{ needs.gitleaks.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::A required job did not succeed (result: $result)"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed or were correctly skipped."

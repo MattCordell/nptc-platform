@@ -1,0 +1,74 @@
+# NPTC platform - local stack (Foundation issue F-7, NFR-41/42).
+#
+# `docker compose -f deploy/compose.yml up` brings Postgres and Keycloak up
+# healthy from a clean volume, with only deploy/.env.example copied to
+# deploy/.env - no other manual steps (NFR-41). Everything else in the
+# eventual stack (the API, the worker, the frontend, Caddy) lands with the
+# backlog issues that build them; this file is deliberately just the two
+# stateful services nothing else can be developed against without.
+#
+# No compose.dev.yml/compose.prod.yml overlay exists yet: there is only one
+# environment so far (this one) and nothing container-specific to
+# differentiate. compose.dev.yml lands once the backend/frontend containers
+# exist and need dev-only bind mounts or hot reload; the hardened production
+# overlay (non-root, read-only containers) is P5 per the delivery plan.
+
+name: nptc
+
+services:
+  postgres:
+    image: postgres:16.14
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - nptc
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.0
+    restart: unless-stopped
+    # start-dev: fine for the local/bootstrap stack this file targets. Realm
+    # configuration as code (ADR-0001) and a production start mode land with
+    # Foundation... P1-3 (identity), not here - F-7 only proves Keycloak
+    # itself reaches healthy from a clean volume.
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    healthcheck:
+      # No curl/wget in the Keycloak image - probe the management-port health
+      # endpoint (KC_HEALTH_ENABLED above) via bash's /dev/tcp instead.
+      test:
+        - "CMD-SHELL"
+        - >-
+          exec 3<>/dev/tcp/localhost/9000 &&
+          echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - nptc
+
+volumes:
+  postgres-data:
+
+networks:
+  nptc:
