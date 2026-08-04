@@ -18,10 +18,11 @@ permissions:
 
 jobs:
   # Deliberately triggers on every PR (no paths-ignore on pull_request above),
-  # unlike push. The branch ruleset (F-7) requires this workflow's `required`
-  # job to pass on every PR - a trigger-level path filter would make GitHub
-  # wait forever for a check that never runs on a docs-only PR, since GitHub
-  # does not treat "workflow didn't trigger" as a passing required check. Job
+  # unlike push. The branch ruleset (F-7, deferred - see repo-configuration.md)
+  # will require this workflow's `required` job to pass on every PR once
+  # applied - a trigger-level path filter would make GitHub wait forever for a
+  # check that never runs on a docs-only PR, since GitHub does not treat
+  # "workflow didn't trigger" as a passing required check. Job
   # level filtering below gets the same cost saving without that deadlock.
   changes:
     name: Detect changed paths
@@ -184,8 +185,9 @@ jobs:
       - name: vite build
         run: pnpm build
 
-  # Branch ruleset (F-7) requires this job, not the three above directly - a
-  # PR that legitimately skips one of them (job-level `if`, not the workflow
+  # Branch ruleset (F-7, deferred - see repo-configuration.md) will require
+  # this job, not the three above directly, once applied - a PR that
+  # legitimately skips one of them (job-level `if`, not the workflow
   # trigger) still needs a check that actually runs and reports success. This
   # job always runs and passes unless a needed job actually failed or was
   # cancelled; "skipped" is treated as pass.

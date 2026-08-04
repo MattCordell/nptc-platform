@@ -214,7 +214,7 @@
 
 - id: F-7
   github_issue: 10
-  title: "Compose skeleton: Postgres + Keycloak, .env.example, branch ruleset applied"
+  title: "Compose skeleton: Postgres + Keycloak, .env.example (branch ruleset deferred)"
   milestone: "Foundation"
   issue_type: Task
   priority: MUST

@@ -5,9 +5,10 @@ name: Docs
 # this workflow too, since the jobs below are filtered individually rather
 # than at the workflow trigger - see the `changes` job. Deliberately
 # triggers on every PR (no `paths:` on pull_request) so that the `required`
-# job actually runs on every PR: the branch ruleset (F-7) requires it, and a
-# trigger-level path filter would make GitHub wait forever for a check that
-# never fires on a code-only PR.
+# job actually runs on every PR: the branch ruleset (F-7, deferred - see
+# repo-configuration.md) will require it once applied, and a trigger-level
+# path filter would make GitHub wait forever for a check that never fires on
+# a code-only PR.
 on:
   pull_request:
   push:
@@ -156,7 +157,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run python scripts/backlog_sync.py
 
-  # Branch ruleset (F-7) requires this job - see the matching job in ci.yml.
+  # Branch ruleset (F-7, deferred) will require this job once applied - see
+  # the matching job in ci.yml.
   required:
     name: Required (Docs)
     if: always()

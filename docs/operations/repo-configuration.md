@@ -24,23 +24,26 @@ not know about it and won't keep it in step with `docs/backlog/*.yaml`.
 
 ## Branch protection ruleset
 
-**Currently blocked, not yet applied.** Branch protection (both the modern
-rulesets API below and classic branch protection) requires GitHub Team or
-Enterprise Cloud for a private repository owned by an organisation — the
-`aehrc` org is on the Free plan. Attempting the command below returns:
+**Deferred, not yet applied.** Not needed yet: this is a single-committer
+project. It's also currently blocked outright regardless of that decision -
+branch protection (both the modern rulesets API below and classic branch
+protection) requires GitHub Team or Enterprise Cloud for a private
+repository owned by an organisation, and the `aehrc` org is on the Free
+plan. Attempting the command below returns:
 
 ```text
 {"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.", ...}
 ```
 
-This repo stays private until TSWG clears visibility (see `README.md`), so
-the fix is an org billing decision (upgrade `aehrc` to Team/Enterprise), not
-a configuration change. Until one of those happens, `main` has no branch
-protection: direct pushes, force pushes and merges without green CI are all
-technically possible, and this is a real gap to be aware of, not a
-theoretical one. Re-run the command below (and flip the F-7/F-4 backlog
-checklist boxes it corresponds to, via `backlog_sync.py --apply`) the moment
-either condition changes.
+Apply it the day a second developer joins - that's the trigger, since that's
+when peer review actually matters - which also requires the org to be on a
+plan that supports it by then (or the repo to have gone public; it stays
+private until TSWG clears visibility, see `README.md`). Until then, `main`
+has no branch protection: direct pushes, force pushes and merges without
+green CI are all technically possible, and this is a real gap to be aware
+of, not a theoretical one. Run the command below (and flip the F-7/F-4
+backlog checklist boxes it corresponds to, via `backlog_sync.py --apply`)
+once that day comes.
 
 Applied once, by hand, via `gh api` (rulesets aren't file-based config, so
 there's nothing for `backlog_sync.py` or any other script to own here).
@@ -111,9 +114,11 @@ failed — treating "skipped because the path filter didn't match" the same as
 **Why zero required approvals:** GitHub does not allow a PR author to approve
 their own PR, so any non-zero requirement makes a single-committer repository
 unmergeable without an admin bypass — and a bypass that's always used is not a
-control. The PR review that happens today is a Claude review comment plus the
-Definition of Done checklist in `CONTRIBUTING.md`. Raise this to `1` and add a
-`CODEOWNERS`-backed review requirement the day a second developer joins.
+control. The PR review that happens today is the maintainer's own review plus
+the Definition of Done checklist in `CONTRIBUTING.md` (see "Code review"
+there — reviews are manual, including for PRs Claude prepares). Raise this to
+`1` and add a `CODEOWNERS`-backed review requirement the day a second
+developer joins.
 
 ### Verifying it took effect
 

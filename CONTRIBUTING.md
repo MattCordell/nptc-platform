@@ -119,18 +119,20 @@ issues" is a complete review when it is true.
 Reviewers should check the negative-case tests and the documentation, not only the happy
 path. Those are the two things that quietly go missing.
 
-**Current merge protection: none, by necessity.** `main` has no GitHub-enforced branch
-protection today — the ruleset (and classic branch protection, same restriction) needs
-GitHub Team or Enterprise Cloud for a private repository owned by an organisation, and
-this org is on the Free plan. Direct pushes, force pushes and merging without green CI
-are all technically possible; the discipline above is procedural, not platform-enforced,
-for as long as that's the case. Acceptable for a single-committer project. The exact
-ruleset to apply the moment that changes (org plan upgrade, or the repo going public) is
-recorded in [docs/operations/repo-configuration.md](docs/operations/repo-configuration.md),
-along with why required approvals stay at `0` even once it can be applied — GitHub does
-not allow self-approval, so a single-committer repository needs that to stay unmergeable
-without an admin bypass, and a bypass that's always used is not a control. When a second
-developer joins, raise it to `1` and add `CODEOWNERS` enforcement.
+**Current merge protection: none, deferred.** `main` has no GitHub-enforced branch
+protection today. It isn't needed yet for a single-committer project — direct pushes,
+force pushes and merging without green CI are all technically possible, and the
+discipline above is procedural, not platform-enforced, until that changes. It's also
+currently blocked outright regardless: the ruleset (and classic branch protection, same
+restriction) needs GitHub Team or Enterprise Cloud for a private repository owned by an
+organisation, and this org is on the Free plan. Apply it — and raise required approvals
+from `0` to `1` with `CODEOWNERS` enforcement — the day a second developer joins; that
+also requires the org to be on a plan that supports it by then, or the repo to be public.
+The exact command is recorded in
+[docs/operations/repo-configuration.md](docs/operations/repo-configuration.md), along
+with why required approvals stay at `0` until then: GitHub does not allow self-approval,
+so any non-zero requirement would make a single-committer repository unmergeable without
+an admin bypass, and a bypass that's always used is not a control.
 
 ## Things that will be pushed back on
 

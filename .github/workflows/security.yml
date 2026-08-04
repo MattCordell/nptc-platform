@@ -31,8 +31,9 @@ permissions:
 jobs:
   # See the matching `changes` job in ci.yml for why this triggers on every
   # PR (no paths-ignore on pull_request above) and filters at job level
-  # instead - the branch ruleset (F-7) requires the `required` job below to
-  # actually run on every PR, which a trigger-level path filter would break.
+  # instead - the branch ruleset (F-7, deferred - see repo-configuration.md)
+  # will require the `required` job below to actually run on every PR once
+  # applied, which a trigger-level path filter would break.
   changes:
     name: Detect changed paths
     # Only meaningful for pull_request - push already has its own paths-ignore
@@ -148,7 +149,8 @@ jobs:
       - name: Scan git history
         run: ./gitleaks detect --source . --redact -v
 
-  # Branch ruleset (F-7) requires this job - see the matching job in ci.yml.
+  # Branch ruleset (F-7, deferred) will require this job once applied - see
+  # the matching job in ci.yml.
   required:
     name: Required (Security)
     if: always()
