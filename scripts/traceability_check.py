@@ -45,11 +45,15 @@ VALID_PHASES = {"foundation", "p0", "p1", "p2", "p3", "p4", "p5", "governance"}
 
 def _display_path(path: Path) -> str:
     """Path relative to the repo root for readability, or absolute if it isn't
-    one (e.g. under a test's tmp_path fixture, outside ROOT entirely)."""
+    one (e.g. under a test's tmp_path fixture, outside ROOT entirely).
+
+    Always forward-slashed: str(Path) is backslash-separated on Windows, and this
+    value is embedded in the committed traceability.md, which must match byte-for-
+    byte regardless of which OS regenerated it (CI runs on ubuntu-latest)."""
     try:
-        return str(path.relative_to(ROOT))
+        return path.relative_to(ROOT).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 @dataclass(frozen=True)
