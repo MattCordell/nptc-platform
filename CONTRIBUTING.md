@@ -107,20 +107,32 @@ issue comments, definition belongs in the file.
 
 ## Code review
 
-Every PR is reviewed before merge. Reviews are **succinct and constructive**: findings
-ordered by severity, each naming the file and the concrete problem. Elaborate positive
-feedback is not expected — "no blocking issues" is a complete review when it is true.
+Every PR is reviewed before merge, by the maintainer — including PRs prepared with
+Claude's help: Claude opens the PR, waits for CI to go green, and then stops. It does not
+self-review or merge. The maintainer reviews, relays any comments to action, and merges
+once satisfied.
+
+Reviews are **succinct and constructive**: findings ordered by severity, each naming the
+file and the concrete problem. Elaborate positive feedback is not expected — "no blocking
+issues" is a complete review when it is true.
 
 Reviewers should check the negative-case tests and the documentation, not only the happy
 path. Those are the two things that quietly go missing.
 
-**Current merge protection:** `main` requires a pull request, all status checks green,
-and all conversations resolved. Required approvals are set to `0` because GitHub does not
-allow self-approval and this is currently a single-committer repository — the review
-still happens, it just cannot be enforced by the platform. When a second developer joins,
-set required approvals to `1` and add `CODEOWNERS` enforcement; the exact commands will
-be in `docs/operations/repo-configuration.md` once Foundation issue F-7 lands. Do not
-enable admin bypass — a control that is always bypassed is not a control.
+**Current merge protection: none, deferred.** `main` has no GitHub-enforced branch
+protection today. It isn't needed yet for a single-committer project — direct pushes,
+force pushes and merging without green CI are all technically possible, and the
+discipline above is procedural, not platform-enforced, until that changes. It's also
+currently blocked outright regardless: the ruleset (and classic branch protection, same
+restriction) needs GitHub Team or Enterprise Cloud for a private repository owned by an
+organisation, and this org is on the Free plan. Apply it — and raise required approvals
+from `0` to `1` with `CODEOWNERS` enforcement — the day a second developer joins; that
+also requires the org to be on a plan that supports it by then, or the repo to be public.
+The exact command is recorded in
+[docs/operations/repo-configuration.md](docs/operations/repo-configuration.md), along
+with why required approvals stay at `0` until then: GitHub does not allow self-approval,
+so any non-zero requirement would make a single-committer repository unmergeable without
+an admin bypass, and a bypass that's always used is not a control.
 
 ## Things that will be pushed back on
 

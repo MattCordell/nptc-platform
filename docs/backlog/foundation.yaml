@@ -137,20 +137,24 @@
     Governance and contribution surface: Apache-2.0 LICENSE/NOTICE (SNOMED CT and SPIA
     content carved out as separately licensed and not vendored), CONTRIBUTING.md,
     SECURITY.md, CODE_OF_CONDUCT.md, CODEOWNERS, PR and issue templates, ADR-0001
-    recording the stack decision, and - landing last, in F-7 - the branch protection
-    ruleset that makes the documented process actually enforced.
+    recording the stack decision, and a branch protection ruleset - deferred, not
+    applied. GitHub blocks it outright for now (branch protection on a private repo
+    needs GitHub Team/Enterprise for an org, and aehrc is on Free), and the maintainer
+    has separately decided it isn't required yet for a single-committer project either
+    way. See docs/operations/repo-configuration.md for the exact command to run if
+    either the org plan changes or a second developer joins.
   checklist:
     - "[x] LICENSE, NOTICE, CODE_OF_CONDUCT.md, SECURITY.md, CONTRIBUTING.md"
     - "[x] Issue templates (task, bug, spike, governance) and PR template"
     - "[x] CODEOWNERS"
     - "[x] ADR-0001: stack decision and rejected alternatives"
-    - "Branch ruleset on main applied (lands in F-7, after the bootstrap PRs) - blocked, see F-7"
+    - "Branch ruleset on main - deferred, not required for a solo-dev project (see docs/operations/repo-configuration.md); also currently blocked by the org's GitHub plan regardless"
   docs:
     - "none: this issue is itself the documentation baseline"
   acceptance:
     - "LICENSE, NOTICE, CODE_OF_CONDUCT.md, SECURITY.md, CONTRIBUTING.md all present and accurate"
     - "Issue and PR templates exist and match the process CONTRIBUTING.md describes"
-    - "main requires a PR and all status checks green, blocks direct pushes and force pushes (completed in F-7)"
+    - "Deferred: main requiring a PR and all status checks green is not GitHub-enforced while this is a single-committer project on the Free plan"
 
 - id: F-5
   github_issue: 8
@@ -210,7 +214,7 @@
 
 - id: F-7
   github_issue: 10
-  title: "Compose skeleton: Postgres + Keycloak, .env.example, branch ruleset applied"
+  title: "Compose skeleton: Postgres + Keycloak, .env.example (branch ruleset deferred)"
   milestone: "Foundation"
   issue_type: Task
   priority: MUST
@@ -220,25 +224,22 @@
     PostgreSQL 16 and Keycloak brought up healthy from a clean volume via
     docker compose -f deploy/compose.yml up, with only deploy/.env.example copied to
     .env and no manual steps. docs/operations/repo-configuration.md recording the exact
-    gh commands used to configure the branch ruleset, labels and milestones. This is
-    also where the branch protection ruleset on main is finally switched on -
-    deliberately last, so the bootstrap PRs before it don't fight a ruleset that would
-    block the very PRs that create the process it enforces. The ruleset itself is
-    currently blocked: `gh api repos/aehrc/nptc-platform/rulesets` returns 403 ("Upgrade
-    to GitHub Pro or make this repository public") because branch protection on a
-    private repo needs GitHub Team/Enterprise for an org (the `aehrc` org is on Free),
-    and the repo stays private until TSWG clears visibility - so this item stays open
-    until one of those changes.
+    gh commands used to configure labels, milestones, and the branch ruleset - deferred,
+    not applied. `gh api repos/aehrc/nptc-platform/rulesets` returns 403 ("Upgrade to
+    GitHub Pro or make this repository public") because branch protection on a private
+    repo needs GitHub Team/Enterprise for an org (the `aehrc` org is on Free), and the
+    maintainer has separately decided it isn't required yet for a single-committer
+    project either way. Revisit if the org plan changes, the repo goes public, or a
+    second developer joins.
   checklist:
     - "[x] deploy/compose.yml (+ overlays) bringing Postgres 16 and Keycloak up healthy"
     - "[x] deploy/.env.example with no real values"
     - "[x] docs/operations/repo-configuration.md: gh commands for ruleset, labels, milestones"
-    - "Branch protection ruleset applied to main via gh api - blocked, see below"
+    - "Branch protection ruleset applied to main via gh api - deferred, not required for a solo-dev project; also currently blocked by the org's GitHub plan regardless"
   docs:
     - "docs/operations/repo-configuration.md: new, records the exact gh commands for the ruleset/labels/milestones"
     - "docs/operations/README.md: updated to stop pointing at repo-configuration.md as forthcoming"
   acceptance:
     - "docker compose -f deploy/compose.yml up brings Postgres and Keycloak to healthy from a clean volume with no manual steps"
     - "deploy/.env.example carries no real values"
-    - "gh api repos/aehrc/nptc-platform/rulesets shows PR-required, force-push-blocked, all-checks-required"
-    - "A direct git push origin main is rejected"
+    - "Deferred: gh api repos/aehrc/nptc-platform/rulesets showing PR-required, force-push-blocked, all-checks-required, and a direct git push origin main being rejected, both wait on the ruleset actually being applied (see checklist)"
