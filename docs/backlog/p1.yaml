@@ -55,6 +55,10 @@
     - id: P1-2.1
       title: "Audit DB privilege model: append-only, no UPDATE/DELETE for the app role"
       requirements: [NFR-08]
+      summary: >
+        Grants the application's DB role INSERT-only on the audit table, so a compromised
+        or buggy app process cannot alter or erase history at the database level - the
+        first line of NFR-08's tamper-resistance guarantee.
       checklist:
         - "Migration granting INSERT-only to the app role on the audit table"
         - "Integration test asserting UPDATE and DELETE are rejected at the DB level"
@@ -63,6 +67,10 @@
     - id: P1-2.2
       title: "Hash chain linking each audit record to its predecessor"
       requirements: [NFR-09, NFR-10]
+      summary: >
+        Each audit record's hash covers its own fields plus the previous record's hash, so
+        tampering with any historical row is detectable even by someone with direct DB
+        write access.
       checklist:
         - "Each record's hash covers its own fields plus the previous record's hash"
         - "A tampered historical row breaks the chain from that point forward"
@@ -71,6 +79,10 @@
     - id: P1-2.3
       title: "Field-level before/after diffing on every write path"
       requirements: [NFR-08, NFR-11]
+      summary: >
+        A shared diffing helper every mutating endpoint calls, so the audit log always
+        records which fields actually changed rather than a coarse whole-row snapshot, and
+        no endpoint has to reimplement it.
       checklist:
         - "Diffing helper used by every mutating endpoint, not reimplemented per-endpoint"
         - "Test asserting a representative write path emits a correct before/after diff"
@@ -80,6 +92,10 @@
       title: "verify_audit_chain.py command"
       requirements: [NFR-12, NFR-13]
       tests: [NFR-38.5]
+      summary: >
+        A standalone command that walks the hash chain end to end and reports the first
+        broken link, so chain integrity can be checked on demand rather than only inferred
+        from application behaviour.
       checklist:
         - "scripts/verify_audit_chain.py walking the full chain and reporting the first break"
         - "Test fixture with a deliberately corrupted chain, asserting the break is detected and located"
@@ -105,6 +121,10 @@
     - id: P1-3.1
       title: "Keycloak realm as code (deploy/keycloak/realm/), imported on compose up"
       requirements: [NFR-03]
+      summary: >
+        Commits the Keycloak realm configuration as JSON so authentication setup is
+        reproducible from a clean clone rather than a manually clicked-through admin
+        console.
       checklist:
         - "Realm JSON committed, imported automatically by the Keycloak container on startup"
       docs:
@@ -112,6 +132,10 @@
     - id: P1-3.2
       title: "OIDC PKCE login flow (frontend initiation, backend callback)"
       requirements: [NFR-01, NFR-02]
+      summary: >
+        The actual login round-trip: the frontend redirects to Keycloak with a PKCE
+        challenge and the backend exchanges the returned code for tokens, so no client
+        secret ever needs to live in the browser.
       checklist:
         - "Frontend redirects to Keycloak with PKCE; backend exchanges the code for tokens"
       docs:
@@ -119,6 +143,11 @@
     - id: P1-3.3
       title: "Internal user and user_identity model linked to the OIDC subject"
       requirements: [NFR-04, NFR-05, NFR-17]
+      summary: >
+        Separates the platform's own user identity from the OIDC subject that
+        authenticates it, so the same person re-authenticating always resolves to the same
+        internal account, and closing an account can pseudonymise it rather than delete the
+        history it's attached to (NFR-17).
       checklist:
         - "user table with a stable internal ID; user_identity linking it to the OIDC sub claim"
         - "Re-authenticating as the same OIDC subject resolves to the same internal user"
@@ -128,6 +157,10 @@
     - id: P1-3.4
       title: "Server-side JWT verification: signature, issuer, audience, expiry"
       requirements: [NFR-06, NFR-07]
+      summary: >
+        Verifies every token's signature, issuer, audience and expiry against Keycloak's
+        own keys on the backend, so a client cannot forge or extend its own session by
+        manipulating a token it holds.
       checklist:
         - "Backend verifies signature against Keycloak's JWKS, plus issuer/audience/expiry"
         - "A tampered or expired token is rejected server-side regardless of client behaviour"
@@ -177,6 +210,10 @@
     - id: P1-5.1
       title: "Catalogue entity: business_key identity, row_version optimistic locking"
       requirements: [FR-03, FR-04]
+      summary: >
+        The entity's stable identity and its concurrency control: business_key survives
+        edits, row_version increments on every write, and a conflicting concurrent edit
+        surfaces to the user instead of silently overwriting.
       checklist:
         - "business_key stable across edits; row_version incremented on every write"
         - "Concurrent conflicting writes surface a conflict, not a silent last-write-wins"
@@ -185,6 +222,10 @@
     - id: P1-5.2
       title: "Designations: preferred/synonym/definition, language, changelog note validation"
       requirements: [FR-05, FR-38, FR-85]
+      summary: >
+        Designation records (preferred term, synonyms, definitions) with a required
+        changelog note on every edit, and preferred-term length computed rather than stored
+        so it can never drift from the text it describes (FR-85).
       checklist:
         - "Designation model with kind, language and a required changelog note on edit"
         - "An edit with no changelog note is rejected"
@@ -194,6 +235,10 @@
     - id: P1-5.3
       title: "Code bindings stored as served (FR-82)"
       requirements: [FR-06, FR-07, FR-82, FR-83]
+      summary: >
+        Stores each entity's bound SNOMED code and display term exactly as the terminology
+        server returned them, with no re-derivation anywhere downstream - semantic tag
+        stripping happens only once, in the export renderer, not here.
       checklist:
         - "Code binding stores the SCTID (string, via shared/) and the display term exactly as served"
         - "No code path re-derives or re-normalises the display term after storage"
@@ -204,6 +249,10 @@
       title: "Two-severity collision detection"
       requirements: [FR-08]
       tests: [NFR-38.4, NFR-38.8]
+      summary: >
+        Flags two distinct collision cases at different severities: a warning when the same
+        designation text is reused across unrelated entities, and a hard block when the
+        same code ends up bound to two entities at once.
       checklist:
         - "Warning-severity collision: same designation text, different entity, different code"
         - "Blocking-severity collision: same code bound to two entities"
@@ -231,6 +280,10 @@
     - id: P1-6.1
       title: "PropertyDefinition model and JSONB PropertyValue storage"
       requirements: [FR-09, FR-10]
+      summary: >
+        The registry's storage layer: a PropertyDefinition table describing each property's
+        key and datatype, and a JSONB PropertyValue row per entity/property pair so a new
+        property never requires a schema migration.
       checklist:
         - "PropertyDefinition table: key, datatype, schema reference"
         - "PropertyValue stored as JSONB, one row per (entity, property)"
@@ -239,6 +292,11 @@
     - id: P1-6.2
       title: "Per-property JSON Schema validation"
       requirements: [FR-09, FR-88, FR-89]
+      summary: >
+        Validates every PropertyValue write against its PropertyDefinition's JSON Schema
+        before commit, returning a field-level error rather than a generic failure - proven
+        by the Specimen property's own coded value-set constraint as its first real test
+        case (FR-88/89).
       checklist:
         - "A PropertyValue write is validated against its PropertyDefinition's JSON Schema before commit"
         - "An invalid value is rejected with a field-level error, not a generic 500"
@@ -249,6 +307,10 @@
     - id: P1-6.3
       title: "Datatype handler registry (FR-77)"
       requirements: [FR-77]
+      summary: >
+        Dispatches datatype-specific behaviour through one handler module per datatype
+        rather than a switch statement scattered across the codebase, proven by adding a
+        wholly synthetic new datatype end to end using only a new handler.
       checklist:
         - "Handler registry: one module per datatype, no datatype switch outside it"
         - "End-to-end test adding a synthetic new datatype via a single handler module"
@@ -257,6 +319,10 @@
     - id: P1-6.4
       title: "Automatic index generation for filterable properties (FR-13)"
       requirements: [FR-13]
+      summary: >
+        Generates the database index for a property automatically the moment it's flagged
+        filterable, so making a property searchable never depends on someone remembering to
+        write a migration.
       checklist:
         - "A property flagged filterable gets its index created automatically, not by hand-written migration"
       docs:
@@ -264,6 +330,10 @@
     - id: P1-6.5
       title: "Deprecation-not-deletion (FR-11) and key immutability (FR-12)"
       requirements: [FR-11, FR-12]
+      summary: >
+        Enforces the registry's two non-negotiable invariants: deprecating a property
+        retains every value ever recorded against it, and a property's key can never be
+        changed once created.
       checklist:
         - "Deprecating a PropertyDefinition marks it deprecated; existing values are retained, not deleted"
         - "A PropertyDefinition's key cannot be changed once created"
@@ -377,6 +447,9 @@
     - id: P1-11.1
       title: "Entry edit screens: designations, code bindings, properties"
       requirements: [FR-36, FR-37]
+      summary: >
+        The core editing screens a Reviewer/Administrator uses day to day: forms for
+        designations, code bindings and registry properties on a catalogue entry.
       checklist:
         - "Edit forms for designations, code bindings and registry properties"
       docs:
@@ -384,6 +457,10 @@
     - id: P1-11.2
       title: "Changelog note validation on every edit (FR-39)"
       requirements: [FR-39]
+      summary: >
+        Makes the changelog note a hard client-side gate on every edit form - submit stays
+        disabled until one is entered - rather than a convention the backend has to reject
+        after the fact.
       checklist:
         - "Every edit form requires a non-empty changelog note before submit is enabled"
       docs:
@@ -391,6 +468,10 @@
     - id: P1-11.3
       title: "Bulk reclassify with conflict presentation"
       requirements: [FR-38]
+      summary: >
+        Lets a Reviewer reclassify many entries in one operation, and surfaces any
+        optimistic-lock conflict (P1-5.1) it hits along the way for manual resolution
+        rather than silently discarding the losing edit.
       checklist:
         - "Bulk reclassify operation across a selection of entries"
         - "An optimistic-lock conflict (P1-5.1) is presented for resolution, not silently overwritten"
