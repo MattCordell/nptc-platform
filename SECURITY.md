@@ -62,9 +62,14 @@ rather than left to be discovered.
 unauthenticated users by design (PRD §4.1) — a national standard behind a login would
 defeat its purpose. Submissions, user identities and internal comments are not public.
 
-**GitHub's native secret scanning and OpenSSF Scorecard aren't active yet.** Both need
-GitHub Advanced Security to run against a private repository, and this one doesn't have
-it enabled. In the interim, `security.yml` runs the open-source gitleaks CLI directly
-against git history on every PR and daily — a real control, just not GitHub's own. Revisit
-both once the repository goes public (see the licence decision in README.md) or Advanced
+**GitHub's native secret scanning, code scanning (CodeQL's Security tab integration)
+and OpenSSF Scorecard aren't active yet.** All three need GitHub Advanced Security to
+run against a private repository, and this one doesn't have it enabled — confirmed by
+running each, not assumed from the docs (CodeQL's own upload step fails outright with
+"Advanced Security must be enabled for this repository to use code scanning").
+`codeql.yml` still runs the actual scan on every PR and weekly, with `upload: never` and
+findings summarised into the job's own step summary instead of the Security tab.
+`security.yml` runs the open-source gitleaks CLI directly against git history on every
+PR and daily. Both are real controls, just not surfaced through GitHub's own UI. Revisit
+all three once the repository goes public (see the licence decision in README.md) or Advanced
 Security is enabled first.

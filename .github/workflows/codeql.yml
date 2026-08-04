@@ -9,8 +9,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly rather than only on push/PR, so a query-pack update surfaces a
-    # finding even in a week nobody touches the code (NFR-25).
+    # Weekly rather than only on push/PR (NFR-25) - a query-pack update
+    # surfaces a finding even in a week nobody touches the code.
     - cron: "17 3 * * 1"
 
 permissions:
@@ -22,11 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
       # The analyze step queries the Actions API for workflow-run metadata
-      # while processing SARIF results; without this it fails with
-      # "Resource not accessible by integration" after the scan itself
-      # completes successfully (caught by actually running this workflow).
+      # while processing results, even with upload disabled below (caught by
+      # actually running this workflow, not just linting it).
       actions: read
     strategy:
       fail-fast: false
@@ -45,7 +43,59 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
 
+      # upload: never - this repo is private without GitHub Advanced
+      # Security, so uploading to the code-scanning API fails outright
+      # ("Advanced Security must be enabled for this repository to use code
+      # scanning" - caught by running this, not by reading the docs). We
+      # still get the scan itself; we just report it ourselves below instead
+      # of via the Security tab. Switch this to `always` (or drop the input
+      # entirely) once Advanced Security is enabled or the repo goes public.
       - name: Perform CodeQL analysis
+        id: analyze
         uses: github/codeql-action/analyze@85689a103d1234521562bbb736b2c4a31c9a85d5 # v4.37.5
         with:
           category: "/language:${{ matrix.language }}"
+          upload: never
+          output: sarif-results
+
+      - name: Summarise findings
+        if: always()
+        run: |
+          set -euo pipefail
+          # codeql-action names the file after its own canonical language name,
+          # not always the matrix value verbatim (javascript-typescript ->
+          # javascript.sarif, caught by checking the real output rather than
+          # assuming) - glob for it instead of hardcoding the name.
+          sarif_file=$(find sarif-results -maxdepth 1 -name '*.sarif' -print -quit)
+          python3 - "$sarif_file" "$GITHUB_STEP_SUMMARY" <<'PYEOF'
+          import json
+          import sys
+
+          sarif_path, summary_path = sys.argv[1], sys.argv[2]
+          with open(sarif_path, encoding="utf-8") as f:
+              sarif = json.load(f)
+
+          results = [r for run in sarif.get("runs", []) for r in run.get("results", [])]
+          lines = [f"### CodeQL: {len(results)} finding(s) in {sarif_path}", ""]
+          for r in results:
+              rule = r.get("ruleId", "?")
+              text = r.get("message", {}).get("text", "")
+              msg = text.splitlines()[0] if text else ""
+              loc = r.get("locations", [{}])[0].get("physicalLocation", {})
+              path = loc.get("artifactLocation", {}).get("uri", "?")
+              line = loc.get("region", {}).get("startLine", "?")
+              lines.append(f"- `{rule}` {path}:{line} - {msg}")
+
+          out = "\n".join(lines) + "\n"
+          print(out)
+          with open(summary_path, "a", encoding="utf-8") as f:
+              f.write(out)
+          PYEOF
+
+      - name: Upload SARIF as a build artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-${{ matrix.language }}
+          path: sarif-results
+          retention-days: 14
