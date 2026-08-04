@@ -10,7 +10,8 @@
   title: "Transform CLI skeleton, --report-only, determinism and idempotency harness"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-70, FR-73]
   summary: >
     The CLI entrypoint: --report-only by default (no mutation without an explicit flag),
@@ -31,7 +32,8 @@
   title: "Workbook reader, cell-type capture, invisible-character detection"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-70]
   summary: >
     Reads the SPIA workbook cell-by-cell, capturing the original cell type (not just its
@@ -51,7 +53,8 @@
   title: "Three-band classification engine"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-71]
   summary: >
     Classifies each row into the three defect bands the PRD defines, so downstream
@@ -69,7 +72,8 @@
   title: "Terminology client interface, stub, and Ontoserver implementation"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, terminology, priority/must]
+  priority: MUST
+  labels: [transform, terminology]
   requirements: [FR-53, NFR-37]
   summary: >
     A terminology client contract in shared/ (FR-74: one implementation, used by both
@@ -89,7 +93,8 @@
   title: "Batch terminology validation and hierarchy check"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, terminology, priority/must]
+  priority: MUST
+  labels: [transform, terminology]
   requirements: [FR-52, FR-84, FR-99, FR-74]
   tests: [NFR-38.13]
   summary: >
@@ -113,7 +118,8 @@
   title: "Designation reconciliation report, four outcomes"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, terminology, priority/must]
+  priority: MUST
+  labels: [transform, terminology]
   requirements: [FR-97]
   summary: >
     Compares the workbook's designation against the terminology server's current
@@ -131,7 +137,8 @@
   title: "Misspelling and semantic-drift heuristics"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-79, FR-75]
   summary: >
     Heuristics flagging likely misspellings and semantic drift in designations,
@@ -151,7 +158,8 @@
   title: "Machine- and human-readable defect reports with cell references"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-72]
   summary: >
     Renders every finding from P0-2/P0-3/P0-6/P0-7 into both a machine-readable report
@@ -172,7 +180,8 @@
   title: "Import dataset emission and synthetic baseline release"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-76]
   summary: >
     Emits the cleaned import dataset the backend's initial data load consumes, and a
@@ -191,7 +200,8 @@
   title: "Shared SCTID library: string-only, Verhoeff check digit"
   milestone: "P0 — Seeding transform"
   issue_type: Feature
-  labels: [transform, priority/must]
+  priority: MUST
+  labels: [transform]
   requirements: [FR-06]
   summary: >
     The single SCTID implementation shared/ exists to provide (FR-74): string-only
