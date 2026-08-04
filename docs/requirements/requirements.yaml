@@ -1,0 +1,898 @@
+# Requirements register (Foundation issue F-5, FR-05 of the delivery plan).
+#
+# One entry per FR-nn/NFR-nn in docs/prd/NPTC-Catalogue-Platform-PRD.md. Extracted
+# once by a throwaway script (title = the requirement's own first sentence, so the
+# register quotes the PRD rather than paraphrasing it) and hand-maintained from
+# here on - see CONTRIBUTING.md and scripts/traceability_check.py.
+#
+# Fields:
+#   id       FR-nn / NFR-nn, stable, matches the PRD exactly.
+#   priority MUST / SHOULD / MAY, the PRD's own RFC-2119 scheduling band.
+#   phase    foundation / p0 / p1 / p2 / p3 / p4 / p5 / governance - which backlog
+#            phase (docs/backlog/, once F-6 lands) is expected to implement this.
+#   title    Short label, quoted from the PRD.
+#   status   planned / in-progress / implemented / deferred / n-a.
+#   notes    Free text - deferral rationale, links to an open issue, etc.
+#
+# Moving a requirement to `implemented` requires a test carrying
+# @pytest.mark.req("<id>") (or the frontend `test.meta({req: '<id>'})` equivalent);
+# traceability_check.py enforces this in CI, along with: every ID here is used at
+# least once (in a test or a backlog item) and vice versa, and every MUST has at
+# least one backlog item.
+
+- id: "FR-01"
+  priority: MUST
+  phase: p2
+  title: "An administrator may grant and revoke any role"
+  status: planned
+  notes: ""
+- id: "FR-02"
+  priority: SHOULD
+  phase: p2
+  title: "Administrator actions that are irreversible or high-impact require an explicit confirmation step that restates what will happen"
+  status: planned
+  notes: ""
+- id: "FR-03"
+  priority: MUST
+  phase: p1
+  title: "Every catalogue entry MUST carry an immutable business_key assigned at creation and never reused"
+  status: planned
+  notes: ""
+- id: "FR-04"
+  priority: MUST
+  phase: p1
+  title: "Synonyms MUST be modelled as separate rows, not as a delimited string"
+  status: planned
+  notes: ""
+- id: "FR-05"
+  priority: MUST
+  phase: p1
+  title: "On save, the system MUST detect collisions between a designation and a designation on a different active entry"
+  status: planned
+  notes: ""
+- id: "FR-06"
+  priority: MUST
+  phase: p1
+  title: "SNOMED CT identifiers MUST be stored, transported and exported as strings at every layer"
+  status: planned
+  notes: ""
+- id: "FR-07"
+  priority: MUST
+  phase: p1
+  title: "The spreadsheet export MUST write the code cell with an explicit text format"
+  status: planned
+  notes: ""
+- id: "FR-08"
+  priority: SHOULD
+  phase: p1
+  title: "An entry SHOULD permit at most one active code binding"
+  status: planned
+  notes: ""
+- id: "FR-09"
+  priority: MUST
+  phase: p1
+  title: "Adding, deprecating or amending a property definition MUST NOT require a schema migration, application restart, or code deployment"
+  status: planned
+  notes: ""
+- id: "FR-10"
+  priority: MUST
+  phase: p1
+  title: "A property of datatype code MUST carry a terminology binding, not merely a datatype"
+  status: planned
+  notes: ""
+- id: "FR-11"
+  priority: MUST
+  phase: p1
+  title: "A property definition MUST NOT be deletable once any value has been recorded against it or once it has appeared in any published export"
+  status: planned
+  notes: ""
+- id: "FR-12"
+  priority: MUST
+  phase: p1
+  title: "A property key MUST be immutable"
+  status: planned
+  notes: ""
+- id: "FR-13"
+  priority: SHOULD
+  phase: p1
+  title: "Properties marked filterable SHOULD have a supporting index created automatically"
+  status: planned
+  notes: ""
+- id: "FR-14"
+  priority: MUST
+  phase: p1
+  title: "Anonymous and authenticated users can search the approved catalogue across preferred terms, synonyms, the FSN, the AU preferred term and the SNOMED code in one query field"
+  status: planned
+  notes: ""
+- id: "FR-15"
+  priority: MUST
+  phase: p1
+  title: "Search MUST tolerate typographical error and word-order variation"
+  status: planned
+  notes: ""
+- id: "FR-16"
+  priority: MUST
+  phase: p1
+  title: "Results can be filtered by any property marked filterable, presented as faceted filters with result counts"
+  status: planned
+  notes: ""
+- id: "FR-17"
+  priority: MUST
+  phase: p1
+  title: "Exact-code lookup MUST be unambiguous and MUST be reachable by direct URL: /catalogue/{business_key} and /catalogue/code/{system_token}/{code}"
+  status: planned
+  notes: ""
+- id: "FR-18"
+  priority: SHOULD
+  phase: p1
+  title: "Search results indicate whether an entry's terminology binding has an open validation finding, without exposing internal validation detail to anonymous users"
+  status: planned
+  notes: ""
+- id: "FR-19"
+  priority: SHOULD
+  phase: p1
+  title: "An entry's detail page shows its full change history: every published release in which it appeared"
+  status: planned
+  notes: ""
+- id: "FR-20"
+  priority: MUST
+  phase: p1
+  title: "A documented, versioned, read-only JSON API over the approved catalogue, available without authentication, with the same content as the public UI"
+  status: planned
+  notes: ""
+- id: "FR-21"
+  priority: SHOULD
+  phase: p1
+  title: "Published FHIR artefacts for each release are served as static files at stable, versioned URLs"
+  status: planned
+  notes: ""
+- id: "FR-22"
+  priority: SHOULD
+  phase: p1
+  title: "Anonymous API access is rate-limited by IP"
+  status: planned
+  notes: ""
+- id: "FR-23"
+  priority: MUST
+  phase: p2
+  title: "Provisional users, Members, Reviewers and Administrators can submit a proposed new test"
+  status: planned
+  notes: ""
+- id: "FR-24"
+  priority: MUST
+  phase: p2
+  title: "Computed fields MUST NOT appear as editable inputs anywhere, for any role"
+  status: planned
+  notes: ""
+- id: "FR-25"
+  priority: MUST
+  phase: p2
+  title: "Before submission is accepted, the system MUST run duplicate detection against existing catalogue entries and open submissions"
+  status: planned
+  notes: ""
+- id: "FR-26"
+  priority: SHOULD
+  phase: p2
+  title: "Where the submitter supplies a SNOMED code, the platform validates it live against Ontoserver during form completion"
+  status: planned
+  notes: ""
+- id: "FR-27"
+  priority: SHOULD
+  phase: p2
+  title: "Submitters can attach free-text clinical justification and supporting references"
+  status: planned
+  notes: ""
+- id: "FR-28"
+  priority: MUST
+  phase: p2
+  title: "Submissions progress through the following states"
+  status: planned
+  notes: ""
+- id: "FR-29"
+  priority: MUST
+  phase: p2
+  title: "Approved and Published are distinct states"
+  status: planned
+  notes: ""
+- id: "FR-30"
+  priority: MUST
+  phase: p2
+  title: "The Awaiting terminology state exists for submissions with no suitable existing SNOMED concept"
+  status: planned
+  notes: ""
+- id: "FR-31"
+  priority: MAY
+  phase: p2
+  title: "Direct integration with a concept request or authoring system"
+  status: planned
+  notes: ""
+- id: "FR-32"
+  priority: MUST
+  phase: p2
+  title: "Members can register interest in an open submission"
+  status: planned
+  notes: ""
+- id: "FR-33"
+  priority: SHOULD
+  phase: p2
+  title: "The Reviewer and Administrator view of an interest count MUST show the distinct organisations represented, not only the headcount"
+  status: planned
+  notes: ""
+- id: "FR-34"
+  priority: MUST
+  phase: p2
+  title: "Interest counts are visible to all authenticated users"
+  status: planned
+  notes: ""
+- id: "FR-35"
+  priority: MUST
+  phase: p2
+  title: "Any role that can submit (FR-23) can propose an amendment to an existing published entry, most commonly an additional synonym"
+  status: planned
+  notes: ""
+- id: "FR-36"
+  priority: MUST
+  phase: p1
+  title: "Administrators can create, amend and deprecate catalogue entries directly, including codings, designations, preferred term, and all registry properties"
+  status: planned
+  notes: ""
+- id: "FR-37"
+  priority: MUST
+  phase: p1
+  title: "Every save requires a changelog note"
+  status: planned
+  notes: ""
+- id: "FR-38"
+  priority: MUST
+  phase: p1
+  title: "Concurrent editing MUST be handled with optimistic locking on row_version"
+  status: planned
+  notes: ""
+- id: "FR-39"
+  priority: SHOULD
+  phase: p1
+  title: "Bulk operations for the common editorial patterns visible in the revision history, principally reclassifying discipline across a filtered set"
+  status: planned
+  notes: ""
+- id: "FR-40"
+  priority: MUST
+  phase: p2
+  title: "A user dashboard listing all users with registered name, organisation, username, email, role, status and rate limit"
+  status: planned
+  notes: ""
+- id: "FR-41"
+  priority: MUST
+  phase: p2
+  title: "Administrators can grant and revoke every role, suspend accounts, and override the per-user submission rate limit"
+  status: planned
+  notes: ""
+- id: "FR-42"
+  priority: MUST
+  phase: p2
+  title: "Registration captures real name, organisation and chosen username"
+  status: planned
+  notes: ""
+- id: "FR-43"
+  priority: MUST
+  phase: p2
+  title: "Rate limits MUST be enforced server-side"
+  status: planned
+  notes: ""
+- id: "FR-44"
+  priority: SHOULD
+  phase: p1
+  title: "Roles MUST be implemented as named sets of discrete permissions rather than as hard-coded checks against a role enum"
+  status: planned
+  notes: ""
+- id: "FR-45"
+  priority: MUST
+  phase: p3
+  title: "For every code binding in the catalogue, validation determines status, inactivation reason and replacement suitability"
+  status: planned
+  notes: ""
+- id: "FR-46"
+  priority: MUST
+  phase: p3
+  title: "Where a concept is inactive, the finding MUST include the inactivation reason and the associated historical association"
+  status: planned
+  notes: ""
+- id: "FR-47"
+  priority: MUST
+  phase: p3
+  title: "Every validation run executes against both the latest SNOMED CT-AU edition and the latest International edition, and the results are diffed"
+  status: planned
+  notes: ""
+- id: "FR-48"
+  priority: MUST
+  phase: p3
+  title: "Each validation run MUST record the fully qualified version URI of each edition it resolved against"
+  status: planned
+  notes: ""
+- id: "FR-49"
+  priority: SHOULD
+  phase: p3
+  title: "Editions are referenced without a version parameter in normal operation, so runs target the latest available release"
+  status: planned
+  notes: ""
+- id: "FR-50"
+  priority: MUST
+  phase: p3
+  title: "Validation runs on demand (triggered by a Reviewer or Administrator, whole catalogue or filtered subset) and on a schedule"
+  status: planned
+  notes: ""
+- id: "FR-51"
+  priority: SHOULD
+  phase: p3
+  title: "The scheduled run SHOULD execute at least weekly, and the schedule SHOULD be configurable"
+  status: planned
+  notes: ""
+- id: "FR-52"
+  priority: MUST
+  phase: p0
+  title: "Validation MUST NOT be implemented as one $validate-code call per code per edition"
+  status: planned
+  notes: ""
+- id: "FR-53"
+  priority: MUST
+  phase: p0
+  title: "Terminology server access MUST be behind an interface with a stub implementation for testing"
+  status: planned
+  notes: ""
+- id: "FR-54"
+  priority: SHOULD
+  phase: p3
+  title: "Terminology server failure MUST degrade gracefully"
+  status: planned
+  notes: ""
+- id: "FR-55"
+  priority: MUST
+  phase: p3
+  title: "Findings persist with a lifecycle of open, acknowledged, resolved and superseded"
+  status: planned
+  notes: ""
+- id: "FR-56"
+  priority: MUST
+  phase: p3
+  title: "A release MUST NOT be publishable while any error-severity finding is open and unacknowledged against an entry included in that release"
+  status: planned
+  notes: ""
+- id: "FR-57"
+  priority: MUST
+  phase: p4
+  title: "The catalogue has a mutable working state and a sequence of immutable published releases"
+  status: planned
+  notes: ""
+- id: "FR-58"
+  priority: MUST
+  phase: p4
+  title: "Cutting a release requires: all error findings resolved or acknowledged (FR-56), a release note, and explicit confirmation"
+  status: planned
+  notes: ""
+- id: "FR-59"
+  priority: MUST
+  phase: p4
+  title: "The per-entry Version and History values in the SPIA export MUST be generated from release membership and the changelog notes recorded against each change"
+  status: planned
+  notes: ""
+- id: "FR-60"
+  priority: SHOULD
+  phase: p4
+  title: "A diff view between any two releases: entries added, removed, and changed with field-level detail"
+  status: planned
+  notes: ""
+- id: "FR-61"
+  priority: SHOULD
+  phase: p4
+  title: "Release artefacts are immutable and retained indefinitely at stable URLs"
+  status: planned
+  notes: ""
+- id: "FR-62"
+  priority: MUST
+  phase: p4
+  title: "Simple CSV export format"
+  status: planned
+  notes: ""
+- id: "FR-63"
+  priority: MUST
+  phase: p4
+  title: "SPIA spreadsheet export format"
+  status: planned
+  notes: ""
+- id: "FR-64"
+  priority: MUST
+  phase: p4
+  title: "FHIR CodeSystem supplement export format"
+  status: planned
+  notes: ""
+- id: "FR-65"
+  priority: SHOULD
+  phase: p4
+  title: "A manifest accompanies every release listing each artefact, its SHA-256 hash"
+  status: planned
+  notes: ""
+- id: "FR-66"
+  priority: MUST
+  phase: p4
+  title: "Administrators can configure each export format: which properties are included, and for CSV and spreadsheet formats, the column order and header text"
+  status: planned
+  notes: ""
+- id: "FR-67"
+  priority: MUST
+  phase: p4
+  title: "Reordering or removing a column MUST display an explicit warning that downstream implementers may be affected, and MUST require acknowledgement"
+  status: planned
+  notes: ""
+- id: "FR-68"
+  priority: MUST
+  phase: p4
+  title: "Export configurations are versioned with linear, append-only history"
+  status: planned
+  notes: ""
+- id: "FR-69"
+  priority: MUST
+  phase: p4
+  title: "Each published release records which export configuration version produced each artefact, satisfying reproducibility (FR-61)"
+  status: planned
+  notes: ""
+- id: "FR-70"
+  priority: MUST
+  phase: p0
+  title: "A command-line transform that reads the published SPIA workbook and produces either a validated import dataset or a detailed defect report"
+  status: planned
+  notes: ""
+- id: "FR-71"
+  priority: MUST
+  phase: p0
+  title: "The transform classifies every finding into one of three bands, and the band determines behaviour"
+  status: planned
+  notes: ""
+- id: "FR-72"
+  priority: MUST
+  phase: p0
+  title: "The defect report is machine-readable (JSON or CSV) and human-readable"
+  status: planned
+  notes: ""
+- id: "FR-73"
+  priority: MUST
+  phase: p0
+  title: "The transform is idempotent and re-runnable"
+  status: planned
+  notes: ""
+- id: "FR-74"
+  priority: MUST
+  phase: p0
+  title: "Every code in the source is validated against both editions during transform, using the same validation engine as FR-45"
+  status: planned
+  notes: ""
+- id: "FR-75"
+  priority: SHOULD
+  phase: p0
+  title: "The transform reports semantic mismatches between the RCPA preferred term and the bound SNOMED FSN as warnings for editorial review"
+  status: planned
+  notes: ""
+- id: "FR-76"
+  priority: MUST
+  phase: p0
+  title: "The seeded data MUST be imported as a synthetic baseline release representing the state at seeding"
+  status: planned
+  notes: ""
+- id: "FR-77"
+  priority: SHOULD
+  phase: p1
+  title: "The design MUST accommodate the addition of new datatypes to the registry, not only new properties, without a rebuild"
+  status: planned
+  notes: ""
+- id: "FR-78"
+  priority: MUST
+  phase: p4
+  title: "Administrators MUST be able to generate an ad hoc export of the current working state, outside the release cycle, in any configured format"
+  status: planned
+  notes: ""
+- id: "FR-79"
+  priority: SHOULD
+  phase: p0
+  title: "The transform SHOULD detect probable misspellings in designations"
+  status: planned
+  notes: ""
+- id: "FR-80"
+  priority: MUST
+  phase: p2
+  title: "The Observer role MUST have no write capability of any kind"
+  status: planned
+  notes: ""
+- id: "FR-81"
+  priority: MUST
+  phase: p2
+  title: "The boundary between Reviewer and Administrator MUST be enforced server-side per permission"
+  status: planned
+  notes: ""
+- id: "FR-82"
+  priority: MUST
+  phase: p1
+  title: "The platform MUST store fsn and au_preferred_term exactly as the terminology server returns them, with the semantic tag intact on the FSN"
+  status: planned
+  notes: ""
+- id: "FR-83"
+  priority: MUST
+  phase: p1
+  title: "Semantic tag removal happens only in the export renderer, never in storage or in validation"
+  status: planned
+  notes: ""
+- id: "FR-84"
+  priority: MUST
+  phase: p1
+  title: "Every code binding MUST be subsumed by 71388002 |Procedure (procedure)|"
+  status: planned
+  notes: ""
+- id: "FR-85"
+  priority: MUST
+  phase: p1
+  title: "Length MUST be computed from the preferred term and MUST NOT be storable or editable (FR-24)"
+  status: planned
+  notes: ""
+- id: "FR-86"
+  priority: SHOULD
+  phase: p1
+  title: "The platform SHOULD support a configurable maximum preferred-term length"
+  status: planned
+  notes: ""
+- id: "FR-87"
+  priority: SHOULD
+  phase: p1
+  title: "The platform SHOULD report the distribution of preferred-term lengths across the catalogue: a histogram"
+  status: planned
+  notes: ""
+- id: "FR-88"
+  priority: MUST
+  phase: p1
+  title: "Specimen MUST be a coded property with cardinality 0..*, bound to a value set rooted at 123038009, replacing the semicolon-delimited string"
+  status: planned
+  notes: ""
+- id: "FR-89"
+  priority: MUST
+  phase: p1
+  title: "The value 'Any' MUST NOT be represented as a specimen code"
+  status: planned
+  notes: ""
+- id: "FR-90"
+  priority: MUST
+  phase: p1
+  title: "Discipline and Subgroup MUST each be implemented as a governed local code system owned by RCPA-QAP"
+  status: planned
+  notes: ""
+- id: "FR-91"
+  priority: SHOULD
+  phase: p1
+  title: "A published non-authoritative map from the local Discipline code system to SNOMED CT concepts, for consumers who want a SNOMED view"
+  status: planned
+  notes: ""
+- id: "FR-92"
+  priority: SHOULD
+  phase: p1
+  title: "Subgroup migration MUST reconcile inconsistent classification axes and pluralisation before the code system is populated"
+  status: planned
+  notes: ""
+- id: "FR-93"
+  priority: MUST
+  phase: p4
+  title: "Release artefacts MUST be downloadable as a single self-contained archive suitable for delivery to NCTS through the existing submission process"
+  status: planned
+  notes: ""
+- id: "FR-94"
+  priority: SHOULD
+  phase: p4
+  title: "The platform SHOULD record that a release was delivered to NCTS, by whom and when, as an audit event"
+  status: planned
+  notes: ""
+- id: "FR-95"
+  priority: MUST
+  phase: p2
+  title: "Administrators and Reviewers can post free-text comments against a submission or a catalogue entry"
+  status: planned
+  notes: ""
+- id: "FR-96"
+  priority: SHOULD
+  phase: p2
+  title: "Comments SHOULD support mentioning another Administrator or Reviewer, generating a notification"
+  status: planned
+  notes: ""
+- id: "FR-97"
+  priority: MUST
+  phase: p0
+  title: "The transform MUST produce a designation reconciliation report"
+  status: planned
+  notes: ""
+- id: "FR-98"
+  priority: MUST
+  phase: p1
+  title: "Every artefact that publishes a SNOMED label MUST state explicitly which designation it carries and whether the tag is stripped"
+  status: planned
+  notes: ""
+- id: "FR-99"
+  priority: SHOULD
+  phase: p1
+  title: "Where a binding is subsumed by <<71388002 but its semantic tag is not (procedure), raise a warning, not an error"
+  status: planned
+  notes: ""
+- id: "NFR-01"
+  priority: MUST
+  phase: p1
+  title: "Authentication is delegated to a Keycloak instance deployed as part of the stack"
+  status: planned
+  notes: ""
+- id: "NFR-02"
+  priority: MUST
+  phase: p1
+  title: "Keycloak launches with its local user database enabled and external federation switched off"
+  status: planned
+  notes: ""
+- id: "NFR-03"
+  priority: MUST
+  phase: p1
+  title: "Keycloak realm configuration MUST be managed as code and MUST NOT be configured by hand through the admin console"
+  status: planned
+  notes: ""
+- id: "NFR-04"
+  priority: MUST
+  phase: p1
+  title: "Application data MUST NEVER be keyed on the identity provider's subject claim"
+  status: planned
+  notes: ""
+- id: "NFR-05"
+  priority: MUST
+  phase: p1
+  title: "Automatic linking of an external identity to an existing account is permitted only where the issuer is explicitly trusted and asserts email_verified"
+  status: planned
+  notes: ""
+- id: "NFR-06"
+  priority: SHOULD
+  phase: p1
+  title: "Multi-factor authentication (TOTP) MUST be available and SHOULD be mandatory for the administrator role"
+  status: planned
+  notes: ""
+- id: "NFR-07"
+  priority: MUST
+  phase: p1
+  title: "All tokens validated server-side on every request: signature against the realm's JWKS, issuer, audience, and expiry"
+  status: planned
+  notes: ""
+- id: "NFR-08"
+  priority: MUST
+  phase: p1
+  title: "A single append-only audit log capturing every state-changing operation"
+  status: planned
+  notes: ""
+- id: "NFR-09"
+  priority: MUST
+  phase: p1
+  title: "Append-only MUST be enforced at the database privilege level"
+  status: planned
+  notes: ""
+- id: "NFR-10"
+  priority: SHOULD
+  phase: p1
+  title: "Each entry includes a SHA-256 hash over its own content plus the previous entry's hash, forming a chain"
+  status: planned
+  notes: ""
+- id: "NFR-11"
+  priority: MUST
+  phase: p1
+  title: "Authentication events (login, failure, lockout, MFA enrolment) are logged by Keycloak in its own event store"
+  status: planned
+  notes: ""
+- id: "NFR-12"
+  priority: MUST
+  phase: p1
+  title: "Administrators can search and filter the audit log by actor, entity, action, and date range, and export a filtered view"
+  status: planned
+  notes: ""
+- id: "NFR-13"
+  priority: MUST
+  phase: p1
+  title: "Audit entries are retained indefinitely and are not deleted when a user account is removed"
+  status: planned
+  notes: ""
+- id: "NFR-14"
+  priority: MUST
+  phase: p1
+  title: "A privacy policy and a collection notice are presented at registration"
+  status: planned
+  notes: ""
+- id: "NFR-15"
+  priority: MUST
+  phase: p1
+  title: "Collect only what is necessary"
+  status: planned
+  notes: ""
+- id: "NFR-16"
+  priority: MUST
+  phase: p1
+  title: "Users can view and correct their own personal information (APP 12, APP 13)"
+  status: planned
+  notes: ""
+- id: "NFR-17"
+  priority: MUST
+  phase: p1
+  title: "Account closure MUST pseudonymise rather than delete"
+  status: planned
+  notes: ""
+- id: "NFR-18"
+  priority: SHOULD
+  phase: governance
+  title: "Data residency in Australia"
+  status: planned
+  notes: ""
+- id: "NFR-19"
+  priority: SHOULD
+  phase: governance
+  title: "A documented data breach response procedure, referencing the Notifiable Data Breaches scheme"
+  status: planned
+  notes: ""
+- id: "NFR-20"
+  priority: MUST
+  phase: p1
+  title: "Every request authorised server-side against the internal user record"
+  status: planned
+  notes: ""
+- id: "NFR-21"
+  priority: MUST
+  phase: p5
+  title: "All traffic over TLS 1.2 or higher"
+  status: planned
+  notes: ""
+- id: "NFR-22"
+  priority: MUST
+  phase: p1
+  title: "Parameterised queries throughout"
+  status: planned
+  notes: ""
+- id: "NFR-23"
+  priority: MUST
+  phase: p5
+  title: "Output encoding and a restrictive Content-Security-Policy"
+  status: planned
+  notes: ""
+- id: "NFR-24"
+  priority: MUST
+  phase: p1
+  title: "Rate limiting at three layers: per-IP for anonymous requests, per-user for authenticated actions, and the domain-level submission limits in FR-43"
+  status: planned
+  notes: ""
+- id: "NFR-25"
+  priority: MUST
+  phase: foundation
+  title: "Dependency vulnerability scanning in CI, with the build failing on high or critical findings in production dependencies"
+  status: planned
+  notes: "security.yml (pip-audit, pnpm audit) already runs this in CI - issue #6/F-3; status stays planned until a test carries this marker per the DoD"
+- id: "NFR-26"
+  priority: MUST
+  phase: foundation
+  title: "No secrets in the repository or in image layers"
+  status: planned
+  notes: "security.yml gitleaks job already runs this in CI - issue #6/F-3; deploy/.env.example still pending (issue #10/F-7)"
+- id: "NFR-27"
+  priority: SHOULD
+  phase: p5
+  title: "An independent security review before any production deployment"
+  status: planned
+  notes: ""
+- id: "NFR-28"
+  priority: SHOULD
+  phase: p5
+  title: "Containers run as a non-root user with a read-only root filesystem where practical"
+  status: planned
+  notes: ""
+- id: "NFR-29"
+  priority: SHOULD
+  phase: p5
+  title: "Maintain a hazard log identifying clinical safety risks arising from catalogue defects, and the mitigations"
+  status: in-progress
+  notes: "docs/governance/hazard-log.md seeded with 5 hazards from the PRD (issue #7/F-4); owner (OI-6) still open"
+- id: "NFR-30"
+  priority: SHOULD
+  phase: governance
+  title: "Governance should formally confirm that a passive reference catalogue falls outside the TGA's software-as-a-medical-device regulatory scope"
+  status: planned
+  notes: ""
+- id: "NFR-31"
+  priority: MUST
+  phase: p5
+  title: "WCAG 2.2 Level AA"
+  status: planned
+  notes: ""
+- id: "NFR-32"
+  priority: SHOULD
+  phase: p1
+  title: "Search returns in under 500 ms at the 95th percentile for a catalogue of 20,000 entries"
+  status: planned
+  notes: ""
+- id: "NFR-33"
+  priority: SHOULD
+  phase: p3
+  title: "A full dual-edition validation sweep of 20,000 entries completes within 30 minutes, running as a background job that does not degrade interactive use"
+  status: planned
+  notes: ""
+- id: "NFR-34"
+  priority: SHOULD
+  phase: p5
+  title: "Nightly database backup plus continuous WAL archiving"
+  status: planned
+  notes: ""
+- id: "NFR-35"
+  priority: MUST
+  phase: p5
+  title: "Structured JSON application logs including the correlation ID from NFR-08"
+  status: planned
+  notes: ""
+- id: "NFR-36"
+  priority: SHOULD
+  phase: p5
+  title: "Operational documentation sufficient for an organisation other than the builder to run the platform"
+  status: planned
+  notes: ""
+- id: "NFR-37"
+  priority: MUST
+  phase: foundation
+  title: "The test suite MUST run with no network access"
+  status: in-progress
+  notes: "ci.yml transform-offline job blocks outbound egress via iptables (issue #5/F-2); backend integration tests will need the same treatment once P1-1 lands"
+- id: "NFR-38"
+  priority: MUST
+  phase: foundation
+  title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
+  status: planned
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement"
+- id: "NFR-39"
+  priority: SHOULD
+  phase: p1
+  title: "Integration tests run against a real PostgreSQL instance (testcontainers or equivalent), not an in-memory substitute"
+  status: planned
+  notes: ""
+- id: "NFR-40"
+  priority: SHOULD
+  phase: p5
+  title: "End-to-end tests covering registration, submission, the full workflow path, and release publication"
+  status: planned
+  notes: ""
+- id: "NFR-41"
+  priority: MUST
+  phase: foundation
+  title: "The whole stack starts from a single docker compose up against a documented .env, with no manual post-installation steps"
+  status: planned
+  notes: "docs/backlog once F-6 lands: issue #10/F-7"
+- id: "NFR-42"
+  priority: SHOULD
+  phase: foundation
+  title: "Separate compose overlays for development (hot reload, seeded demonstration data, permissive CORS) and production (no debug, restrictive CORS, resource limits)"
+  status: planned
+  notes: "issue #10/F-7 lays the dev overlay; the production overlay is P5"
+- id: "NFR-43"
+  priority: SHOULD
+  phase: p5
+  title: "Images built in CI, tagged by commit SHA and semantic version, published to a registry"
+  status: planned
+  notes: ""
+- id: "NFR-44"
+  priority: SHOULD
+  phase: p5
+  title: "The architecture MUST NOT depend on any single cloud provider's proprietary services"
+  status: planned
+  notes: ""
+- id: "NFR-45"
+  priority: MUST
+  phase: p1
+  title: "Terms of use MUST be presented at registration and MUST require positive acceptance"
+  status: planned
+  notes: ""
+- id: "NFR-46"
+  priority: MUST
+  phase: p1
+  title: "The terms MUST include a contribution licence"
+  status: planned
+  notes: ""
+- id: "NFR-47"
+  priority: SHOULD
+  phase: p1
+  title: "The terms MUST be versioned in the repository and rendered from a single source, so that the text a user accepted can be reproduced exactly"
+  status: planned
+  notes: ""

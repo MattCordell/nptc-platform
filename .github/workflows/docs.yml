@@ -1,0 +1,93 @@
+name: Docs
+
+# Runs instead of ci.yml's full Python/Node matrix for a documentation-only PR
+# (see ci.yml's paths-ignore). A PR that also touches source still gets this
+# workflow too, since GitHub Actions runs every workflow whose trigger paths
+# match - there is no equivalent paths-ignore needed here.
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - "scripts/traceability_check.py"
+      - ".markdownlint-cli2.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "**/*.md"
+      - "scripts/traceability_check.py"
+      - ".markdownlint-cli2.yaml"
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: markdownlint-cli2
+        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+        with:
+          globs: "**/*.md"
+
+  link-check:
+    name: lychee link check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: lychee
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          # mailto: links are excluded by default (opt back in with
+          # --include-mail) - caught by running this, since the --exclude-mail
+          # flag this action's own docs used to document no longer exists.
+          args: >
+            --no-progress
+            --exclude "^http://localhost"
+            --exclude "^https://tx\.ontoserver\.csiro\.au"
+            --exclude-path frontend/node_modules
+            --exclude-path .venv
+            './**/*.md'
+          fail: true
+
+  traceability:
+    name: Requirements traceability
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install workspace
+        run: uv sync --all-packages --locked
+
+      - name: traceability_check.py
+        run: uv run python scripts/traceability_check.py
+
+      # docs/requirements/traceability.md is committed, not gitignored, so it's
+      # reviewable in a diff like any other generated-but-tracked artefact -
+      # this catches a PR that changed requirements.yaml or a test's
+      # @pytest.mark.req without regenerating the report to match.
+      - name: traceability.md is up to date
+        run: |
+          if ! git diff --exit-code -- docs/requirements/traceability.md; then
+            echo "::error::docs/requirements/traceability.md is stale - run"
+            echo "'uv run python scripts/traceability_check.py' and commit the result."
+            exit 1
+          fi
