@@ -6,8 +6,8 @@
 
 Report privately through GitHub's [private vulnerability
 reporting](https://github.com/aehrc/nptc-platform/security/advisories/new), or by email
-to the maintainer listed in [CODEOWNERS](.github/CODEOWNERS) with `[SECURITY]` in the
-subject line.
+to **matt.cordell@csiro.au** with `[SECURITY]` in the subject line. See
+[CODEOWNERS](.github/CODEOWNERS) if that contact ever goes stale.
 
 Please include what you can: affected component and version or commit, reproduction
 steps, and the impact you believe it has. A partial report received early is more useful
