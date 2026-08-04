@@ -40,11 +40,13 @@ jobs:
         id: filter
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
-          # some-with-excludes: a file matches if it matches a positive
-          # pattern AND none of the negated ones - the default quantifier
-          # ('some') treats '!'-prefixed entries as literal patterns rather
-          # than exclusions, so '**' alone would match everything.
-          predicate-quantifier: some-with-excludes
+          # 'every': a file counts as matching only if it satisfies every
+          # listed pattern, where a '!'-prefixed pattern requires a
+          # non-match - so this is "matches '**' AND is not under docs/,
+          # *.md or .github/ISSUE_TEMPLATE/". The default quantifier
+          # ('some') instead treats '!' patterns as literal, so '**' alone
+          # matched everything, negations included (verified on PR #77).
+          predicate-quantifier: every
           filters: |
             code:
               - "**"
