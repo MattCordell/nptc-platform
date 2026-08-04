@@ -54,6 +54,9 @@ jobs:
         id: filter
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
+          # some-with-excludes: see the matching step in ci.yml for why this
+          # is required for the negated patterns below to actually exclude.
+          predicate-quantifier: some-with-excludes
           filters: |
             code:
               - "**"
