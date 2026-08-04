@@ -64,13 +64,11 @@ KNOWN_MILESTONES = [
 # What/type and phase are deliberately NOT labels: GitHub's native Issue Types
 # (see ISSUE_TYPES below) cover "what kind of work is this", and the issue's
 # milestone already carries the phase - a phase/* label would just duplicate it.
-# `priority/*` stays a plain label for now: GitHub has no native issue-level
-# priority field (only a Projects-v2 custom field, a bigger adoption this repo
-# hasn't made yet).
+# Priority is likewise not a label: it lives in the "Priority" custom field on
+# the NPTC Catalogue Platform Projects-v2 board (see PROJECT_TITLE below), which
+# is what a native GitHub priority looks like - Issues has no priority field of
+# its own.
 LABEL_TAXONOMY: dict[str, tuple[str, str]] = {
-    "priority/must": ("PRD scheduling priority: MUST", "b60205"),
-    "priority/should": ("PRD scheduling priority: SHOULD", "d93f0b"),
-    "priority/may": ("PRD scheduling priority: MAY", "fbca04"),
     "api": ("Backend HTTP API", "5319e7"),
     "db": ("Database schema and migrations", "5319e7"),
     "frontend": ("React/TypeScript client", "5319e7"),
@@ -103,6 +101,15 @@ LABEL_TAXONOMY: dict[str, tuple[str, str]] = {
 # epic vocabulary).
 ISSUE_TYPES = {"Task", "Bug", "Feature"}
 
+# The PRD's own RFC-2119 scheduling priority (requirements.yaml and every backlog
+# item already carry this vocabulary). Represented as a single-select "Priority"
+# field on a Projects-v2 board, created/adopted under whichever account owns this
+# repo - not a label, since GitHub Issues has no native priority field.
+PRIORITIES = ("MUST", "SHOULD", "MAY")
+PRIORITY_OPTION_COLORS = {"MUST": "RED", "SHOULD": "ORANGE", "MAY": "YELLOW"}
+PROJECT_TITLE = "NPTC Catalogue Platform"
+PRIORITY_FIELD_NAME = "Priority"
+
 
 # --- Schema, parsing, validation --------------------------------------------------
 
@@ -113,6 +120,7 @@ class BacklogItem:
     title: str
     milestone: str
     issue_type: str
+    priority: str
     labels: tuple[str, ...]
     requirements: tuple[str, ...]
     tests: tuple[str, ...]
@@ -172,6 +180,13 @@ def _flatten(
                 f"{item_id}: issue_type {issue_type!r} is not one of {sorted(ISSUE_TYPES)}"
             )
 
+        priority = raw.get("priority") or (parent.priority if parent else None)
+        if not priority:
+            errors.append(f"{item_id}: missing priority")
+            priority = ""
+        elif priority not in PRIORITIES:
+            errors.append(f"{item_id}: priority {priority!r} is not one of {PRIORITIES}")
+
         labels = _as_tuple(raw.get("labels")) or (parent.labels if parent else ())
 
         for rid in raw.get("requirements") or []:
@@ -196,6 +211,7 @@ def _flatten(
             title=str(raw.get("title", "")),
             milestone=milestone,
             issue_type=issue_type,
+            priority=priority,
             labels=labels,
             requirements=_as_tuple(raw.get("requirements")),
             tests=_as_tuple(raw.get("tests")),
@@ -275,6 +291,7 @@ def render_body(item: BacklogItem) -> str:
 class ExistingIssue:
     number: int
     database_id: int
+    node_id: str
     body: str
     labels: frozenset[str]
     milestone: str | None
@@ -282,10 +299,11 @@ class ExistingIssue:
     state: str
 
 
-# Prefixes backlog_sync.py used to manage before the Issue Types / area-prefix
-# migration. A label matching one of these is ours to prune even though it is no
-# longer in LABEL_TAXONOMY at all (the taxonomy only lists what we manage *now*).
-RETIRED_LABEL_PREFIXES = ("phase/", "area/", "type/")
+# Prefixes backlog_sync.py used to manage before the Issue Types / area-prefix /
+# Projects-v2-priority migrations. A label matching one of these is ours to prune
+# even though it is no longer in LABEL_TAXONOMY at all (the taxonomy only lists
+# what we manage *now*).
+RETIRED_LABEL_PREFIXES = ("phase/", "area/", "type/", "priority/")
 
 
 def _is_managed_label(name: str) -> bool:
@@ -334,8 +352,13 @@ def plan_sync(
     by_number: dict[int, ExistingIssue],
     by_marker: dict[str, int],
     linked_sub_issues: dict[int, set[int]] | None = None,
+    project_priorities: dict[int, str | None] | None = None,
 ) -> tuple[list[Action], list[str]]:
+    """`project_priorities` maps issue number -> its current Priority field value on
+    the Projects-v2 board (None if the issue is on the board with the field unset).
+    A number's absence means the issue isn't on the board at all yet."""
     linked_sub_issues = linked_sub_issues or {}
+    project_priorities = project_priorities or {}
     actions: list[Action] = []
     errors: list[str] = []
 
@@ -363,6 +386,8 @@ def plan_sync(
                     },
                 )
             )
+            # A brand-new issue can't already be on the project board.
+            actions.append(Action("set_priority", item.id, {"priority": item.priority}))
             continue
 
         existing = by_number[number]
@@ -383,6 +408,11 @@ def plan_sync(
         if existing.issue_type != item.issue_type:
             actions.append(
                 Action("set_type", item.id, {"number": number, "issue_type": item.issue_type})
+            )
+
+        if number not in project_priorities or project_priorities[number] != item.priority:
+            actions.append(
+                Action("set_priority", item.id, {"number": number, "priority": item.priority})
             )
 
     numbers_by_id = resolve_all_issue_numbers(items, by_number, by_marker)
@@ -445,6 +475,22 @@ def _gh_send(method: str, path: str, payload: dict[str, Any]) -> Any:
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def _gh_graphql(query: str, **variables: str) -> dict[str, Any]:
+    # Projects-v2 (the Priority field) has no REST surface at all - GraphQL is the
+    # only way to create/read/write it. Variables are passed through `-f`, which
+    # gh's own GraphQL command treats as plain string arguments.
+    cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for key, value in variables.items():
+        cmd += ["-f", f"{key}={value}"]
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode != 0:
+        raise GhError(f"GraphQL request failed: {result.stderr.strip()}")
+    payload = json.loads(result.stdout)
+    if payload.get("errors"):
+        raise GhError(f"GraphQL errors: {payload['errors']}")
+    return dict(payload["data"])
+
+
 class GhClient:
     """Thin wrapper around `gh api`. Not exercised by the unit test suite beyond its
     pure JSON-shaping helpers - the planning functions above carry the real coverage,
@@ -462,6 +508,7 @@ class GhClient:
             issue = ExistingIssue(
                 number=raw["number"],
                 database_id=raw["id"],
+                node_id=raw["node_id"],
                 body=body,
                 labels=frozenset(label["name"] for label in raw.get("labels", [])),
                 milestone=(raw.get("milestone") or {}).get("title"),
@@ -514,6 +561,7 @@ class GhClient:
         return ExistingIssue(
             number=raw["number"],
             database_id=raw["id"],
+            node_id=raw["node_id"],
             body=raw.get("body") or "",
             labels=frozenset(labels),
             milestone=None,
@@ -544,6 +592,113 @@ class GhClient:
             "POST",
             f"repos/:owner/:repo/issues/{parent_number}/sub_issues",
             {"sub_issue_id": child_database_id},
+        )
+
+    def repo_owner_login(self) -> str:
+        raw = _gh_get("repos/:owner/:repo") or {}
+        return str(raw["owner"]["login"])
+
+    def ensure_project(self, owner_login: str) -> str:
+        """Node id of the PROJECT_TITLE Projects-v2 board owned by `owner_login`,
+        creating it (and linking it to this repo) if it doesn't exist yet."""
+        data = _gh_graphql(
+            "query($login: String!) { organization(login: $login) { id "
+            "projectsV2(first: 100) { nodes { id title } } } }",
+            login=owner_login,
+        )
+        org = data["organization"]
+        for node in org["projectsV2"]["nodes"]:
+            if node["title"] == PROJECT_TITLE:
+                return str(node["id"])
+
+        created = _gh_graphql(
+            "mutation($ownerId: ID!, $title: String!) { createProjectV2(input: "
+            "{ownerId: $ownerId, title: $title}) { projectV2 { id } } }",
+            ownerId=org["id"],
+            title=PROJECT_TITLE,
+        )
+        project_id = str(created["createProjectV2"]["projectV2"]["id"])
+
+        repo_raw = _gh_get("repos/:owner/:repo") or {}
+        _gh_graphql(
+            "mutation($projectId: ID!, $repositoryId: ID!) { linkProjectV2ToRepository"
+            "(input: {projectId: $projectId, repositoryId: $repositoryId}) "
+            "{ repository { id } } }",
+            projectId=project_id,
+            repositoryId=str(repo_raw["node_id"]),
+        )
+        return project_id
+
+    def ensure_priority_field(self, project_id: str) -> tuple[str, dict[str, str]]:
+        """Returns (field node id, {"MUST": option id, ...}), creating the field
+        (and any of PRIORITIES missing from it) if needed."""
+        data = _gh_graphql(
+            "query($projectId: ID!) { node(id: $projectId) { ... on ProjectV2 { "
+            "fields(first: 50) { nodes { ... on ProjectV2SingleSelectField "
+            "{ id name options { id name } } } } } } }",
+            projectId=project_id,
+        )
+        for existing_field in data["node"]["fields"]["nodes"]:
+            if existing_field.get("name") == PRIORITY_FIELD_NAME:
+                return str(existing_field["id"]), {
+                    opt["name"]: opt["id"] for opt in existing_field["options"]
+                }
+
+        option_literals = ", ".join(
+            f'{{name: "{p}", color: {PRIORITY_OPTION_COLORS[p]}, description: ""}}'
+            for p in PRIORITIES
+        )
+        created = _gh_graphql(
+            "mutation($projectId: ID!) { createProjectV2Field(input: {projectId: "
+            f'$projectId, dataType: SINGLE_SELECT, name: "{PRIORITY_FIELD_NAME}", '
+            f"singleSelectOptions: [{option_literals}]}}) {{ projectV2Field {{ "
+            "... on ProjectV2SingleSelectField { id options { id name } } } } }",
+            projectId=project_id,
+        )
+        field = created["createProjectV2Field"]["projectV2Field"]
+        return str(field["id"]), {opt["name"]: opt["id"] for opt in field["options"]}
+
+    def fetch_project_priorities(self, project_id: str) -> dict[int, dict[str, Any]]:
+        """issue number -> {"item_id": ..., "priority": <name or None>}, for every
+        issue from this repo currently on the board (assumes under 100 items -
+        this project tracks one repo's backlog, not a cross-repo board)."""
+        data = _gh_graphql(
+            "query($projectId: ID!) { node(id: $projectId) { ... on ProjectV2 { "
+            "items(first: 100) { nodes { id content { ... on Issue { number } } "
+            'fieldValueByName(name: "Priority") { ... on '
+            "ProjectV2ItemFieldSingleSelectValue { name } } } } } } }",
+            projectId=project_id,
+        )
+        result: dict[int, dict[str, Any]] = {}
+        for node in data["node"]["items"]["nodes"]:
+            number = (node.get("content") or {}).get("number")
+            if number is None:
+                continue
+            priority_value = node.get("fieldValueByName") or {}
+            result[number] = {"item_id": node["id"], "priority": priority_value.get("name")}
+        return result
+
+    def add_project_item(self, project_id: str, issue_node_id: str) -> str:
+        data = _gh_graphql(
+            "mutation($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: "
+            "{projectId: $projectId, contentId: $contentId}) { item { id } } }",
+            projectId=project_id,
+            contentId=issue_node_id,
+        )
+        return str(data["addProjectV2ItemById"]["item"]["id"])
+
+    def set_priority_field(
+        self, project_id: str, item_id: str, field_id: str, option_id: str
+    ) -> None:
+        _gh_graphql(
+            "mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) "
+            "{ updateProjectV2ItemFieldValue(input: {projectId: $projectId, itemId: "
+            "$itemId, fieldId: $fieldId, value: {singleSelectOptionId: $optionId}}) "
+            "{ projectV2Item { id } } }",
+            projectId=project_id,
+            itemId=item_id,
+            fieldId=field_id,
+            optionId=option_id,
         )
 
 
@@ -580,6 +735,8 @@ def print_plan(
                 f"  ~ set issue type of #{action.detail['number']} ({action.item_id}) "
                 f"to {action.detail['issue_type']!r}"
             )
+        elif action.kind == "set_priority":
+            print(f"  ~ set priority of {action.item_id} to {action.detail['priority']!r}")
         elif action.kind == "ensure_sub_issue":
             print(
                 f"  ~ ensure {action.item_id} is linked as a sub-issue of {action.detail['parent_id']}"
@@ -594,6 +751,10 @@ def apply_plan(
     milestone_actions: list[str],
     milestone_numbers: dict[str, int],
     actions: list[Action],
+    project_id: str,
+    priority_field_id: str,
+    priority_option_ids: dict[str, str],
+    project_items: dict[int, dict[str, Any]],
 ) -> None:
     for name in label_actions:
         client.create_label(name)
@@ -608,6 +769,15 @@ def apply_plan(
         actions_by_item.setdefault(action.item_id, []).append(action)
 
     for item in items:
+        # Resolved upfront (not just as a post-loop fallback) so "set_priority" can
+        # rely on resolved[item.id] uniformly, whether this item already had an
+        # issue or gets one from a "create" action later in this same loop body.
+        if item.id not in resolved:
+            number = resolve_issue_number(item, by_number, {})
+            if number is not None:
+                resolved[item.id] = number
+                resolved_issues[item.id] = by_number[number]
+
         for action in actions_by_item.get(item.id, []):
             if action.kind == "create":
                 issue = client.create_issue(
@@ -629,11 +799,21 @@ def apply_plan(
                 )
             elif action.kind == "set_type":
                 client.set_issue_type(action.detail["number"], action.detail["issue_type"])
-        if item.id not in resolved:
-            number = resolve_issue_number(item, by_number, {})
-            if number is not None:
-                resolved[item.id] = number
-                resolved_issues[item.id] = by_number[number]
+            elif action.kind == "set_priority":
+                number = resolved[item.id]
+                existing_item = project_items.get(number)
+                if existing_item is not None:
+                    project_item_id = existing_item["item_id"]
+                else:
+                    project_item_id = client.add_project_item(
+                        project_id, resolved_issues[item.id].node_id
+                    )
+                client.set_priority_field(
+                    project_id,
+                    project_item_id,
+                    priority_field_id,
+                    priority_option_ids[action.detail["priority"]],
+                )
 
     sub_issue_cache: dict[int, set[int]] = {}
     for action in actions:
@@ -679,11 +859,19 @@ def main() -> int:
         linked_sub_issues = {
             number: client.fetch_sub_issue_ids(number) for number in parent_numbers
         }
+
+        owner_login = client.repo_owner_login()
+        project_id = client.ensure_project(owner_login)
+        priority_field_id, priority_option_ids = client.ensure_priority_field(project_id)
+        project_items = client.fetch_project_priorities(project_id)
+        project_priorities = {number: entry["priority"] for number, entry in project_items.items()}
     except GhError as exc:
         print(f"backlog_sync: {exc}", file=sys.stderr)
         return 1
 
-    actions, plan_errors = plan_sync(items, by_number, by_marker, linked_sub_issues)
+    actions, plan_errors = plan_sync(
+        items, by_number, by_marker, linked_sub_issues, project_priorities
+    )
     if plan_errors:
         print(f"backlog_sync: {len(plan_errors)} problem(s):", file=sys.stderr)
         for error in plan_errors:
@@ -702,7 +890,17 @@ def main() -> int:
 
     try:
         apply_plan(
-            client, items, by_number, label_actions, milestone_actions, milestone_numbers, actions
+            client,
+            items,
+            by_number,
+            label_actions,
+            milestone_actions,
+            milestone_numbers,
+            actions,
+            project_id,
+            priority_field_id,
+            priority_option_ids,
+            project_items,
         )
     except GhError as exc:
         print(f"backlog_sync: {exc}", file=sys.stderr)
