@@ -292,6 +292,7 @@ class ExistingIssue:
     number: int
     database_id: int
     node_id: str
+    title: str
     body: str
     labels: frozenset[str]
     milestone: str | None
@@ -398,6 +399,9 @@ def plan_sync(
             continue
 
         existing = by_number[number]
+        if existing.title != item.title:
+            actions.append(Action("set_title", item.id, {"number": number, "title": item.title}))
+
         if existing.body.strip() != desired_body.strip():
             actions.append(Action("update_body", item.id, {"number": number, "body": desired_body}))
 
@@ -501,10 +505,10 @@ def _gh_graphql(query: str, **variables: str) -> dict[str, Any]:
 
 
 class GhClient:
-    """Thin wrapper around `gh api`. Not exercised by the unit test suite beyond its
-    pure JSON-shaping helpers - the planning functions above carry the real coverage,
-    and this class's actual network behaviour is only meaningfully checked by running
-    it (docs.yml runs the --dry-run form on every PR touching docs/backlog/**)."""
+    """Thin wrapper around `gh api`. Its JSON-shaping logic is unit-tested with
+    `_gh_get`/`_gh_send`/`_gh_graphql` monkeypatched (see scripts/tests/); its actual
+    network behaviour against a real token is only meaningfully checked by running it
+    (docs.yml runs the --dry-run form on every PR touching docs/backlog/**)."""
 
     def fetch_issues(self) -> tuple[dict[int, ExistingIssue], dict[str, int]]:
         raw_issues = _gh_get("repos/:owner/:repo/issues?state=all&per_page=100") or []
@@ -518,6 +522,7 @@ class GhClient:
                 number=raw["number"],
                 database_id=raw["id"],
                 node_id=raw["node_id"],
+                title=raw.get("title") or "",
                 body=body,
                 labels=frozenset(label["name"] for label in raw.get("labels", [])),
                 milestone=(raw.get("milestone") or {}).get("title"),
@@ -571,12 +576,16 @@ class GhClient:
             number=raw["number"],
             database_id=raw["id"],
             node_id=raw["node_id"],
+            title=title,
             body=raw.get("body") or "",
             labels=frozenset(labels),
             milestone=None,
             issue_type=issue_type,
             state="OPEN",
         )
+
+    def set_title(self, number: int, title: str) -> None:
+        _gh_send("PATCH", f"repos/:owner/:repo/issues/{number}", {"title": title})
 
     def update_body(self, number: int, body: str) -> None:
         _gh_send("PATCH", f"repos/:owner/:repo/issues/{number}", {"body": body})
@@ -727,6 +736,11 @@ def print_plan(
     for action in actions:
         if action.kind == "create":
             print(f"  + create issue for {action.item_id}: {action.detail['title']!r}")
+        elif action.kind == "set_title":
+            print(
+                f"  ~ set title of #{action.detail['number']} ({action.item_id}) "
+                f"to {action.detail['title']!r}"
+            )
         elif action.kind == "update_body":
             print(f"  ~ update body of #{action.detail['number']} ({action.item_id})")
         elif action.kind == "set_labels":
@@ -803,6 +817,8 @@ def apply_plan(
                 )
                 resolved[item.id] = issue.number
                 resolved_issues[item.id] = issue
+            elif action.kind == "set_title":
+                client.set_title(action.detail["number"], action.detail["title"])
             elif action.kind == "update_body":
                 client.update_body(action.detail["number"], action.detail["body"])
             elif action.kind == "set_labels":
