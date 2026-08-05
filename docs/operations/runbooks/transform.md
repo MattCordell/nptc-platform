@@ -2,7 +2,7 @@
 
 `nptc-transform` converts the published SPIA Requesting workbook into either a
 defect report or an import dataset (PRD §12). This runbook covers the `run`
-command that lands with backlog issue [P0-1](https://github.com/aehrc/nptc-platform/issues/23):
+command that lands with backlog issue [P0-1](https://github.com/MattCordell/nptc-platform/issues/23):
 the entrypoint, the report-only guarantee (FR-70) and the determinism/idempotency
 contract (FR-73). It does not yet read the workbook or classify anything - see
 "Not implemented yet" below.
