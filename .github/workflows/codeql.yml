@@ -1,27 +1,29 @@
 name: CodeQL
 
 on:
+  pull_request:
   push:
     branches: [main]
   schedule:
-    # Daily rather than only on push to main (NFR-25) - a query-pack update
-    # surfaces a finding even on a day nobody touches the code, and this repo
-    # doesn't run CodeQL per-PR (see below), so this is also the main way
-    # findings on in-progress branches get caught before they land.
+    # Daily in addition to per-PR (NFR-25) - a query-pack update surfaces a
+    # finding even on a day nobody touches the code, so this is what catches
+    # findings on branches with no open PR.
     - cron: "17 3 * * *"
   workflow_dispatch:
-    # Per-PR CodeQL was dropped (2026-08-04) to stop paying its full cost on
-    # every push during active development - the daily schedule now covers
-    # regular detection. Trigger this manually on a specific branch/PR when
-    # you want assurance before merging something security-sensitive.
+    # Runs on every PR again (repo went public 2026-08-06, so per-PR cost is
+    # no longer a concern - see the removed upload:never comment below for the
+    # matching upload-side change). Keep this for ad-hoc runs against a branch
+    # that hasn't opened a PR yet.
 
 concurrency:
-  # Scheduled runs get their own group, distinct from push-triggered runs on the
-  # same ref: without this, `github.ref` is refs/heads/main for both a push to
-  # main and the daily schedule, so a push cancels an in-flight scheduled scan -
-  # and a cancelled run sends no failure email, directly undercutting the new
-  # severity gate's whole point (issue #87 review). Push/dispatch runs on the
-  # same ref still cancel each other, which is the behaviour worth keeping there.
+  # Scheduled runs get their own group, distinct from push/PR-triggered runs:
+  # without this, `github.ref` is refs/heads/main for both a push to main and
+  # the daily schedule, so a push cancels an in-flight scheduled scan - and a
+  # cancelled run sends no failure email, directly undercutting the severity
+  # gate's whole point (issue #87 review). For a pull_request event,
+  # `github.ref` is refs/pull/N/merge, which is already distinct per-PR and
+  # from refs/heads/main, so two pushes to the same PR still correctly cancel
+  # each other and a push to main still gets its own group.
   group: codeql-${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
   cancel-in-progress: true
 
@@ -36,9 +38,11 @@ jobs:
     permissions:
       contents: read
       # The analyze step queries the Actions API for workflow-run metadata
-      # while processing results, even with upload disabled below (caught by
-      # actually running this workflow, not just linting it).
+      # while processing results (caught by actually running this workflow,
+      # not just linting it).
       actions: read
+      # Required to upload SARIF results to the code-scanning API (below).
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -56,19 +60,16 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
 
-      # upload: never - this repo is private without GitHub Advanced
-      # Security, so uploading to the code-scanning API fails outright
-      # ("Advanced Security must be enabled for this repository to use code
-      # scanning" - caught by running this, not by reading the docs). We
-      # still get the scan itself; we just report it ourselves below instead
-      # of via the Security tab. Switch this to `always` (or drop the input
-      # entirely) once Advanced Security is enabled or the repo goes public.
+      # Uploads to the code-scanning API (default upload behaviour, no
+      # `upload:` input needed) now that the repo is public - findings show
+      # up in the Security tab and as PR annotations, not just the step
+      # summary and artifact below. `output: sarif-results` is kept so those
+      # still work unchanged.
       - name: Perform CodeQL analysis
         id: analyze
         uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
         with:
           category: "/language:${{ matrix.language }}"
-          upload: never
           output: sarif-results
 
       - name: Summarise findings

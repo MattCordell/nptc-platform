@@ -34,7 +34,7 @@ with. A stub module existing is not the same as a control being active.
 | Control | Where | Requirement | Status |
 |---|---|---|---|
 | Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 | Active |
-| Static analysis (CodeQL) daily, on push to main, and on demand, failing the build on a high/critical (security-severity >= 7.0) finding | `.github/workflows/codeql.yml` | — | Active |
+| Static analysis (CodeQL) on every pull request, daily, on push to main, and on demand, failing the build on a high/critical (security-severity >= 7.0) finding | `.github/workflows/codeql.yml` | — | Active |
 | Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 | Active |
 | Dependency updates | `.github/dependabot.yml` | NFR-25 | Active |
 | No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 | Active |
@@ -66,20 +66,21 @@ rather than left to be discovered.
 unauthenticated users by design (PRD §4.1) — a national standard behind a login would
 defeat its purpose. Submissions, user identities and internal comments are not public.
 
-**GitHub's native secret scanning, code scanning (CodeQL's Security tab integration)
-and OpenSSF Scorecard aren't active yet.** All three need GitHub Advanced Security to
-run against a private repository, and this one doesn't have it enabled — confirmed by
-running each, not assumed from the docs (CodeQL's own upload step fails outright with
-"Advanced Security must be enabled for this repository to use code scanning").
-`codeql.yml` still runs the actual scan daily and on push to main (plus on demand), with
-`upload: never` and findings summarised into the job's own step summary instead of the
-Security tab. Because a finding with no consequence is a finding nobody looks at, the
-workflow also fails outright on any high/critical (security-severity >= 7.0) result, so
-the daily scheduled run's own failure (and the email GitHub sends for it) is what
-substitutes for the missing Security-tab alert. Lower-severity findings stay
-advisory-only, printed to the step summary but not gating — `security-extended` on a
-pre-alpha codebase produces enough of those that gating on all of them would just teach
-reviewers to ignore a red run. `security.yml` runs the open-source gitleaks CLI directly
-against git history on every PR and daily. Both are real controls, just not surfaced
-through GitHub's own UI. Revisit all three once the repository goes public (see the
-licence decision in README.md) or Advanced Security is enabled first.
+**CodeQL now uploads to the Security tab (2026-08).** The repository went public, which
+makes GitHub code scanning free without needing GitHub Advanced Security (the prior
+private-repo upload failure — "Advanced Security must be enabled for this repository to
+use code scanning" — no longer applies). `codeql.yml` runs on every pull request,
+daily, on push to main, and on demand, and results (including PR annotations) go to the
+Security tab as well as the job's own step summary and a downloadable SARIF artifact. Because a finding with no consequence is a finding nobody looks at, the
+workflow also fails outright on any high/critical (security-severity >= 7.0) result,
+independent of the Security tab, so a PR or the daily scheduled run fails loudly rather
+than relying on someone checking the tab. Lower-severity findings stay advisory-only —
+`security-extended` on a pre-alpha codebase produces enough of those that gating on all
+of them would just teach reviewers to ignore a red run.
+
+**GitHub's native secret scanning and OpenSSF Scorecard aren't active yet (tracked in
+#108).** Unlike CodeQL's Security-tab integration above, neither of these was ever
+blocked specifically by Advanced Security or repository visibility — they're simply not
+set up yet. `security.yml` runs the open-source gitleaks CLI directly against git
+history on every PR and daily as an interim control, which native secret scanning would
+complement (not replace) with push-time blocking. Revisit both once #108 lands.
