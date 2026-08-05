@@ -114,14 +114,14 @@
     plus gitleaks secret scanning of git history).
   checklist:
     - "[x] dependabot.yml: uv/npm/github-actions ecosystems, grouped minor/patch, capped open-PR limit"
-    - "[x] codeql.yml: python and javascript-typescript, on PR/push/weekly"
+    - "[x] codeql.yml: python and javascript-typescript, on push to main, daily, and on demand"
     - "[x] security.yml: pip-audit and pnpm audit --prod failing on high/critical"
     - "[x] gitleaks scanning full git history"
   docs:
     - "[x] SECURITY.md: controls table and known-risks section updated to state what's active vs deferred"
   acceptance:
     - "Dependabot opens grouped minor/patch PRs weekly per ecosystem, capped at 5 open PRs each"
-    - "CodeQL runs on PR, push to main and weekly, for both python and javascript-typescript"
+    - "CodeQL runs on push to main, daily and on demand, for both python and javascript-typescript"
     - "pip-audit and pnpm audit --prod both fail the build on a high/critical finding"
     - "gitleaks scans full git history and fails the build on a genuine finding"
 

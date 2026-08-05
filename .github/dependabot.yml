@@ -13,14 +13,29 @@ updates:
         update-types: ["minor", "patch"]
     labels: ["infra", "dependencies"]
 
+  # Directory is the repository root, not /frontend, even though frontend/ is
+  # the only package: pnpm-workspace.yaml and pnpm-lock.yaml both live here and
+  # Dependabot must run where the lockfile is. From the root it runs `pnpm
+  # recursive update`, which rewrites the member manifests AND the shared
+  # lockfile; pointed at /frontend it found a package.json with no lockfile
+  # beside it and updated the manifest alone, so every PR it opened failed
+  # `pnpm install --frozen-lockfile` in CI (dependabot-core#11135, and #11487
+  # which made "update a pnpm workspace from a subdirectory" an explicit
+  # misconfiguration). Do not "tidy" this back to /frontend.
   - package-ecosystem: "npm"
-    directory: "/frontend"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
+      # Majors grouped too, unlike the other ecosystems. The frontend toolchain
+      # is peer-entangled - vite pins @vitejs/plugin-react, vitest pins vite,
+      # eslint pins @eslint/js and every plugin - so Dependabot's default of one
+      # PR per major produces a set of PRs that each fail on the others' absence.
+      npm-major:
+        update-types: ["major"]
     labels: ["frontend", "dependencies"]
 
   - package-ecosystem: "github-actions"
@@ -33,11 +48,14 @@ updates:
         update-types: ["minor", "patch"]
     labels: ["ci", "dependencies"]
 
-  # Tracks image tags in deploy/compose.yml (Foundation issue F-7). No
-  # Dockerfile of our own exists yet - that lands with the backend/frontend
-  # container images in P4/P5 - but Dependabot's docker ecosystem also scans
-  # compose files in this directory for base image updates.
-  - package-ecosystem: "docker"
+  # Tracks the postgres and keycloak image tags in deploy/compose.yml
+  # (Foundation issue F-7). "docker-compose", not "docker": the docker
+  # ecosystem reads Dockerfiles and Kubernetes manifests only and failed every
+  # run here with `dependency_file_not_found: No Dockerfiles nor Kubernetes
+  # YAML found in /deploy`. Compose files are a separate ecosystem, GA since
+  # February 2025. Add a "docker" entry alongside this one when our own
+  # Dockerfiles land with the backend/frontend container images in P4/P5.
+  - package-ecosystem: "docker-compose"
     directory: "/deploy"
     schedule:
       interval: "weekly"

@@ -40,7 +40,7 @@ jobs:
           fi
 
       - name: PR body links an issue
-        if: github.actor != 'dependabot[bot]'
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -52,22 +52,43 @@ jobs:
       # Dependabot PRs never link an issue (there is no per-bump issue to link) and a
       # routine dependency bump has no documentation impact by construction - both
       # checks above are about human-authored process, not applicable to automation.
+      #
+      # The exemption tests pull_request.user.login, the PR's author, not
+      # github.actor, which is whoever triggered *this event*. With github.actor
+      # the exemption silently missed: labelling or editing a Dependabot PR
+      # re-runs this workflow as the human who did it, and the issue-link check
+      # then failed a bot PR it was meant to skip (seen on PRs #13-#16).
       - name: Documentation impact is declared
-        if: github.actor != 'dependabot[bot]'
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BODY: ${{ github.event.pull_request.body }}
           BASE: ${{ github.event.pull_request.base.ref }}
         run: |
-          changed_src=$(git diff --name-only "origin/$BASE...HEAD" -- \
-            'backend/src/**' 'frontend/src/**' 'transform/src/**' 'shared/src/**')
-          changed_docs=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/**')
-          if [ -n "$changed_src" ] && [ -z "$changed_docs" ] && \
-             ! echo "$BODY" | grep -qi 'no-doc-impact:'; then
-            echo "::error::This PR changes application source under backend/src, frontend/src,"
-            echo "transform/src or shared/src, touches nothing under docs/**, and states no"
-            echo "'no-doc-impact:' reason. See the documentation-impact table in CONTRIBUTING.md."
-            exit 1
+          # Any file outside docs/** and *.md counts as "source" for this gate - the
+          # same rule ci.yml's own `code` path filter expresses (see its `changes`
+          # job) - not just the four */src/** trees. That widened scope is what
+          # catches a PR touching only scripts/, deploy/ or .github/workflows/: F-7
+          # added six env vars with no docs/operations/configuration.md because the
+          # old pathspec list never looked at deploy/ (issue #87).
+          changed_src=$(git diff --name-only "origin/$BASE...HEAD" -- . \
+            ':(exclude)docs/**' ':(exclude)*.md' ':(exclude).github/ISSUE_TEMPLATE/**')
+          # "Docs changed" recognises *any* markdown file, not just docs/** - CONTRIBUTING.md's
+          # own table names README.md and CONTRIBUTING.md as legitimate targets (setup,
+          # quickstart), so a deploy/compose.yml + README-quickstart PR must have an honest
+          # way to pass without a no-doc-impact reason, not just docs/**-rooted changes.
+          changed_docs=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/**' '*.md')
+          if [ -z "$changed_src" ] || [ -n "$changed_docs" ]; then
+            exit 0
           fi
+
+          # scripts/doc_impact_gate.py (unit-tested under scripts/tests/, including a
+          # regression test that reads .github/PULL_REQUEST_TEMPLATE.md directly and
+          # asserts it fails this gate) - not an inline heredoc, after an unanchored
+          # re.search previously found the literal string 'no-doc-impact:' inside the
+          # template's own instructional comment and read the word after it as a
+          # genuine declared reason (issue #87).
+          printf '%s' "$BODY" > /tmp/pr-body.txt
+          python3 scripts/doc_impact_gate.py /tmp/pr-body.txt
 
       - name: Backlog checklist updated on feature PRs
         if: contains(github.event.pull_request.labels.*.name, 'feature')
