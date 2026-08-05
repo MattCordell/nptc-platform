@@ -55,10 +55,14 @@ ignore = [
 known-first-party = ["nptc", "nptc_transform", "nptc_shared"]
 
 # --- mypy ----------------------------------------------------------------
+# `files`, not `packages`: mypy rejects specifying both module/package and
+# files in the same config ("May only specify one of: module/package, files,
+# or command"), and scripts/ has no __init__.py to be a package in the first
+# place - it must be a files entry, so packages can't be kept alongside it.
 [tool.mypy]
 python_version = "3.12"
 mypy_path = ["backend/src", "transform/src", "shared/src"]
-packages = ["nptc", "nptc_transform", "nptc_shared"]
+files = ["backend/src", "transform/src", "shared/src", "scripts"]
 strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
@@ -82,4 +86,5 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["backend/src", "transform/src", "shared/src"]
+source = ["backend/src", "transform/src", "shared/src", "scripts"]
+omit = ["scripts/tests/*"]

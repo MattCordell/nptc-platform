@@ -1,16 +1,19 @@
 """Unit tests for scripts/backlog_sync.py (Foundation issue F-6).
 
-Exercises the pure parsing/rendering/planning logic against synthetic fixtures. The
-GhClient I/O layer that actually talks to `gh api` is deliberately not covered here -
-see backlog_sync.py's own docstring on that class - it is exercised by really running
-the script (docs.yml's --dry-run job).
+Exercises the pure parsing/rendering/planning logic against synthetic fixtures, plus
+GhClient's JSON-shaping logic (with the module-level `_gh_get`/`_gh_send`/`_gh_graphql`
+transport monkeypatched) and print_plan/apply_plan/main (with a fake GhClient). Real
+network behaviour against a live token is exercised only by really running the script
+(docs.yml's --dry-run job).
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -252,8 +255,8 @@ def test_load_backlog_items_flags_duplicate_id_across_files() -> None:
 # --- render_body ---------------------------------------------------------------------
 
 
-def _item(**overrides: object) -> bs.BacklogItem:
-    defaults: dict[str, object] = {
+def _item(**overrides: Any) -> bs.BacklogItem:
+    defaults: dict[str, Any] = {
         "id": "F-1",
         "title": "Example",
         "milestone": "Foundation",
@@ -274,8 +277,8 @@ def _item(**overrides: object) -> bs.BacklogItem:
     return bs.BacklogItem(**defaults)
 
 
-def _existing(**overrides: object) -> bs.ExistingIssue:
-    defaults: dict[str, object] = {
+def _existing(**overrides: Any) -> bs.ExistingIssue:
+    defaults: dict[str, Any] = {
         "number": 42,
         "database_id": 1,
         "node_id": "I_node42",
@@ -564,3 +567,867 @@ def test_plan_milestones_returns_only_missing_titles() -> None:
     existing = {"Foundation", "P0 — Seeding transform"}
     missing = bs.plan_milestones(existing)
     assert missing == [t for t in bs.KNOWN_MILESTONES if t not in existing]
+
+
+# --- load_backlog_items: remaining edge cases --------------------------------------
+
+
+def test_load_backlog_items_flags_bad_item_id_and_skips_it() -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        - id: "not an id"
+          title: "Example"
+          milestone: "Foundation"
+          issue_type: Task
+          priority: MUST
+          docs: ["none: n/a"]
+        """,
+    )
+    items, errors = bs.load_backlog_items()
+    assert items == []
+    assert any("does not match the expected id pattern" in error for error in errors)
+
+
+def test_load_backlog_items_flags_non_list_yaml_top_level() -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        id: F-1
+        title: "Example"
+        """,
+    )
+    _, errors = bs.load_backlog_items()
+    assert any("expected a YAML list" in error for error in errors)
+
+
+# --- render_body: remaining fields ---------------------------------------------------
+
+
+def test_render_body_includes_requirement_ids() -> None:
+    body = bs.render_body(_item(requirements=("FR-06", "NFR-08")))
+    assert "## Requirement IDs" in body
+    assert "FR-06, NFR-08" in body
+
+
+def test_render_body_includes_mandated_tests() -> None:
+    body = bs.render_body(_item(tests=("NFR-38.1",)))
+    assert "## Mandated tests" in body
+    assert "NFR-38.1" in body
+
+
+def test_render_body_includes_acceptance_criteria() -> None:
+    body = bs.render_body(_item(acceptance=("It works",)))
+    assert "## Acceptance criteria" in body
+    assert "- It works" in body
+
+
+# --- _gh_get / _gh_send / _gh_graphql (transport helpers) --------------------------
+
+
+class _FakeCompletedProcess:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_gh_get_returns_parsed_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> _FakeCompletedProcess:
+        calls.append((cmd, kwargs))
+        return _FakeCompletedProcess(stdout='{"a": 1}')
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = bs._gh_get("repos/:owner/:repo")
+    assert result == {"a": 1}
+    # encoding="utf-8" is required explicitly (Windows cp1252 defect, see the
+    # inline comment on _gh_get) - assert it's actually passed, not assumed.
+    assert calls[0][1]["encoding"] == "utf-8"
+
+
+def test_gh_get_returns_none_for_empty_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _FakeCompletedProcess(stdout="  "))
+    assert bs._gh_get("repos/:owner/:repo") is None
+
+
+def test_gh_get_raises_gherror_on_nonzero_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: _FakeCompletedProcess(returncode=1, stderr="boom")
+    )
+    with pytest.raises(bs.GhError, match="boom"):
+        bs._gh_get("repos/:owner/:repo")
+
+
+def test_gh_send_returns_parsed_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: _FakeCompletedProcess(stdout='{"ok": true}')
+    )
+    assert bs._gh_send("PATCH", "repos/:owner/:repo/issues/1", {"title": "x"}) == {"ok": True}
+
+
+def test_gh_send_raises_gherror_on_nonzero_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: _FakeCompletedProcess(returncode=1, stderr="nope")
+    )
+    with pytest.raises(bs.GhError, match="nope"):
+        bs._gh_send("PATCH", "repos/:owner/:repo/issues/1", {})
+
+
+def test_gh_graphql_returns_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompletedProcess(stdout='{"data": {"x": 1}}'),
+    )
+    assert bs._gh_graphql("query { x }") == {"x": 1}
+
+
+def test_gh_graphql_raises_gherror_on_nonzero_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: _FakeCompletedProcess(returncode=1, stderr="down")
+    )
+    with pytest.raises(bs.GhError, match="down"):
+        bs._gh_graphql("query { x }")
+
+
+def test_gh_graphql_raises_gherror_on_graphql_errors_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: _FakeCompletedProcess(stdout='{"data": null, "errors": ["bad field"]}'),
+    )
+    with pytest.raises(bs.GhError, match="bad field"):
+        bs._gh_graphql("query { x }")
+
+
+# --- GhClient: JSON-shaping methods (module-level _gh_* monkeypatched) -------------
+
+
+def test_ghclient_fetch_issues_skips_prs_and_extracts_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = [
+        {
+            "number": 1,
+            "id": 100,
+            "node_id": "n1",
+            "title": "PR",
+            "body": "",
+            "state": "open",
+            "pull_request": {},
+        },
+        {
+            "number": 2,
+            "id": 200,
+            "node_id": "n2",
+            "title": "Has marker",
+            "body": "<!-- nptc-backlog-id: F-1 -->",
+            "labels": [{"name": "infra"}],
+            "milestone": {"title": "Foundation"},
+            "type": {"name": "Task"},
+            "state": "open",
+        },
+        {
+            "number": 3,
+            "id": 300,
+            "node_id": "n3",
+            "title": "No marker",
+            "body": "plain body",
+            "labels": [],
+            "milestone": None,
+            "type": None,
+            "state": "closed",
+        },
+    ]
+    monkeypatch.setattr(bs, "_gh_get", lambda path: raw)
+    client = bs.GhClient()
+    by_number, by_marker = client.fetch_issues()
+    assert set(by_number) == {2, 3}
+    assert by_marker == {"F-1": 2}
+    assert by_number[2].labels == frozenset({"infra"})
+    assert by_number[2].milestone == "Foundation"
+    assert by_number[2].issue_type == "Task"
+    assert by_number[3].milestone is None
+    assert by_number[3].issue_type is None
+
+
+def test_ghclient_fetch_label_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bs, "_gh_get", lambda path: [{"name": "infra"}, {"name": "docs"}])
+    assert bs.GhClient().fetch_label_names() == {"infra", "docs"}
+
+
+def test_ghclient_fetch_milestones(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bs, "_gh_get", lambda path: [{"title": "Foundation", "number": 1}])
+    assert bs.GhClient().fetch_milestones() == {"Foundation": 1}
+
+
+def test_ghclient_create_label_sends_taxonomy_description_and_color(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    def fake_send(method: str, path: str, payload: dict[str, Any]) -> None:
+        sent["method"], sent["path"], sent["payload"] = method, path, payload
+
+    monkeypatch.setattr(bs, "_gh_send", fake_send)
+    bs.GhClient().create_label("security")
+    description, color = bs.LABEL_TAXONOMY["security"]
+    assert sent["payload"] == {"name": "security", "color": color, "description": description}
+
+
+def test_ghclient_create_milestone_returns_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bs, "_gh_send", lambda method, path, payload: {"number": "7"})
+    assert bs.GhClient().create_milestone("Foundation") == 7
+
+
+def test_ghclient_create_issue_omits_milestone_when_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: dict[str, Any] = {}
+
+    def fake_send(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sent["payload"] = payload
+        return {"number": 1, "id": 10, "node_id": "n1", "body": "rendered body"}
+
+    monkeypatch.setattr(bs, "_gh_send", fake_send)
+    issue = bs.GhClient().create_issue("Title", "Body", ["infra"], None, "Task")
+    assert "milestone" not in sent["payload"]
+    assert issue.number == 1
+    assert issue.labels == frozenset({"infra"})
+    assert issue.issue_type == "Task"
+
+
+def test_ghclient_create_issue_includes_milestone_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    def fake_send(method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sent["payload"] = payload
+        return {"number": 1, "id": 10, "node_id": "n1", "body": ""}
+
+    monkeypatch.setattr(bs, "_gh_send", fake_send)
+    bs.GhClient().create_issue("Title", "Body", [], 5, "Task")
+    assert sent["payload"]["milestone"] == 5
+
+
+def test_ghclient_update_body_set_labels_set_milestone_set_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = []
+    monkeypatch.setattr(
+        bs, "_gh_send", lambda method, path, payload: sent.append((method, path, payload))
+    )
+    client = bs.GhClient()
+    client.update_body(1, "new body")
+    client.set_labels(1, ["infra"])
+    client.set_milestone(1, 5)
+    client.set_issue_type(1, "Feature")
+    assert sent[0] == ("PATCH", "repos/:owner/:repo/issues/1", {"body": "new body"})
+    assert sent[1] == ("PUT", "repos/:owner/:repo/issues/1/labels", {"labels": ["infra"]})
+    assert sent[2] == ("PATCH", "repos/:owner/:repo/issues/1", {"milestone": 5})
+    assert sent[3] == ("PATCH", "repos/:owner/:repo/issues/1", {"type": "Feature"})
+
+
+def test_ghclient_fetch_sub_issue_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bs, "_gh_get", lambda path: [{"id": 1}, {"id": 2}])
+    assert bs.GhClient().fetch_sub_issue_ids(100) == {1, 2}
+
+
+def test_ghclient_add_sub_issue_sends_expected_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: dict[str, Any] = {}
+    monkeypatch.setattr(
+        bs,
+        "_gh_send",
+        lambda method, path, payload: sent.update(method=method, path=path, payload=payload),
+    )
+    bs.GhClient().add_sub_issue(100, 2001)
+    assert sent["path"] == "repos/:owner/:repo/issues/100/sub_issues"
+    assert sent["payload"] == {"sub_issue_id": 2001}
+
+
+def test_ghclient_repo_owner_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bs, "_gh_get", lambda path: {"owner": {"login": "MattCordell"}})
+    assert bs.GhClient().repo_owner_login() == "MattCordell"
+
+
+def test_ghclient_ensure_project_returns_existing_project_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        return {
+            "organization": {
+                "id": "org1",
+                "projectsV2": {"nodes": [{"id": "proj1", "title": bs.PROJECT_TITLE}]},
+            }
+        }
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    assert bs.GhClient().ensure_project("myorg") == "proj1"
+
+
+def test_ghclient_ensure_project_creates_and_links_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        calls.append((query, variables))
+        if "createProjectV2" in query:
+            return {"createProjectV2": {"projectV2": {"id": "new-proj"}}}
+        if "linkProjectV2ToRepository" in query:
+            return {"repository": {"id": "repo1"}}
+        return {"organization": {"id": "org1", "projectsV2": {"nodes": []}}}
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    monkeypatch.setattr(bs, "_gh_get", lambda path: {"node_id": "repo-node"})
+    project_id = bs.GhClient().ensure_project("myorg")
+    assert project_id == "new-proj"
+    assert any("linkProjectV2ToRepository" in q for q, _ in calls)
+
+
+def test_ghclient_ensure_priority_field_returns_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        return {
+            "node": {
+                "fields": {
+                    "nodes": [
+                        {
+                            "name": bs.PRIORITY_FIELD_NAME,
+                            "id": "field1",
+                            "options": [{"id": "opt-must", "name": "MUST"}],
+                        }
+                    ]
+                }
+            }
+        }
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    field_id, options = bs.GhClient().ensure_priority_field("proj1")
+    assert field_id == "field1"
+    assert options == {"MUST": "opt-must"}
+
+
+def test_ghclient_ensure_priority_field_creates_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        if "createProjectV2Field" in query:
+            return {
+                "createProjectV2Field": {
+                    "projectV2Field": {
+                        "id": "new-field",
+                        "options": [
+                            {"id": "o1", "name": "MUST"},
+                            {"id": "o2", "name": "SHOULD"},
+                            {"id": "o3", "name": "MAY"},
+                        ],
+                    }
+                }
+            }
+        return {"node": {"fields": {"nodes": []}}}
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    field_id, options = bs.GhClient().ensure_priority_field("proj1")
+    assert field_id == "new-field"
+    assert options == {"MUST": "o1", "SHOULD": "o2", "MAY": "o3"}
+
+
+def test_ghclient_fetch_project_priorities_shapes_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        return {
+            "node": {
+                "items": {
+                    "nodes": [
+                        {
+                            "id": "item1",
+                            "content": {"number": 42},
+                            "fieldValueByName": {"name": "MUST"},
+                        },
+                        {"id": "item2", "content": {"number": 43}, "fieldValueByName": None},
+                        {"id": "item3", "content": None, "fieldValueByName": None},
+                    ]
+                }
+            }
+        }
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    result = bs.GhClient().fetch_project_priorities("proj1")
+    assert result == {
+        42: {"item_id": "item1", "priority": "MUST"},
+        43: {"item_id": "item2", "priority": None},
+    }
+
+
+def test_ghclient_add_project_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        bs, "_gh_graphql", lambda q, **v: {"addProjectV2ItemById": {"item": {"id": "item1"}}}
+    )
+    assert bs.GhClient().add_project_item("proj1", "issue-node") == "item1"
+
+
+def test_ghclient_set_priority_field_passes_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {}
+
+    def fake_graphql(query: str, **variables: str) -> dict[str, Any]:
+        seen.update(variables)
+        return {}
+
+    monkeypatch.setattr(bs, "_gh_graphql", fake_graphql)
+    bs.GhClient().set_priority_field("proj1", "item1", "field1", "opt1")
+    assert seen == {
+        "projectId": "proj1",
+        "itemId": "item1",
+        "fieldId": "field1",
+        "optionId": "opt1",
+    }
+
+
+# --- print_plan ----------------------------------------------------------------------
+
+
+def test_print_plan_reports_no_changes(capsys: pytest.CaptureFixture[str]) -> None:
+    bs.print_plan([], [], [])
+    assert "no changes" in capsys.readouterr().out
+
+
+def test_print_plan_prints_one_line_per_action_kind(capsys: pytest.CaptureFixture[str]) -> None:
+    actions = [
+        bs.Action("create", "F-1", {"title": "New"}),
+        bs.Action("update_body", "F-2", {"number": 1}),
+        bs.Action("set_labels", "F-3", {"number": 2, "labels": ["infra"]}),
+        bs.Action("set_milestone", "F-4", {"number": 3, "milestone": "Foundation"}),
+        bs.Action("set_type", "F-5", {"number": 4, "issue_type": "Task"}),
+        bs.Action("set_priority", "F-6", {"priority": "MUST"}),
+        bs.Action("ensure_sub_issue", "F-7.1", {"parent_id": "F-7"}),
+    ]
+    bs.print_plan(["security"], ["Foundation"], actions)
+    out = capsys.readouterr().out
+    assert "create label security" in out
+    assert "create milestone 'Foundation'" in out
+    assert "create issue for F-1" in out
+    assert "update body of #1 (F-2)" in out
+    assert "set labels of #2 (F-3)" in out
+    assert "set milestone of #3 (F-4)" in out
+    assert "set issue type of #4 (F-5)" in out
+    assert "set priority of F-6" in out
+    assert "F-7.1 is linked as a sub-issue of F-7" in out
+
+
+# --- apply_plan ------------------------------------------------------------------
+
+
+class _FakeGhClient(bs.GhClient):
+    """Records every call apply_plan makes, in call order, without touching gh.
+
+    Subclasses the real GhClient (rather than duck-typing independently) purely so
+    it satisfies apply_plan's `client: GhClient` type hint under mypy --strict; none
+    of the base class's own methods are invoked."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self._next_issue_number = 1000
+
+    def create_label(self, name: str) -> None:
+        self.calls.append(("create_label", (name,)))
+
+    def create_milestone(self, title: str) -> int:
+        self.calls.append(("create_milestone", (title,)))
+        return 99
+
+    def create_issue(
+        self,
+        title: str,
+        body: str,
+        labels: list[str],
+        milestone_number: int | None,
+        issue_type: str,
+    ) -> bs.ExistingIssue:
+        self.calls.append(("create_issue", (title, body, labels, milestone_number, issue_type)))
+        self._next_issue_number += 1
+        return bs.ExistingIssue(
+            number=self._next_issue_number,
+            database_id=self._next_issue_number * 10,
+            node_id=f"node-{self._next_issue_number}",
+            body=body,
+            labels=frozenset(labels),
+            milestone=None,
+            issue_type=issue_type,
+            state="OPEN",
+        )
+
+    def update_body(self, number: int, body: str) -> None:
+        self.calls.append(("update_body", (number, body)))
+
+    def set_labels(self, number: int, labels: list[str]) -> None:
+        self.calls.append(("set_labels", (number, labels)))
+
+    def set_milestone(self, number: int, milestone_number: int) -> None:
+        self.calls.append(("set_milestone", (number, milestone_number)))
+
+    def set_issue_type(self, number: int, issue_type: str) -> None:
+        self.calls.append(("set_issue_type", (number, issue_type)))
+
+    def fetch_sub_issue_ids(self, parent_number: int) -> set[int]:
+        self.calls.append(("fetch_sub_issue_ids", (parent_number,)))
+        return set()
+
+    def add_sub_issue(self, parent_number: int, child_database_id: int) -> None:
+        self.calls.append(("add_sub_issue", (parent_number, child_database_id)))
+
+    def add_project_item(self, project_id: str, issue_node_id: str) -> str:
+        self.calls.append(("add_project_item", (project_id, issue_node_id)))
+        return "new-item-id"
+
+    def set_priority_field(
+        self, project_id: str, item_id: str, field_id: str, option_id: str
+    ) -> None:
+        self.calls.append(("set_priority_field", (project_id, item_id, field_id, option_id)))
+
+
+def test_apply_plan_creates_issue_then_sets_priority_for_it() -> None:
+    item = _item()
+    client = _FakeGhClient()
+    actions = [
+        bs.Action(
+            "create",
+            item.id,
+            {
+                "title": item.title,
+                "body": "body",
+                "labels": [],
+                "milestone": "Foundation",
+                "issue_type": "Task",
+            },
+        ),
+        bs.Action("set_priority", item.id, {"priority": "MUST"}),
+    ]
+    bs.apply_plan(
+        client,
+        [item],
+        {},
+        {},
+        [],
+        [],
+        {"Foundation": 1},
+        actions,
+        "proj1",
+        "field1",
+        {"MUST": "opt-must"},
+        {},
+    )
+    kinds = [kind for kind, _ in client.calls]
+    assert kinds == ["create_issue", "add_project_item", "set_priority_field"]
+    # the new issue's node_id must be what add_project_item was called with
+    _, add_args = client.calls[1]
+    assert add_args[1] == "node-1001"
+
+
+def test_apply_plan_set_priority_reuses_existing_project_item() -> None:
+    item = _item(github_issue=42)
+    existing = _existing(number=42, database_id=420, node_id="n42")
+    client = _FakeGhClient()
+    actions = [bs.Action("set_priority", item.id, {"number": 42, "priority": "SHOULD"})]
+    bs.apply_plan(
+        client,
+        [item],
+        {42: existing},
+        {},
+        [],
+        [],
+        {},
+        actions,
+        "proj1",
+        "field1",
+        {"SHOULD": "opt-should"},
+        {42: {"item_id": "existing-item"}},
+    )
+    kinds = [kind for kind, _ in client.calls]
+    assert kinds == ["set_priority_field"]  # add_project_item skipped - already on the board
+    _, args = client.calls[0]
+    assert args == ("proj1", "existing-item", "field1", "opt-should")
+
+
+def test_apply_plan_update_body_labels_milestone_type() -> None:
+    item = _item(github_issue=42)
+    existing = _existing(number=42, database_id=420, node_id="n42")
+    client = _FakeGhClient()
+    actions = [
+        bs.Action("update_body", item.id, {"number": 42, "body": "new body"}),
+        bs.Action("set_labels", item.id, {"number": 42, "labels": ["infra"]}),
+        bs.Action("set_milestone", item.id, {"number": 42, "milestone": "Foundation"}),
+        bs.Action("set_type", item.id, {"number": 42, "issue_type": "Feature"}),
+    ]
+    bs.apply_plan(
+        client,
+        [item],
+        {42: existing},
+        {},
+        [],
+        [],
+        {"Foundation": 7},
+        actions,
+        None,
+        None,
+        {},
+        {},
+    )
+    assert ("update_body", (42, "new body")) in client.calls
+    assert ("set_labels", (42, ["infra"])) in client.calls
+    assert ("set_milestone", (42, 7)) in client.calls
+    assert ("set_issue_type", (42, "Feature")) in client.calls
+
+
+def test_apply_plan_ensure_sub_issue_links_once_and_caches_lookup() -> None:
+    parent = _item(id="P1-6", github_issue=100)
+    child_a = _item(id="P1-6.1", parent_id="P1-6", github_issue=101)
+    child_b = _item(id="P1-6.2", parent_id="P1-6", github_issue=102)
+    by_number = {
+        100: _existing(number=100, database_id=1000, node_id="n100"),
+        101: _existing(number=101, database_id=1001, node_id="n101"),
+        102: _existing(number=102, database_id=1002, node_id="n102"),
+    }
+    client = _FakeGhClient()
+    actions = [
+        bs.Action("ensure_sub_issue", "P1-6.1", {"parent_id": "P1-6"}),
+        bs.Action("ensure_sub_issue", "P1-6.2", {"parent_id": "P1-6"}),
+    ]
+    bs.apply_plan(
+        client,
+        [parent, child_a, child_b],
+        by_number,
+        {},
+        [],
+        [],
+        {},
+        actions,
+        None,
+        None,
+        {},
+        {},
+    )
+    fetch_calls = [c for c in client.calls if c[0] == "fetch_sub_issue_ids"]
+    add_calls = [c for c in client.calls if c[0] == "add_sub_issue"]
+    # fetched once for the parent, reused (cached) for the second child
+    assert len(fetch_calls) == 1
+    assert len(add_calls) == 2
+
+
+def test_apply_plan_creates_labels_and_milestones_upfront() -> None:
+    client = _FakeGhClient()
+    bs.apply_plan(
+        client,
+        [],
+        {},
+        {},
+        ["security"],
+        ["Foundation"],
+        {},
+        [],
+        None,
+        None,
+        {},
+        {},
+    )
+    assert ("create_label", ("security",)) in client.calls
+    assert ("create_milestone", ("Foundation",)) in client.calls
+
+
+# --- main ------------------------------------------------------------------------
+
+
+class _MainFakeGhClient:
+    """Configurable fake for main()'s three call sites: fetch_issues/labels/
+    milestones/sub-issues, the Projects-v2 bootstrap, and (on --apply) apply_plan's
+    client. `project_error`, if set, is raised by repo_owner_login."""
+
+    def __init__(
+        self,
+        issues: dict[int, bs.ExistingIssue] | None = None,
+        markers: dict[str, int] | None = None,
+        project_error: Exception | None = None,
+    ) -> None:
+        self._issues = issues or {}
+        self._markers = markers or {}
+        self._project_error = project_error
+        self.apply_calls: list[str] = []
+
+    def fetch_issues(self) -> tuple[dict[int, bs.ExistingIssue], dict[str, int]]:
+        return self._issues, self._markers
+
+    def fetch_label_names(self) -> set[str]:
+        return set(bs.LABEL_TAXONOMY)
+
+    def fetch_milestones(self) -> dict[str, int]:
+        return {title: i for i, title in enumerate(bs.KNOWN_MILESTONES)}
+
+    def fetch_sub_issue_ids(self, parent_number: int) -> set[int]:
+        return set()
+
+    def repo_owner_login(self) -> str:
+        if self._project_error is not None:
+            raise self._project_error
+        return "MattCordell"
+
+    def ensure_project(self, owner_login: str) -> str:
+        return "proj1"
+
+    def ensure_priority_field(self, project_id: str) -> tuple[str, dict[str, str]]:
+        return "field1", {"MUST": "o1", "SHOULD": "o2", "MAY": "o3"}
+
+    def fetch_project_priorities(self, project_id: str) -> dict[int, dict[str, Any]]:
+        return {}
+
+    def create_issue(self, *a: Any, **k: Any) -> bs.ExistingIssue:
+        self.apply_calls.append("create_issue")
+        return bs.ExistingIssue(
+            number=1,
+            database_id=1,
+            node_id="n1",
+            body="x",
+            labels=frozenset(),
+            milestone=None,
+            issue_type="Task",
+            state="OPEN",
+        )
+
+    def add_project_item(self, project_id: str, issue_node_id: str) -> str:
+        self.apply_calls.append("add_project_item")
+        return "item1"
+
+    def set_priority_field(self, *a: Any) -> None:
+        self.apply_calls.append("set_priority_field")
+
+    def create_label(self, name: str) -> None:
+        self.apply_calls.append("create_label")
+
+    def create_milestone(self, title: str) -> int:
+        self.apply_calls.append("create_milestone")
+        return 1
+
+
+def _write_valid_backlog(path: Path) -> None:
+    _write(
+        path,
+        "foundation.yaml",
+        """\
+        - id: F-1
+          title: "Example"
+          milestone: "Foundation"
+          issue_type: Task
+          priority: MUST
+          docs: ["none: n/a"]
+        """,
+    )
+
+
+def test_main_returns_1_on_backlog_errors_before_any_network_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        - id: F-1
+          title: "Example"
+          milestone: "P9 — Does not exist"
+          issue_type: Task
+          priority: MUST
+          docs: ["none: n/a"]
+        """,
+    )
+
+    class _ExplodingClient:
+        def __getattr__(self, name: str) -> Any:
+            raise AssertionError(f"main() must not reach GhClient.{name} on a backlog error")
+
+    monkeypatch.setattr(bs, "GhClient", _ExplodingClient)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
+    assert bs.main() == 1
+    assert "problem(s) in docs/backlog" in capsys.readouterr().err
+
+
+def test_main_returns_1_when_fetch_issues_raises(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_valid_backlog(bs.BACKLOG_DIR)
+
+    class _RaisingClient:
+        def fetch_issues(self) -> Any:
+            raise bs.GhError("network down")
+
+    monkeypatch.setattr(bs, "GhClient", _RaisingClient)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
+    assert bs.main() == 1
+    assert "network down" in capsys.readouterr().err
+
+
+def test_main_degrades_gracefully_when_projects_v2_unavailable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The principal failure mode this degrade-path exists for: CI's default
+    GITHUB_TOKEN cannot reach Projects-v2 at all. main() must still complete the
+    rest of the sync and print a warning, not crash or skip everything."""
+    _write_valid_backlog(bs.BACKLOG_DIR)
+    client = _MainFakeGhClient(project_error=bs.GhError("no project scope"))
+    monkeypatch.setattr(bs, "GhClient", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
+    result = bs.main()
+    err = capsys.readouterr().err
+    assert result == 0
+    assert "Projects-v2 (Priority) sync unavailable" in err
+    assert "no project scope" in err
+
+
+def test_main_dry_run_prints_plan_and_does_not_apply(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_valid_backlog(bs.BACKLOG_DIR)
+    client = _MainFakeGhClient()
+    monkeypatch.setattr(bs, "GhClient", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
+    result = bs.main()
+    out = capsys.readouterr().out
+    assert result == 0
+    assert "dry-run" in out
+    assert client.apply_calls == []
+
+
+def test_main_apply_runs_apply_plan_and_reports_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_valid_backlog(bs.BACKLOG_DIR)
+    client = _MainFakeGhClient()
+    monkeypatch.setattr(bs, "GhClient", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py", "--apply"])
+    result = bs.main()
+    out = capsys.readouterr().out
+    assert result == 0
+    assert "applied" in out
+    assert "create_issue" in client.apply_calls
+
+
+def test_main_returns_1_on_plan_errors(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(
+        bs.BACKLOG_DIR,
+        "foundation.yaml",
+        """\
+        - id: F-1
+          title: "Example"
+          milestone: "Foundation"
+          issue_type: Task
+          priority: MUST
+          github_issue: 999
+          docs: ["none: n/a"]
+        """,
+    )
+    client = _MainFakeGhClient()  # by_number has no #999 -> plan_sync errors
+    monkeypatch.setattr(bs, "GhClient", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
+    result = bs.main()
+    assert result == 1
+    assert "999" in capsys.readouterr().err
