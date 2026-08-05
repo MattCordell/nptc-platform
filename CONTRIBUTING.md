@@ -67,7 +67,7 @@ Plus, for this project:
    `docs/requirements/requirements.yaml` is moved to `implemented` when it is. For an
    infrastructure/process requirement with no plausible test, an `evidence:` path
    (pointing at the CI config or document that demonstrates it) may stand in for the test
-   marker instead — see ADR-0002 and the `requirements.yaml` header.
+   marker, or accompany one — see ADR-0002 and the `requirements.yaml` header.
 
 ## Documentation is part of the change
 

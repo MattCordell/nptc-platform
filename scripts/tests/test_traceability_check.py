@@ -229,6 +229,22 @@ def test_run_checks_flags_evidence_path_with_nothing_before_the_fragment() -> No
     assert any("NFR-37" in error and "no path before the #fragment" in error for error in errors)
 
 
+def test_run_checks_flags_evidence_path_with_a_backslash() -> None:
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37",
+            "MUST",
+            "foundation",
+            "t",
+            "implemented",
+            "",
+            evidence="docs\\governance\\hazard-log.md",
+        ),
+    }
+    errors = tc.run_checks(requirements, {})
+    assert any("NFR-37" in error and "backslash" in error for error in errors)
+
+
 def test_run_checks_flags_evidence_path_that_escapes_the_repo_root(tmp_path: Path) -> None:
     requirements = {
         "NFR-37": tc.Requirement(

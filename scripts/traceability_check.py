@@ -139,6 +139,11 @@ def _validate_evidence(req: Requirement) -> str | None:
     path_part, _, fragment = req.evidence.partition("#")
     if not path_part:
         return f"{req.id}: evidence path '{req.evidence}' has no path before the #fragment"
+    if "\\" in path_part:
+        return (
+            f"{req.id}: evidence path '{req.evidence}' uses a backslash - "
+            "use forward slashes (repo convention, see .gitattributes)"
+        )
 
     target = (ROOT / path_part).resolve()
     try:
