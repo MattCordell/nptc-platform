@@ -72,17 +72,21 @@ jobs:
           # old pathspec list never looked at deploy/ (issue #87).
           changed_src=$(git diff --name-only "origin/$BASE...HEAD" -- . \
             ':(exclude)docs/**' ':(exclude)*.md' ':(exclude).github/ISSUE_TEMPLATE/**')
-          changed_docs=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/**')
+          # "Docs changed" recognises *any* markdown file, not just docs/** - CONTRIBUTING.md's
+          # own table names README.md and CONTRIBUTING.md as legitimate targets (setup,
+          # quickstart), so a deploy/compose.yml + README-quickstart PR must have an honest
+          # way to pass without a no-doc-impact reason, not just docs/**-rooted changes.
+          changed_docs=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/**' '*.md')
           if [ -z "$changed_src" ] || [ -n "$changed_docs" ]; then
             exit 0
           fi
 
-          # grep for the literal string 'no-doc-impact:' used to pass on the
-          # committed PR_TEMPLATE.md's own unticked boilerplate - it contains that
-          # exact string (issue #87). Require a *ticked* box with a real,
-          # non-empty reason instead: either the no-doc-impact option or the
-          # follow-up-issue option (CONTRIBUTING.md offers both, plus "docs
-          # updated in this PR", which is covered by the changed_docs check above).
+          # grep for the literal string 'no-doc-impact:' used to pass on the committed
+          # PR_TEMPLATE.md's own unticked boilerplate - it contains that exact string
+          # (issue #87). Require a real, non-empty reason instead - CONTRIBUTING.md's
+          # own documented contract is a bare `no-doc-impact: <reason>` line (or the
+          # follow-up-issue equivalent), not specifically a ticked checkbox, so a body
+          # written without the PR template's checkbox scaffolding must still pass.
           python3 - <<'PYEOF'
           import os
           import re
@@ -90,25 +94,35 @@ jobs:
 
           body = os.environ.get("BODY") or ""
 
-          def ticked_reason(pattern):
+          def declared_reason(pattern):
               match = re.search(pattern, body, re.IGNORECASE)
               if not match:
                   return None
               reason = match.group("reason")
-              reason = re.sub(r"<!--.*?-->", "", reason, flags=re.DOTALL)
+              # Anchored to a single line (no re.DOTALL - the reason can never span
+              # lines), so an unticked/empty box can't swallow the next body line as
+              # its "reason". If the reason is itself only an unterminated comment
+              # marker (a placeholder HTML comment wrapped onto a later line), that
+              # leaves a stray "<!--" behind after stripping complete comments - treat
+              # that the same as no reason at all, not a truthy one.
+              reason = re.sub(r"<!--.*?-->", "", reason)
               reason = reason.replace("`", "").strip()
-              return reason or None
+              if not reason or "<!--" in reason or "-->" in reason:
+                  return None
+              return reason
 
-          no_impact = ticked_reason(r"-\s*\[x\]\s*`?no-doc-impact:`?\s*(?P<reason>.*)")
-          followup = ticked_reason(r"-\s*\[x\]\s*Follow-up issue #\d+\s*because:\s*(?P<reason>.*)")
+          no_impact = declared_reason(r"no-doc-impact:`?[^\S\n]*(?P<reason>[^\n]*)")
+          followup = declared_reason(
+              r"Follow-up issue #\d+[^\S\n]*because:[^\S\n]*(?P<reason>[^\n]*)"
+          )
           reason = no_impact or followup
 
           if reason:
               print(f"Documentation impact declared: {reason}")
               sys.exit(0)
 
-          print("::error::This PR changes source outside docs/** with no docs update, and no")
-          print("ticked 'no-doc-impact: <reason>' or 'Follow-up issue #N because: <reason>' box")
+          print("::error::This PR changes source outside docs/**/*.md with no docs update, and")
+          print("no 'no-doc-impact: <reason>' or 'Follow-up issue #N because: <reason>' line")
           print("carries a real reason (not just the template's own HTML-comment placeholder).")
           print("See the documentation-impact table in CONTRIBUTING.md.")
           sys.exit(1)

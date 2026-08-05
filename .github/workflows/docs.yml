@@ -19,11 +19,9 @@ on:
       - "scripts/traceability_check.py"
       - "scripts/backlog_sync.py"
       - ".markdownlint-cli2.yaml"
-      # @pytest.mark.req("FR-nn") markers live in these trees (see
-      # traceability_check.py's TEST_DIRS) - without them here, a PR that adds,
-      # renames or deletes a marker skips the traceability job entirely, and
-      # traceability.md goes stale until some unrelated later docs PR trips over
-      # it (issue #87). Keep this list in step with TEST_DIRS.
+      # Mirrors the `changes` job's `test_trees` filter below (the thing that
+      # actually gates `traceability` on a PR) - kept here too so a push to main
+      # touching only a test tree still triggers this workflow at all.
       - "backend/tests/**"
       - "transform/tests/**"
       - "shared/tests/**"
@@ -45,6 +43,7 @@ jobs:
       pull-requests: read
     outputs:
       docs: ${{ steps.filter.outputs.docs }}
+      test_trees: ${{ steps.filter.outputs.test_trees }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,6 +59,12 @@ jobs:
               - "scripts/traceability_check.py"
               - "scripts/backlog_sync.py"
               - ".markdownlint-cli2.yaml"
+            # A separate output, not folded into `docs`: markdownlint and the
+            # network-dependent lychee link check have nothing to do with a
+            # test-tree-only PR, so gating them on this too would widen
+            # Required (Docs)'s flaky-failure surface for no reason - only
+            # `traceability` (below) also checks this output.
+            test_trees:
               - "backend/tests/**"
               - "transform/tests/**"
               - "shared/tests/**"
@@ -107,7 +112,12 @@ jobs:
   traceability:
     name: Requirements traceability
     needs: changes
-    if: needs.changes.outputs.docs == 'true'
+    # @pytest.mark.req("FR-nn") markers live in the test trees (see
+    # traceability_check.py's TEST_DIRS) - a PR that adds, renames or deletes a
+    # marker without touching a doc file must still run this job, or a stale
+    # traceability.md goes undetected until some unrelated later docs PR trips
+    # over it (issue #87). Keep `test_trees`'s filter list in step with TEST_DIRS.
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.test_trees == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
