@@ -80,6 +80,6 @@ substitutes for the missing Security-tab alert. Lower-severity findings stay
 advisory-only, printed to the step summary but not gating — `security-extended` on a
 pre-alpha codebase produces enough of those that gating on all of them would just teach
 reviewers to ignore a red run. `security.yml` runs the open-source gitleaks CLI directly
-against git history on every PR and daily. All three are real controls, just not
-surfaced through GitHub's own UI. Revisit all three once the repository goes public (see
-the licence decision in README.md) or Advanced Security is enabled first.
+against git history on every PR and daily. Both are real controls, just not surfaced
+through GitHub's own UI. Revisit all three once the repository goes public (see the
+licence decision in README.md) or Advanced Security is enabled first.
