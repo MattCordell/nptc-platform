@@ -33,14 +33,14 @@ shared/      nptc_shared - code imported by BOTH backend and transform (SCTID/Ve
                             validation, terminology client contract) so there is never a
                             second, divergent implementation (ADR-0001, FR-74)
 frontend/    nptc-frontend - React 19 + TypeScript + Vite SPA
-scripts/     backlog_sync.py, traceability_check.py - repo governance tooling (Python,
-                            tested, run via uv, not part of the app runtime)
-docs/        prd, adr, architecture, backlog, requirements, operations, user, governance
+scripts/     traceability_check.py, doc_impact_gate.py - repo governance tooling
+                            (Python, tested, run via uv, not part of the app runtime)
+docs/        prd, adr, architecture, requirements, operations, user, governance
 deploy/      Docker Compose stack (compose.yml, .env.example)
 ```
 
 Backend module responsibilities (each currently just an `__init__.py` stub — see
-`backend/src/nptc/__init__.py` for the authoritative list and which backlog issue lands
+`backend/src/nptc/__init__.py` for the authoritative list and which GitHub issue lands
 each one):
 
 - `api/` — routers, dependencies, OpenAPI wiring
@@ -107,8 +107,6 @@ pnpm build               # tsc -b && vite build
 Repo governance scripts (Python, at repo root, tested under `scripts/tests/`):
 
 ```powershell
-uv run python scripts/backlog_sync.py            # dry-run: preview GitHub issue sync
-uv run python scripts/backlog_sync.py --apply    # apply it
 uv run python scripts/traceability_check.py      # regenerate docs/requirements/traceability.md
 ```
 
@@ -160,10 +158,10 @@ CONTRIBUTING.md's table for which `docs/` path each kind of change touches (API/
 
 ## Backlog and issues
 
-`docs/backlog/*.yaml` (one file per delivery phase: `foundation.yaml`, `p0.yaml`,
-`p1.yaml`, ...) is the source of truth for issue content and checklists — **not** the
-GitHub issue body, which `backlog_sync.py` generates and will overwrite. Tick checklist
-boxes in the YAML, not on GitHub.
+GitHub Issues is the source of truth for backlog content and checklists — there is no
+YAML file behind it and no sync script. Tick checklist boxes directly on the issue.
+Labels, milestones and the Projects v2 Priority field are also managed by hand on
+GitHub (see `docs/operations/repo-configuration.md`), not generated from a file.
 
 ## Git / PR workflow
 

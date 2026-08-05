@@ -3,8 +3,8 @@
 Required by NFR-29. Seeded from the candidate hazards the PRD identifies from the
 50-row sample (§13.5); extended as new hazards are found during build or operation.
 
-**Ownership is unresolved** — tracked as governance issue OI-6 (see
-`docs/backlog/governance.yaml` once the backlog lands, or PRD §15.1 in the meantime).
+**Ownership is unresolved** — tracked as governance issue OI-6 (see the corresponding
+GitHub issue, or PRD §15.1 in the meantime).
 This log exists and is maintained by the development team in the interim, but a
 document with no accountable owner does not stay current on its own. The TSWG Terms of
 Reference commits to supporting clinical safety; naming an owner discharges that

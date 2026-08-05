@@ -5,22 +5,12 @@ The exact commands that configure this repository outside of files tracked in
 the configuration is reproducible (on a fork, or after a mistaken change),
 rather than living only in one person's shell history (Foundation issue F-7).
 
-## Labels and milestones
+## Labels, milestones and the Priority field
 
-Not created by hand. `scripts/backlog_sync.py` owns the label taxonomy
-(`LABEL_TAXONOMY`) and the milestone list (`KNOWN_MILESTONES`) and reconciles
-both — creating anything missing, never deleting — every time it runs:
-
-```powershell
-$env:GH_TOKEN = gh auth token
-uv run python scripts/backlog_sync.py --apply
-```
-
-Re-running it is always safe: it diffs against the live repository state and
-only acts on what's missing or out of date (see the script's module
-docstring). If you need to add a label or milestone, add it to the script's
-taxonomy and re-run — not `gh label create` by hand — or the next sync will
-not know about it and won't keep it in step with `docs/backlog/*.yaml`.
+Created and maintained by hand, directly on GitHub — via the UI, or `gh label
+create` / `gh api graphql` for one-off scripting. There is no reconciliation
+script and none of these are declared in a tracked file; GitHub Issues,
+Milestones and the Projects v2 board are the source of truth for themselves.
 
 ## Branch protection ruleset
 
@@ -41,12 +31,12 @@ plan that supports it by then (or the repo to have gone public; it stays
 private until TSWG clears visibility, see `README.md`). Until then, `main`
 has no branch protection: direct pushes, force pushes and merges without
 green CI are all technically possible, and this is a real gap to be aware
-of, not a theoretical one. Run the command below (and flip the F-7/F-4
-backlog checklist boxes it corresponds to, via `backlog_sync.py --apply`)
-once that day comes.
+of, not a theoretical one. Run the command below (and tick the F-7/F-4
+issue checklists it corresponds to, on the issues themselves) once that
+day comes.
 
 Applied once, by hand, via `gh api` (rulesets aren't file-based config, so
-there's nothing for `backlog_sync.py` or any other script to own here).
+there's nothing to own here beyond this record of the command).
 
 ```powershell
 gh api --method POST repos/aehrc/nptc-platform/rulesets --input - <<'EOF'

@@ -8,7 +8,7 @@ is not here, use your judgement and raise it in the PR.
 1. **Every change starts from an issue.** If one does not exist, open it first.
 2. **Every change lands through a pull request.** No direct pushes to `main`.
 3. **Tests pass before you push**, not after CI tells you.
-4. **Documentation and the issue checklist are updated in the same PR** as the code.
+4. **Documentation and the issue's checklist are updated in the same PR** as the code.
 
 ## The requirement identifiers
 
@@ -72,8 +72,8 @@ A change that lands without its documentation is incomplete. The platform's succ
 condition is that another organisation can adopt and operate it (NFR-36), and
 documentation that lags the code is precisely how that fails.
 
-Every issue declares its documentation impact in its `docs:` field before work starts.
-Your PR must then do one of three things, stated explicitly in the PR body:
+Every issue declares its documentation impact in its "Documentation impact" field before
+work starts. Your PR must then do one of three things, stated explicitly in the PR body:
 
 - update the documentation in this PR; **or**
 - state `no-doc-impact: <reason>` — a legitimate and common answer for internal
@@ -95,15 +95,12 @@ Silence is not an option, and CI enforces that.
 
 ## Issue checklists
 
-Checklists live in [docs/backlog/](docs/backlog/), not in the GitHub issue body — the
-issue body is generated from them. Tick the boxes in the YAML as part of your PR and
-`backlog_sync.py` pushes the change to GitHub on merge.
+The GitHub issue is the source of truth for what a unit of work covers and which of its
+checklist boxes are ticked — there is no YAML file behind it. Tick the boxes on the issue
+itself as the PR that does the work merges.
 
-This means a forgotten checklist shows up as a review comment on your diff rather than
-as a stale board nobody trusts.
-
-Do not hand-edit an issue body in GitHub; it will be overwritten. Discussion belongs in
-issue comments, definition belongs in the file.
+Discussion belongs in issue comments; the definition (acceptance criteria, checklist)
+belongs in the issue body, edited in place as scope is clarified.
 
 ## Code review
 

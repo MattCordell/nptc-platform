@@ -1,17 +1,16 @@
 name: Backlog task
 description: >-
-  A unit of implementation work. If this is already defined in docs/backlog/, edit the
-  YAML in a PR instead — this template is for work discovered outside that process.
+  A unit of implementation work. This is the standard way to open one — the issue
+  itself, not a YAML file, is the source of truth for what it covers and which of
+  its checklist boxes are ticked.
 # No default label - set the native Issue Type (usually "Feature" or "Task") in
 # the form sidebar instead.
 body:
   - type: markdown
     attributes:
       value: |
-        Most implementation work should already be tracked in `docs/backlog/*.yaml` and
-        synced here by `backlog_sync.py`. Use this form for work that turned up during
-        development and does not yet have a backlog entry — then add it to the YAML in
-        the PR that closes this issue, so the two stay in sync.
+        Fill in a checklist as part of "Acceptance criteria" below and tick its boxes
+        directly on this issue as work completes — don't track progress anywhere else.
   - type: input
     id: requirements
     attributes:

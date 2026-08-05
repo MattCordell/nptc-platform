@@ -8,8 +8,8 @@
 # Fields:
 #   id       FR-nn / NFR-nn, stable, matches the PRD exactly.
 #   priority MUST / SHOULD / MAY, the PRD's own RFC-2119 scheduling band.
-#   phase    foundation / p0 / p1 / p2 / p3 / p4 / p5 / governance - which backlog
-#            phase (docs/backlog/, once F-6 lands) is expected to implement this.
+#   phase    foundation / p0 / p1 / p2 / p3 / p4 / p5 / governance - which delivery
+#            phase is expected to implement this.
 #   title    Short label, quoted from the PRD.
 #   status   planned / in-progress / implemented / deferred / n-a.
 #   notes    Free text - deferral rationale, links to an open issue, etc.
@@ -17,8 +17,8 @@
 # Moving a requirement to `implemented` requires a test carrying
 # @pytest.mark.req("<id>") (or the frontend `test.meta({req: '<id>'})` equivalent);
 # traceability_check.py enforces this in CI, along with: every ID here is used at
-# least once (in a test or a backlog item) and vice versa, and every MUST has at
-# least one backlog item.
+# least once in a test and vice versa. Whether a MUST requirement has a
+# corresponding GitHub issue is a manual review concern, not a CI gate.
 
 - id: "FR-01"
   priority: MUST
@@ -859,7 +859,7 @@
   phase: foundation
   title: "The whole stack starts from a single docker compose up against a documented .env, with no manual post-installation steps"
   status: planned
-  notes: "docs/backlog once F-6 lands: issue #10/F-7"
+  notes: "See GitHub issue #10 (F-7)"
 - id: "NFR-42"
   priority: SHOULD
   phase: foundation
