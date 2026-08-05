@@ -3,6 +3,18 @@
 Thanks for working on the NPTC platform. This document is short on purpose — if a rule
 is not here, use your judgement and raise it in the PR.
 
+## Prerequisites
+
+| Tool | Version |
+|---|---|
+| Python | see [`.python-version`](.python-version) |
+| Node.js | see [`.nvmrc`](.nvmrc) — bump alongside `frontend/package.json`'s `engines.node` floor, they must stay compatible |
+| pnpm | `11.20.0` (the root `package.json`'s `packageManager` field) |
+| `uv` | any recent version |
+| Docker (with Compose) | any recent version supporting the Compose Specification |
+
+See [README.md](README.md)'s Quickstart for bringing up the local Docker Compose stack.
+
 ## Ground rules
 
 1. **Every change starts from an issue.** If one does not exist, open it first.
@@ -44,7 +56,8 @@ rather than edits scattered across storage, export and search.
 
 ```powershell
 pre-commit run --all-files
-uv run pytest            # from backend/ or transform/
+uv run pytest            # from the repo root (testpaths and ruff config resolve
+                          # relative to the workspace root, not a package directory)
 pnpm test                # from frontend/
 ```
 
@@ -124,11 +137,11 @@ protection today. It isn't needed yet for a single-committer project — direct 
 force pushes and merging without green CI are all technically possible, and the
 discipline above is procedural, not platform-enforced, until that changes. It's also
 currently blocked outright regardless: the ruleset (and classic branch protection, same
-restriction) needs GitHub Team or Enterprise Cloud for a private repository owned by an
-organisation, and this org is on the Free plan. Apply it — and raise required approvals
-from `0` to `1` with `CODEOWNERS` enforcement — the day a second developer joins; that
-also requires the org to be on a plan that supports it by then, or the repo to be public.
-The exact command is recorded in
+restriction) is a paid-plan feature for a private repository, and the account owning this
+repo is on a plan that does not include it. Apply it — and raise required approvals from
+`0` to `1` with `CODEOWNERS` enforcement — the day a second developer joins; that also
+requires the account to be on a plan that supports it by then, or the repo to be public.
+The exact command, and the actual error returned today, are recorded in
 [docs/operations/repo-configuration.md](docs/operations/repo-configuration.md), along
 with why required approvals stay at `0` until then: GitHub does not allow self-approval,
 so any non-zero requirement would make a single-committer repository unmergeable without

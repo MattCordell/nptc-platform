@@ -75,17 +75,18 @@ repo — no cleanup needed there.
 **Deferred, not yet applied.** Not needed yet: this is a single-committer
 project. It's also currently blocked outright regardless of that decision -
 branch protection (both the modern rulesets API below and classic branch
-protection) requires GitHub Team or Enterprise Cloud for a private
-repository owned by an organisation, and the `aehrc` org is on the Free
-plan. Attempting the command below returns:
+protection) is a paid-plan feature for a private repository. Attempting the
+command below returns the actual, authoritative error (not a paraphrase of
+which plan tier is required):
 
 ```text
 {"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.", ...}
 ```
 
 Apply it the day a second developer joins - that's the trigger, since that's
-when peer review actually matters - which also requires the org to be on a
-plan that supports it by then (or the repo to have gone public; it stays
+when peer review actually matters - which also requires the account owning
+this repo to be on a plan that supports it by then (or the repo to have gone
+public; it stays
 private until TSWG clears visibility, see `README.md`). Until then, `main`
 has no branch protection: direct pushes, force pushes and merges without
 green CI are all technically possible, and this is a real gap to be aware
@@ -93,50 +94,18 @@ of, not a theoretical one. Run the command below (and tick the F-7/F-4
 issue checklists it corresponds to, on the issues themselves) once that
 day comes.
 
-Applied once, by hand, via `gh api` (rulesets aren't file-based config, so
-there's nothing to own here beyond this record of the command).
+To be applied once, by hand, via `gh api` (rulesets aren't file-based config,
+so there's nothing to own here beyond this record of the command). The
+ruleset body is committed as
+[`main-ruleset.json`](main-ruleset.json) in this same directory, rather than
+inlined as a heredoc, for two reasons: it makes the ruleset itself diffable,
+and `<<'EOF'` is POSIX-shell syntax and a parse error in PowerShell 5.1
+(which has here-strings, `@'...'@`/`@"..."@`, but not that syntax).
+
+Run this from the repo root, so the relative `--input` path resolves:
 
 ```powershell
-gh api --method POST repos/aehrc/nptc-platform/rulesets --input - <<'EOF'
-{
-  "name": "main",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["refs/heads/main"],
-      "exclude": []
-    }
-  },
-  "rules": [
-    {
-      "type": "pull_request",
-      "parameters": {
-        "required_approving_review_count": 0,
-        "dismiss_stale_reviews_on_push": false,
-        "require_code_owner_review": false,
-        "require_last_push_approval": false,
-        "required_review_thread_resolution": true
-      }
-    },
-    { "type": "required_linear_history" },
-    { "type": "non_fast_forward" },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "required_status_checks": [
-          { "context": "Required (CI)" },
-          { "context": "Required (Docs)" },
-          { "context": "Required (Security)" },
-          { "context": "hygiene" }
-        ],
-        "strict_required_status_checks_policy": false
-      }
-    }
-  ],
-  "bypass_actors": []
-}
-EOF
+gh api --method POST repos/aehrc/nptc-platform/rulesets --input docs/operations/main-ruleset.json
 ```
 
 This requires a pull request into `main` (no direct pushes), blocks force

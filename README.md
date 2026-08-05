@@ -19,20 +19,39 @@ It replaces a hand-edited Excel workbook with a machine-readable catalogue that:
   International editions, so bindings cannot silently rot between publications;
 - records every editorial decision in an append-only, tamper-evident audit log.
 
-**Status: pre-alpha.** No functionality is implemented yet. The repository currently
-holds the specification and the delivery process. See the
+**Status: pre-alpha.** No application functionality is implemented yet. See the
 [GitHub issues](https://github.com/aehrc/nptc-platform/issues) and
 [milestones](https://github.com/aehrc/nptc-platform/milestones) for what is planned and
-[docs/requirements/](docs/requirements/) for what is built, once Foundation issue F-5
-lands.
+[docs/requirements/](docs/requirements/) for the requirement register and traceability
+report tracking what's implemented.
 
 ---
 
 ## Quickstart
 
-> Not yet available. The single-command stack (`docker compose up`, no manual
-> post-installation steps) is a hard requirement — NFR-41 — and lands with Foundation
-> issue F-7. This section will carry the real instructions at that point.
+The Foundation stack (Postgres and Keycloak — the API, worker, frontend and Caddy come
+with later phases) comes up with one command and no manual post-installation steps
+(NFR-41).
+
+**Prerequisites:** Docker, with Compose (any recent version supporting the Compose
+Specification). For the full dev toolchain (Node, pnpm, uv, Python), see
+[CONTRIBUTING.md](CONTRIBUTING.md)'s Prerequisites table.
+
+**Bring the stack up:**
+
+```powershell
+cp deploy/.env.example deploy/.env
+docker compose -f deploy/compose.yml up
+```
+
+This brings up, on a clean volume:
+
+- **PostgreSQL** (pinned to `18.4` in `deploy/compose.yml`) on `${POSTGRES_PORT:-5432}`
+- **Keycloak** on `${KEYCLOAK_PORT:-8080}`
+
+There is no API, frontend or Caddy yet — those land with later Foundation/P1 issues. See
+[docs/operations/configuration.md](docs/operations/configuration.md) for what each
+`deploy/.env` variable does.
 
 ## Documentation map
 
