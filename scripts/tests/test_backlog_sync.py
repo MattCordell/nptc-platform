@@ -686,6 +686,23 @@ def test_gh_graphql_returns_data(monkeypatch: pytest.MonkeyPatch) -> None:
     assert bs._gh_graphql("query { x }") == {"x": 1}
 
 
+def test_gh_graphql_marshals_variables_as_dash_f_key_equals_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> _FakeCompletedProcess:
+        calls.append(cmd)
+        return _FakeCompletedProcess(stdout='{"data": {}}')
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    bs._gh_graphql("query($projectId: ID!) { x }", projectId="proj1", itemId="item1")
+    cmd = calls[0]
+    assert cmd[:5] == ["gh", "api", "graphql", "-f", "query=query($projectId: ID!) { x }"]
+    assert "-f" in cmd and "projectId=proj1" in cmd
+    assert "itemId=item1" in cmd
+
+
 def test_gh_graphql_raises_gherror_on_nonzero_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **k: _FakeCompletedProcess(returncode=1, stderr="down")
@@ -1026,9 +1043,12 @@ class _FakeGhClient(bs.GhClient):
     it satisfies apply_plan's `client: GhClient` type hint under mypy --strict; none
     of the base class's own methods are invoked."""
 
-    def __init__(self) -> None:
+    def __init__(self, sub_issue_ids: dict[int, set[int]] | None = None) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self._next_issue_number = 1000
+        # parent issue number -> the child database_ids GitHub already has linked -
+        # lets a test pre-seed the "already linked" case without a real API call.
+        self._sub_issue_ids = sub_issue_ids or {}
 
     def create_label(self, name: str) -> None:
         self.calls.append(("create_label", (name,)))
@@ -1072,7 +1092,7 @@ class _FakeGhClient(bs.GhClient):
 
     def fetch_sub_issue_ids(self, parent_number: int) -> set[int]:
         self.calls.append(("fetch_sub_issue_ids", (parent_number,)))
-        return set()
+        return self._sub_issue_ids.get(parent_number, set())
 
     def add_sub_issue(self, parent_number: int, child_database_id: int) -> None:
         self.calls.append(("add_sub_issue", (parent_number, child_database_id)))
@@ -1215,6 +1235,23 @@ def test_apply_plan_ensure_sub_issue_links_once_and_caches_lookup() -> None:
     assert len(add_calls) == 2
 
 
+def test_apply_plan_ensure_sub_issue_skips_a_child_already_linked() -> None:
+    """The guard apply_plan exists for in the first place: don't re-POST a link
+    GitHub already has. Pre-seeds the fake's fetch_sub_issue_ids with the child's
+    database_id, so add_sub_issue must not be called for it."""
+    parent = _item(id="P1-6", github_issue=100)
+    child = _item(id="P1-6.1", parent_id="P1-6", github_issue=101)
+    by_number = {
+        100: _existing(number=100, database_id=1000, node_id="n100"),
+        101: _existing(number=101, database_id=1001, node_id="n101"),
+    }
+    client = _FakeGhClient(sub_issue_ids={100: {1001}})
+    actions = [bs.Action("ensure_sub_issue", "P1-6.1", {"parent_id": "P1-6"})]
+    bs.apply_plan(client, [parent, child], by_number, {}, [], [], {}, actions, None, None, {}, {})
+    assert ("fetch_sub_issue_ids", (100,)) in client.calls
+    assert not any(c[0] == "add_sub_issue" for c in client.calls)
+
+
 def test_apply_plan_creates_labels_and_milestones_upfront() -> None:
     client = _FakeGhClient()
     bs.apply_plan(
@@ -1248,10 +1285,12 @@ class _MainFakeGhClient:
         issues: dict[int, bs.ExistingIssue] | None = None,
         markers: dict[str, int] | None = None,
         project_error: Exception | None = None,
+        apply_error: Exception | None = None,
     ) -> None:
         self._issues = issues or {}
         self._markers = markers or {}
         self._project_error = project_error
+        self._apply_error = apply_error
         self.apply_calls: list[str] = []
 
     def fetch_issues(self) -> tuple[dict[int, bs.ExistingIssue], dict[str, int]]:
@@ -1282,6 +1321,8 @@ class _MainFakeGhClient:
 
     def create_issue(self, *a: Any, **k: Any) -> bs.ExistingIssue:
         self.apply_calls.append("create_issue")
+        if self._apply_error is not None:
+            raise self._apply_error
         return bs.ExistingIssue(
             number=1,
             database_id=1,
@@ -1407,6 +1448,20 @@ def test_main_apply_runs_apply_plan_and_reports_success(
     assert result == 0
     assert "applied" in out
     assert "create_issue" in client.apply_calls
+
+
+def test_main_returns_1_when_apply_plan_raises(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A GhError partway through --apply (e.g. the token losing write access
+    mid-run) must be reported and exit 1, not propagate as a traceback."""
+    _write_valid_backlog(bs.BACKLOG_DIR)
+    client = _MainFakeGhClient(apply_error=bs.GhError("write access revoked"))
+    monkeypatch.setattr(bs, "GhClient", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["backlog_sync.py", "--apply"])
+    result = bs.main()
+    assert result == 1
+    assert "write access revoked" in capsys.readouterr().err
 
 
 def test_main_returns_1_on_plan_errors(

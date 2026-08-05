@@ -67,9 +67,14 @@ strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
+# No [[tool.mypy.overrides]] relaxing scripts/tests/ - a former "module = 'tests.*'"
+# override never matched anything (scripts/tests/ has no __init__.py, so mypy sees
+# bare top-level module names like `test_backlog_sync`, never `tests.test_backlog_sync`
+# - true of backend/tests, transform/tests and shared/tests too, per CLAUDE.md's
+# testing conventions). mypy's per-module patterns must be fully-qualified dotted
+# names with '*' only replacing a whole component ("spam.*.eggs.*"), so there's no
+# working glob for "every bare test_* module" to replace it with - every test file
+# under scripts/tests/ is fully annotated instead.
 
 # --- pytest ----------------------------------------------------------------
 [tool.pytest.ini_options]
