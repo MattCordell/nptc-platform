@@ -19,6 +19,14 @@ on:
       - "scripts/traceability_check.py"
       - "scripts/backlog_sync.py"
       - ".markdownlint-cli2.yaml"
+      # @pytest.mark.req("FR-nn") markers live in these trees (see
+      # traceability_check.py's TEST_DIRS) - without them here, a PR that adds,
+      # renames or deletes a marker skips the traceability job entirely, and
+      # traceability.md goes stale until some unrelated later docs PR trips over
+      # it (issue #87). Keep this list in step with TEST_DIRS.
+      - "backend/tests/**"
+      - "transform/tests/**"
+      - "shared/tests/**"
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.ref }}
@@ -52,6 +60,9 @@ jobs:
               - "scripts/traceability_check.py"
               - "scripts/backlog_sync.py"
               - ".markdownlint-cli2.yaml"
+              - "backend/tests/**"
+              - "transform/tests/**"
+              - "shared/tests/**"
 
   markdownlint:
     name: markdownlint

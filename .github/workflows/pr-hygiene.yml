@@ -64,16 +64,55 @@ jobs:
           BODY: ${{ github.event.pull_request.body }}
           BASE: ${{ github.event.pull_request.base.ref }}
         run: |
-          changed_src=$(git diff --name-only "origin/$BASE...HEAD" -- \
-            'backend/src/**' 'frontend/src/**' 'transform/src/**' 'shared/src/**')
+          # Any file outside docs/** and *.md counts as "source" for this gate - the
+          # same rule ci.yml's own `code` path filter expresses (see its `changes`
+          # job) - not just the four */src/** trees. That widened scope is what
+          # catches a PR touching only scripts/, deploy/ or .github/workflows/: F-7
+          # added six env vars with no docs/operations/configuration.md because the
+          # old pathspec list never looked at deploy/ (issue #87).
+          changed_src=$(git diff --name-only "origin/$BASE...HEAD" -- . \
+            ':(exclude)docs/**' ':(exclude)*.md' ':(exclude).github/ISSUE_TEMPLATE/**')
           changed_docs=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/**')
-          if [ -n "$changed_src" ] && [ -z "$changed_docs" ] && \
-             ! echo "$BODY" | grep -qi 'no-doc-impact:'; then
-            echo "::error::This PR changes application source under backend/src, frontend/src,"
-            echo "transform/src or shared/src, touches nothing under docs/**, and states no"
-            echo "'no-doc-impact:' reason. See the documentation-impact table in CONTRIBUTING.md."
-            exit 1
+          if [ -z "$changed_src" ] || [ -n "$changed_docs" ]; then
+            exit 0
           fi
+
+          # grep for the literal string 'no-doc-impact:' used to pass on the
+          # committed PR_TEMPLATE.md's own unticked boilerplate - it contains that
+          # exact string (issue #87). Require a *ticked* box with a real,
+          # non-empty reason instead: either the no-doc-impact option or the
+          # follow-up-issue option (CONTRIBUTING.md offers both, plus "docs
+          # updated in this PR", which is covered by the changed_docs check above).
+          python3 - <<'PYEOF'
+          import os
+          import re
+          import sys
+
+          body = os.environ.get("BODY") or ""
+
+          def ticked_reason(pattern):
+              match = re.search(pattern, body, re.IGNORECASE)
+              if not match:
+                  return None
+              reason = match.group("reason")
+              reason = re.sub(r"<!--.*?-->", "", reason, flags=re.DOTALL)
+              reason = reason.replace("`", "").strip()
+              return reason or None
+
+          no_impact = ticked_reason(r"-\s*\[x\]\s*`?no-doc-impact:`?\s*(?P<reason>.*)")
+          followup = ticked_reason(r"-\s*\[x\]\s*Follow-up issue #\d+\s*because:\s*(?P<reason>.*)")
+          reason = no_impact or followup
+
+          if reason:
+              print(f"Documentation impact declared: {reason}")
+              sys.exit(0)
+
+          print("::error::This PR changes source outside docs/** with no docs update, and no")
+          print("ticked 'no-doc-impact: <reason>' or 'Follow-up issue #N because: <reason>' box")
+          print("carries a real reason (not just the template's own HTML-comment placeholder).")
+          print("See the documentation-impact table in CONTRIBUTING.md.")
+          sys.exit(1)
+          PYEOF
 
       - name: Backlog checklist updated on feature PRs
         if: contains(github.event.pull_request.labels.*.name, 'feature')
