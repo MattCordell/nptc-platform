@@ -84,8 +84,9 @@ which plan tier is required):
 ```
 
 Apply it the day a second developer joins - that's the trigger, since that's
-when peer review actually matters - which also requires the org to be on a
-plan that supports it by then (or the repo to have gone public; it stays
+when peer review actually matters - which also requires the account owning
+this repo to be on a plan that supports it by then (or the repo to have gone
+public; it stays
 private until TSWG clears visibility, see `README.md`). Until then, `main`
 has no branch protection: direct pushes, force pushes and merges without
 green CI are all technically possible, and this is a real gap to be aware
@@ -98,8 +99,10 @@ so there's nothing to own here beyond this record of the command). The
 ruleset body is committed as
 [`main-ruleset.json`](main-ruleset.json) in this same directory, rather than
 inlined as a heredoc, for two reasons: it makes the ruleset itself diffable,
-and PowerShell 5.1 (the shell this repo's scripts target) has no heredoc
-syntax - `<<'EOF'` is a parse error there.
+and `<<'EOF'` is POSIX-shell syntax and a parse error in PowerShell 5.1
+(which has here-strings, `@'...'@`/`@"..."@`, but not that syntax).
+
+Run this from the repo root, so the relative `--input` path resolves:
 
 ```powershell
 gh api --method POST repos/aehrc/nptc-platform/rulesets --input docs/operations/main-ruleset.json

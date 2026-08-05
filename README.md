@@ -33,14 +33,9 @@ The Foundation stack (Postgres and Keycloak — the API, worker, frontend and Ca
 with later phases) comes up with one command and no manual post-installation steps
 (NFR-41).
 
-**Prerequisites:**
-
-| Tool | Version |
-|---|---|
-| Docker (with Compose) | any recent version supporting the Compose Specification |
-| Node.js | see [`.nvmrc`](.nvmrc) |
-| pnpm | `11.20.0` (`frontend/package.json`'s `packageManager` field) |
-| `uv` | any recent version |
+**Prerequisites:** Docker, with Compose (any recent version supporting the Compose
+Specification). For the full dev toolchain (Node, pnpm, uv, Python), see
+[CONTRIBUTING.md](CONTRIBUTING.md)'s Prerequisites table.
 
 **Bring the stack up:**
 
@@ -51,7 +46,7 @@ docker compose -f deploy/compose.yml up
 
 This brings up, on a clean volume:
 
-- **Postgres 16+** on `${POSTGRES_PORT:-5432}`
+- **PostgreSQL** (pinned to `18.4` in `deploy/compose.yml`) on `${POSTGRES_PORT:-5432}`
 - **Keycloak** on `${KEYCLOAK_PORT:-8080}`
 
 There is no API, frontend or Caddy yet — those land with later Foundation/P1 issues. See

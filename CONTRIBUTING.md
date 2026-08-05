@@ -8,8 +8,8 @@ is not here, use your judgement and raise it in the PR.
 | Tool | Version |
 |---|---|
 | Python | see [`.python-version`](.python-version) |
-| Node.js | see [`.nvmrc`](.nvmrc) |
-| pnpm | `11.20.0` (`frontend/package.json`'s `packageManager` field) |
+| Node.js | see [`.nvmrc`](.nvmrc) — bump alongside `frontend/package.json`'s `engines.node` floor, they must stay compatible |
+| pnpm | `11.20.0` (the root `package.json`'s `packageManager` field) |
 | `uv` | any recent version |
 | Docker (with Compose) | any recent version supporting the Compose Specification |
 
@@ -137,11 +137,11 @@ protection today. It isn't needed yet for a single-committer project — direct 
 force pushes and merging without green CI are all technically possible, and the
 discipline above is procedural, not platform-enforced, until that changes. It's also
 currently blocked outright regardless: the ruleset (and classic branch protection, same
-restriction) is a paid-plan feature for a private repository, and this org is on a plan
-that does not include it. Apply it — and raise required approvals from `0` to `1` with
-`CODEOWNERS` enforcement — the day a second developer joins; that also requires the org
-to be on a plan that supports it by then, or the repo to be public. The exact command,
-and the actual error returned today, are recorded in
+restriction) is a paid-plan feature for a private repository, and the account owning this
+repo is on a plan that does not include it. Apply it — and raise required approvals from
+`0` to `1` with `CODEOWNERS` enforcement — the day a second developer joins; that also
+requires the account to be on a plan that supports it by then, or the repo to be public.
+The exact command, and the actual error returned today, are recorded in
 [docs/operations/repo-configuration.md](docs/operations/repo-configuration.md), along
 with why required approvals stay at `0` until then: GitHub does not allow self-approval,
 so any non-zero requirement would make a single-committer repository unmergeable without
