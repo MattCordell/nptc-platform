@@ -16,7 +16,13 @@ on:
     # you want assurance before merging something security-sensitive.
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  # Scheduled runs get their own group, distinct from push-triggered runs on the
+  # same ref: without this, `github.ref` is refs/heads/main for both a push to
+  # main and the daily schedule, so a push cancels an in-flight scheduled scan -
+  # and a cancelled run sends no failure email, directly undercutting the new
+  # severity gate's whole point (issue #87 review). Push/dispatch runs on the
+  # same ref still cancel each other, which is the behaviour worth keeping there.
+  group: codeql-${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -67,37 +73,7 @@ jobs:
 
       - name: Summarise findings
         if: always()
-        run: |
-          set -euo pipefail
-          # codeql-action names the file after its own canonical language name,
-          # not always the matrix value verbatim (javascript-typescript ->
-          # javascript.sarif, caught by checking the real output rather than
-          # assuming) - glob for it instead of hardcoding the name.
-          sarif_file=$(find sarif-results -maxdepth 1 -name '*.sarif' -print -quit)
-          python3 - "$sarif_file" "$GITHUB_STEP_SUMMARY" <<'PYEOF'
-          import json
-          import sys
-
-          sarif_path, summary_path = sys.argv[1], sys.argv[2]
-          with open(sarif_path, encoding="utf-8") as f:
-              sarif = json.load(f)
-
-          results = [r for run in sarif.get("runs", []) for r in run.get("results", [])]
-          lines = [f"### CodeQL: {len(results)} finding(s) in {sarif_path}", ""]
-          for r in results:
-              rule = r.get("ruleId", "?")
-              text = r.get("message", {}).get("text", "")
-              msg = text.splitlines()[0] if text else ""
-              loc = r.get("locations", [{}])[0].get("physicalLocation", {})
-              path = loc.get("artifactLocation", {}).get("uri", "?")
-              line = loc.get("region", {}).get("startLine", "?")
-              lines.append(f"- `{rule}` {path}:{line} - {msg}")
-
-          out = "\n".join(lines) + "\n"
-          print(out)
-          with open(summary_path, "a", encoding="utf-8") as f:
-              f.write(out)
-          PYEOF
+        run: python3 scripts/codeql_gate.py summarize sarif-results "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SARIF as a build artifact
         if: always()
@@ -106,3 +82,15 @@ jobs:
           name: codeql-${{ matrix.language }}
           path: sarif-results
           retention-days: 14
+
+      # Everything above this point is advisory-only: nothing exits non-zero on a
+      # finding, so a daily unattended scan could produce output nobody is alerted
+      # to (issue #87). Gate on severity instead of any finding at all -
+      # security-extended on a pre-alpha codebase surfaces plenty of low-severity
+      # noise that would otherwise train reviewers to ignore a real failure.
+      # Threshold (7.0, CVSS "high") matches the "high/critical" language NFR-25
+      # already uses for pip-audit/pnpm audit in security.yml. Both this step and
+      # "Summarise findings" above call scripts/codeql_gate.py (unit-tested under
+      # scripts/tests/) rather than duplicating SARIF-parsing logic inline.
+      - name: Fail on high/critical findings (NFR-25 threshold)
+        run: python3 scripts/codeql_gate.py check-severity sarif-results --threshold 7.0
