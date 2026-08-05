@@ -25,7 +25,7 @@ Refs #
 
 ## Issue checklist
 
-<!-- Which boxes in docs/backlog/*.yaml this PR ticks. They must be ticked in this diff. -->
+<!-- Tick the corresponding boxes on the linked issue itself once this PR merges. -->
 
 ## Definition of done
 

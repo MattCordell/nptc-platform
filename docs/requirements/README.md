@@ -5,5 +5,5 @@ Not yet populated. Lands with Foundation issue F-5: `requirements.yaml` (one ent
 `traceability_check.py` script that enforces it in CI, and the generated
 `traceability.md` report this directory will then also carry.
 
-See `docs/backlog/foundation.yaml` (once F-6 lands) for the issue, or PRD §"Reading
-guide" for the requirement-numbering convention this register follows.
+See the corresponding GitHub issue, or PRD §"Reading guide" for the
+requirement-numbering convention this register follows.

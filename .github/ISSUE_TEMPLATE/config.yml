@@ -3,6 +3,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/aehrc/nptc-platform/security/advisories/new
     about: Report privately. Never open a public issue for a security problem.
-  - name: Planned work is already in the backlog
-    url: https://github.com/aehrc/nptc-platform/tree/main/docs/backlog
-    about: Phase P0-P5 work is defined in docs/backlog/ and synced to issues. Edit the YAML in a PR rather than opening a duplicate.
+  - name: Planned work is already tracked
+    url: https://github.com/aehrc/nptc-platform/milestones
+    about: Check the milestones and open issues for the phase before opening a duplicate.

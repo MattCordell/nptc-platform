@@ -20,8 +20,9 @@ It replaces a hand-edited Excel workbook with a machine-readable catalogue that:
 - records every editorial decision in an append-only, tamper-evident audit log.
 
 **Status: pre-alpha.** No functionality is implemented yet. The repository currently
-holds the specification, the delivery process and the backlog. See
-[docs/backlog/](docs/backlog/) for what is planned and
+holds the specification and the delivery process. See the
+[GitHub issues](https://github.com/aehrc/nptc-platform/issues) and
+[milestones](https://github.com/aehrc/nptc-platform/milestones) for what is planned and
 [docs/requirements/](docs/requirements/) for what is built, once Foundation issue F-5
 lands.
 
@@ -39,7 +40,7 @@ lands.
 |---|---|
 | [docs/prd/](docs/prd/) | The Product Requirements Document. The authority for every `FR-nn` and `NFR-nn` reference in this repository. |
 | [docs/requirements/](docs/requirements/) | Requirement register and the generated traceability report: which requirements exist, their status, and the tests covering them. |
-| [docs/backlog/](docs/backlog/) | The backlog, as version-controlled YAML. Source of truth for the GitHub issues. |
+| [GitHub Issues](https://github.com/aehrc/nptc-platform/issues) | The backlog. Source of truth for what's planned and its checklists — no YAML behind it. |
 | [docs/adr/](docs/adr/) | Architecture decision records. Why things are the way they are, including the alternatives rejected. |
 | [docs/architecture/](docs/architecture/) | Data model, component structure, and the contracts between them. |
 | [docs/operations/](docs/operations/) | Deployment, configuration, upgrade, backup and restore, and runbooks. Written for an operator who did not build the system. |
@@ -61,8 +62,8 @@ CSIRO, for the NPTC Technical and Standards Working Group (TSWG), which reports 
 NPTC Steering Committee. The catalogue content itself is owned and curated by RCPA-QAP.
 
 The question of who hosts and operates the platform if the proof of concept succeeds is
-open and tracked as governance issue OI-7 (PRD §15.1; see `docs/backlog/` once
-Foundation issue F-6 lands).
+open and tracked as governance issue OI-7 (PRD §15.1; see the corresponding GitHub
+issue).
 
 ## Licence
 

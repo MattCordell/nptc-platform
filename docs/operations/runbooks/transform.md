@@ -73,10 +73,9 @@ the same `--report-dir`, produces byte-identical `report.json` and
 ## Not implemented yet
 
 This issue delivers the entrypoint and the writing discipline, not the
-transform. The following are owned by later P0 issues (see
-[`docs/backlog/p0.yaml`](../../backlog/p0.yaml) for the current issue numbers)
-and will change what `report.json`/`report.md` contain, but not the
-guarantees above:
+transform. The following are owned by later P0 issues (see the P0 milestone
+on GitHub for the current issue numbers) and will change what
+`report.json`/`report.md` contain, but not the guarantees above:
 
 - Reading the workbook and detecting invisible/non-printing characters - P0-2
 - Three-band defect classification - P0-3

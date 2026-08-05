@@ -1,8 +1,7 @@
 """NPTC Catalogue Maintenance Platform - API and background worker.
 
-Package layout (populated as the corresponding backlog issues land - see
-docs/backlog/ once Foundation issue F-6 lands, and the repository layout in
-the delivery plan):
+Package layout (populated as the corresponding GitHub issues land - see the
+repository layout in the PRD's delivery plan):
 
 - api/          routers, dependencies, OpenAPI wiring (P1-9)
 - auth/         OIDC verification, permission framework (P1-3, P1-4, FR-44)

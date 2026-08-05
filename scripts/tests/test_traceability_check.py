@@ -24,12 +24,10 @@ def _isolate_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     requirements_file = tmp_path / "requirements.yaml"
     test_dir = tmp_path / "tests"
     test_dir.mkdir()
-    backlog_dir = tmp_path / "backlog"
 
     monkeypatch.setattr(tc, "REQUIREMENTS_FILE", requirements_file)
     monkeypatch.setattr(tc, "TRACEABILITY_REPORT", tmp_path / "traceability.md")
     monkeypatch.setattr(tc, "TEST_DIRS", [test_dir])
-    monkeypatch.setattr(tc, "BACKLOG_DIR", backlog_dir)
 
 
 def _write_requirements(path: Path, body: str) -> None:
@@ -115,39 +113,11 @@ def test_collect_test_markers_finds_module_level_pytestmark() -> None:
     assert "NFR-08" in refs
 
 
-def test_collect_backlog_references_returns_no_phases_when_no_yaml_files() -> None:
-    tc.BACKLOG_DIR.mkdir()
-    (tc.BACKLOG_DIR / "README.md").write_text("placeholder\n", encoding="utf-8")
-    refs, backlogged_phases = tc.collect_backlog_references()
-    assert refs == {}
-    assert backlogged_phases == set()
-
-
-def test_collect_backlog_references_recurses_into_children() -> None:
-    tc.BACKLOG_DIR.mkdir()
-    (tc.BACKLOG_DIR / "p1.yaml").write_text(
-        textwrap.dedent(
-            """\
-            - id: P1-6
-              requirements: [FR-09]
-              children:
-                - id: P1-6.1
-                  requirements: [FR-10, FR-11]
-            """
-        ),
-        encoding="utf-8",
-    )
-    refs, backlogged_phases = tc.collect_backlog_references()
-    assert backlogged_phases == {"p1"}
-    assert refs["FR-09"][0].endswith("p1.yaml#P1-6")
-    assert refs["FR-11"][0].endswith("p1.yaml#P1-6.1")
-
-
 def test_run_checks_flags_unknown_id_in_test_marker() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "planned", ""),
     }
-    errors = tc.run_checks(requirements, {"FR-99": ["a.py:1"]}, {}, backlogged_phases=set())
+    errors = tc.run_checks(requirements, {"FR-99": ["a.py:1"]})
     assert any("FR-99" in error and "not in requirements.yaml" in error for error in errors)
 
 
@@ -155,39 +125,15 @@ def test_run_checks_flags_implemented_without_test() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "implemented", ""),
     }
-    errors = tc.run_checks(requirements, {}, {}, backlogged_phases=set())
+    errors = tc.run_checks(requirements, {})
     assert any("FR-01" in error and "no test carries" in error for error in errors)
-
-
-def test_run_checks_flags_must_without_backlog_item_only_for_a_backlogged_phase() -> None:
-    requirements = {
-        "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "planned", ""),
-    }
-    assert tc.run_checks(requirements, {}, {}, backlogged_phases=set()) == []
-    errors_with_backlog = tc.run_checks(requirements, {}, {}, backlogged_phases={"p1"})
-    assert any("no backlog item" in error for error in errors_with_backlog)
-
-
-def test_run_checks_does_not_flag_a_must_in_a_phase_not_backlogged_yet() -> None:
-    """A MUST in P2 shouldn't fail CI just because docs/backlog/p2.yaml doesn't exist
-    yet - only Foundation/P0/P1 are backlogged so far (Foundation issue F-6)."""
-    requirements = {
-        "FR-30": tc.Requirement("FR-30", "MUST", "p2", "t", "planned", ""),
-    }
-    errors = tc.run_checks(requirements, {}, {}, backlogged_phases={"foundation", "p0", "p1"})
-    assert errors == []
 
 
 def test_run_checks_passes_a_fully_covered_requirement() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "implemented", ""),
     }
-    errors = tc.run_checks(
-        requirements,
-        {"FR-01": ["backend/tests/test_x.py:5"]},
-        {"FR-01": ["backlog/p1.yaml#P1-1"]},
-        backlogged_phases={"p1"},
-    )
+    errors = tc.run_checks(requirements, {"FR-01": ["backend/tests/test_x.py:5"]})
     assert errors == []
 
 
@@ -197,12 +143,12 @@ def test_render_report_escapes_a_literal_pipe_in_a_title() -> None:
             "FR-84", "MUST", "p1", "Subsumed by 71388002 |Procedure|", "planned", ""
         ),
     }
-    report = tc.render_report(requirements, {}, {})
+    report = tc.render_report(requirements, {})
     table_row = next(line for line in report.splitlines() if line.startswith("| FR-84"))
     assert "71388002 \\|Procedure\\|" in table_row
-    # 7 columns -> 8 unescaped-pipe delimiters; the title's own pipes must not add more.
+    # 6 columns -> 7 unescaped-pipe delimiters; the title's own pipes must not add more.
     unescaped_pipes = re.findall(r"(?<!\\)\|", table_row)
-    assert len(unescaped_pipes) == 8
+    assert len(unescaped_pipes) == 7
 
 
 def test_render_report_includes_every_requirement_and_sorts_fr_before_nfr() -> None:
@@ -210,6 +156,6 @@ def test_render_report_includes_every_requirement_and_sorts_fr_before_nfr() -> N
         "NFR-02": tc.Requirement("NFR-02", "MUST", "p1", "Second", "planned", ""),
         "FR-10": tc.Requirement("FR-10", "MUST", "p1", "First", "planned", ""),
     }
-    report = tc.render_report(requirements, {}, {})
+    report = tc.render_report(requirements, {})
     assert report.index("FR-10") < report.index("NFR-02")
     assert "Total requirements: 2" in report

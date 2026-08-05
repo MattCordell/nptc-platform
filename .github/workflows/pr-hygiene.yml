@@ -1,9 +1,8 @@
 name: PR hygiene
 
 # Enforces the process from CONTRIBUTING.md mechanically rather than relying
-# on everyone remembering it: a Conventional Commit title, a linked issue, a
-# stated documentation impact, and (once docs/backlog/ exists - Foundation
-# issue F-6) a ticked backlog checklist on feature PRs.
+# on everyone remembering it: a Conventional Commit title, a linked issue, and
+# a stated documentation impact.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
@@ -89,15 +88,3 @@ jobs:
           # genuine declared reason (issue #87).
           printf '%s' "$BODY" > /tmp/pr-body.txt
           python3 scripts/doc_impact_gate.py /tmp/pr-body.txt
-
-      - name: Backlog checklist updated on feature PRs
-        if: contains(github.event.pull_request.labels.*.name, 'feature')
-        env:
-          BASE: ${{ github.event.pull_request.base.ref }}
-        run: |
-          changed_backlog=$(git diff --name-only "origin/$BASE...HEAD" -- 'docs/backlog/**')
-          if [ -z "$changed_backlog" ]; then
-            echo "::error::This PR is labelled feature but touches nothing under"
-            echo "docs/backlog/** - tick the issue's checklist in the same PR that does the work."
-            exit 1
-          fi
