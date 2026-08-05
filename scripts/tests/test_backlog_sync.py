@@ -279,6 +279,7 @@ def _existing(**overrides: object) -> bs.ExistingIssue:
         "number": 42,
         "database_id": 1,
         "node_id": "I_node42",
+        "title": "Example",
         "body": "",
         "labels": frozenset(),
         "milestone": "Foundation",
@@ -443,6 +444,32 @@ def test_plan_sync_flags_issue_type_drift() -> None:
     set_type = [a for a in actions if a.kind == "set_type"]
     assert len(set_type) == 1
     assert set_type[0].detail["issue_type"] == "Feature"
+
+
+def test_plan_sync_flags_title_drift() -> None:
+    item = _item(title="New title")
+    existing = _existing(
+        body=bs.render_body(item), labels=frozenset(item.labels), title="Old title"
+    )
+    actions, errors = bs.plan_sync(
+        [item], {42: existing}, {"F-1": 42}, project_priorities={42: "MUST"}
+    )
+    assert errors == []
+    set_title = [a for a in actions if a.kind == "set_title"]
+    assert len(set_title) == 1
+    assert set_title[0].detail == {"number": 42, "title": "New title"}
+
+
+def test_plan_sync_does_not_flag_title_when_unchanged() -> None:
+    item = _item(title="Same title")
+    existing = _existing(
+        body=bs.render_body(item), labels=frozenset(item.labels), title="Same title"
+    )
+    actions, errors = bs.plan_sync(
+        [item], {42: existing}, {"F-1": 42}, project_priorities={42: "MUST"}
+    )
+    assert errors == []
+    assert [a for a in actions if a.kind == "set_title"] == []
 
 
 def test_plan_sync_flags_stale_body() -> None:
