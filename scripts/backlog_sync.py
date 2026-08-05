@@ -505,10 +505,10 @@ def _gh_graphql(query: str, **variables: str) -> dict[str, Any]:
 
 
 class GhClient:
-    """Thin wrapper around `gh api`. Not exercised by the unit test suite beyond its
-    pure JSON-shaping helpers - the planning functions above carry the real coverage,
-    and this class's actual network behaviour is only meaningfully checked by running
-    it (docs.yml runs the --dry-run form on every PR touching docs/backlog/**)."""
+    """Thin wrapper around `gh api`. Its JSON-shaping logic is unit-tested with
+    `_gh_get`/`_gh_send`/`_gh_graphql` monkeypatched (see scripts/tests/); its actual
+    network behaviour against a real token is only meaningfully checked by running it
+    (docs.yml runs the --dry-run form on every PR touching docs/backlog/**)."""
 
     def fetch_issues(self) -> tuple[dict[int, ExistingIssue], dict[str, int]]:
         raw_issues = _gh_get("repos/:owner/:repo/issues?state=all&per_page=100") or []
