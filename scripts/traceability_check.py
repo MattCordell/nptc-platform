@@ -12,9 +12,12 @@ Fails when:
   * a requirement marked `implemented` in requirements.yaml has neither a test
     carrying `@pytest.mark.req("<id>")` nor an `evidence:` path (see ADR-0002 -
     some infrastructure/process requirements have no plausible pytest test);
-  * a requirement's `evidence:` path does not exist on disk;
-  * a requirement carries both a test marker and an `evidence:` path - pick
-    the one that actually demonstrates it.
+  * a requirement's `evidence:` path is missing, escapes the repository root,
+    or is not a file;
+  * an `evidence:` path's `#fragment` does not appear literally in the target
+    file's text (a weak check - it does not parse YAML job IDs or Markdown
+    headings - but it catches the common case of the fragment's target being
+    renamed or deleted out from under it).
 
 Deliberately not enforced: that a requirement has a corresponding GitHub
 issue. The backlog lives on GitHub Issues directly now, and that coverage is
@@ -122,6 +125,39 @@ def collect_test_markers() -> dict[str, list[str]]:
     return references
 
 
+def _validate_evidence(req: Requirement) -> str | None:
+    """Check req.evidence names a real file inside the repo and, if it carries
+    a #fragment, that the fragment appears literally in that file's text.
+
+    The fragment check is deliberately weak - a substring search, not a YAML
+    job-ID or Markdown-heading parse - but it is cheap, format-agnostic, and
+    catches the case that actually matters: the fragment's target being
+    renamed or deleted out from under it (e.g. a CI job renamed so
+    "ci.yml#transform-offline" no longer contains "transform-offline"
+    anywhere).
+    """
+    path_part, _, fragment = req.evidence.partition("#")
+    if not path_part:
+        return f"{req.id}: evidence path '{req.evidence}' has no path before the #fragment"
+
+    target = (ROOT / path_part).resolve()
+    try:
+        target.relative_to(ROOT.resolve())
+    except ValueError:
+        return f"{req.id}: evidence path '{req.evidence}' escapes the repository root"
+
+    if not target.is_file():
+        return f"{req.id}: evidence path '{req.evidence}' does not exist or is not a file"
+
+    if fragment and fragment not in target.read_text(encoding="utf-8", errors="replace"):
+        return (
+            f"{req.id}: evidence path '{req.evidence}' - fragment '{fragment}' "
+            f"not found in {path_part}"
+        )
+
+    return None
+
+
 def run_checks(requirements: dict[str, Requirement], test_refs: dict[str, list[str]]) -> list[str]:
     errors: list[str] = []
 
@@ -136,13 +172,10 @@ def run_checks(requirements: dict[str, Requirement], test_refs: dict[str, list[s
         has_test = req.id in test_refs
         has_evidence = bool(req.evidence)
 
-        if has_test and has_evidence:
-            errors.append(f"{req.id}: has both a test marker and an evidence: path - pick one")
-
         if has_evidence:
-            evidence_path = ROOT / req.evidence.split("#", 1)[0]
-            if not evidence_path.exists():
-                errors.append(f"{req.id}: evidence path '{req.evidence}' does not exist")
+            evidence_error = _validate_evidence(req)
+            if evidence_error:
+                errors.append(evidence_error)
 
         if req.status == "implemented" and not has_test and not has_evidence:
             errors.append(
@@ -168,7 +201,8 @@ def render_report(requirements: dict[str, Requirement], test_refs: dict[str, lis
         "Do not hand-edit; it is overwritten on every run.",
         "",
         f"Total requirements: {len(requirements)}. "
-        f"With a test: {sum(1 for r in requirements if r in test_refs)}.",
+        f"With a test: {sum(1 for r in requirements if r in test_refs)}. "
+        f"With evidence: {sum(1 for r in requirements.values() if r.evidence)}.",
         "",
         "| ID | Priority | Phase | Status | Evidence | Title | Tests |",
         "|---|---|---|---|---|---|---|",

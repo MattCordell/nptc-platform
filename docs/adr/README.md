@@ -26,8 +26,21 @@ records and cross-references the PRD's own argument rather than repeating it).
 ## Consequences
 ```
 
-Number sequentially. Never delete or renumber a past ADR; supersede it with a new one
-and update its `Status` line.
+Number sequentially. Never delete or renumber a past ADR.
+
+**Reversing the decision itself** — choosing a different technology, rule, or approach —
+gets a new ADR that supersedes the old one; update the superseded ADR's `Status` line, but
+leave its `Context`/`Decision`/`Consequences` as the historical record of what was decided
+and why at the time.
+
+**Correcting a stated fact within a decision that has not changed** — e.g. a version
+number in a table that was wrong or has since been narrowed, a broken link, a typo — may be
+edited in place, with a dated `## Amendments` section appended (one line per correction:
+what was stated, what it's now, why) so the correction itself is visible in `git blame`
+without a whole new ADR for something that isn't a new decision. See ADR-0001's Amendments
+section for the shape.
+
+If it's unclear which of the two a change is, it's a reversal: supersede.
 
 ## Index
 

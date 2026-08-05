@@ -40,16 +40,29 @@ pointing at whatever demonstrates the requirement outside of a test.
 `traceability_check.py` treats `evidence:` as an alternative to a test marker, not an
 unchecked free-text field:
 
-- `implemented` requires a test marker **or** an `evidence:` path — not neither.
-- An `evidence:` path that does not exist on disk is a CI failure, same severity as a
-  broken test marker reference. This is what keeps the field honest rather than becoming a
-  write-only escape hatch nobody re-checks.
-- A requirement carrying **both** a test marker and `evidence:` is a CI failure. A
-  requirement with a real test does not need a hand-written pointer standing in for it;
-  allowing both invites the two to drift out of sync silently.
+- `implemented` requires a test marker **or** an `evidence:` path (or both) — not neither.
+- An `evidence:` path is checked for existence, that it is a file (not a directory), and
+  that it resolves inside the repository root (rejecting `../` traversal and absolute
+  paths) — same failure severity as a broken test marker reference. This is what keeps the
+  field honest rather than becoming a write-only escape hatch nobody re-checks.
+- If the path carries a `#fragment`, the fragment string must appear literally somewhere in
+  the target file's text. This is a weak check — it does not parse a YAML job ID or a
+  Markdown heading, just a substring search — but it is cheap, works across every file
+  format an evidence path might name, and catches the case that actually matters: the
+  fragment's target being renamed or deleted out from under it.
+- A requirement may carry **both** a test marker and `evidence:` — they are not mutually
+  exclusive. A requirement can be partially demonstrated by a test and partially by a
+  non-test artefact (NFR-37 is exactly this shape once backend tests also run offline: a
+  marker on the backend test, `evidence:` still pointing at the CI job that blocks egress
+  for the rest of the suite). Treating "both present" as an error would force deleting a
+  true statement to satisfy the checker.
+- The `traceability` CI job (`.github/workflows/docs.yml`) runs unconditionally on every
+  PR, not gated on a path filter — `evidence:` can point anywhere in the repository, so
+  there is no enumerable set of paths whose changes should trigger a re-check.
 
-`docs/requirements/traceability.md` gains an `Evidence` column so the report shows, per
-requirement, which of the two kinds of proof backs it.
+`docs/requirements/traceability.md` gains an `Evidence` column, and its summary line a
+"With evidence: N" count, so the report shows, per requirement, which kind(s) of proof
+back it.
 
 ## Rejected alternatives
 
@@ -61,14 +74,19 @@ requirement, which of the two kinds of proof backs it.
 
 ## Consequences
 
-- NFR-37 moves to `implemented` with `evidence: ".github/workflows/ci.yml#transform-offline"`.
+- NFR-37 gets `evidence: ".github/workflows/ci.yml#transform-offline"` recorded, but stays
+  `in-progress`: that job only blocks egress for `transform/tests` and `shared/tests`, and
+  `ci.yml`'s `python` job runs `backend/tests` with unrestricted network, so the
+  requirement is not yet met for the whole test suite. `evidence:` records what backs a
+  requirement independent of whether that is enough to call it `implemented` — it is not,
+  here, until backend integration tests get the same treatment (P1-1).
 - NFR-29 stays `in-progress` with `evidence: "docs/governance/hazard-log.md"` — the log
   exists but its owner (OI-6) is still unassigned, so the requirement is genuinely not
-  finished. This is the intended shape: `evidence:` records what backs a requirement,
-  independent of whether that's enough to call it `implemented`.
+  finished. Same shape as NFR-37: evidence recorded, status reflecting that it is not done.
 - Future infrastructure/process requirements (e.g. future NFRs about deployment, backups,
   or documentation) can reach `implemented` the same way, without inventing a new
   mechanism each time.
-- `scripts/tests/test_traceability_check.py` covers: evidence satisfies `implemented`, a
-  missing evidence path fails, an evidence path plus a test marker fails, and a `#fragment`
-  resolves to the underlying file rather than a literal (nonexistent) path.
+- `scripts/tests/test_traceability_check.py` covers: evidence satisfies `implemented`; a
+  missing, non-file, or root-escaping evidence path fails; a `#fragment` present in the
+  target file passes and one that is absent fails; a test marker and `evidence:` together
+  is allowed; and the report's `Evidence` column and "With evidence" count render correctly.

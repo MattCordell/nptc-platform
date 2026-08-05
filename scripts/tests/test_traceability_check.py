@@ -178,9 +178,9 @@ def test_run_checks_flags_evidence_path_that_does_not_exist() -> None:
     assert any("NFR-37" in error and "does not exist" in error for error in errors)
 
 
-def test_run_checks_resolves_evidence_fragment_to_the_file(tmp_path: Path) -> None:
+def test_run_checks_resolves_evidence_fragment_present_in_the_file(tmp_path: Path) -> None:
     evidence_file = tmp_path / "ci.yml"
-    evidence_file.write_text("", encoding="utf-8")
+    evidence_file.write_text("jobs:\n  transform-offline:\n    steps: []\n", encoding="utf-8")
     requirements = {
         "NFR-37": tc.Requirement(
             "NFR-37",
@@ -197,17 +197,71 @@ def test_run_checks_resolves_evidence_fragment_to_the_file(tmp_path: Path) -> No
     assert errors == []
 
 
-def test_run_checks_flags_both_test_marker_and_evidence() -> None:
+def test_run_checks_flags_evidence_fragment_missing_from_the_file(tmp_path: Path) -> None:
+    evidence_file = tmp_path / "ci.yml"
+    evidence_file.write_text("jobs:\n  renamed-job:\n    steps: []\n", encoding="utf-8")
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37",
+            "MUST",
+            "foundation",
+            "t",
+            "implemented",
+            "",
+            evidence="ci.yml#transform-offline",
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", tmp_path):
+        errors = tc.run_checks(requirements, {})
+    assert any(
+        "NFR-37" in error and "transform-offline" in error and "not found" in error
+        for error in errors
+    )
+
+
+def test_run_checks_flags_evidence_path_with_nothing_before_the_fragment() -> None:
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37", "MUST", "foundation", "t", "implemented", "", evidence="#transform-offline"
+        ),
+    }
+    errors = tc.run_checks(requirements, {})
+    assert any("NFR-37" in error and "no path before the #fragment" in error for error in errors)
+
+
+def test_run_checks_flags_evidence_path_that_escapes_the_repo_root(tmp_path: Path) -> None:
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37", "MUST", "foundation", "t", "implemented", "", evidence="../outside.yml"
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", tmp_path):
+        errors = tc.run_checks(requirements, {})
+    assert any("NFR-37" in error and "escapes the repository root" in error for error in errors)
+
+
+def test_run_checks_flags_evidence_path_that_is_a_directory(tmp_path: Path) -> None:
+    (tmp_path / "somedir").mkdir()
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37", "MUST", "foundation", "t", "implemented", "", evidence="somedir"
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", tmp_path):
+        errors = tc.run_checks(requirements, {})
+    assert any("NFR-37" in error and "not a file" in error for error in errors)
+
+
+def test_run_checks_allows_both_a_test_marker_and_an_evidence_path(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("evidence for the other half", encoding="utf-8")
     requirements = {
         "FR-01": tc.Requirement(
             "FR-01", "MUST", "p1", "t", "implemented", "", evidence="README.md"
         ),
     }
-    with mock.patch.object(tc, "ROOT", Path(__file__).resolve().parent.parent.parent):
+    with mock.patch.object(tc, "ROOT", tmp_path):
         errors = tc.run_checks(requirements, {"FR-01": ["backend/tests/test_x.py:5"]})
-    assert any(
-        "FR-01" in error and "both a test marker and an evidence" in error for error in errors
-    )
+    assert errors == []
 
 
 def test_render_report_escapes_a_literal_pipe_in_a_title() -> None:
@@ -249,3 +303,14 @@ def test_render_report_includes_every_requirement_and_sorts_fr_before_nfr() -> N
     report = tc.render_report(requirements, {})
     assert report.index("FR-10") < report.index("NFR-02")
     assert "Total requirements: 2" in report
+
+
+def test_render_report_counts_requirements_with_evidence() -> None:
+    requirements = {
+        "NFR-02": tc.Requirement("NFR-02", "MUST", "p1", "Second", "planned", ""),
+        "FR-10": tc.Requirement(
+            "FR-10", "MUST", "p1", "First", "implemented", "", evidence="README.md"
+        ),
+    }
+    report = tc.render_report(requirements, {})
+    assert "With evidence: 1" in report

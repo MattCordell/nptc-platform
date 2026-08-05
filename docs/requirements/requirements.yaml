@@ -20,15 +20,20 @@
 #   evidence Optional. A repo-relative path (optionally with a #fragment, e.g.
 #            ".github/workflows/ci.yml#transform-offline") demonstrating the
 #            requirement without a pytest test - for infrastructure/process
-#            requirements with no plausible test (see ADR-0002). Mutually
-#            exclusive with a test marker.
+#            requirements with no plausible test (see ADR-0002). May be set
+#            alongside a test marker (e.g. a requirement partially covered by
+#            a test and partially by a non-test artefact); the two are not
+#            mutually exclusive. traceability_check.py checks the path exists,
+#            is a file, is inside the repo, and - if a #fragment is given -
+#            that the fragment string appears literally somewhere in the
+#            target file (a weak, format-agnostic check that still catches
+#            the target being renamed or deleted out from under it).
 #
 # Moving a requirement to `implemented` requires either a test carrying
-# @pytest.mark.req("<id>") or an evidence: path; traceability_check.py enforces
-# this in CI (including that an evidence: path exists on disk), along with:
-# every ID here is used at least once in a test and vice versa. Whether a MUST
-# requirement has a corresponding GitHub issue is a manual review concern, not
-# a CI gate.
+# @pytest.mark.req("<id>") or an evidence: path (or both); traceability_check.py
+# enforces this in CI, along with: every ID here is used at least once in a
+# test and vice versa. Whether a MUST requirement has a corresponding GitHub
+# issue is a manual review concern, not a CI gate.
 
 - id: "FR-01"
   priority: MUST
@@ -845,9 +850,9 @@
   priority: MUST
   phase: foundation
   title: "The test suite MUST run with no network access"
-  status: implemented
+  status: in-progress
   evidence: ".github/workflows/ci.yml#transform-offline"
-  notes: "transform-offline job blocks outbound egress via iptables (issue #5/F-2); backend integration tests will need the same treatment once P1-1 lands"
+  notes: "transform-offline job blocks outbound egress via iptables for transform/tests and shared/tests only (issue #5/F-2); ci.yml's python job runs backend/tests with unrestricted network, so the requirement is not yet met for the whole test suite - stays in-progress until backend integration tests get the same treatment (P1-1)"
 - id: "NFR-38"
   priority: MUST
   phase: foundation
