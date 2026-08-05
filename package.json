@@ -8,6 +8,7 @@
     "dev": "pnpm --filter nptc-frontend dev",
     "build": "pnpm --filter nptc-frontend build",
     "test": "pnpm --filter nptc-frontend test",
+    "test:coverage": "pnpm --filter nptc-frontend test:coverage",
     "lint": "pnpm --filter nptc-frontend lint",
     "typecheck": "pnpm --filter nptc-frontend typecheck",
     "format:check": "pnpm --filter nptc-frontend format:check"

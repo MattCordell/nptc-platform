@@ -9,8 +9,66 @@ rather than living only in one person's shell history (Foundation issue F-7).
 
 Created and maintained by hand, directly on GitHub — via the UI, or `gh label
 create` / `gh api graphql` for one-off scripting. There is no reconciliation
-script and none of these are declared in a tracked file; GitHub Issues,
-Milestones and the Projects v2 board are the source of truth for themselves.
+script and none of these are declared in a tracked file (`scripts/backlog_sync.py` and
+its `LABEL_TAXONOMY` were retired in issue #101 — GitHub Issues, Milestones and the
+Projects v2 board are the source of truth for themselves, including for labels).
+
+### Current label inventory
+
+```text
+a11y                      Accessibility
+api                       Backend HTTP API
+audit                     Audit logging
+auth                      Authentication and identity
+bug                       Something isn't working                    (GitHub default)
+ci                        GitHub Actions workflows
+db                        Database schema and migrations
+dependencies              Dependency version update (Dependabot)
+docs                      Documentation and its tooling
+duplicate                 This issue or pull request already exists  (GitHub default)
+export                    Release exports (CSV, FHIR, SPIA spreadsheet)
+feature                   This PR implements backlog work - see pr-hygiene.yml
+frontend                  React/TypeScript client
+good first issue          Good for newcomers                         (GitHub default)
+governance/open-issue     One of the PRD's numbered open issues (OI-n)
+help wanted               Extra attention is needed                  (GitHub default)
+infra                     CI, deployment, containers, tooling
+invalid                   This doesn't seem right                    (GitHub default)
+question                  Further information is requested           (GitHub default)
+registry                  Property registry
+security                  Security-relevant, cross-cutting across Bug/Task/Feature
+spike                     Time-boxed investigation, not a committed implementation
+status/blocked            Blocked on something outside this issue
+status/needs-decision     Needs a decision before work can proceed
+status/needs-rcpa-input   Needs RCPA-QAP editorial input
+terminology               SNOMED CT / Ontoserver integration
+transform                 The P0 seeding transform CLI
+wontfix                   This will not be worked on                 (GitHub default)
+```
+
+`dependencies` is applied by all four ecosystems in `.github/dependabot.yml`.
+
+**Two GitHub default labels are kept on the repo but deliberately unused**, so their
+presence in `gh label list` is not drift: `documentation` (the project labels docs work
+`docs` instead) and `enhancement` (the project labels feature work `feature` instead, per
+`pr-hygiene.yml`). They are default labels created automatically on repo creation, not
+hand-added duplicates, and are left alone rather than deleted for no operational reason.
+
+### Retired labels
+
+`priority/must`, `priority/should` and `priority/may` were superseded by the Projects v2
+Priority field (issue #71) and applied to zero open issues. Deleted by hand, 2026-08-05,
+via the Foundation Phase Retro (issue #89):
+
+```powershell
+gh label delete priority/must   --repo MattCordell/nptc-platform --yes
+gh label delete priority/should --repo MattCordell/nptc-platform --yes
+gh label delete priority/may    --repo MattCordell/nptc-platform --yes
+```
+
+`phase/*`, `area/*` and `type/*` label definitions (retired by issue #69, native GitHub
+Issue Types adopted instead) were checked at the same time and are already absent from the
+repo — no cleanup needed there.
 
 ## Branch protection ruleset
 

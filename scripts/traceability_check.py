@@ -9,12 +9,22 @@ surfaces the whole list.
 Fails when:
   * an FR-nn/NFR-nn ID used in a test marker is not in requirements.yaml (a
     typo, or the requirement was renumbered);
-  * a requirement marked `implemented` in requirements.yaml has no test
-    carrying `@pytest.mark.req("<id>")`.
+  * a requirement marked `implemented` in requirements.yaml has neither a test
+    carrying `@pytest.mark.req("<id>")` nor an `evidence:` path (see ADR-0002 -
+    some infrastructure/process requirements have no plausible pytest test);
+  * a requirement's `evidence:` path is missing, escapes the repository root,
+    or is not a file;
+  * an `evidence:` path's `#fragment` does not appear literally in the target
+    file's text (a weak check - it does not parse YAML job IDs or Markdown
+    headings - but it catches the common case of the fragment's target being
+    renamed or deleted out from under it).
 
 Deliberately not enforced: that a requirement has a corresponding GitHub
 issue. The backlog lives on GitHub Issues directly now, and that coverage is
-a manual review concern, not a CI gate.
+a manual review concern, not a CI gate. Likewise `phase` is validated against
+VALID_PHASES and printed in the report, but is descriptive only - it drives no
+check and need not match the phase of the GitHub issue that actually delivers
+the requirement (see docs/requirements/requirements.yaml's header).
 
 Usage: uv run python scripts/traceability_check.py
 """
@@ -61,6 +71,7 @@ class Requirement:
     title: str
     status: str
     notes: str
+    evidence: str = ""
 
 
 def load_requirements() -> tuple[dict[str, Requirement], list[str]]:
@@ -94,6 +105,7 @@ def load_requirements() -> tuple[dict[str, Requirement], list[str]]:
             title=str(entry.get("title", "")),
             status=status,
             notes=str(entry.get("notes", "")),
+            evidence=str(entry.get("evidence", "")),
         )
     return requirements, errors
 
@@ -113,6 +125,44 @@ def collect_test_markers() -> dict[str, list[str]]:
     return references
 
 
+def _validate_evidence(req: Requirement) -> str | None:
+    """Check req.evidence names a real file inside the repo and, if it carries
+    a #fragment, that the fragment appears literally in that file's text.
+
+    The fragment check is deliberately weak - a substring search, not a YAML
+    job-ID or Markdown-heading parse - but it is cheap, format-agnostic, and
+    catches the case that actually matters: the fragment's target being
+    renamed or deleted out from under it (e.g. a CI job renamed so
+    "ci.yml#transform-offline" no longer contains "transform-offline"
+    anywhere).
+    """
+    path_part, _, fragment = req.evidence.partition("#")
+    if not path_part:
+        return f"{req.id}: evidence path '{req.evidence}' has no path before the #fragment"
+    if "\\" in path_part:
+        return (
+            f"{req.id}: evidence path '{req.evidence}' uses a backslash - "
+            "use forward slashes (repo convention, see .gitattributes)"
+        )
+
+    target = (ROOT / path_part).resolve()
+    try:
+        target.relative_to(ROOT.resolve())
+    except ValueError:
+        return f"{req.id}: evidence path '{req.evidence}' escapes the repository root"
+
+    if not target.is_file():
+        return f"{req.id}: evidence path '{req.evidence}' does not exist or is not a file"
+
+    if fragment and fragment not in target.read_text(encoding="utf-8", errors="replace"):
+        return (
+            f"{req.id}: evidence path '{req.evidence}' - fragment '{fragment}' "
+            f"not found in {path_part}"
+        )
+
+    return None
+
+
 def run_checks(requirements: dict[str, Requirement], test_refs: dict[str, list[str]]) -> list[str]:
     errors: list[str] = []
 
@@ -124,10 +174,18 @@ def run_checks(requirements: dict[str, Requirement], test_refs: dict[str, list[s
             )
 
     for req in requirements.values():
-        if req.status == "implemented" and req.id not in test_refs:
+        has_test = req.id in test_refs
+        has_evidence = bool(req.evidence)
+
+        if has_evidence:
+            evidence_error = _validate_evidence(req)
+            if evidence_error:
+                errors.append(evidence_error)
+
+        if req.status == "implemented" and not has_test and not has_evidence:
             errors.append(
                 f"{req.id}: status is 'implemented' but no test carries "
-                f'@pytest.mark.req("{req.id}")'
+                f'@pytest.mark.req("{req.id}") and no evidence: path is set'
             )
 
     return errors
@@ -148,17 +206,20 @@ def render_report(requirements: dict[str, Requirement], test_refs: dict[str, lis
         "Do not hand-edit; it is overwritten on every run.",
         "",
         f"Total requirements: {len(requirements)}. "
-        f"With a test: {sum(1 for r in requirements if r in test_refs)}.",
+        f"With a test: {sum(1 for r in requirements if r in test_refs)}. "
+        f"With evidence: {sum(1 for r in requirements.values() if r.evidence)}.",
         "",
-        "| ID | Priority | Phase | Status | Title | Tests |",
-        "|---|---|---|---|---|---|",
+        "| ID | Priority | Phase | Status | Evidence | Title | Tests |",
+        "|---|---|---|---|---|---|---|",
     ]
     for rid in sorted(requirements, key=lambda r: (r.split("-")[0], int(r.split("-")[1]))):
         req = requirements[rid]
         title = _escape_cell(req.title)
+        evidence = _escape_cell(req.evidence or "-")
         tests = _escape_cell("<br>".join(test_refs.get(rid, [])) or "-")
         lines.append(
-            f"| {req.id} | {req.priority} | {req.phase} | {req.status} | {title} | {tests} |"
+            f"| {req.id} | {req.priority} | {req.phase} | {req.status} | {evidence} "
+            f"| {title} | {tests} |"
         )
     lines.append("")
     return "\n".join(lines)

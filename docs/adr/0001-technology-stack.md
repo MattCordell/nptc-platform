@@ -17,7 +17,7 @@ by a future contributor who has not read §14.1.
 |---|---|
 | Backend | Python 3.12+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2 |
 | Database | PostgreSQL 16+, extensions `pg_trgm` and `unaccent` |
-| Frontend | React 18+, TypeScript, Vite, TanStack Query; client generated from the backend's OpenAPI document via `openapi-typescript` |
+| Frontend | React 19, TypeScript, Vite, TanStack Query; client generated from the backend's OpenAPI document via `openapi-typescript` |
 | Identity | Keycloak, realm configuration managed as code |
 | Background jobs | PostgreSQL-backed queue using `SELECT ... FOR UPDATE SKIP LOCKED` |
 | Reverse proxy | Caddy |
@@ -66,3 +66,11 @@ repository layout in the delivery plan.
 - Revisiting this decision mid-build is expensive (a rewrite, not a refactor). If it
   needs revisiting, open a new ADR that supersedes this one rather than editing it in
   place — this file is a historical record of what was decided and why.
+
+## Amendments
+
+- 2026-08-05: the Frontend row said "React 18+"; the frontend was scaffolded on React 19
+  (`frontend/package.json`) from the start. Narrowed to "React 19" so the table states the
+  version actually in use, rather than a floor no version has ever tested below. This is a
+  correction of the stated version, not a reversal of the framework decision, so it is made
+  in place rather than via a superseding ADR.
