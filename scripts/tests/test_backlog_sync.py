@@ -9,6 +9,7 @@ network behaviour against a live token is exercised only by really running the s
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sys
 import textwrap
@@ -24,6 +25,25 @@ import backlog_sync as bs
 @pytest.fixture(autouse=True)
 def _isolate_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bs, "BACKLOG_DIR", tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gh_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard against a fake client method silently falling through to GhClient's
+    real implementation - _FakeGhClient inherits from bs.GhClient so that apply_plan
+    type-checks, and if a future action kind called a method the fake didn't
+    override, that would shell out to a real `gh api` call from the unit suite
+    rather than fail loudly. Every test that genuinely needs subprocess.run mocked
+    (the _gh_get/_gh_send/_gh_graphql tests) sets its own monkeypatch.setattr
+    later in the test body, which simply overrides this for that test."""
+
+    def _refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "subprocess.run was called without being mocked - a fake client method "
+            "fell through to a real `gh` call (see _no_real_gh_calls in this file)"
+        )
+
+    monkeypatch.setattr(subprocess, "run", _refuse)
 
 
 def _write(path: Path, name: str, body: str) -> None:
@@ -255,42 +275,104 @@ def test_load_backlog_items_flags_duplicate_id_across_files() -> None:
 # --- render_body ---------------------------------------------------------------------
 
 
-def _item(**overrides: Any) -> bs.BacklogItem:
-    defaults: dict[str, Any] = {
-        "id": "F-1",
-        "title": "Example",
-        "milestone": "Foundation",
-        "issue_type": "Task",
-        "priority": "MUST",
-        "labels": (),
-        "requirements": (),
-        "tests": (),
-        "summary": "",
-        "checklist": (),
-        "docs": ("none: n/a",),
-        "acceptance": (),
-        "github_issue": None,
-        "parent_id": None,
-        "source_file": "foundation.yaml",
-    }
-    defaults.update(overrides)
-    return bs.BacklogItem(**defaults)
+# Canonical instances _item()/_existing() build on via dataclasses.replace().
+# Every parameter below is individually typed (not a **overrides: Any splat) so
+# mypy actually checks each field's value type at every call site - a splat
+# would type-check dataclasses.replace(base, **overrides) fine regardless of
+# what's inside overrides, since Any is compatible with everything; verified
+# empirically that mypy only checks replace()'s keyword arguments when they're
+# literal keywords at the call, not forwarded through **overrides: Any.
+_ITEM_BASE = bs.BacklogItem(
+    id="F-1",
+    title="Example",
+    milestone="Foundation",
+    issue_type="Task",
+    priority="MUST",
+    labels=(),
+    requirements=(),
+    tests=(),
+    summary="",
+    checklist=(),
+    docs=("none: n/a",),
+    acceptance=(),
+    github_issue=None,
+    parent_id=None,
+    source_file="foundation.yaml",
+)
+
+_EXISTING_BASE = bs.ExistingIssue(
+    number=42,
+    database_id=1,
+    node_id="I_node42",
+    title="Example",
+    body="",
+    labels=frozenset(),
+    milestone="Foundation",
+    issue_type="Task",
+    state="OPEN",
+)
 
 
-def _existing(**overrides: Any) -> bs.ExistingIssue:
-    defaults: dict[str, Any] = {
-        "number": 42,
-        "database_id": 1,
-        "node_id": "I_node42",
-        "title": "Example",
-        "body": "",
-        "labels": frozenset(),
-        "milestone": "Foundation",
-        "issue_type": "Task",
-        "state": "OPEN",
-    }
-    defaults.update(overrides)
-    return bs.ExistingIssue(**defaults)
+def _item(
+    id: str = _ITEM_BASE.id,
+    title: str = _ITEM_BASE.title,
+    milestone: str = _ITEM_BASE.milestone,
+    issue_type: str = _ITEM_BASE.issue_type,
+    priority: str = _ITEM_BASE.priority,
+    labels: tuple[str, ...] = _ITEM_BASE.labels,
+    requirements: tuple[str, ...] = _ITEM_BASE.requirements,
+    tests: tuple[str, ...] = _ITEM_BASE.tests,
+    summary: str = _ITEM_BASE.summary,
+    checklist: tuple[str, ...] = _ITEM_BASE.checklist,
+    docs: tuple[str, ...] = _ITEM_BASE.docs,
+    acceptance: tuple[str, ...] = _ITEM_BASE.acceptance,
+    github_issue: int | None = _ITEM_BASE.github_issue,
+    parent_id: str | None = _ITEM_BASE.parent_id,
+    source_file: str = _ITEM_BASE.source_file,
+) -> bs.BacklogItem:
+    return dataclasses.replace(
+        _ITEM_BASE,
+        id=id,
+        title=title,
+        milestone=milestone,
+        issue_type=issue_type,
+        priority=priority,
+        labels=labels,
+        requirements=requirements,
+        tests=tests,
+        summary=summary,
+        checklist=checklist,
+        docs=docs,
+        acceptance=acceptance,
+        github_issue=github_issue,
+        parent_id=parent_id,
+        source_file=source_file,
+    )
+
+
+def _existing(
+    number: int = _EXISTING_BASE.number,
+    database_id: int = _EXISTING_BASE.database_id,
+    node_id: str = _EXISTING_BASE.node_id,
+    title: str = _EXISTING_BASE.title,
+    body: str = _EXISTING_BASE.body,
+    labels: frozenset[str] = _EXISTING_BASE.labels,
+    milestone: str | None = _EXISTING_BASE.milestone,
+    issue_type: str | None = _EXISTING_BASE.issue_type,
+    state: str = _EXISTING_BASE.state,
+) -> bs.ExistingIssue:
+    return dataclasses.replace(
+        _EXISTING_BASE,
+        number=number,
+        database_id=database_id,
+        node_id=node_id,
+        title=title,
+        body=body,
+        labels=labels,
+        milestone=milestone,
+        issue_type=issue_type,
+        state=state,
+    )
 
 
 def test_render_body_includes_the_hidden_marker() -> None:
@@ -1445,10 +1527,15 @@ def test_main_degrades_gracefully_when_projects_v2_unavailable(
     monkeypatch.setattr(bs, "GhClient", lambda: client)
     monkeypatch.setattr(sys, "argv", ["backlog_sync.py"])
     result = bs.main()
-    err = capsys.readouterr().err
+    out, err = capsys.readouterr()
     assert result == 0
     assert "Projects-v2 (Priority) sync unavailable" in err
     assert "no project scope" in err
+    # The warning alone isn't enough - a regression that bailed out right after
+    # printing it (returning 0 without planning or printing anything else) would
+    # still pass on the assertions above. The sync itself must actually have run.
+    assert "create issue for F-1" in out
+    assert "dry-run" in out
 
 
 def test_main_dry_run_prints_plan_and_does_not_apply(
