@@ -40,6 +40,11 @@ Thumbs.db
 # Ad hoc exports (FR-78) and release artefacts are runtime output, not repo content.
 /exports/
 /releases/
+# Default output directory for the transform CLI (issue #23) - defect reports in
+# both machine- and human-readable form. Regenerated from the source workbook on
+# every run, and named after whichever workbook was passed in, so committing it
+# would just be noise that goes stale.
+/out/
 # NOTE: docs/requirements/traceability.md is generated but IS committed, the
 # same way docs/api/openapi.json is: CI (F-5) regenerates it and fails the
 # build if that differs from what's committed, so it's always current and
