@@ -26,7 +26,7 @@ read one before relitigating a stack choice.
 This is a polyglot monorepo: a `uv` workspace for Python, a `pnpm` workspace for the
 frontend, one shared root git repo.
 
-```
+```text
 backend/     nptc        - FastAPI API + background worker
 transform/   nptc_transform - P0 seeding transform (Excel -> import dataset), CLI via typer
 shared/      nptc_shared - code imported by BOTH backend and transform (SCTID/Verhoeff
