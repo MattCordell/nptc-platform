@@ -19,9 +19,9 @@
     produces byte-identical output (idempotency) and that output does not depend on
     filesystem iteration order or dict ordering (determinism).
   checklist:
-    - "CLI skeleton with --report-only as the default mode"
-    - "Determinism harness: two runs on the same input diff byte-identical"
-    - "Idempotency harness: re-running against already-processed output is a no-op"
+    - "[x] CLI skeleton with --report-only as the default mode"
+    - "[x] Determinism harness: two runs on the same input diff byte-identical"
+    - "[x] Idempotency harness: re-running against already-processed output is a no-op"
   docs:
     - "docs/operations/runbooks/transform.md: CLI usage and flags"
   acceptance:
