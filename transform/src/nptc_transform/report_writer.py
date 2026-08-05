@@ -57,6 +57,25 @@ def _render_json(result: RunResult) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
 
 
+def _escape_cell(value: str) -> str:
+    """Makes ``value`` safe to interpolate into a Markdown table cell.
+
+    A finding's location or message is workbook-derived text, so it can contain
+    the two characters that break a table row: ``|`` (splits the row into extra
+    columns, silently truncating the rest) and a line break (ends the row
+    mid-cell, and would put a literal ``\\r\\n`` into the file on Windows,
+    violating rule 3 above). Both are escaped rather than stripped so the
+    defect stays visible to the operator.
+    """
+    return (
+        value.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", "<br>")
+        .replace("\r", "<br>")
+        .replace("\n", "<br>")
+    )
+
+
 def _render_markdown(result: RunResult) -> str:
     lines = [
         "# Transform report",
@@ -70,7 +89,11 @@ def _render_markdown(result: RunResult) -> str:
         lines.append("| Location | Code | Message |")
         lines.append("|---|---|---|")
         for finding in result.findings:
-            lines.append(f"| {finding.location} | {finding.code} | {finding.message} |")
+            lines.append(
+                f"| {_escape_cell(finding.location)} "
+                f"| {_escape_cell(finding.code)} "
+                f"| {_escape_cell(finding.message)} |"
+            )
     else:
         lines.append("No findings.")
     lines.append("")

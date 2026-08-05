@@ -16,7 +16,8 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | Flag | Default | Meaning |
 |---|---|---|
 | `--workbook` | *(required)* | Path to the source `.xlsx`. Must exist and be readable. |
-| `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. |
+| `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
+| `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode. **Not implemented yet** - see below. |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
@@ -28,7 +29,11 @@ to actually run.
 |---|---|
 | `0` | Ran to completion. In report-only mode, this does not mean the workbook is clean - check `finding_count` in `report.json`. |
 | `1` | Reserved for blocking findings once band classification (P0-3) lands. Unreachable today. |
-| `2` | Usage error: the workbook doesn't exist or isn't readable, or `--emit-dataset` was passed. |
+| `2` | Usage error: the workbook doesn't exist or isn't readable, `--report-dir` names an existing file or can't be written to, both mode flags were passed together, or `--emit-dataset` was passed. |
+
+A filesystem refusal on `--report-dir` reports the path and the reason on
+stderr and exits `2`. It never exits `1` - that code stays reserved for
+"the report contains blocking findings" - and never prints a traceback.
 
 ## The report-only guarantee (FR-70)
 
@@ -57,7 +62,9 @@ the same `--report-dir`, produces byte-identical `report.json` and
   finding order is never dict- or set-iteration order, and does not depend on
   `PYTHONHASHSEED`.
 - Both files are written as UTF-8 with `\n` line endings, regardless of
-  platform.
+  platform. Workbook-derived text in `report.md` is escaped before it reaches
+  a table cell: a `|` in a finding's message is shown literally rather than
+  splitting the row, and a line break becomes `<br>` rather than a raw CRLF.
 - Both files are overwritten in place on every run - never appended to, never
   numbered (`report-2.json`). Re-running into a report directory that already
   holds a report from a previous run replaces it exactly; it does not

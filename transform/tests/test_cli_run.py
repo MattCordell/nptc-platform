@@ -38,9 +38,16 @@ def test_report_only_is_the_default_and_writes_only_the_report_dir(
     assert (report_dir / "report.json").is_file()
     assert (report_dir / "report.md").is_file()
 
-    after = _tree(tmp_path)
-    changed = after - before
-    assert all(str(Path(p)).startswith("report") for p in changed), changed
+    # Exactly the report dir and its two files - not "something starting with
+    # report", which would pass for a stray sibling too.
+    assert _tree(tmp_path) - before == {
+        str(Path("report")),
+        str(Path("report/report.json")),
+        str(Path("report/report.md")),
+    }
+    # The default --report-dir is relative, so a regression that ignores the
+    # option writes into the process CWD, which is outside tmp_path entirely.
+    assert not (Path.cwd() / "transform-report").exists()
 
 
 @pytest.mark.req("FR-70")
@@ -64,6 +71,72 @@ def test_emit_dataset_refuses_and_writes_nothing(tmp_path: Path, sample_workbook
     assert "P0-9" in result.output
     assert _tree(tmp_path) == before
     assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-70")
+def test_report_only_can_be_stated_explicitly(tmp_path: Path, sample_workbook: Path) -> None:
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--report-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (report_dir / "report.json").is_file()
+
+
+@pytest.mark.req("FR-70")
+def test_report_only_and_emit_dataset_together_are_a_usage_error(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    """Asking for both modes at once must be refused, not silently resolved."""
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--report-only",
+            "--emit-dataset",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+    assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-70")
+def test_report_dir_pointing_at_a_file_is_a_usage_error(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    """An unwritable --report-dir must explain itself, not raise a traceback.
+
+    Exit 1 is reserved for P0-3's blocking findings, so a filesystem refusal
+    has to land on 2 with a message the operator can act on.
+    """
+    not_a_dir = tmp_path / "report"
+    not_a_dir.write_text("", encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["run", "--workbook", str(sample_workbook), "--report-dir", str(not_a_dir)]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
 
 
 @pytest.mark.req("FR-70")

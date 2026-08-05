@@ -58,8 +58,20 @@ def run(
     ],
     report_dir: Annotated[
         Path,
-        typer.Option(help="Directory the report files are written into."),
+        typer.Option(
+            file_okay=False,
+            writable=True,
+            help="Directory the report files are written into.",
+        ),
     ] = Path("transform-report"),
+    report_only: Annotated[
+        bool,
+        typer.Option(
+            "--report-only",
+            help="Write a report and mutate nothing. The default; accepted explicitly "
+            "so the mode can be stated in a script.",
+        ),
+    ] = False,
     emit_dataset: Annotated[
         bool,
         typer.Option(
@@ -70,12 +82,16 @@ def run(
 ) -> None:
     """Run the transform against WORKBOOK.
 
-    Report-only by default (FR-70): writes report.json and report.md into
-    --report-dir and nothing else. No file outside --report-dir is ever
-    touched. --emit-dataset opts into the mutating mode, which is not
-    implemented yet.
+    Report-only by default (FR-70), and --report-only says so explicitly:
+    writes report.json and report.md into --report-dir and nothing else. No
+    file outside --report-dir is ever touched. --emit-dataset opts into the
+    mutating mode, which is not implemented yet.
     """
     typer.echo(f"nptc-transform {__version__}: starting", err=True)
+
+    if report_only and emit_dataset:
+        typer.echo("--report-only and --emit-dataset are mutually exclusive", err=True)
+        raise typer.Exit(code=ExitCode.USAGE_ERROR)
 
     if emit_dataset:
         typer.echo("dataset emission is not implemented yet (backlog P0-9)", err=True)
@@ -83,7 +99,18 @@ def run(
 
     start = time.monotonic()
     result = run_transform(workbook, mode=Mode.REPORT_ONLY)
-    write_report(result, report_dir)
+    try:
+        write_report(result, report_dir)
+    except OSError as exc:
+        # Anything the filesystem refuses is the operator's to fix, so say which
+        # path and why - never a traceback, and never exit 1, which P0-3 reserves
+        # for "the report itself contains blocking findings".
+        typer.echo(
+            f"could not write the report into {report_dir}: {exc.strerror or exc}. "
+            "Pass --report-dir a writable directory path.",
+            err=True,
+        )
+        raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     elapsed = time.monotonic() - start
     typer.echo(f"nptc-transform: wrote report to {report_dir} in {elapsed:.2f}s", err=True)
     raise typer.Exit(code=ExitCode.OK)
