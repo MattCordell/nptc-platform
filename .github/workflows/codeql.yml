@@ -106,3 +106,54 @@ jobs:
           name: codeql-${{ matrix.language }}
           path: sarif-results
           retention-days: 14
+
+      # Everything above this point is advisory-only: nothing exits non-zero on a
+      # finding, so a daily unattended scan could produce output nobody is alerted
+      # to (issue #87). Gate on severity instead of any finding at all -
+      # security-extended on a pre-alpha codebase surfaces plenty of low-severity
+      # noise that would otherwise train reviewers to ignore a real failure.
+      # Threshold (7.0, CVSS "high") matches the "high/critical" language NFR-25
+      # already uses for pip-audit/pnpm audit in security.yml.
+      - name: Fail on high/critical findings (NFR-25 threshold)
+        run: |
+          set -euo pipefail
+          sarif_file=$(find sarif-results -maxdepth 1 -name '*.sarif' -print -quit)
+          python3 - "$sarif_file" <<'PYEOF'
+          import json
+          import sys
+
+          THRESHOLD = 7.0
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              sarif = json.load(f)
+
+          failed = False
+          for run in sarif.get("runs", []):
+              # Rule metadata (including security-severity) lives on the tool driver
+              # for built-in rules and on tool extensions for query-pack rules
+              # (security-extended ships as an extension) - both must be checked,
+              # not just the driver.
+              rules_by_id = {}
+              tool = run.get("tool", {})
+              for source in [tool.get("driver", {}), *tool.get("extensions", [])]:
+                  for rule in source.get("rules", []):
+                      rules_by_id[rule["id"]] = rule
+
+              for result in run.get("results", []):
+                  rule_id = result.get("ruleId")
+                  rule = rules_by_id.get(rule_id, {})
+                  severity = rule.get("properties", {}).get("security-severity")
+                  if severity is None:
+                      continue
+                  if float(severity) >= THRESHOLD:
+                      text = result.get("message", {}).get("text", "")
+                      msg = text.splitlines()[0] if text else ""
+                      loc = result.get("locations", [{}])[0].get("physicalLocation", {})
+                      path = loc.get("artifactLocation", {}).get("uri", "?")
+                      line = loc.get("region", {}).get("startLine", "?")
+                      print(f"::error::{rule_id} (security-severity {severity}) {path}:{line} - {msg}")
+                      failed = True
+
+          if failed:
+              sys.exit(1)
+          PYEOF

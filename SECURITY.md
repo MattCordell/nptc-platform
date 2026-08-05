@@ -27,16 +27,20 @@ pipeline belong with those services, not here.
 
 ## Controls in this repository
 
-| Control | Where | Requirement |
-|---|---|---|
-| Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 |
-| Container image scanning before publication | `.github/workflows/images.yml` | NFR-25 |
-| Static analysis (CodeQL) daily, on push to main, and on demand | `.github/workflows/codeql.yml` | — |
-| Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 |
-| Dependency updates | `.github/dependabot.yml` | NFR-25 |
-| No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 |
-| Server-side authorisation on every request, tested for the negative case | `backend/src/nptc/auth/` | NFR-20, FR-80, FR-81 |
-| Append-only audit log enforced at database privilege level, with a hash chain | `backend/src/nptc/audit/` | NFR-09, NFR-10 |
+Status is stated honestly per row: `Active` means the control runs today and would
+actually catch the thing it claims to; `Planned` names the phase or issue it lands
+with. A stub module existing is not the same as a control being active.
+
+| Control | Where | Requirement | Status |
+|---|---|---|---|
+| Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 | Active |
+| Static analysis (CodeQL) daily, on push to main, and on demand, failing the build on a high/critical (security-severity >= 7.0) finding | `.github/workflows/codeql.yml` | — | Active |
+| Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 | Active |
+| Dependency updates | `.github/dependabot.yml` | NFR-25 | Active |
+| No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 | Active |
+| Container image scanning before publication | — | NFR-25 | Planned (P4/P5, lands with the container images) |
+| Server-side authorisation on every request, tested for the negative case | `backend/src/nptc/auth/` | NFR-20, FR-80, FR-81 | Planned (P1/P2 — currently a docstring stub, enforces nothing) |
+| Append-only audit log enforced at database privilege level, with a hash chain | `backend/src/nptc/audit/` | NFR-09, NFR-10 | Planned (P1/P2 — currently a docstring stub, enforces nothing) |
 
 An independent security review is required before any production deployment (NFR-27) and
 is scheduled in phase P5.
@@ -67,9 +71,15 @@ and OpenSSF Scorecard aren't active yet.** All three need GitHub Advanced Securi
 run against a private repository, and this one doesn't have it enabled — confirmed by
 running each, not assumed from the docs (CodeQL's own upload step fails outright with
 "Advanced Security must be enabled for this repository to use code scanning").
-`codeql.yml` still runs the actual scan daily and on push to main (plus on demand), with `upload: never` and
-findings summarised into the job's own step summary instead of the Security tab.
-`security.yml` runs the open-source gitleaks CLI directly against git history on every
-PR and daily. Both are real controls, just not surfaced through GitHub's own UI. Revisit
-all three once the repository goes public (see the licence decision in README.md) or Advanced
-Security is enabled first.
+`codeql.yml` still runs the actual scan daily and on push to main (plus on demand), with
+`upload: never` and findings summarised into the job's own step summary instead of the
+Security tab. Because a finding with no consequence is a finding nobody looks at, the
+workflow also fails outright on any high/critical (security-severity >= 7.0) result, so
+the daily scheduled run's own failure (and the email GitHub sends for it) is what
+substitutes for the missing Security-tab alert. Lower-severity findings stay
+advisory-only, printed to the step summary but not gating — `security-extended` on a
+pre-alpha codebase produces enough of those that gating on all of them would just teach
+reviewers to ignore a red run. `security.yml` runs the open-source gitleaks CLI directly
+against git history on every PR and daily. All three are real controls, just not
+surfaced through GitHub's own UI. Revisit all three once the repository goes public (see
+the licence decision in README.md) or Advanced Security is enabled first.
