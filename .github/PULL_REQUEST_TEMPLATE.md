@@ -15,8 +15,8 @@ Refs #
 ## Documentation
 
 <!--
-  REQUIRED. Pick exactly one. CI fails a feature PR that touches backend/src or
-  frontend/src with no docs change and no `no-doc-impact:` line.
+  REQUIRED. Pick exactly one. CI fails a PR that changes anything outside
+  docs/**/*.md with no docs change and no documentation-impact line below.
 -->
 
 - [ ] Documentation updated in this PR: <!-- list the files -->
