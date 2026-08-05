@@ -8,17 +8,27 @@
 # Fields:
 #   id       FR-nn / NFR-nn, stable, matches the PRD exactly.
 #   priority MUST / SHOULD / MAY, the PRD's own RFC-2119 scheduling band.
-#   phase    foundation / p0 / p1 / p2 / p3 / p4 / p5 / governance - which delivery
-#            phase is expected to implement this.
+#   phase    foundation / p0 / p1 / p2 / p3 / p4 / p5 / governance - descriptive
+#            grouping only (where this requirement conceptually belongs in the
+#            delivery narrative). It drives no check in traceability_check.py and
+#            need not match the phase of the GitHub issue that actually delivers
+#            the requirement - that issue's own "## Requirement IDs" section is
+#            the authority on what delivers what.
 #   title    Short label, quoted from the PRD.
 #   status   planned / in-progress / implemented / deferred / n-a.
 #   notes    Free text - deferral rationale, links to an open issue, etc.
+#   evidence Optional. A repo-relative path (optionally with a #fragment, e.g.
+#            ".github/workflows/ci.yml#transform-offline") demonstrating the
+#            requirement without a pytest test - for infrastructure/process
+#            requirements with no plausible test (see ADR-0002). Mutually
+#            exclusive with a test marker.
 #
-# Moving a requirement to `implemented` requires a test carrying
-# @pytest.mark.req("<id>") (or the frontend `test.meta({req: '<id>'})` equivalent);
-# traceability_check.py enforces this in CI, along with: every ID here is used at
-# least once in a test and vice versa. Whether a MUST requirement has a
-# corresponding GitHub issue is a manual review concern, not a CI gate.
+# Moving a requirement to `implemented` requires either a test carrying
+# @pytest.mark.req("<id>") or an evidence: path; traceability_check.py enforces
+# this in CI (including that an evidence: path exists on disk), along with:
+# every ID here is used at least once in a test and vice versa. Whether a MUST
+# requirement has a corresponding GitHub issue is a manual review concern, not
+# a CI gate.
 
 - id: "FR-01"
   priority: MUST
@@ -787,7 +797,8 @@
   phase: p5
   title: "Maintain a hazard log identifying clinical safety risks arising from catalogue defects, and the mitigations"
   status: in-progress
-  notes: "docs/governance/hazard-log.md seeded with 5 hazards from the PRD (issue #7/F-4); owner (OI-6) still open"
+  evidence: "docs/governance/hazard-log.md"
+  notes: "docs/governance/hazard-log.md seeded with 5 hazards from the PRD (issue #7/F-4); owner (OI-6) still open - stays in-progress until an owner is assigned, evidence: here just points at what exists so far"
 - id: "NFR-30"
   priority: SHOULD
   phase: governance
@@ -834,8 +845,9 @@
   priority: MUST
   phase: foundation
   title: "The test suite MUST run with no network access"
-  status: in-progress
-  notes: "ci.yml transform-offline job blocks outbound egress via iptables (issue #5/F-2); backend integration tests will need the same treatment once P1-1 lands"
+  status: implemented
+  evidence: ".github/workflows/ci.yml#transform-offline"
+  notes: "transform-offline job blocks outbound egress via iptables (issue #5/F-2); backend integration tests will need the same treatment once P1-1 lands"
 - id: "NFR-38"
   priority: MUST
   phase: foundation

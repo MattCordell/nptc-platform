@@ -11,6 +11,7 @@ import re
 import sys
 import textwrap
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -137,6 +138,78 @@ def test_run_checks_passes_a_fully_covered_requirement() -> None:
     assert errors == []
 
 
+def test_run_checks_passes_implemented_via_evidence_path(tmp_path: Path) -> None:
+    evidence_file = tmp_path / "ci.yml"
+    evidence_file.write_text("", encoding="utf-8")
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37", "MUST", "foundation", "t", "implemented", "", evidence="ci.yml"
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", tmp_path):
+        errors = tc.run_checks(requirements, {})
+    assert errors == []
+
+
+def test_run_checks_flags_implemented_with_neither_test_nor_evidence() -> None:
+    requirements = {
+        "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "implemented", ""),
+    }
+    errors = tc.run_checks(requirements, {})
+    assert any(
+        "FR-01" in error and "no test carries" in error and "no evidence" in error
+        for error in errors
+    )
+
+
+def test_run_checks_flags_evidence_path_that_does_not_exist() -> None:
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37",
+            "MUST",
+            "foundation",
+            "t",
+            "implemented",
+            "",
+            evidence="does/not/exist.yml",
+        ),
+    }
+    errors = tc.run_checks(requirements, {})
+    assert any("NFR-37" in error and "does not exist" in error for error in errors)
+
+
+def test_run_checks_resolves_evidence_fragment_to_the_file(tmp_path: Path) -> None:
+    evidence_file = tmp_path / "ci.yml"
+    evidence_file.write_text("", encoding="utf-8")
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37",
+            "MUST",
+            "foundation",
+            "t",
+            "implemented",
+            "",
+            evidence="ci.yml#transform-offline",
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", tmp_path):
+        errors = tc.run_checks(requirements, {})
+    assert errors == []
+
+
+def test_run_checks_flags_both_test_marker_and_evidence() -> None:
+    requirements = {
+        "FR-01": tc.Requirement(
+            "FR-01", "MUST", "p1", "t", "implemented", "", evidence="README.md"
+        ),
+    }
+    with mock.patch.object(tc, "ROOT", Path(__file__).resolve().parent.parent.parent):
+        errors = tc.run_checks(requirements, {"FR-01": ["backend/tests/test_x.py:5"]})
+    assert any(
+        "FR-01" in error and "both a test marker and an evidence" in error for error in errors
+    )
+
+
 def test_render_report_escapes_a_literal_pipe_in_a_title() -> None:
     requirements = {
         "FR-84": tc.Requirement(
@@ -146,9 +219,26 @@ def test_render_report_escapes_a_literal_pipe_in_a_title() -> None:
     report = tc.render_report(requirements, {})
     table_row = next(line for line in report.splitlines() if line.startswith("| FR-84"))
     assert "71388002 \\|Procedure\\|" in table_row
-    # 6 columns -> 7 unescaped-pipe delimiters; the title's own pipes must not add more.
+    # 7 columns -> 8 unescaped-pipe delimiters; the title's own pipes must not add more.
     unescaped_pipes = re.findall(r"(?<!\\)\|", table_row)
-    assert len(unescaped_pipes) == 7
+    assert len(unescaped_pipes) == 8
+
+
+def test_render_report_includes_the_evidence_column() -> None:
+    requirements = {
+        "NFR-37": tc.Requirement(
+            "NFR-37",
+            "MUST",
+            "foundation",
+            "t",
+            "implemented",
+            "",
+            evidence=".github/workflows/ci.yml#transform-offline",
+        ),
+    }
+    report = tc.render_report(requirements, {})
+    assert "| Evidence |" in report
+    assert ".github/workflows/ci.yml#transform-offline" in report
 
 
 def test_render_report_includes_every_requirement_and_sorts_fr_before_nfr() -> None:

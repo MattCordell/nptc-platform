@@ -64,7 +64,10 @@ Plus, for this project:
 
 7. **Documentation is updated in the same PR.** See below.
 8. Requirement IDs appear on at least one test (`@pytest.mark.req("FR-07")`), and
-   `docs/requirements/requirements.yaml` is moved to `implemented` when it is.
+   `docs/requirements/requirements.yaml` is moved to `implemented` when it is. For an
+   infrastructure/process requirement with no plausible test, an `evidence:` path
+   (pointing at the CI config or document that demonstrates it) may stand in for the test
+   marker instead — see ADR-0002 and the `requirements.yaml` header.
 
 ## Documentation is part of the change
 

@@ -34,3 +34,4 @@ and update its `Status` line.
 | ADR | Title |
 |---|---|
 | [0001](0001-technology-stack.md) | Technology stack |
+| [0002](0002-requirement-evidence-without-a-test.md) | Requirement evidence without a pytest test |

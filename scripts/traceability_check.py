@@ -9,12 +9,19 @@ surfaces the whole list.
 Fails when:
   * an FR-nn/NFR-nn ID used in a test marker is not in requirements.yaml (a
     typo, or the requirement was renumbered);
-  * a requirement marked `implemented` in requirements.yaml has no test
-    carrying `@pytest.mark.req("<id>")`.
+  * a requirement marked `implemented` in requirements.yaml has neither a test
+    carrying `@pytest.mark.req("<id>")` nor an `evidence:` path (see ADR-0002 -
+    some infrastructure/process requirements have no plausible pytest test);
+  * a requirement's `evidence:` path does not exist on disk;
+  * a requirement carries both a test marker and an `evidence:` path - pick
+    the one that actually demonstrates it.
 
 Deliberately not enforced: that a requirement has a corresponding GitHub
 issue. The backlog lives on GitHub Issues directly now, and that coverage is
-a manual review concern, not a CI gate.
+a manual review concern, not a CI gate. Likewise `phase` is validated against
+VALID_PHASES and printed in the report, but is descriptive only - it drives no
+check and need not match the phase of the GitHub issue that actually delivers
+the requirement (see docs/requirements/requirements.yaml's header).
 
 Usage: uv run python scripts/traceability_check.py
 """
@@ -61,6 +68,7 @@ class Requirement:
     title: str
     status: str
     notes: str
+    evidence: str = ""
 
 
 def load_requirements() -> tuple[dict[str, Requirement], list[str]]:
@@ -94,6 +102,7 @@ def load_requirements() -> tuple[dict[str, Requirement], list[str]]:
             title=str(entry.get("title", "")),
             status=status,
             notes=str(entry.get("notes", "")),
+            evidence=str(entry.get("evidence", "")),
         )
     return requirements, errors
 
@@ -124,10 +133,21 @@ def run_checks(requirements: dict[str, Requirement], test_refs: dict[str, list[s
             )
 
     for req in requirements.values():
-        if req.status == "implemented" and req.id not in test_refs:
+        has_test = req.id in test_refs
+        has_evidence = bool(req.evidence)
+
+        if has_test and has_evidence:
+            errors.append(f"{req.id}: has both a test marker and an evidence: path - pick one")
+
+        if has_evidence:
+            evidence_path = ROOT / req.evidence.split("#", 1)[0]
+            if not evidence_path.exists():
+                errors.append(f"{req.id}: evidence path '{req.evidence}' does not exist")
+
+        if req.status == "implemented" and not has_test and not has_evidence:
             errors.append(
                 f"{req.id}: status is 'implemented' but no test carries "
-                f'@pytest.mark.req("{req.id}")'
+                f'@pytest.mark.req("{req.id}") and no evidence: path is set'
             )
 
     return errors
@@ -150,15 +170,17 @@ def render_report(requirements: dict[str, Requirement], test_refs: dict[str, lis
         f"Total requirements: {len(requirements)}. "
         f"With a test: {sum(1 for r in requirements if r in test_refs)}.",
         "",
-        "| ID | Priority | Phase | Status | Title | Tests |",
-        "|---|---|---|---|---|---|",
+        "| ID | Priority | Phase | Status | Evidence | Title | Tests |",
+        "|---|---|---|---|---|---|---|",
     ]
     for rid in sorted(requirements, key=lambda r: (r.split("-")[0], int(r.split("-")[1]))):
         req = requirements[rid]
         title = _escape_cell(req.title)
+        evidence = _escape_cell(req.evidence or "-")
         tests = _escape_cell("<br>".join(test_refs.get(rid, [])) or "-")
         lines.append(
-            f"| {req.id} | {req.priority} | {req.phase} | {req.status} | {title} | {tests} |"
+            f"| {req.id} | {req.priority} | {req.phase} | {req.status} | {evidence} "
+            f"| {title} | {tests} |"
         )
     lines.append("")
     return "\n".join(lines)

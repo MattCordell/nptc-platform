@@ -41,8 +41,8 @@ services:
     restart: unless-stopped
     # start-dev: fine for the local/bootstrap stack this file targets. Realm
     # configuration as code (ADR-0001) and a production start mode land with
-    # Foundation... P1-3 (identity), not here - F-7 only proves Keycloak
-    # itself reaches healthy from a clean volume.
+    # P1-3 (identity), not here - F-7 only proves Keycloak itself reaches
+    # healthy from a clean volume.
     command: start-dev
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
