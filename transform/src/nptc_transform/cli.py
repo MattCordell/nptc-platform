@@ -102,7 +102,9 @@ def run(
     try:
         result = run_transform(workbook, mode=Mode.REPORT_ONLY)
     except WorkbookReadError as exc:
-        typer.echo(f"could not read {workbook}: {exc}", err=True)
+        # WorkbookReadError's own message already names the path and reason -
+        # echo it as-is rather than wrapping it a second time.
+        typer.echo(f"{exc}. Pass --workbook a valid, readable .xlsx file.", err=True)
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     try:
         write_report(result, report_dir)

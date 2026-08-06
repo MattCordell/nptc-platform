@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.cli import app
-from nptc_transform.pipeline import Finding
+from nptc_transform.findings import Finding
 from nptc_transform.workbook import Sheet, read_workbook
 
 runner = CliRunner()
@@ -151,6 +151,38 @@ def test_unrecognised_layout_flags_the_missing_code_column(
 
 
 @pytest.mark.req("FR-70")
+def test_unrecognised_layout_sheet_gets_no_cell_level_noise(
+    unrecognised_layout_workbook: Path,
+) -> None:
+    """A sheet with no code column isn't SPIA data - it gets exactly the one
+    UNRECOGNISED_LAYOUT finding, not per-cell A.1/A.3 noise on top of it."""
+    sheets = read_workbook(unrecognised_layout_workbook)
+    findings = scan_workbook(sheets)
+    assert len(findings) == 1
+    assert findings[0].code == "UNRECOGNISED_LAYOUT"
+
+
+@pytest.mark.req("FR-70")
+def test_rev_history_style_sheet_is_not_scanned_cell_by_cell(tmp_path: Path) -> None:
+    """FR-63/FR-60: the published workbook's own ``Rev History`` worksheet is
+    a hand-written prose paragraph with no SPIA columns at all. A trailing
+    space in its prose and an ALT+ENTER line break inside a paragraph cell
+    must not turn into Appendix A findings - only the one layout finding."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Rev History"
+    sheet.append(["Release notes"])
+    sheet.append(["Line one.\nLine two, with a trailing space. "])
+    path = tmp_path / "rev_history.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    findings = scan_workbook(sheets)
+    assert len(findings) == 1
+    assert findings[0].code == "UNRECOGNISED_LAYOUT"
+
+
+@pytest.mark.req("FR-70")
 def test_headers_only_sheet_with_no_code_column_is_not_flagged(tmp_path: Path) -> None:
     """No data rows means nothing to validate yet - an empty template sheet
     with an unfamiliar header row is not itself a defect."""
@@ -182,3 +214,113 @@ def test_report_never_contains_a_raw_invisible_character(
         text = (report_dir / name).read_text(encoding="utf-8")
         assert chr(0x00A0) not in text
         assert chr(0x202F) not in text
+
+
+@pytest.mark.req("FR-70")
+def test_line_break_in_free_text_column_is_not_an_invisible_character(
+    tmp_path: Path,
+) -> None:
+    """An ALT+ENTER line break in a genuine free-text column (Usage guidance)
+    on the primary data sheet is ordinary formatting, not an A.1 defect - the
+    sheet-scoping fix above only covers non-data sheets; this covers the
+    same free-text content sitting *inside* a sheet that has a code column."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)", "Usage guidance"])
+    sheet.append(["12345678", "Line one.\nLine two."])
+    path = tmp_path / "guidance.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    findings = scan_workbook(sheets)
+    assert findings == ()
+
+
+@pytest.mark.req("FR-70")
+def test_fifteen_digit_number_is_at_the_safe_ceiling_not_flagged(tmp_path: Path) -> None:
+    """PRD §2.1: 15 significant decimal digits is Excel's own guaranteed-safe
+    ceiling - a 15-digit numeric cell is exactly representable, so it must
+    not be reported as a precision risk (only as the wrong storage type)."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)"])
+    sheet.append([123456789012345])  # 15 digits
+    path = tmp_path / "fifteen.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "NUMERIC_PRECISION_RISK" not in codes
+    assert "CODE_CELL_NOT_TEXT" in codes
+
+
+@pytest.mark.req("FR-70")
+def test_sixteen_digit_number_crosses_the_corruption_boundary(tmp_path: Path) -> None:
+    """PRD Appendix A.2: 'any SCTID of 16 digits or more... is silently
+    corrupted' - the finding must fire exactly at that boundary, not one
+    digit later."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)"])
+    sheet.append([1393151000168101])  # 16 digits
+    path = tmp_path / "sixteen.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "NUMERIC_PRECISION_RISK" in codes
+
+
+@pytest.mark.req("FR-70")
+def test_numeric_precision_risk_fires_outside_the_code_column(tmp_path: Path) -> None:
+    """Deliberately column-agnostic (unlike CODE_CELL_NOT_TEXT): a corrupted
+    long value sitting in an unexpected column of an otherwise-recognised
+    sheet must still surface, not just when it's in the code column."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)", "Version"])
+    sheet.append(["12345678", 1393151000168101])  # code column clean; Version corrupted-length
+    path = tmp_path / "version_precision.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in _findings_at(sheets, "Requesting!B2")}
+    assert "NUMERIC_PRECISION_RISK" in codes
+    assert "CODE_CELL_NOT_TEXT" not in codes
+
+
+@pytest.mark.req("FR-70")
+def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
+    """A cell that's nothing but whitespace should say so plainly, rather
+    than the misleading 'has leading and trailing whitespace' - there's no
+    content for either edge to be relative to."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)", "RCPA Synonyms"])
+    sheet.append(["12345678", "   "])
+    path = tmp_path / "whitespace_only.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(
+        f for f in _findings_at(sheets, "Requesting!B2") if f.code == "SURROUNDING_WHITESPACE"
+    )
+    assert "only whitespace" in finding.message
+    assert "leading" not in finding.message
+    assert "trailing" not in finding.message
+
+
+@pytest.mark.req("FR-70")
+def test_numeric_overflow_is_flagged_not_crashed(numeric_overflow_workbook: Path) -> None:
+    """A numeric cell whose raw text overflows a double (openpyxl's own
+    ``_cast_number`` returns ``inf`` without raising) must become a finding,
+    not an uncaught OverflowError out of ``int(inf)``."""
+    sheets = read_workbook(numeric_overflow_workbook)
+    findings = scan_workbook(sheets)
+    codes = {f.code for f in findings}
+    assert "NUMERIC_PRECISION_RISK" in codes

@@ -16,6 +16,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.findings import Finding
+from nptc_transform.workbook import read_workbook
+
 
 @dataclass(frozen=True)
 class SourceRef:
@@ -29,24 +33,6 @@ class SourceRef:
 
     filename: str
     sha256: str
-
-
-@dataclass(frozen=True)
-class Finding:
-    """A single defect finding.
-
-    Minimal today: ``code``, ``location`` (a cell reference or similar) and
-    ``message``. The defect band (P0-3) and grouped rendering (P0-8) are owned
-    elsewhere; this type exists here only because determinism needs a defined
-    ordering to be testable.
-    """
-
-    code: str
-    location: str
-    message: str
-
-    def sort_key(self) -> tuple[str, str, str]:
-        return (self.location, self.code, self.message)
 
 
 class Mode(StrEnum):
@@ -78,14 +64,7 @@ def run_transform(workbook: Path, *, mode: Mode) -> RunResult:
 
     Reads the workbook and scans every cell for PRD Appendix A.1-A.3 defects
     (P0-2). Severity band classification (P0-3) still plugs in later.
-
-    Imports ``cell_defects``/``workbook`` here, not at module level: both
-    import ``Finding`` from this module, and importing them at module level
-    would make the two modules circularly dependent on each other.
     """
-    from nptc_transform.cell_defects import scan_workbook
-    from nptc_transform.workbook import read_workbook
-
     source = SourceRef(filename=workbook.name, sha256=_hash_file(workbook))
     sheets = read_workbook(workbook)
     findings = scan_workbook(sheets)

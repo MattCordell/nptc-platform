@@ -39,9 +39,7 @@ PARAGRAPH_SEPARATOR = chr(0x2029)  # Zp
         (ZWNJ, True),
         (BOM, True),
         (SOFT_HYPHEN, True),
-        ("\t", True),  # Cc, tab
-        ("\r", True),  # Cc, carriage return
-        ("\n", True),  # Cc, line feed
+        ("\t", True),  # Cc, tab - no legitimate use inside a single cell
         (LINE_SEPARATOR, True),
         (PARAGRAPH_SEPARATOR, True),
         (" ", False),  # ASCII space is never a defect
@@ -51,6 +49,13 @@ PARAGRAPH_SEPARATOR = chr(0x2029)  # Zp
 )
 def test_is_invisible_categorises_each_case(ch: str, expected: bool) -> None:
     assert is_invisible(ch) is expected
+
+
+@pytest.mark.parametrize("ch", ["\n", "\r"])
+def test_is_invisible_excludes_legitimate_line_breaks(ch: str) -> None:
+    """An ALT+ENTER line break inside a cell (e.g. Usage guidance, History) is
+    ordinary multi-line formatting, not an Appendix A.1 defect."""
+    assert is_invisible(ch) is False
 
 
 def test_find_invisible_characters_reports_offset_codepoint_and_name() -> None:

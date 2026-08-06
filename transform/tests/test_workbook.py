@@ -73,10 +73,16 @@ def test_text_typed_code_cell_captured_verbatim(typed_workbook: Path) -> None:
     assert cell.text == "12345678"
 
 
-def test_eighteen_digit_code_stored_as_number_renders_exact_digits_when_int(
+def test_fifteen_digit_code_stored_as_number_renders_exact_digits_when_int(
     tmp_path: Path,
 ) -> None:
-    """FR-06: an int must never be rendered via float, which would lose digits."""
+    """FR-06: an int must never be rendered via float, which would lose digits.
+
+    15 digits (magnitude ~1.23e14) is comfortably inside a double's exact
+    integer range (up to ~4.5e15), so openpyxl's own round trip keeps this as
+    a Python ``int``, not a ``float`` - this is the case ``_render_text``'s
+    ``int`` branch actually serves.
+    """
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Requesting"
@@ -90,6 +96,30 @@ def test_eighteen_digit_code_stored_as_number_renders_exact_digits_when_int(
     assert cell.cell_type is CellType.NUMBER
     assert cell.text == "123456789012345"
     assert isinstance(cell.raw, int)
+
+
+def test_eighteen_digit_code_stored_as_number_renders_via_repr_when_float(
+    tmp_path: Path,
+) -> None:
+    """The realistic corruption case: an 18-digit code that overflowed a
+    double's exact integer range, which is exactly what Excel itself would
+    store for a code this long entered into a numeric cell (PRD Appendix
+    A.2). ``_render_text`` can't recover the lost digits - it renders what
+    the cell actually holds, via ``repr()``, which is what the scanner (not
+    this reader) turns into a NUMERIC_PRECISION_RISK finding."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)"])
+    sheet.append([933434771000036107])  # 18 digits, magnitude forces float storage
+    path = tmp_path / "digits.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    cell = sheets[0].cells[0]
+    assert cell.cell_type is CellType.NUMBER
+    assert isinstance(cell.raw, float)
+    assert cell.text == repr(cell.raw)
 
 
 def test_formula_cell_captured_as_formula_not_its_cached_value(typed_workbook: Path) -> None:
@@ -182,10 +212,39 @@ def test_corrupt_file_raises_workbook_read_error(corrupt_workbook: Path) -> None
 def test_corrupt_worksheet_xml_raises_workbook_read_error(
     corrupt_worksheet_workbook: Path,
 ) -> None:
-    """A valid zip with one unparsable sheet part fails during iteration, not
-    at ``load_workbook()`` - both paths must still surface as the same error."""
+    """A sheet XML that's unparsable from byte one fails eagerly, inside
+    ``load_workbook()`` itself (``ReadOnlyWorksheet`` parses dimensions on
+    construction) - still the same clean ``WorkbookReadError``."""
     with pytest.raises(WorkbookReadError):
         read_workbook(corrupt_worksheet_workbook)
+
+
+def test_corrupt_row_raises_workbook_read_error_from_iteration(
+    corrupt_row_workbook: Path,
+) -> None:
+    """A valid dimension tag and clean earlier rows let ``load_workbook()``
+    succeed; the malformed later row only surfaces once ``iter_rows()``
+    actually reads that far - both paths must still raise the same error."""
+    with pytest.raises(WorkbookReadError):
+        read_workbook(corrupt_row_workbook)
+
+
+def test_sheet_title_with_invisible_character_is_escaped(tmp_path: Path) -> None:
+    """Excel permits U+00A0 in a worksheet title (the published workbook is
+    hand-maintained, exactly the kind of file this could happen to) - a raw
+    NBSP must never reach Cell.reference, or from there, a report."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = f"Requesting{chr(0x00A0)}"
+    sheet.append(["A"])
+    sheet.append(["x"])
+    path = tmp_path / "nbsp_title.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    assert chr(0x00A0) not in sheets[0].name
+    assert "<U+00A0>" in sheets[0].name
+    assert chr(0x00A0) not in sheets[0].cells[0].reference
 
 
 def test_blank_header_cell_renders_as_empty_string(tmp_path: Path) -> None:

@@ -25,6 +25,8 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
+from nptc_shared.text import escape_invisible
+
 
 class _RawCell(Protocol):
     """The subset of openpyxl's cell interface used here.
@@ -165,10 +167,13 @@ def _render_text(value: object) -> str:
     """Renders ``value`` to text without ever passing an int through float.
 
     Order matters: ``bool`` is checked before ``int`` because ``bool`` is an
-    ``int`` subclass in Python. An 18-digit SCTID read from a numeric cell
-    must render to its exact digits (FR-06) - never via ``float``, which
-    would silently reproduce the same precision loss the defect report is
-    supposed to surface.
+    ``int`` subclass in Python. A code short enough to survive as an exact
+    ``int`` (up to roughly 4.5e15) renders to its exact digits (FR-06) rather
+    than being routed through ``float`` and losing them. A code long enough
+    that Excel itself already stores it as a float - which is precisely the
+    corruption Appendix A.2 is about - renders via ``repr()``; that value is
+    already lossy by the time it reaches this function, and no rendering
+    choice here recovers it.
     """
     if value is None:
         return ""
@@ -217,21 +222,41 @@ def read_workbook(path: Path) -> tuple[Sheet, ...]:
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=False)
         sheets = []
         for worksheet in workbook.worksheets:
+            # A worksheet title can itself carry an Appendix A.1 defect (Excel
+            # permits U+00A0 in a sheet name) - escaped once here so it can
+            # never put a raw invisible character into a Cell.reference, and
+            # therefore into a report, via the sheet side of the reference.
+            sheet_name = escape_invisible(worksheet.title)
             row_iter = worksheet.iter_rows()
             try:
                 header_row = next(row_iter)
             except StopIteration:
-                sheets.append(Sheet(name=worksheet.title, headers=(), cells=()))
+                sheets.append(Sheet(name=sheet_name, headers=(), cells=()))
                 continue
             headers = tuple(_render_text(cell.value) for cell in header_row)
-            cells = tuple(_iter_sheet_cells(worksheet.title, headers, row_iter))
-            sheets.append(Sheet(name=worksheet.title, headers=headers, cells=cells))
+            cells = tuple(_iter_sheet_cells(sheet_name, headers, row_iter))
+            sheets.append(Sheet(name=sheet_name, headers=headers, cells=cells))
         return tuple(sheets)
-    except (InvalidFileException, zipfile.BadZipFile, ET.ParseError, KeyError, OSError) as exc:
+    except (
+        InvalidFileException,
+        zipfile.BadZipFile,
+        ET.ParseError,
+        KeyError,
+        IndexError,
+        ValueError,
+        OSError,
+    ) as exc:
         # openpyxl's read-only mode parses a worksheet's dimensions as soon as
         # it opens (eagerly, inside load_workbook), but the rest of the sheet
         # lazily, as it's iterated - so a corrupt or unreadable workbook can
         # fail at either point, and both need the same treatment here.
+        # ValueError/IndexError cover content-level corruption openpyxl makes
+        # no promise not to raise: parse_cell() calls int()/float() on a
+        # numeric cell's raw text (ValueError on garbage), from_ISO8601() on a
+        # malformed date (ValueError), and indexes into sharedStrings by
+        # position for a text cell (IndexError on a truncated sharedStrings
+        # part) - openpyxl/worksheet/_reader.py, no try/except around any of
+        # them.
         raise WorkbookReadError(f"could not read workbook {path}: {exc}") from exc
     finally:
         if workbook is not None:

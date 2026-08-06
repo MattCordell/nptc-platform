@@ -87,11 +87,11 @@ corrected and no severity band is assigned (that's P0-3):
 
 | Finding code | Appendix | What it means |
 |---|---|---|
-| `INVISIBLE_CHARACTER` | A.1 | The cell's text contains a control, format, line/paragraph separator, or non-ASCII space character - for example a non-breaking space (U+00A0) or narrow no-break space (U+202F). Every such character is invisible on screen and named by codepoint in the finding, never reproduced literally. |
-| `SURROUNDING_WHITESPACE` | A.3 | The cell's text has leading and/or trailing whitespace. |
+| `INVISIBLE_CHARACTER` | A.1 | The cell's text contains a control, format, line/paragraph separator, or non-ASCII space character - for example a non-breaking space (U+00A0) or narrow no-break space (U+202F). Every such character is invisible on screen and named by codepoint in the finding, never reproduced literally. An ALT+ENTER line break inside a cell (U+000A, and U+000D for a Windows-origin paste) is exempted - that's ordinary multi-line formatting in a free-text column, not a defect. |
+| `SURROUNDING_WHITESPACE` | A.3 | The cell's text has leading and/or trailing whitespace. A cell that's nothing *but* whitespace is reported as "contains only whitespace" rather than a leading-and-trailing message that implies there's content between the two edges. |
 | `CODE_CELL_NOT_TEXT` | A.2 | The code column holds a cell that isn't stored as text (FR-06). |
-| `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 15 or more significant digits - Excel's own precision ceiling, and the point past which a numeric cell silently corrupts a long SCTID. |
-| `UNRECOGNISED_LAYOUT` | - | A sheet has data rows but no column recognised as the code column. Reported once per sheet, naming every header actually found, rather than silently skipping A.2 detection on a drifted workbook. |
+| `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) |
+| `UNRECOGNISED_LAYOUT` | - | A sheet has data rows but no column recognised as the code column. Reported once per sheet, naming every header actually found, rather than silently skipping A.2 detection on a drifted workbook. Such a sheet gets no further cell-level scanning - the published workbook's own `Rev History` worksheet (FR-63, FR-60) is exactly this case: hand-written prose with no SPIA columns at all, not a sheet whose whitespace and line breaks are worth reporting on. |
 
 A finding's `location` is a `Sheet!CellRef` reference (for example
 `Requesting!H16`); `UNRECOGNISED_LAYOUT` points at `Sheet!A1`, the header row.

@@ -12,6 +12,13 @@ from dataclasses import dataclass
 
 INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
+# Excel's ALT+ENTER produces a literal U+000A inside a cell's own text - a
+# legitimate multi-line cell (e.g. a Usage guidance or History paragraph),
+# not an Appendix A defect. U+000D is carried along for the same reason
+# (a Windows-origin paste can leave a bare \r or a \r\n pair). Both are
+# category Cc, so they'd otherwise match the control-character sweep below.
+_LEGITIMATE_CONTROL_CHARACTERS = frozenset({"\n", "\r"})
+
 
 def is_invisible(ch: str) -> bool:
     """True if ``ch`` is a control, format, line/paragraph separator, or non-ASCII space.
@@ -21,6 +28,8 @@ def is_invisible(ch: str) -> bool:
     non-breaking space (U+00A0) and narrow no-break space (U+202F) named in PRD
     Appendix A.1, are invisible-character defects.
     """
+    if ch in _LEGITIMATE_CONTROL_CHARACTERS:
+        return False
     category = unicodedata.category(ch)
     if category in INVISIBLE_CATEGORIES:
         return True

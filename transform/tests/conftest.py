@@ -173,11 +173,15 @@ def corrupt_workbook(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def corrupt_worksheet_workbook(tmp_path: Path) -> Path:
-    """A valid zip and workbook manifest, but a corrupt individual sheet XML.
+    """A valid zip and workbook manifest, but a sheet XML that's unparsable
+    from its very first byte.
 
-    Distinct from ``corrupt_workbook``: read-only mode parses each
-    worksheet's XML lazily, only when it's iterated, so a corrupt sheet part
-    surfaces only during ``iter_rows()`` - not at ``load_workbook()`` time.
+    ``ReadOnlyWorksheet.__init__`` parses dimensions eagerly, via a fresh
+    ``iterparse`` over the sheet XML (``_get_size`` -> ``parse_dimensions``,
+    openpyxl/worksheet/_reader.py) - so if the corruption is at the start of
+    the file, ``load_workbook()`` itself fails, before ``iter_rows()`` is
+    ever called. Distinct from ``corrupt_row_workbook`` below, where the
+    corruption surfaces only once the sheet body is actually iterated.
     """
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -199,3 +203,86 @@ def corrupt_worksheet_workbook(tmp_path: Path) -> Path:
             dest.writestr(item, data)
 
     return corrupt_path
+
+
+@pytest.fixture()
+def corrupt_row_workbook(tmp_path: Path) -> Path:
+    """A valid zip, manifest and sheet dimension - but a malformed later row.
+
+    ``parse_dimensions`` finds the sheet's ``<dimension>`` element (which
+    openpyxl always writes before ``<sheetData>``) and returns immediately,
+    without reading as far as ``<sheetData>`` at all - so ``load_workbook()``
+    succeeds. ``iter_rows()`` re-reads the same XML from the start via a
+    second, separate parse and gets as far as yielding the clean earlier
+    rows before it reaches the corrupt one. This is the lazy failure path
+    ``read_workbook``'s merged except block is also written to catch.
+    """
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["A", "B"])
+    sheet.append(["x", "y"])
+    sheet.append(["p", "q"])
+    good_path = tmp_path / "good.xlsx"
+    workbook.save(good_path)
+
+    with zipfile.ZipFile(good_path) as source:
+        sheet_xml = source.read("xl/worksheets/sheet1.xml").decode("utf-8")
+
+    bad_row = (
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>p</t></is></c>'
+        '<c r="B3" t="inlineStr"><is><t>q</t></is></c></row>'
+    )
+    assert bad_row in sheet_xml, "openpyxl's row XML shape changed - update bad_row to match"
+    corrupted_xml = sheet_xml.replace(bad_row, '<row r="3"><c r="A3"<not-valid')
+
+    corrupt_path = tmp_path / "corrupt_row.xlsx"
+    with (
+        zipfile.ZipFile(good_path) as source,
+        zipfile.ZipFile(corrupt_path, "w") as dest,
+    ):
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = corrupted_xml.encode("utf-8")
+            dest.writestr(item, data)
+
+    return corrupt_path
+
+
+@pytest.fixture()
+def numeric_overflow_workbook(tmp_path: Path) -> Path:
+    """A numeric cell whose raw XML text overflows a double when parsed.
+
+    ``float("1E400")`` returns ``inf`` without raising - Python's own
+    ``_cast_number`` behaviour, not a malformed file in any sense
+    ``read_workbook`` would reject - so this is a well-formed workbook that
+    the reader must read successfully; it's the scanner's ``_digit_count``
+    that has to cope with the resulting ``inf`` without crashing.
+    """
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)"])
+    sheet.append([12345678])
+    good_path = tmp_path / "good.xlsx"
+    workbook.save(good_path)
+
+    with zipfile.ZipFile(good_path) as source:
+        sheet_xml = source.read("xl/worksheets/sheet1.xml").decode("utf-8")
+
+    assert "<v>12345678</v>" in sheet_xml, "openpyxl's cell XML shape changed"
+    overflowed_xml = sheet_xml.replace("<v>12345678</v>", "<v>1E400</v>")
+
+    overflow_path = tmp_path / "numeric_overflow.xlsx"
+    with (
+        zipfile.ZipFile(good_path) as source,
+        zipfile.ZipFile(overflow_path, "w") as dest,
+    ):
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = overflowed_xml.encode("utf-8")
+            dest.writestr(item, data)
+
+    return overflow_path
