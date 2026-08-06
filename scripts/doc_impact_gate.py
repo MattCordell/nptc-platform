@@ -53,7 +53,12 @@ def _clean_reason(raw: str) -> str | None:
     what survives is empty or still carries a stray, unterminated comment
     delimiter (a placeholder comment wrapped onto a later line leaves one behind,
     which would otherwise read as a truthy, non-empty "reason")."""
-    reason = re.sub(r"<!--.*?-->", "", raw)
+    # `[\s\S]*?` rather than `.*?` (CodeQL py/bad-tag-filter): `raw` can't
+    # actually contain a newline today, since both capture patterns above
+    # exclude `\n`, but a plain `.` silently stops matching a comment that
+    # does span lines instead of raising, so use the DOTALL-equivalent for
+    # correctness independent of that caller invariant.
+    reason = re.sub(r"<!--[\s\S]*?-->", "", raw)
     reason = reason.replace("`", "").strip()
     if not reason or "<!--" in reason or "-->" in reason:
         return None
