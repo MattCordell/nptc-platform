@@ -49,6 +49,12 @@ class TerminologyClient(Protocol):
         whole chunk of codes, not one request per code. It is also FR-84's
         hierarchy check, via ``nptc_shared.terminology.snomed.ecl_set_of`` and
         a ``MINUS <<71388002`` clause.
+
+        Exactly one request per call - this method never pages on its own.
+        Check ``result.is_complete`` and re-call with an advanced ``offset``
+        if it is ``False``; a server-side page-size ceiling can otherwise cap
+        ``concepts`` below what ``total`` promises, and a truncated page
+        looks identical to a genuinely short result.
         """
         ...
 

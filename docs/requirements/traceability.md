@@ -141,7 +141,7 @@ Total requirements: 146. With a test: 5. With evidence: 2.
 | NFR-34 | SHOULD | p5 | planned | - | Nightly database backup plus continuous WAL archiving | - |
 | NFR-35 | MUST | p5 | planned | - | Structured JSON application logs including the correlation ID from NFR-08 | - |
 | NFR-36 | SHOULD | p5 | planned | - | Operational documentation sufficient for an organisation other than the builder to run the platform | - |
-| NFR-37 | MUST | foundation | in-progress | .github/workflows/ci.yml#transform-offline | The test suite MUST run with no network access | shared/tests/test_terminology_ontoserver.py:403 |
+| NFR-37 | MUST | foundation | in-progress | .github/workflows/ci.yml#transform-offline | The test suite MUST run with no network access | shared/tests/test_terminology_ontoserver.py:465 |
 | NFR-38 | MUST | foundation | planned | - | Specific tests that MUST exist, because each closes a defect class documented in Section 16 | - |
 | NFR-39 | SHOULD | p1 | planned | - | Integration tests run against a real PostgreSQL instance (testcontainers or equivalent), not an in-memory substitute | - |
 | NFR-40 | SHOULD | p5 | planned | - | End-to-end tests covering registration, submission, the full workflow path, and release publication | - |

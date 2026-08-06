@@ -23,6 +23,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from nptc_shared.sctid import has_valid_format
 from nptc_shared.terminology.errors import TerminologyError
 from nptc_shared.terminology.models import (
     AU_LANGUAGE_TAG,
@@ -106,7 +107,9 @@ class StubTerminologyClient:
         self._expansions: dict[tuple[str, str | None], Expansion] = {}
         self._lookups: dict[tuple[str, str | None], LookupResult] = {}
         self._subsumes: dict[tuple[str, str, str | None], SubsumptionOutcome] = {}
-        self._validate_code: dict[tuple[str, str | None, str | None], ValidationResult] = {}
+        self._validate_code: dict[
+            tuple[str, str | None, str | None, str | None], ValidationResult
+        ] = {}
         self._errors: dict[tuple[Operation, str | None], TerminologyError] = {}
         self._requests: list[StubRequest] = []
 
@@ -141,9 +144,10 @@ class StubTerminologyClient:
         result: ValidationResult,
         *,
         display: str | None = None,
+        value_set_url: str | None = None,
         edition: Edition | None = None,
     ) -> None:
-        self._validate_code[(code, display, _edition_key(edition))] = result
+        self._validate_code[(code, display, value_set_url, _edition_key(edition))] = result
 
     def seed_error(
         self, operation: Operation, error: TerminologyError, *, key: str | None = None
@@ -182,15 +186,24 @@ class StubTerminologyClient:
             return seeded
 
         codes = sorted(self._evaluate_ecl(ecl, edition))
+        if active_only:
+            # A code with no concept info at all is kept - the stub has no
+            # basis to call it inactive, the same "unknown means visible"
+            # rule _visible_in_edition applies to edition membership.
+            codes = [
+                c for c in codes if (concept := self._concepts.get(c)) is None or concept.active
+            ]
+        total = len(codes)
+        page = codes[offset : offset + count] if count is not None else codes[offset:]
         concepts = tuple(
             _expanded_concept_from_code(
                 code, self._concepts.get(code), include_designations=include_designations
             )
-            for code in codes
+            for code in page
         )
         return Expansion(
             concepts=concepts,
-            total=len(concepts),
+            total=total,
             offset=offset,
             resolved_versions=self._resolved_versions_for(edition),
         )
@@ -256,24 +269,42 @@ class StubTerminologyClient:
         display: str | None = None,
         value_set_url: str | None = None,
     ) -> ValidationResult:
-        self._requests.append(StubRequest(Operation.CODE_SYSTEM_VALIDATE_CODE, code))
-        self._raise_if_seeded_error(Operation.CODE_SYSTEM_VALIDATE_CODE, code)
+        operation = (
+            Operation.VALUE_SET_VALIDATE_CODE
+            if value_set_url is not None
+            else Operation.CODE_SYSTEM_VALIDATE_CODE
+        )
+        self._requests.append(StubRequest(operation, code))
+        self._raise_if_seeded_error(operation, code)
 
         for key in (
-            (code, display, edition.label),
-            (code, None, edition.label),
-            (code, display, None),
-            (code, None, None),
+            (code, display, value_set_url, edition.label),
+            (code, None, value_set_url, edition.label),
+            (code, display, value_set_url, None),
+            (code, None, value_set_url, None),
         ):
             seeded = self._validate_code.get(key)
             if seeded is not None:
                 return seeded
 
+        if value_set_url is not None:
+            # The stub has no ECL engine to evaluate value-set membership -
+            # unlike the code-system check below, there is no safe derived
+            # answer here. Silently falling through to the code-system logic
+            # would make an FR-10 binding check always pass against the stub.
+            raise StubNotSeededError(
+                f"stub was not seeded for ValueSet/$validate-code(code={code!r}, "
+                f"value_set_url={value_set_url!r}, edition={edition.label!r}) - seed the "
+                "response explicitly, the stub cannot evaluate value-set membership",
+                operation=operation,
+            )
+
         concept = self._concepts.get(code)
         if concept is None or edition.label not in concept.editions:
             raise StubNotSeededError(
-                f"stub was not seeded for $validate-code(code={code!r}, edition={edition.label!r})",
-                operation=Operation.CODE_SYSTEM_VALIDATE_CODE,
+                f"stub was not seeded for CodeSystem/$validate-code(code={code!r}, "
+                f"edition={edition.label!r})",
+                operation=operation,
             )
         known_designations = {concept.fsn, *concept.preferred_terms.values(), *concept.synonyms}
         result = display is None or display in known_designations
@@ -315,6 +346,16 @@ class StubTerminologyClient:
                 frontier.extend(self._concepts[parent].parents)
         return frozenset(seen)
 
+    def _visible_in_edition(self, code: str, edition: Edition) -> bool:
+        """True unless the stub was explicitly told ``code`` is excluded from
+        ``edition`` - a code with no ``StubConcept`` entry at all (e.g. the
+        FR-84 procedure root, typically referenced but never itself seeded)
+        is assumed visible, since the stub has no basis to exclude it."""
+        concept = self._concepts.get(code)
+        if concept is None:
+            return True
+        return edition.label in concept.editions
+
     def _descendants_or_self(
         self, root: str, *, edition: Edition, include_self: bool
     ) -> frozenset[str]:
@@ -323,7 +364,7 @@ class StubTerminologyClient:
             for code, concept in self._concepts.items()
             if edition.label in concept.editions and root in self._ancestors(code)
         }
-        if include_self:
+        if include_self and self._visible_in_edition(root, edition):
             descendants = descendants | {root}
         return frozenset(descendants)
 
@@ -341,19 +382,32 @@ class StubTerminologyClient:
         if term.startswith("(") and term.endswith(")"):
             return self._evaluate_term(term[1:-1], edition)
         if term.startswith("<<"):
-            return self._descendants_or_self(term[2:].strip(), edition=edition, include_self=True)
+            return self._descendants_root(term[2:], edition=edition, include_self=True)
         if term.startswith("<"):
-            return self._descendants_or_self(term[1:].strip(), edition=edition, include_self=False)
-        if " OR " in term or _looks_like_bare_code(term):
-            return frozenset(piece.strip() for piece in term.split(" OR ") if piece.strip())
-        raise StubEclNotSupportedError(
-            f"the stub's ECL subset does not recognise {term!r} - it is not an ECL engine",
-            operation=Operation.EXPAND,
-        )
+            return self._descendants_root(term[1:], edition=edition, include_self=False)
+        pieces = [piece.strip() for piece in term.split(" OR ") if piece.strip()]
+        for piece in pieces:
+            if not has_valid_format(piece):
+                raise StubEclNotSupportedError(
+                    f"the stub's ECL subset does not recognise {term!r} - it is not an ECL engine",
+                    operation=Operation.EXPAND,
+                )
+        return frozenset(piece for piece in pieces if self._visible_in_edition(piece, edition))
 
-
-def _looks_like_bare_code(term: str) -> bool:
-    return term.isdigit()
+    def _descendants_root(
+        self, raw_root: str, *, edition: Edition, include_self: bool
+    ) -> frozenset[str]:
+        root = raw_root.strip()
+        if not has_valid_format(root):
+            # A well-formed "<<X"/"<X" has exactly one code after the
+            # operator - anything else (a second operator, an OR, stray
+            # punctuation) means this ECL is more than the stub's subset.
+            raise StubEclNotSupportedError(
+                f"the stub's ECL subset does not recognise {raw_root!r} as a single code "
+                "after '<'/'<<' - it is not an ECL engine",
+                operation=Operation.EXPAND,
+            )
+        return self._descendants_or_self(root, edition=edition, include_self=include_self)
 
 
 def _expanded_concept_from_code(

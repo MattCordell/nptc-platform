@@ -135,7 +135,7 @@ def _key_for_request(request: httpx.Request) -> tuple[str | None, ...]:
             _label_from_version_uri(params.get("version")),
         )
     if path.endswith("$validate-code"):
-        version = params.get("version") or params.get("system-version")
+        version = params.get("version") or params.get("systemVersion")
         return (
             "validate_code",
             params.get("code", ""),

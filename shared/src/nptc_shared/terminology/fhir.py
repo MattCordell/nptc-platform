@@ -155,8 +155,19 @@ def _parse_expansion_designation(raw: Mapping[str, object]) -> Designation:
 
 
 def parse_expansion(body: Mapping[str, object]) -> Expansion:
-    """Parses a ``ValueSet`` with an ``expansion`` (``ValueSet/$expand``)."""
-    expansion = as_mapping(body.get("expansion", {}), context="ValueSet.expansion")
+    """Parses a ``ValueSet`` with an ``expansion`` (``ValueSet/$expand``).
+
+    ``expansion`` is required - a ``ValueSet`` returned with no ``expansion``
+    element is a *definition*, not a result, and defaulting it to ``{}``
+    would parse as a clean, empty ``Expansion``. That is exactly FR-54's
+    hazard: a response the server never actually expanded would read as
+    "nothing matched" instead of the protocol violation it is.
+    """
+    if "expansion" not in body:
+        raise TerminologyProtocolError(
+            "ValueSet response has no 'expansion' element - it was not expanded"
+        )
+    expansion = as_mapping(body["expansion"], context="ValueSet.expansion")
     total = expansion.get("total")
     offset = expansion.get("offset")
 
@@ -238,8 +249,11 @@ def _value_and_type(part: Mapping[str, object], *, context: str) -> tuple[str, s
             return ("true" if value else "false"), type_name
         if isinstance(value, str):
             return value, type_name
-        if isinstance(value, int | float):
-            return str(value), type_name
+        # No int/float branch: a value[x] that arrives as a bare JSON number
+        # (e.g. a SAME_AS historical-association target sent as valueDecimal
+        # instead of valueCode) is exactly the FR-06 defect class as_str()
+        # refuses elsewhere - str()-coercing it here would silently let a
+        # numeric SNOMED CT identifier back in through a side door.
         raise TerminologyProtocolError(
             f"{context}.{key}: unsupported value type {type(value).__name__}"
         )

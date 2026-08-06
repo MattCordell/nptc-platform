@@ -180,7 +180,9 @@ class OntoserverClient:
                 "url": value_set_url,
                 "system": edition.system,
                 "code": code,
-                "system-version": edition.system_version_uri,
+                # R4 names this parameter "systemVersion" on ValueSet/$validate-code -
+                # not "system-version" (that hyphenated form belongs to $expand).
+                "systemVersion": edition.system_version_uri,
             }
         else:
             operation = Operation.CODE_SYSTEM_VALIDATE_CODE

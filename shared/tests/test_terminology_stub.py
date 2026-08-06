@@ -115,6 +115,66 @@ def test_expand_unsupported_ecl_raises_not_an_ecl_engine() -> None:
         client.expand("122192001:246093002=50875003", edition=SNOMED_CT_AU)
 
 
+def test_expand_rejects_two_descendant_operators_ored_together_rather_than_fabricating_a_code() -> (
+    None
+):
+    """A malformed ECL the stub's subset doesn't cover must raise, never be
+    silently accepted as a literal code built from leftover ECL syntax."""
+    client = _client()
+    with pytest.raises(StubEclNotSupportedError):
+        client.expand("<<71388002 OR <<122192001", edition=SNOMED_CT_AU)
+
+
+def test_expand_rejects_an_unbalanced_paren_left_over_from_a_double_wrap() -> None:
+    client = _client()
+    with pytest.raises(StubEclNotSupportedError):
+        client.expand("((122192001 OR 71388002) MINUS <<71388002)", edition=SNOMED_CT_AU)
+
+
+def test_expand_active_only_excludes_known_inactive_concepts() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", active=True),
+        StubConcept(
+            code="873871000168106", fsn="Fixture duplicate concept (procedure)", active=False
+        ),
+    )
+    result = client.expand("122192001 OR 873871000168106", edition=SNOMED_CT_AU, active_only=True)
+    assert result.codes == ("122192001",)
+
+
+def test_expand_active_only_keeps_codes_the_stub_has_no_concept_info_for() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    result = client.expand("122192001 OR 71388002", edition=SNOMED_CT_AU, active_only=True)
+    assert set(result.codes) == {"122192001", "71388002"}
+
+
+def test_expand_count_and_offset_page_the_derived_result_and_report_the_full_total() -> None:
+    client = _client(
+        StubConcept(code="111111116", fsn="A"),
+        StubConcept(code="222222223", fsn="B"),
+        StubConcept(code="333333330", fsn="C"),
+    )
+    result = client.expand(
+        "111111116 OR 222222223 OR 333333330", edition=SNOMED_CT_AU, count=1, offset=1
+    )
+    assert result.total == 3
+    assert result.offset == 1
+    assert len(result.concepts) == 1
+    assert not result.is_complete
+
+
+def test_expand_literal_code_disjunction_respects_edition_membership() -> None:
+    """Unlike the '<<'/'<' branches, the plain-disjunction branch used to be
+    edition-blind - FR-47's dual-edition diff needs every branch to agree."""
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", editions=("au",))
+    )
+    au_result = client.expand("122192001", edition=SNOMED_CT_AU)
+    international_result = client.expand("122192001", edition=SNOMED_CT_INTERNATIONAL)
+    assert au_result.codes == ("122192001",)
+    assert international_result.codes == ()
+
+
 def test_seeded_expansion_takes_precedence_over_the_concept_table() -> None:
     from nptc_shared.terminology.models import Expansion
 
@@ -259,6 +319,74 @@ def test_validate_code_raises_when_the_code_is_unknown() -> None:
     client = _client()
     with pytest.raises(StubNotSeededError):
         client.validate_code("122192001", edition=SNOMED_CT_AU, display="Anything")
+
+
+def test_validate_code_with_a_value_set_url_raises_unless_seeded() -> None:
+    """FR-10's value-set binding check: the stub has no ECL engine to
+    evaluate membership, so it must never silently pass a value-set check
+    it cannot actually evaluate - the concept-table fallback is code-system
+    only, and does not apply here."""
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    with pytest.raises(StubNotSeededError):
+        client.validate_code(
+            "122192001",
+            edition=SNOMED_CT_AU,
+            value_set_url="http://example.test/fhir/ValueSet/specimen",
+        )
+
+
+def test_validate_code_with_a_value_set_url_returns_the_seeded_result() -> None:
+    from nptc_shared.terminology.models import ValidationResult
+
+    client = _client()
+    seeded = ValidationResult(code="122192001", result=True, display="Acanthamoeba culture")
+    client.seed_validate_code(
+        "122192001",
+        seeded,
+        value_set_url="http://example.test/fhir/ValueSet/specimen",
+        edition=SNOMED_CT_AU,
+    )
+    result = client.validate_code(
+        "122192001",
+        edition=SNOMED_CT_AU,
+        value_set_url="http://example.test/fhir/ValueSet/specimen",
+    )
+    assert result is seeded
+
+
+def test_a_value_set_url_seed_does_not_satisfy_a_plain_code_system_check() -> None:
+    """A value-set-scoped seed and a code-system-scoped seed are genuinely
+    different checks - one must never silently answer the other."""
+    from nptc_shared.terminology.models import ValidationResult
+
+    client = _client()
+    client.seed_validate_code(
+        "122192001",
+        ValidationResult(code="122192001", result=True),
+        value_set_url="http://example.test/fhir/ValueSet/specimen",
+        edition=SNOMED_CT_AU,
+    )
+    with pytest.raises(StubNotSeededError):
+        client.validate_code("122192001", edition=SNOMED_CT_AU)
+
+
+def test_seed_error_for_value_set_validate_code_is_reachable() -> None:
+    """Before the fix, validate_code always logged/raised against
+    CODE_SYSTEM_VALIDATE_CODE, so a seeded VALUE_SET_VALIDATE_CODE error
+    could never trigger."""
+    from nptc_shared.terminology.errors import TerminologyStatusError
+
+    client = _client()
+    configured = TerminologyStatusError(
+        "simulated", operation=Operation.VALUE_SET_VALIDATE_CODE, status_code=500
+    )
+    client.seed_error(Operation.VALUE_SET_VALIDATE_CODE, configured, key="122192001")
+    with pytest.raises(TerminologyStatusError, match="simulated"):
+        client.validate_code(
+            "122192001",
+            edition=SNOMED_CT_AU,
+            value_set_url="http://example.test/fhir/ValueSet/specimen",
+        )
 
 
 # -- errors, introspection ---------------------------------------------------

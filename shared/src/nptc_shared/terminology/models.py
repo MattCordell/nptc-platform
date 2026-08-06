@@ -156,6 +156,20 @@ class Expansion:
     def contains(self, code: str) -> bool:
         return code in self.codes
 
+    @property
+    def is_complete(self) -> bool:
+        """False if ``concepts`` is a page, not the whole result.
+
+        A single ``expand`` call is not guaranteed to return everything a
+        chunk's ``total`` promises - a server-side page-size ceiling can cap
+        ``contains`` below ``count``, and a truncated page looks identical to
+        a genuinely short result unless a caller checks this. Paging with
+        ``offset`` to fetch the rest is the caller's responsibility (issue
+        #27's chunked sweep); this client makes exactly one request per
+        ``expand`` call and never pages on its own.
+        """
+        return self.total is None or len(self.concepts) >= self.total
+
 
 @dataclass(frozen=True, slots=True)
 class LookupResult:

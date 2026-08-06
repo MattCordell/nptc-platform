@@ -375,6 +375,68 @@ def test_a_code_returned_as_a_json_number_is_rejected_not_coerced() -> None:
         client.expand("122192001", edition=SNOMED_CT_AU)
 
 
+def test_a_lookup_property_value_arriving_as_a_json_number_is_rejected_not_coerced() -> None:
+    """The same FR-06 chokepoint, for a $lookup property (e.g. a SAME_AS
+    historical-association target sent as valueDecimal instead of valueCode)."""
+    body = {
+        "resourceType": "Parameters",
+        "parameter": [
+            {
+                "name": "property",
+                "part": [
+                    {"name": "code", "valueCode": "SAME_AS"},
+                    {"name": "value", "valueDecimal": 122192001},
+                ],
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    client = _client(handler)
+    with pytest.raises(TerminologyProtocolError):
+        client.lookup("122192001", edition=SNOMED_CT_AU)
+
+
+def test_a_valueset_with_no_expansion_element_raises_rather_than_an_empty_result() -> None:
+    """A ValueSet *definition* (no expansion) must never parse as a clean,
+    empty Expansion - that is FR-54's hazard: a response the server never
+    actually expanded reading as "nothing matched"."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"resourceType": "ValueSet", "url": "http://snomed.info/sct"}
+        )
+
+    client = _client(handler)
+    with pytest.raises(TerminologyProtocolError, match="expansion"):
+        client.expand("122192001", edition=SNOMED_CT_AU)
+
+
+def test_value_set_validate_code_sends_systemversion_not_hyphenated() -> None:
+    """R4 names this parameter ``systemVersion`` on ValueSet/$validate-code -
+    ``system-version`` (the $expand-implicit-URL form) is a different, and
+    wrong, parameter name that a real server silently ignores."""
+    captured: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["systemVersion"] = request.url.params.get("systemVersion")
+        captured["hyphenated"] = request.url.params.get("system-version")
+        return httpx.Response(
+            200,
+            json={
+                "resourceType": "Parameters",
+                "parameter": [{"name": "result", "valueBoolean": True}],
+            },
+        )
+
+    client = _client(handler)
+    client.validate_code("122192001", edition=SNOMED_CT_AU, value_set_url="http://example.test/vs")
+    assert captured["systemVersion"] == SNOMED_CT_AU.system_version_uri
+    assert captured["hyphenated"] is None
+
+
 def test_configured_token_never_appears_in_a_raised_exceptions_string() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)

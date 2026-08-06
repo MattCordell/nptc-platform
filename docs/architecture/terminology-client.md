@@ -59,6 +59,12 @@ FR-52 forbids one `$validate-code` (or `$lookup`) call per catalogue code — at
 4. **Respect HTTP caching**, and honour `Retry-After` on 429 with exponential backoff
    (built into `OntoserverClient`; see "Errors" below).
 
+`expand` makes exactly one request per call and never pages on its own. A server-side
+page-size ceiling can cap the returned page below what `total` promises — check
+`Expansion.is_complete` and re-call with an advanced `offset` if it is `False`; treating a
+single call as exhaustive would let a truncated page look identical to a genuinely short
+result. The chunking/paging loop itself is issue #27's job.
+
 FR-84's hierarchy check is the same primitive, once: expand
 `(codes) MINUS <<71388002` and anything left in the result violates the check.
 
