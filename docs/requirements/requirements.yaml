@@ -70,7 +70,7 @@
   phase: p1
   title: "SNOMED CT identifiers MUST be stored, transported and exported as strings at every layer"
   status: in-progress
-  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). DB check constraint, API/JSON/CSV/xlsx layers still owed."
+  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). The transform's terminology pass screens every code cell with it before submitting anything, reporting CODE_NOT_WELL_FORMED rather than letting a malformed value come back as 'not found' (#27). DB check constraint, API/JSON/CSV/xlsx layers still owed."
 - id: "FR-07"
   priority: MUST
   phase: p1
@@ -315,14 +315,14 @@
   priority: MUST
   phase: p3
   title: "Every validation run executes against both the latest SNOMED CT-AU edition and the latest International edition, and the results are diffed"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "The transform's terminology pass sweeps both editions and combines them: absent from both is a defect, AU-only is not a finding at all (#27). The third case - the forecast, inactive in International while still active in AU, with its expected AU release date - belongs to the scheduled validation sweep and is still owed."
 - id: "FR-48"
   priority: MUST
   phase: p3
   title: "Each validation run MUST record the fully qualified version URI of each edition it resolved against"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "A transform run with --check-terminology records every version URI the server reported, per edition, in report.json's terminology block (#27). The backend's persisted validation runs are still owed (P3)."
 - id: "FR-49"
   priority: SHOULD
   phase: p3
@@ -345,8 +345,8 @@
   priority: MUST
   phase: p0
   title: "Validation MUST NOT be implemented as one $validate-code call per code per edition"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc_shared.terminology.sweep.TerminologySweep (#27): ceil(N/chunk) ValueSet/$expand calls for bulk status (NPTC_TX_CHUNK_SIZE, default 300), one targeted $lookup per unresolved code at NPTC_TX_MAX_CONCURRENCY (default 4) concurrency, Retry-After/backoff inherited from OntoserverClient. Request counts are asserted, not assumed. Defaults and their tuning procedure: ADR-0005."
 - id: "FR-53"
   priority: MUST
   phase: p0
@@ -357,8 +357,8 @@
   priority: SHOULD
   phase: p3
   title: "Terminology server failure MUST degrade gracefully"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "The client classifies every failure (TerminologyError.retryable, #26) and the sweep propagates rather than recording absences (#27); nptc-transform exits 3 and writes no report at all, since a report missing only its terminology findings is indistinguishable from a clean one. The application-side policy - incomplete runs, cached prior results staying visible and dated, browsing/search unaffected - is still owed (P3)."
 - id: "FR-55"
   priority: MUST
   phase: p3
@@ -477,8 +477,8 @@
   priority: MUST
   phase: p0
   title: "Every code in the source is validated against both editions during transform, using the same validation engine as FR-45"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "nptc-transform run --check-terminology validates every code cell against SNOMED CT-AU and International through nptc_shared.terminology.sweep - the engine the backend's FR-45 sweep will use, not a second one (#27). The rest of FR-45's check table (FSN drift, preferred-term drift, inactivation reason/historical association pairing) lands with P0-6/#28."
 - id: "FR-75"
   priority: SHOULD
   phase: p0
@@ -537,8 +537,8 @@
   priority: MUST
   phase: p1
   title: "Every code binding MUST be subsumed by 71388002 |Procedure (procedure)|"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "ceil(N/chunk_size) ValueSet/$expand calls of (chunk) MINUS <<71388002 per edition in TerminologySweep - chunked the same as the status pass, not one request for the whole catalogue, since a single disjunction is itself too large to send at the PRD's 20,000-code ceiling (~340KB of ECL; ADR-0005's 2026-08-07 amendment). Reported by the transform as OUT_OF_SCOPE_HIERARCHY in the blocking data-defect band (#27). NFR-38 test 13's call-count-not-per-code assertion is shared/tests/test_terminology_sweep.py. The backend's own enforcement at entry time lands with P1."
 - id: "FR-85"
   priority: MUST
   phase: p1
@@ -627,8 +627,8 @@
   priority: SHOULD
   phase: p1
   title: "Where a binding is subsumed by <<71388002 but its semantic tag is not (procedure), raise a warning, not an error"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "snomed.semantic_tag reads the FSN the bulk expansion already returned, so the check costs no extra requests; reported as UNEXPECTED_SEMANTIC_TAG in the non-blocking informational band, never alongside an FR-84 violation for the same concept (#27)."
 - id: "NFR-01"
   priority: MUST
   phase: p1
@@ -858,7 +858,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement"
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1

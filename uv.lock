@@ -701,6 +701,7 @@ name = "nptc-transform"
 version = "0.0.0"
 source = { editable = "transform" }
 dependencies = [
+    { name = "httpx" },
     { name = "nptc-shared" },
     { name = "openpyxl" },
     { name = "typer" },
@@ -708,6 +709,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
     { name = "nptc-shared", editable = "shared" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "typer", specifier = ">=0.13" },

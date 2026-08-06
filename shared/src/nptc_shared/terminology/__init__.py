@@ -8,13 +8,22 @@ network access (NFR-37); ``OntoserverClient`` (``ontoserver.py``) satisfies
 it against a real FHIR R4 terminology server. One test suite,
 ``shared/tests/test_terminology_contract.py``, runs against both.
 
-Landed with backlog issue P0-4 (GitHub issue #26).
+``sweep.py`` is the one caller of that contract both the backend and the
+transform share (FR-74): FR-52's chunked status resolution and FR-84's
+single-request hierarchy check, over any of the three.
+
+Landed with backlog issues P0-4 (GitHub issue #26) and P0-5 (#27).
 """
 
 from __future__ import annotations
 
 from nptc_shared.terminology.client import TerminologyClient
-from nptc_shared.terminology.config import DEFAULT_BASE_URL, TerminologyConfig
+from nptc_shared.terminology.config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_MAX_CONCURRENCY,
+    TerminologyConfig,
+)
 from nptc_shared.terminology.errors import (
     OperationOutcomeIssue,
     TerminologyConfigError,
@@ -44,18 +53,28 @@ from nptc_shared.terminology.models import (
     ValidationResult,
 )
 from nptc_shared.terminology.ontoserver import OntoserverClient
-from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url
+from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url, semantic_tag
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
+from nptc_shared.terminology.sweep import (
+    PROCEDURE_SEMANTIC_TAG,
+    ConceptTag,
+    SweepResult,
+    TerminologySweep,
+)
 
 __all__ = [
     "AU_LANGUAGE_TAG",
     "DEFAULT_BASE_URL",
+    "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_MAX_CONCURRENCY",
     "FSN_USE_CODE",
     "PROCEDURE_ROOT_CODE",
+    "PROCEDURE_SEMANTIC_TAG",
     "SNOMED_CT_AU",
     "SNOMED_CT_INTERNATIONAL",
     "SNOMED_SYSTEM",
     "ConceptProperty",
+    "ConceptTag",
     "Designation",
     "Edition",
     "ExpandedConcept",
@@ -67,6 +86,7 @@ __all__ = [
     "StubConcept",
     "StubTerminologyClient",
     "SubsumptionOutcome",
+    "SweepResult",
     "TerminologyClient",
     "TerminologyConfig",
     "TerminologyConfigError",
@@ -75,9 +95,11 @@ __all__ = [
     "TerminologyProtocolError",
     "TerminologyRateLimitError",
     "TerminologyStatusError",
+    "TerminologySweep",
     "TerminologyTimeoutError",
     "TerminologyTransportError",
     "ValidationResult",
     "ecl_set_of",
     "implicit_value_set_url",
+    "semantic_tag",
 ]

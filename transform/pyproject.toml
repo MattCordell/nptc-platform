@@ -7,6 +7,13 @@ dependencies = [
     "openpyxl>=3.1",
     "typer>=0.13",
     "nptc-shared",
+    # transform/tests/conftest.py imports httpx directly, for the NFR-37
+    # network guard - it currently resolves only transitively through
+    # nptc-shared. Declared explicitly, matching shared/pyproject.toml's pin,
+    # so this package's own test suite does not fail at collection on a
+    # dependency it uses but never declared, should the transitive path ever
+    # change (e.g. ADR-0003's transport choice).
+    "httpx>=0.28",
 ]
 
 [project.scripts]

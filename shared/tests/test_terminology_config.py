@@ -72,6 +72,44 @@ def test_from_env_rejects_a_malformed_max_retries_rather_than_falling_back() -> 
         TerminologyConfig.from_env({"NPTC_TX_MAX_RETRIES": "three"})
 
 
+@pytest.mark.req("FR-52")
+def test_from_env_reads_the_sweep_tuning_variables() -> None:
+    config = TerminologyConfig.from_env(
+        {"NPTC_TX_CHUNK_SIZE": "500", "NPTC_TX_MAX_CONCURRENCY": "8"}
+    )
+    assert config.chunk_size == 500
+    assert config.max_concurrency == 8
+
+
+@pytest.mark.req("FR-52")
+def test_sweep_tuning_defaults_sit_inside_the_range_fr52_specifies() -> None:
+    config = TerminologyConfig()
+    assert 200 <= config.chunk_size <= 500
+    assert config.max_concurrency >= 1
+
+
+@pytest.mark.req("FR-52")
+def test_from_env_rejects_a_malformed_chunk_size_rather_than_falling_back() -> None:
+    with pytest.raises(TerminologyConfigError, match="NPTC_TX_CHUNK_SIZE"):
+        TerminologyConfig.from_env({"NPTC_TX_CHUNK_SIZE": "lots"})
+
+
+@pytest.mark.req("FR-52")
+def test_a_chunk_size_of_zero_is_refused_not_silently_treated_as_the_default() -> None:
+    """A zero chunk makes no progress and a negative one slices to nothing -
+    either would let a sweep report a catalogue it never checked as clean."""
+    with pytest.raises(TerminologyConfigError, match="chunk_size"):
+        TerminologyConfig.from_env({"NPTC_TX_CHUNK_SIZE": "0"})
+    with pytest.raises(TerminologyConfigError, match="chunk_size"):
+        TerminologyConfig(chunk_size=-1)
+
+
+@pytest.mark.req("FR-52")
+def test_a_max_concurrency_below_one_is_refused() -> None:
+    with pytest.raises(TerminologyConfigError, match="max_concurrency"):
+        TerminologyConfig.from_env({"NPTC_TX_MAX_CONCURRENCY": "0"})
+
+
 def test_bearer_token_never_appears_in_repr() -> None:
     config = TerminologyConfig(bearer_token="s3cr3t")
     assert "s3cr3t" not in repr(config)

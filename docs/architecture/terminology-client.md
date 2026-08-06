@@ -17,6 +17,10 @@ Two implementations satisfy the `TerminologyClient` Protocol
 
 Why both live in `shared/`, alongside the rejected alternatives, is ADR-0003.
 
+`TerminologySweep` (`sweep.py`) sits on top of the Protocol, not beside it: it is the one
+batch caller both the transform and the backend use, so FR-52's request discipline and
+FR-84's hierarchy check exist once (FR-74). See "Batch discipline" below.
+
 ## The four operations
 
 | Operation | Method | Path | Purpose |
@@ -48,25 +52,61 @@ historical run with `edition.pinned_to("20260531")`.
 ## Batch discipline
 
 FR-52 forbids one `$validate-code` (or `$lookup`) call per catalogue code — at the PRD's
-20,000-entry planning ceiling that is 40,000 sequential requests. The required shape:
+20,000-entry planning ceiling that is 40,000 sequential requests. `TerminologySweep`
+(`sweep.py`) is the implementation, shared by the transform and the backend because FR-74
+forbids the migration path having its own:
 
-1. **Bulk status resolution**: chunk the catalogue (200–500 codes; issue #27 makes the
-   chunk size configurable) and resolve status with one `expand` call per chunk, using
-   `nptc_shared.terminology.snomed.ecl_set_of(codes)` to build the disjunction.
-2. **Targeted `lookup`** only for the delta — codes absent from the expansion, or whose
-   FSN differs.
-3. **Bounded concurrency** on the second pass (issue #27).
+1. **Bulk status resolution**: chunk the catalogue (`NPTC_TX_CHUNK_SIZE`, default 300) and
+   resolve status with one `expand` call per chunk with `activeOnly=true`, using
+   `nptc_shared.terminology.snomed.ecl_set_of(codes)` to build the disjunction. Codes are
+   de-duplicated and sorted first, so the request sequence depends on the *set* of codes,
+   not on row order.
+2. **Targeted `lookup`** only for the delta — the codes the expansion did not return. That
+   call is what separates "inactive" (and, with it, FR-46's inactivation reason and
+   historical association) from "not in this edition at all", which a conformant server
+   answers with a 404. It requests `inactive` and FR-46's historical-association property
+   codes explicitly (`SAME_AS`, `MOVED_TO`, `POSSIBLY_EQUIVALENT_TO`, `WAS_A`,
+   `REPLACED_BY`) rather than relying on a server volunteering them unprompted — FHIR R4
+   makes no such guarantee, and `LookupResult.inactive` coming back `None` (not reported,
+   distinct from reported-false) would otherwise misclassify an active code as inactive.
+3. **Bounded concurrency** on that second pass (`NPTC_TX_MAX_CONCURRENCY`, default 4),
+   submitted in batches rather than all at once — a failure in one batch means the next is
+   never submitted, rather than every remaining code being queued before the failure
+   surfaces. The chunk expansions themselves are sequential — see
+   [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md) for both defaults
+   and why they are untuned.
 4. **Respect HTTP caching**, and honour `Retry-After` on 429 with exponential backoff
-   (built into `OntoserverClient`; see "Errors" below).
+   (built into `OntoserverClient`, inherited by the sweep; see "Errors" below).
 
 `expand` makes exactly one request per call and never pages on its own. A server-side
 page-size ceiling can cap the returned page below what `total` promises — check
 `Expansion.is_complete` and re-call with an advanced `offset` if it is `False`; treating a
 single call as exhaustive would let a truncated page look identical to a genuinely short
-result. The chunking/paging loop itself is issue #27's job.
+result. `TerminologySweep` owns that loop, comparing the *accumulated* count against
+`total` (`is_complete` compares one page, which is the right question for a single call and
+the wrong one while paging), and a code missing from a truncated page is recovered by the
+delta pass rather than reported absent.
 
-FR-84's hierarchy check is the same primitive, once: expand
-`(codes) MINUS <<71388002` and anything left in the result violates the check.
+FR-84's hierarchy check is the same primitive, chunked the same way: expand
+`(chunk) MINUS <<71388002` per `chunk_size` chunk of the codes the status/delta passes
+already resolved, and anything left in a chunk's result violates the check. Not one request
+for the whole catalogue — a single disjunction over 20,000 codes is itself too large to send
+(measured: ~340KB of percent-encoded ECL; see [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md)'s
+2026-08-07 amendment). Only *resolved* codes are offered to this ECL at all, never every
+code handed to the sweep — a code absent from the edition is excluded before the request is
+built, rather than relying on every server tolerating an unknown concept reference inside
+one, and absence is always the status pass's finding, never a false hierarchy violation.
+
+FR-99's semantic-tag warning rides on the bulk pass rather than costing requests of its
+own: the status expansion asks for designations, so the served FSN — and therefore its tag,
+read by `snomed.semantic_tag` — is already in hand for every concept the expansion
+returned. A concept already reported as an FR-84 violation is not also tag-warned, and a
+concept whose FSN the server did not return is not warned at all: "no tag observed" is not
+evidence of a wrong tag — but it is counted, in `SweepResult.unresolved_fsn_count`, since a
+server that never returns an identifiable FSN for anything would otherwise make the check
+pass silently and permanently, with nothing to show it never ran. Paging that overlaps
+(a server ignoring `offset`) is de-duplicated by code before either the tag list or that
+count is built, so a repeated page cannot double-count either one.
 
 **A notation trap worth remembering.** The PRD writes this idiom as
 `(<code1> OR <code2> OR ... OR <codeN>) MINUS <<71388002` — those angle brackets around
@@ -149,8 +189,14 @@ with OntoserverClient() as client:
 
 ## Not implemented here
 
-- Chunking, bounded concurrency and the dual-edition diff (FR-47, FR-52, FR-84 at
-  catalogue scale) — issue #27.
-- Designation reconciliation at scale (FR-97) — issue #28.
-- HTTP response caching, OAuth2 client-credentials, and any transform/backend call site —
-  all deferred; see ADR-0003's Consequences.
+- FR-47's *forecast* finding — a concept inactivated in International while still active in
+  AU. `TerminologySweep` reports status per edition and the transform combines them
+  (`nptc_transform.terminology_check`), but the forecast, with its expected AU release date,
+  belongs to the scheduled validation sweep.
+- Designation reconciliation at scale (FR-97) — issue #28. The sweep keeps every delta
+  `LookupResult` for it rather than discarding them.
+- FR-54's degradation *policy* — incomplete runs, cached prior results staying visible and
+  dated. The sweep's obligation stops at raising; the transform CLI's response is to exit 3
+  and write no report at all.
+- HTTP response caching and OAuth2 client-credentials — deferred; see ADR-0003's
+  Consequences.

@@ -17,10 +17,23 @@ from nptc_shared.terminology.errors import TerminologyConfigError
 
 DEFAULT_BASE_URL = "https://tx.ontoserver.csiro.au/fhir/"
 
+#: Codes per ``ValueSet/$expand`` in the FR-52 bulk pass. FR-52 says "start
+#: around 200 to 500 codes and tune"; 300 is the midpoint, and ADR-0005
+#: records both the reasoning and the procedure for tuning it against a
+#: specific server.
+DEFAULT_CHUNK_SIZE = 300
+
+#: Concurrent requests in the FR-52 targeted second pass. FR-52 says "default
+#: conservatively" - four is conservative for a shared public terminology
+#: server, and ADR-0005 records why it is not higher.
+DEFAULT_MAX_CONCURRENCY = 4
+
 _BASE_URL_VAR = "NPTC_TX_BASE_URL"
 _TOKEN_VAR = "NPTC_TX_TOKEN"
 _TIMEOUT_VAR = "NPTC_TX_TIMEOUT_SECONDS"
 _MAX_RETRIES_VAR = "NPTC_TX_MAX_RETRIES"
+_CHUNK_SIZE_VAR = "NPTC_TX_CHUNK_SIZE"
+_MAX_CONCURRENCY_VAR = "NPTC_TX_MAX_CONCURRENCY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +51,8 @@ class TerminologyConfig:
     max_retries: int = 3
     backoff_base_seconds: float = 0.5
     max_backoff_seconds: float = 30.0
+    chunk_size: int = DEFAULT_CHUNK_SIZE
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY
 
     def __post_init__(self) -> None:
         # httpx joins base_url's raw_path with the request path; a base URL
@@ -46,6 +61,17 @@ class TerminologyConfig:
         # gets the correct join regardless of how the value arrived.
         if not self.base_url.endswith("/"):
             object.__setattr__(self, "base_url", f"{self.base_url}/")
+        # Rejected here rather than at the sweep's call site: a chunk size of
+        # zero makes no progress at all, and a negative one silently inverts
+        # a slice into an empty chunk - either way the sweep would report a
+        # clean catalogue it never actually checked, which is the exact FR-54
+        # hazard (an outage that reads as a clean result).
+        if self.chunk_size < 1:
+            raise TerminologyConfigError(f"chunk_size must be at least 1, got {self.chunk_size}")
+        if self.max_concurrency < 1:
+            raise TerminologyConfigError(
+                f"max_concurrency must be at least 1, got {self.max_concurrency}"
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> TerminologyConfig:
@@ -76,6 +102,14 @@ class TerminologyConfig:
         max_retries_raw = source.get(_MAX_RETRIES_VAR)
         if max_retries_raw:
             kwargs["max_retries"] = _parse_int(_MAX_RETRIES_VAR, max_retries_raw)
+
+        chunk_size_raw = source.get(_CHUNK_SIZE_VAR)
+        if chunk_size_raw:
+            kwargs["chunk_size"] = _parse_int(_CHUNK_SIZE_VAR, chunk_size_raw)
+
+        max_concurrency_raw = source.get(_MAX_CONCURRENCY_VAR)
+        if max_concurrency_raw:
+            kwargs["max_concurrency"] = _parse_int(_MAX_CONCURRENCY_VAR, max_concurrency_raw)
 
         return cls(**kwargs)  # type: ignore[arg-type]
 

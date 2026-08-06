@@ -28,10 +28,37 @@ from nptc_transform import __version__
 from nptc_transform.bands import Band
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
+
+
+def _terminology_payload(result: RunResult) -> object:
+    """The terminology run's provenance block, or ``null`` if none ran.
+
+    ``null`` and "a run that produced no findings" are different facts, and
+    conflating them is how a report that never contacted a server comes to
+    read as a clean validation. The resolved version URIs are FR-48's
+    requirement: a validation you cannot reproduce is not evidence.
+
+    Note what this does to FR-73: two runs against the same workbook stay
+    byte-identical only while the server resolves the same edition versions.
+    That is the intended reading - the SNOMED release is an input to the run,
+    and this block is what records which one it was.
+    """
+    run = result.terminology
+    if run is None:
+        return None
+    return {
+        "codes_checked": run.codes_checked,
+        "codes_not_checked": run.codes_not_checked,
+        "editions": [
+            {"label": edition.label, "resolved_versions": list(edition.resolved_versions)}
+            for edition in run.editions
+        ],
+        "unresolved_fsn_count": run.unresolved_fsn_count,
+    }
 
 
 def _report_payload(result: RunResult) -> dict[str, object]:
@@ -47,6 +74,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "finding_count": len(result.findings),
         "blocking": result.has_blocking_findings,
         "band_counts": {str(band): band_counts[band] for band in Band},
+        "terminology": _terminology_payload(result),
         "findings": [
             {
                 "code": finding.code,
@@ -83,6 +111,45 @@ def _escape_cell(value: str) -> str:
     )
 
 
+def _render_terminology(result: RunResult) -> list[str]:
+    """The human-readable half of the provenance block above.
+
+    Says "not run" explicitly rather than omitting the section: a reader
+    scanning report.md for whether the codes were checked must not have to
+    infer it from the absence of terminology findings.
+    """
+    run = result.terminology
+    if run is None:
+        return ["- Terminology validation: `not run`", ""]
+    lines = [
+        f"- Terminology validation: {run.codes_checked} code(s) checked, "
+        f"{run.codes_not_checked} not checked",
+    ]
+    if run.unresolved_fsn_count:
+        # Not decoration: a nonzero count here means the FR-99 semantic-tag
+        # check could not run for that many concepts at all (no identifiable
+        # FSN designation came back), which would otherwise pass silently
+        # and permanently with nothing to show it never ran.
+        lines.append(
+            f"- {run.unresolved_fsn_count} concept(s) had no identifiable FSN designation; "
+            "the FR-99 semantic-tag check could not run for them"
+        )
+    lines.extend(
+        [
+            "",
+            "| Edition | Resolved version(s) |",
+            "|---|---|",
+        ]
+    )
+    lines.extend(
+        f"| {_escape_cell(edition.label)} "
+        f"| {_escape_cell(', '.join(edition.resolved_versions) or '(not reported)')} |"
+        for edition in run.editions
+    )
+    lines.append("")
+    return lines
+
+
 def _render_markdown(result: RunResult) -> str:
     band_counts = result.band_counts
     lines = [
@@ -98,6 +165,7 @@ def _render_markdown(result: RunResult) -> str:
     ]
     lines.extend(f"| {band} | {band_counts[band]} |" for band in Band)
     lines.append("")
+    lines.extend(_render_terminology(result))
     if result.findings:
         lines.append("| Location | Code | Band | Message |")
         lines.append("|---|---|---|---|")

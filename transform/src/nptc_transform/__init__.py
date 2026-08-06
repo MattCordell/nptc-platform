@@ -11,13 +11,16 @@ determinism/idempotency contract (FR-73) landed with P0-1/#23. The workbook
 reader, cell-type capture and Appendix A.1-A.3 cell defect detection landed
 with P0-2/#24. The three-band defect classification engine landed with
 P0-3/#25: every finding is now classified into a band that determines
-whether the import blocks. The SCTID/Verhoeff library (P0-10/#32) and the
-terminology client interface (P0-4/#26) also landed, in ``nptc_shared``.
-Still open: batch terminology validation and hierarchy check (P0-5/#27),
-designation reconciliation (P0-6/#28), misspelling/semantic-drift heuristics
-(P0-7/#29), report content grouped by defect class (P0-8/#30), and import
-dataset emission - including the auto-correctable band's "fixed
-automatically" behaviour - (P0-9/#31).
+whether the import blocks. Batch terminology validation and the FR-84
+hierarchy check landed with P0-5/#27: ``--check-terminology`` validates every
+code binding against both editions through ``nptc_shared.terminology.sweep``,
+which is the backend's engine too (FR-74), never a second one. The
+SCTID/Verhoeff library (P0-10/#32) and the terminology client interface
+(P0-4/#26) also landed, in ``nptc_shared``. Still open: designation
+reconciliation (P0-6/#28), misspelling/semantic-drift heuristics (P0-7/#29),
+report content grouped by defect class (P0-8/#30), and import dataset
+emission - including the auto-correctable band's "fixed automatically"
+behaviour - (P0-9/#31).
 """
 
 __version__ = "0.0.0"

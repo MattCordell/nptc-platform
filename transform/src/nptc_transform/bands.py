@@ -63,6 +63,11 @@ class FindingCode(StrEnum):
     NUMERIC_PRECISION_RISK = "NUMERIC_PRECISION_RISK"
     UNRECOGNISED_LAYOUT = "UNRECOGNISED_LAYOUT"
     SHEET_NOT_SPIA_DATA = "SHEET_NOT_SPIA_DATA"
+    CODE_NOT_WELL_FORMED = "CODE_NOT_WELL_FORMED"
+    CODE_NOT_FOUND = "CODE_NOT_FOUND"
+    CODE_INACTIVE = "CODE_INACTIVE"
+    OUT_OF_SCOPE_HIERARCHY = "OUT_OF_SCOPE_HIERARCHY"
+    UNEXPECTED_SEMANTIC_TAG = "UNEXPECTED_SEMANTIC_TAG"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -78,8 +83,23 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.CODE_CELL_INVALID_TYPE: Band.DATA_DEFECT,
     FindingCode.NUMERIC_PRECISION_RISK: Band.DATA_DEFECT,
     FindingCode.UNRECOGNISED_LAYOUT: Band.DATA_DEFECT,
+    # Data defect, terminology pass (P0-5): FR-71's own data-defect column
+    # names "codes failing Verhoeff check-digit validation", "codes not
+    # resolving in either edition" and "codes not subsumed by <<71388002"
+    # explicitly. Each is a defect in the source RCPA-QAP must correct - no
+    # repair the transform could make is deterministic, or even knowable.
+    FindingCode.CODE_NOT_WELL_FORMED: Band.DATA_DEFECT,
+    FindingCode.CODE_NOT_FOUND: Band.DATA_DEFECT,
+    FindingCode.CODE_INACTIVE: Band.DATA_DEFECT,
+    FindingCode.OUT_OF_SCOPE_HIERARCHY: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
+    # FR-99 is explicit that an unexpected semantic tag is a warning and not
+    # an error, because subsumption does not imply the tag: 71388002
+    # |Procedure| subsumes 243120004 |Regime/therapy (regime/therapy)|. A
+    # blocking band here would abort the import over a concept that is a
+    # perfectly valid procedure binding.
+    FindingCode.UNEXPECTED_SEMANTIC_TAG: Band.INFORMATIONAL,
 }
 
 if set(BAND_BY_CODE) != set(FindingCode):
