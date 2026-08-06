@@ -15,12 +15,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_SCTID_FORMAT = re.compile(r"^\d{6,18}$")
+_SCTID_FORMAT = re.compile(r"^[0-9]{6,18}$")
 
 # Verhoeff dihedral-group tables (D5), standard for SNOMED CT identifiers: `_D` is
-# the multiplication table, `_P` permutes each digit by its position from the
-# right (mod 8), and `_INV` is unused for verification (only needed to generate a
-# check digit, which is out of scope - this library only validates existing SCTIDs).
+# the multiplication table and `_P` permutes each digit by its position from the
+# right (mod 8). Generating a check digit needs an inverse table too, but that's
+# out of scope - this library only validates existing SCTIDs.
 _D = (
     (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
     (1, 2, 3, 4, 0, 6, 7, 8, 9, 5),
@@ -57,10 +57,17 @@ def has_valid_format(value: str) -> bool:
 def has_valid_check_digit(value: str) -> bool:
     """True if the Verhoeff checksum over ``value``'s digits reduces to zero.
 
+    Total over any ``str``: a ``value`` that isn't a well-formed SCTID (wrong
+    length, non-digit characters, empty) is simply not a valid check digit
+    either, rather than raising - callers can use this standalone without
+    calling ``has_valid_format`` first.
+
     Verhoeff is computed right-to-left, so position ``i`` (0-based, from the
     right) selects the permutation row ``_P[i % 8]`` - this is the standard
     algorithm shape, not an SCTID-specific variant.
     """
+    if not has_valid_format(value):
+        return False
     checksum = 0
     for position, char in enumerate(reversed(value)):
         checksum = _D[checksum][_P[position % 8][int(char)]]

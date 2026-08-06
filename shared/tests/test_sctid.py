@@ -19,6 +19,20 @@ REAL_SCTIDS = (
 )
 
 
+def _to_unicode_digits(ascii_digits: str, zero_codepoint: int) -> str:
+    """Transliterates an ASCII digit string into another Unicode digit script.
+
+    Built via ``chr()`` arithmetic, not literal non-ASCII characters, per this
+    repo's convention (see ``shared/tests/test_text.py``) - and it sidesteps
+    ruff's RUF001 ambiguous-character check on a source literal.
+    """
+    return "".join(chr(zero_codepoint + int(d)) for d in ascii_digits)
+
+
+ARABIC_INDIC_ZERO = 0x0660
+FULLWIDTH_DIGIT_ZERO = 0xFF10
+
+
 @pytest.mark.req("FR-06")
 @pytest.mark.parametrize("value", REAL_SCTIDS)
 def test_real_sctids_pass_format_and_check_digit(value: str) -> None:
@@ -49,6 +63,29 @@ def test_real_sctids_with_corrupted_check_digit_are_rejected(value: str) -> None
 )
 def test_has_valid_format_enforces_six_to_eighteen_digits(value: str, expected: bool) -> None:
     assert has_valid_format(value) is expected
+
+
+@pytest.mark.req("FR-06")
+def test_has_valid_format_rejects_non_ascii_unicode_digits() -> None:
+    # `\d` in a Python str regex matches all Unicode decimal digits, not just
+    # [0-9] - these would otherwise be declared valid here and rejected by the
+    # Postgres ^[0-9]{6,18}$ check constraint FR-06 mandates.
+    ascii_sctid = "873871000168106"
+    assert has_valid_format(_to_unicode_digits(ascii_sctid, ARABIC_INDIC_ZERO)) is False
+    assert has_valid_format(_to_unicode_digits(ascii_sctid, FULLWIDTH_DIGIT_ZERO)) is False
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.parametrize(
+    "value",
+    [
+        "12345a",  # non-digit character: would raise ValueError from int(char) unguarded
+        "12345",  # below minimum length
+        "",  # empty: unguarded, checksum 0 would wrongly read as valid
+    ],
+)
+def test_has_valid_check_digit_is_total_and_rejects_malformed_input(value: str) -> None:
+    assert has_valid_check_digit(value) is False
 
 
 @pytest.mark.req("FR-06")

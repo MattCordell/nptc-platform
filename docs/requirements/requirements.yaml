@@ -69,8 +69,8 @@
   priority: MUST
   phase: p1
   title: "SNOMED CT identifiers MUST be stored, transported and exported as strings at every layer"
-  status: implemented
-  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^\\d{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10)"
+  status: in-progress
+  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). DB check constraint, API/JSON/CSV/xlsx layers still owed."
 - id: "FR-07"
   priority: MUST
   phase: p1
