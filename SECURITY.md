@@ -69,12 +69,13 @@ defeat its purpose. Submissions, user identities and internal comments are not p
 **CodeQL now uploads to the Security tab (2026-08).** The repository went public, which
 makes GitHub code scanning free without needing GitHub Advanced Security (the prior
 private-repo upload failure — "Advanced Security must be enabled for this repository to
-use code scanning" — no longer applies). `codeql.yml` runs on every pull request,
-daily, on push to main, and on demand, and results (including PR annotations) go to the
-Security tab as well as the job's own step summary and a downloadable SARIF artifact. Because a finding with no consequence is a finding nobody looks at, the
-workflow also fails outright on any high/critical (security-severity >= 7.0) result,
-independent of the Security tab, so a PR or the daily scheduled run fails loudly rather
-than relying on someone checking the tab. Lower-severity findings stay advisory-only —
+use code scanning" — no longer applies). `codeql.yml` runs on every pull request, daily,
+on push to main, and on demand, and results (including PR annotations) go to the
+Security tab as well as the job's own step summary and a downloadable SARIF artifact.
+Because a finding with no consequence is a finding nobody looks at, the workflow also
+fails outright on any high/critical (security-severity >= 7.0) result, independent of
+the Security tab, so a PR or the daily scheduled run fails loudly rather than relying on
+someone checking the tab. Lower-severity findings stay advisory-only —
 `security-extended` on a pre-alpha codebase produces enough of those that gating on all
 of them would just teach reviewers to ignore a red run.
 
