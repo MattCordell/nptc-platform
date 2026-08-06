@@ -79,9 +79,10 @@ someone checking the tab. Lower-severity findings stay advisory-only —
 `security-extended` on a pre-alpha codebase produces enough of those that gating on all
 of them would just teach reviewers to ignore a red run.
 
-**GitHub's native secret scanning and OpenSSF Scorecard aren't active yet (tracked in
-#108).** Unlike CodeQL's Security-tab integration above, neither of these was ever
-blocked specifically by Advanced Security or repository visibility — they're simply not
-set up yet. `security.yml` runs the open-source gitleaks CLI directly against git
-history on every PR and daily as an interim control, which native secret scanning would
-complement (not replace) with push-time blocking. Revisit both once #108 lands.
+**GitHub's native secret scanning and OpenSSF Scorecard aren't active yet (tracked
+in issue #108).** Unlike CodeQL's Security-tab integration above, neither of these
+was ever blocked specifically by Advanced Security or repository visibility —
+they're simply not set up yet. `security.yml` runs the open-source gitleaks CLI
+directly against git history on every PR and daily as an interim control, which
+native secret scanning would complement (not replace) with push-time blocking.
+Revisit both once issue #108 lands.
