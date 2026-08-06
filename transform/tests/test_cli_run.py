@@ -144,3 +144,23 @@ def test_missing_workbook_is_a_usage_error(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", "--workbook", str(tmp_path / "does-not-exist.xlsx")])
 
     assert result.exit_code == 2
+
+
+@pytest.mark.req("FR-70")
+def test_unreadable_workbook_is_a_usage_error_not_a_traceback(
+    tmp_path: Path, corrupt_workbook: Path
+) -> None:
+    """A file that exists and is readable but isn't a valid workbook (P0-2)
+    must be refused the same way a missing file is - exit 2, no traceback."""
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app, ["run", "--workbook", str(corrupt_workbook), "--report-dir", str(report_dir)]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Traceback" not in result.output
+    assert not report_dir.exists()
+    # WorkbookReadError's own message already says "could not read workbook
+    # ...": a regression that wraps it a second time doubles this phrase.
+    assert result.output.count("could not read") == 1

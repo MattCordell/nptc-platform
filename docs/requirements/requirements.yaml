@@ -454,7 +454,7 @@
   phase: p0
   title: "A command-line transform that reads the published SPIA workbook and produces either a validated import dataset or a detailed defect report"
   status: in-progress
-  notes: "CLI entrypoint, --report-only default and the report writer land with P0-1/#23; reading the workbook (P0-2) and emitting the import dataset (P0-9) are still open"
+  notes: "CLI entrypoint, --report-only default and the report writer land with P0-1/#23; the workbook reader and Appendix A.1-A.3 cell defect detection land with P0-2/#24; emitting the import dataset (P0-9) is still open"
 - id: "FR-71"
   priority: MUST
   phase: p0

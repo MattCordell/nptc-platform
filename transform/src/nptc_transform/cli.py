@@ -17,6 +17,7 @@ import typer
 from nptc_transform import __version__
 from nptc_transform.pipeline import Mode, run_transform
 from nptc_transform.report_writer import write_report
+from nptc_transform.workbook import WorkbookReadError
 
 app = typer.Typer(
     name="nptc-transform",
@@ -98,7 +99,13 @@ def run(
         raise typer.Exit(code=ExitCode.USAGE_ERROR)
 
     start = time.monotonic()
-    result = run_transform(workbook, mode=Mode.REPORT_ONLY)
+    try:
+        result = run_transform(workbook, mode=Mode.REPORT_ONLY)
+    except WorkbookReadError as exc:
+        # WorkbookReadError's own message already names the path and reason -
+        # echo it as-is rather than wrapping it a second time.
+        typer.echo(f"{exc}. Pass --workbook a valid, readable .xlsx file.", err=True)
+        raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     try:
         write_report(result, report_dir)
     except OSError as exc:
