@@ -1,0 +1,16 @@
+{
+  "resourceType": "ValueSet",
+  "expansion": {
+    "identifier": "urn:uuid:fixture-expand-two-active-concepts",
+    "timestamp": "2026-05-31T00:00:00+00:00",
+    "total": 2,
+    "offset": 0,
+    "parameter": [
+      { "name": "version", "valueUri": "http://snomed.info/sct/32506021000036107/version/20260531" }
+    ],
+    "contains": [
+      { "system": "http://snomed.info/sct", "code": "122192001", "display": "Acanthamoeba culture" },
+      { "system": "http://snomed.info/sct", "code": "71388002", "display": "Procedure" }
+    ]
+  }
+}

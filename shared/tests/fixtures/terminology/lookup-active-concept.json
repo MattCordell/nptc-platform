@@ -1,0 +1,52 @@
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "name", "valueString": "SNOMED CT" },
+    { "name": "version", "valueString": "http://snomed.info/sct/32506021000036107/version/20260531" },
+    { "name": "display", "valueString": "Acanthamoeba culture" },
+    {
+      "name": "designation",
+      "part": [
+        { "name": "language", "valueCode": "en" },
+        {
+          "name": "use",
+          "valueCoding": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000003001",
+            "display": "Fully specified name"
+          }
+        },
+        { "name": "value", "valueString": "Acanthamoeba culture (procedure)" }
+      ]
+    },
+    {
+      "name": "designation",
+      "part": [
+        { "name": "language", "valueCode": "en-x-sctlang-32570271-00003610-6" },
+        {
+          "name": "use",
+          "valueCoding": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000013009",
+            "display": "Synonym"
+          }
+        },
+        { "name": "value", "valueString": "Acanthamoeba culture" }
+      ]
+    },
+    {
+      "name": "property",
+      "part": [
+        { "name": "code", "valueCode": "inactive" },
+        { "name": "value", "valueBoolean": false }
+      ]
+    },
+    {
+      "name": "property",
+      "part": [
+        { "name": "code", "valueCode": "moduleId" },
+        { "name": "value", "valueCode": "900000000000207008" }
+      ]
+    }
+  ]
+}

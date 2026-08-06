@@ -1,0 +1,10 @@
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "result", "valueBoolean": false },
+    {
+      "name": "message",
+      "valueString": "The code '122192001' was found, but the display 'Acanthamoeba species culture' did not match any designation ('Acanthamoeba culture', 'Acanthamoeba culture (procedure)')"
+    }
+  ]
+}

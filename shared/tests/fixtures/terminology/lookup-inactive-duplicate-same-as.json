@@ -1,0 +1,44 @@
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "name", "valueString": "SNOMED CT" },
+    { "name": "version", "valueString": "http://snomed.info/sct/32506021000036107/version/20260531" },
+    { "name": "display", "valueString": "Fixture duplicate concept" },
+    {
+      "name": "designation",
+      "part": [
+        { "name": "language", "valueCode": "en" },
+        {
+          "name": "use",
+          "valueCoding": {
+            "system": "http://snomed.info/sct",
+            "code": "900000000000003001",
+            "display": "Fully specified name"
+          }
+        },
+        { "name": "value", "valueString": "Fixture duplicate concept (procedure)" }
+      ]
+    },
+    {
+      "name": "property",
+      "part": [
+        { "name": "code", "valueCode": "inactive" },
+        { "name": "value", "valueBoolean": true }
+      ]
+    },
+    {
+      "name": "property",
+      "part": [
+        { "name": "code", "valueCode": "inactivationReason" },
+        { "name": "value", "valueString": "Duplicate" }
+      ]
+    },
+    {
+      "name": "property",
+      "part": [
+        { "name": "code", "valueCode": "SAME_AS" },
+        { "name": "value", "valueCode": "122192001" }
+      ]
+    }
+  ]
+}
