@@ -24,26 +24,30 @@ from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_ro
 # at the ceiling itself.
 NUMERIC_PRECISION_RISK_THRESHOLD = 16
 
+# ALT+ENTER produces a literal U+000A inside a cell's own text - legitimate
+# multi-line formatting in these two free-text roles (FR-63's ``Usage
+# guidance`` and ``History`` columns), not an Appendix A.1 defect. U+000D is
+# exempted alongside it for the same reason (a Windows-origin paste can leave
+# a bare \r or a \r\n pair). Scoped to these two roles, not to
+# ``nptc_shared.text.is_invisible`` itself: a line break inside a preferred
+# term, FSN or code cell is never legitimate, and that module is shared with
+# the backend's entry-time prohibition (FR-74), which must not lose the
+# ability to catch it.
+_FREE_TEXT_ROLES = frozenset({ColumnRole.GUIDANCE, ColumnRole.HISTORY})
+_LEGITIMATE_LINE_BREAKS = frozenset({"U+000A", "U+000D"})
 
-def _digit_count(value: int | float) -> int:
-    """Counts the digits in ``value``'s integer part.
 
-    ``int(value)`` is exact even for a float already at or beyond Excel's
-    precision ceiling: a double has no fractional bits left once its
-    magnitude passes roughly 4.5e15, so at the magnitudes this check cares
-    about, "the integer part" and "the value" are the same thing. A
-    non-finite float (``inf``/``nan``) can happen if a numeric cell's raw
-    XML text overflows a double when parsed - e.g. openpyxl's
-    ``_cast_number`` on ``<v>1E400</v>`` returns ``inf`` without raising -
-    and is treated as maximally at risk rather than crashing on ``int(inf)``.
-    """
-    if isinstance(value, float) and not math.isfinite(value):
-        return NUMERIC_PRECISION_RISK_THRESHOLD
-    return len(str(abs(int(value))))
+def _digit_count(value: int) -> int:
+    """Counts the digits in ``abs(value)``. Assumes a finite value - callers
+    that may see a non-finite float (see ``_scan_numeric_precision_risk``)
+    check that first."""
+    return len(str(abs(value)))
 
 
 def _scan_invisible_characters(cell: Cell) -> Finding | None:
     found = find_invisible_characters(cell.text)
+    if cell.role in _FREE_TEXT_ROLES:
+        found = tuple(ic for ic in found if ic.codepoint not in _LEGITIMATE_LINE_BREAKS)
     if not found:
         return None
     detail = ", ".join(f"{ic.codepoint} ({ic.name}) at offset {ic.offset}" for ic in found)
@@ -86,14 +90,27 @@ def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
     # A NUMBER-typed cell's raw value is always int or float - that mapping is
     # workbook.py's own contract (_DATA_TYPE_TO_CELL_TYPE / _cell_type).
     assert isinstance(cell.raw, int | float)
-    digits = _digit_count(cell.raw)
+    header = escape_invisible(cell.header)
+
+    if isinstance(cell.raw, float) and not math.isfinite(cell.raw):
+        # openpyxl's _cast_number returns inf without raising for a numeric
+        # cell's raw XML text that overflows a double (e.g. "1E400") - the
+        # original number is unrecoverable, so say that rather than
+        # fabricating a digit count for a value that isn't a number.
+        return Finding(
+            code="NUMERIC_PRECISION_RISK",
+            location=cell.reference,
+            message=f"'{header}' cell holds a value beyond Excel's numeric range",
+        )
+
+    digits = _digit_count(int(cell.raw))
     if digits < NUMERIC_PRECISION_RISK_THRESHOLD:
         return None
     return Finding(
         code="NUMERIC_PRECISION_RISK",
         location=cell.reference,
         message=(
-            f"'{escape_invisible(cell.header)}' cell holds a {digits}-digit number; "
+            f"'{header}' cell holds a {digits}-digit number; "
             "Excel corrupts a numeric cell at 16 or more significant digits"
         ),
     )

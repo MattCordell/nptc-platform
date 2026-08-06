@@ -161,3 +161,6 @@ def test_unreadable_workbook_is_a_usage_error_not_a_traceback(
     assert result.exit_code == 2, result.output
     assert "Traceback" not in result.output
     assert not report_dir.exists()
+    # WorkbookReadError's own message already says "could not read workbook
+    # ...": a regression that wraps it a second time doubles this phrase.
+    assert result.output.count("could not read") == 1

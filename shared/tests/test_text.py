@@ -39,7 +39,9 @@ PARAGRAPH_SEPARATOR = chr(0x2029)  # Zp
         (ZWNJ, True),
         (BOM, True),
         (SOFT_HYPHEN, True),
-        ("\t", True),  # Cc, tab - no legitimate use inside a single cell
+        ("\t", True),  # Cc, tab
+        ("\r", True),  # Cc, carriage return
+        ("\n", True),  # Cc, line feed
         (LINE_SEPARATOR, True),
         (PARAGRAPH_SEPARATOR, True),
         (" ", False),  # ASCII space is never a defect
@@ -48,14 +50,11 @@ PARAGRAPH_SEPARATOR = chr(0x2029)  # Zp
     ],
 )
 def test_is_invisible_categorises_each_case(ch: str, expected: bool) -> None:
+    """A line break is genuinely a control character and stays flagged here -
+    a caller with column-specific knowledge that a break is legitimate
+    formatting (e.g. cell_defects.py's free-text roles) is responsible for
+    filtering that case out itself, not this shared, universal definition."""
     assert is_invisible(ch) is expected
-
-
-@pytest.mark.parametrize("ch", ["\n", "\r"])
-def test_is_invisible_excludes_legitimate_line_breaks(ch: str) -> None:
-    """An ALT+ENTER line break inside a cell (e.g. Usage guidance, History) is
-    ordinary multi-line formatting, not an Appendix A.1 defect."""
-    assert is_invisible(ch) is False
 
 
 def test_find_invisible_characters_reports_offset_codepoint_and_name() -> None:

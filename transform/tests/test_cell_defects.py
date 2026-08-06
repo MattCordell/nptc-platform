@@ -238,6 +238,26 @@ def test_line_break_in_free_text_column_is_not_an_invisible_character(
 
 
 @pytest.mark.req("FR-70")
+def test_line_break_outside_a_free_text_column_is_still_flagged(tmp_path: Path) -> None:
+    """The free-text exemption is scoped to Usage guidance/History - a line
+    break inside a preferred term or a code cell is never legitimate and
+    must still surface as an INVISIBLE_CHARACTER finding."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["Aciclovir\nlevel", "12345678"])
+    path = tmp_path / "preferred_term_break.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(
+        f for f in _findings_at(sheets, "Requesting!A2") if f.code == "INVISIBLE_CHARACTER"
+    )
+    assert "U+000A" in finding.message
+
+
+@pytest.mark.req("FR-70")
 def test_fifteen_digit_number_is_at_the_safe_ceiling_not_flagged(tmp_path: Path) -> None:
     """PRD §2.1: 15 significant decimal digits is Excel's own guaranteed-safe
     ceiling - a 15-digit numeric cell is exactly representable, so it must
@@ -319,8 +339,9 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
 def test_numeric_overflow_is_flagged_not_crashed(numeric_overflow_workbook: Path) -> None:
     """A numeric cell whose raw text overflows a double (openpyxl's own
     ``_cast_number`` returns ``inf`` without raising) must become a finding,
-    not an uncaught OverflowError out of ``int(inf)``."""
+    not an uncaught OverflowError out of ``int(inf)`` - and the message must
+    not fabricate a digit count for a value that isn't actually a number."""
     sheets = read_workbook(numeric_overflow_workbook)
-    findings = scan_workbook(sheets)
-    codes = {f.code for f in findings}
-    assert "NUMERIC_PRECISION_RISK" in codes
+    finding = next(f for f in scan_workbook(sheets) if f.code == "NUMERIC_PRECISION_RISK")
+    assert "digit" not in finding.message
+    assert "beyond Excel's numeric range" in finding.message
