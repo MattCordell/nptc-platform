@@ -63,10 +63,37 @@ def test_a_terminology_run_records_the_editions_it_resolved_against(tmp_path: Pa
                 "resolved_versions": ["http://snomed.info/sct/32506021000036107/version/20260531"],
             }
         ],
+        "unresolved_fsn_count": 0,
     }
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     assert "42 code(s) checked, 1 not checked" in markdown_text
     assert "| au | http://snomed.info/sct/32506021000036107/version/20260531 |" in markdown_text
+    assert "no identifiable FSN designation" not in markdown_text
+
+
+@pytest.mark.req("FR-99")
+def test_a_nonzero_unresolved_fsn_count_is_rendered_not_silent(tmp_path: Path) -> None:
+    """A concept the bulk expansion returned with no identifiable FSN means
+    the FR-99 check could not run for it at all - that must be visible in
+    both files, not just carried on an unread field."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        terminology=TerminologyRun(
+            codes_checked=5,
+            codes_not_checked=0,
+            editions=(EditionResolution(label="au", resolved_versions=()),),
+            unresolved_fsn_count=3,
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["terminology"]["unresolved_fsn_count"] == 3
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "3 concept(s) had no identifiable FSN designation" in markdown_text
 
 
 @pytest.mark.req("FR-48")

@@ -57,6 +57,7 @@ def _terminology_payload(result: RunResult) -> object:
             {"label": edition.label, "resolved_versions": list(edition.resolved_versions)}
             for edition in run.editions
         ],
+        "unresolved_fsn_count": run.unresolved_fsn_count,
     }
 
 
@@ -123,10 +124,23 @@ def _render_terminology(result: RunResult) -> list[str]:
     lines = [
         f"- Terminology validation: {run.codes_checked} code(s) checked, "
         f"{run.codes_not_checked} not checked",
-        "",
-        "| Edition | Resolved version(s) |",
-        "|---|---|",
     ]
+    if run.unresolved_fsn_count:
+        # Not decoration: a nonzero count here means the FR-99 semantic-tag
+        # check could not run for that many concepts at all (no identifiable
+        # FSN designation came back), which would otherwise pass silently
+        # and permanently with nothing to show it never ran.
+        lines.append(
+            f"- {run.unresolved_fsn_count} concept(s) had no identifiable FSN designation; "
+            "the FR-99 semantic-tag check could not run for them"
+        )
+    lines.extend(
+        [
+            "",
+            "| Edition | Resolved version(s) |",
+            "|---|---|",
+        ]
+    )
     lines.extend(
         f"| {_escape_cell(edition.label)} "
         f"| {_escape_cell(', '.join(edition.resolved_versions) or '(not reported)')} |"

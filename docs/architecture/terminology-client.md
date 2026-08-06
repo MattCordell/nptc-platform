@@ -64,9 +64,15 @@ forbids the migration path having its own:
 2. **Targeted `lookup`** only for the delta — the codes the expansion did not return. That
    call is what separates "inactive" (and, with it, FR-46's inactivation reason and
    historical association) from "not in this edition at all", which a conformant server
-   answers with a 404.
-3. **Bounded concurrency** on that second pass (`NPTC_TX_MAX_CONCURRENCY`, default 4). The
-   chunk expansions themselves are sequential — see
+   answers with a 404. It requests `inactive` and FR-46's historical-association property
+   codes explicitly (`SAME_AS`, `MOVED_TO`, `POSSIBLY_EQUIVALENT_TO`, `WAS_A`,
+   `REPLACED_BY`) rather than relying on a server volunteering them unprompted — FHIR R4
+   makes no such guarantee, and `LookupResult.inactive` coming back `None` (not reported,
+   distinct from reported-false) would otherwise misclassify an active code as inactive.
+3. **Bounded concurrency** on that second pass (`NPTC_TX_MAX_CONCURRENCY`, default 4),
+   submitted in batches rather than all at once — a failure in one batch means the next is
+   never submitted, rather than every remaining code being queued before the failure
+   surfaces. The chunk expansions themselves are sequential — see
    [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md) for both defaults
    and why they are untuned.
 4. **Respect HTTP caching**, and honour `Retry-After` on 429 with exponential backoff
@@ -81,17 +87,26 @@ result. `TerminologySweep` owns that loop, comparing the *accumulated* count aga
 the wrong one while paging), and a code missing from a truncated page is recovered by the
 delta pass rather than reported absent.
 
-FR-84's hierarchy check is the same primitive, once: expand
-`(codes) MINUS <<71388002` and anything left in the result violates the check. A code
-absent from the edition cannot appear in that result, so absence is always the status
-pass's finding, never a false hierarchy violation.
+FR-84's hierarchy check is the same primitive, chunked the same way: expand
+`(chunk) MINUS <<71388002` per `chunk_size` chunk of the codes the status/delta passes
+already resolved, and anything left in a chunk's result violates the check. Not one request
+for the whole catalogue — a single disjunction over 20,000 codes is itself too large to send
+(measured: ~340KB of percent-encoded ECL; see [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md)'s
+2026-08-07 amendment). Only *resolved* codes are offered to this ECL at all, never every
+code handed to the sweep — a code absent from the edition is excluded before the request is
+built, rather than relying on every server tolerating an unknown concept reference inside
+one, and absence is always the status pass's finding, never a false hierarchy violation.
 
 FR-99's semantic-tag warning rides on the bulk pass rather than costing requests of its
 own: the status expansion asks for designations, so the served FSN — and therefore its tag,
 read by `snomed.semantic_tag` — is already in hand for every concept the expansion
 returned. A concept already reported as an FR-84 violation is not also tag-warned, and a
 concept whose FSN the server did not return is not warned at all: "no tag observed" is not
-evidence of a wrong tag.
+evidence of a wrong tag — but it is counted, in `SweepResult.unresolved_fsn_count`, since a
+server that never returns an identifiable FSN for anything would otherwise make the check
+pass silently and permanently, with nothing to show it never ran. Paging that overlaps
+(a server ignoring `offset`) is de-duplicated by code before either the tag list or that
+count is built, so a repeated page cannot double-count either one.
 
 **A notation trap worth remembering.** The PRD writes this idiom as
 `(<code1> OR <code2> OR ... OR <codeN>) MINUS <<71388002` — those angle brackets around

@@ -26,7 +26,7 @@ from nptc_transform.terminology_check import (
     TerminologyRun,
     check_terminology,
 )
-from nptc_transform.workbook import read_workbook
+from nptc_transform.workbook import Sheet, read_workbook
 
 
 @dataclass(frozen=True)
@@ -93,18 +93,34 @@ def _hash_file(workbook: Path) -> str:
     return hashlib.sha256(workbook.read_bytes()).hexdigest()
 
 
-def run_transform(
-    workbook: Path,
+def read_source(workbook: Path) -> tuple[SourceRef, tuple[Sheet, ...]]:
+    """Reads and hashes ``workbook`` once (FR-70, FR-73).
+
+    Split out from ``run_transform`` so a caller that also opens a network
+    connection for --check-terminology (``cli.py``) can do this first and
+    surface ``WorkbookReadError`` before that connection is ever built - a
+    corrupt workbook is a usage error the operator needs to see, not a
+    terminology-server failure, and it should not pay for client setup it
+    never needed either way.
+    """
+    source = SourceRef(filename=workbook.name, sha256=_hash_file(workbook))
+    sheets = read_workbook(workbook)
+    return source, sheets
+
+
+def run_transform_sheets(
+    source: SourceRef,
+    sheets: tuple[Sheet, ...],
     *,
     mode: Mode,
     sweep: TerminologySweep | None = None,
     editions: Sequence[Edition] = DEFAULT_EDITIONS,
 ) -> RunResult:
-    """Runs the transform against ``workbook`` and returns its findings.
+    """The rest of ``run_transform``, given an already-read workbook.
 
-    Reads the workbook and scans every cell for PRD Appendix A.1-A.3 defects
-    (P0-2); each finding is classified into its band by ``Finding.band`` as
-    soon as it's constructed (P0-3, FR-71).
+    Scans every cell for PRD Appendix A.1-A.3 defects (P0-2); each finding is
+    classified into its band by ``Finding.band`` as soon as it's constructed
+    (P0-3, FR-71).
 
     ``sweep`` is optional and defaults to off. Terminology validation is the
     one part of this pipeline that talks to a server, so it is opted into
@@ -113,8 +129,6 @@ def run_transform(
     stub-backed sweep or none at all, so the suite never needs the network
     (NFR-37).
     """
-    source = SourceRef(filename=workbook.name, sha256=_hash_file(workbook))
-    sheets = read_workbook(workbook)
     findings = scan_workbook(sheets)
     if sweep is None:
         return RunResult(source=source, mode=mode, findings=findings)
@@ -125,3 +139,20 @@ def run_transform(
         findings=(*findings, *outcome.findings),
         terminology=outcome.run,
     )
+
+
+def run_transform(
+    workbook: Path,
+    *,
+    mode: Mode,
+    sweep: TerminologySweep | None = None,
+    editions: Sequence[Edition] = DEFAULT_EDITIONS,
+) -> RunResult:
+    """Runs the transform against ``workbook`` and returns its findings.
+
+    ``read_source`` then ``run_transform_sheets`` - kept as one call for
+    every caller that has no reason to split the two (every test in this
+    tree, and any future caller that never talks to a terminology server).
+    """
+    source, sheets = read_source(workbook)
+    return run_transform_sheets(source, sheets, mode=mode, sweep=sweep, editions=editions)

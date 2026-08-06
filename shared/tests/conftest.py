@@ -12,6 +12,7 @@ the exact call, with a message naming the requirement.
 from __future__ import annotations
 
 import json
+import socket
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,9 +238,21 @@ def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
     only in CI and only after the fact. This fails locally, at the exact
     call, with a message naming the requirement - which is what stops a
     network-dependent test being written in the first place.
+
+    Covers httpx's sync transport (this workspace's only HTTP client, per
+    ADR-0003), its async counterpart (nothing uses it today, but a future
+    async terminology client passing this guard silently, caught only by
+    CI's iptables job after the fact, would defeat the point of a local
+    guard), and the socket layer itself, so the claim above is actually true
+    rather than "no real *httpx* request".
     """
 
     def _refuse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("shared/tests must not make a real HTTP request (NFR-37)")
 
+    async def _refuse_async(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("shared/tests must not make a real HTTP request (NFR-37)")
+
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async)
+    monkeypatch.setattr(socket.socket, "connect", _refuse)

@@ -37,12 +37,15 @@ to actually run.
 |---|---|
 | `0` | Ran to completion and no finding blocks the import - check `band_counts` in `report.json` for auto-correctable findings even so. |
 | `1` | The report contains at least one finding banded `requires-human-decision` or `data-defect` (FR-71); the import must not proceed. Report-only mode still writes the report before exiting `1`. |
-| `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, or `--emit-dataset` was passed. |
+| `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, `--emit-dataset` was passed, or (with `--check-terminology`) an `NPTC_TX_*` environment variable is malformed (e.g. `NPTC_TX_CHUNK_SIZE` not a positive integer) - a deployment typo, not a server outage, so it lands here rather than exit `3`. |
 | `3` | `--check-terminology` was passed and the terminology sweep could not complete (server unreachable, rate limited past the retry budget, a malformed response). **No report is written at all** - a report with the cell defects complete and the terminology findings silently missing would look exactly like a run in which every code validated cleanly (FR-54). Re-run without `--check-terminology` for the cell-defect report alone. |
 
 A filesystem refusal on `--report-dir` reports the path and the reason on
 stderr and exits `2`. It never exits `1` - that code is reserved for
 "the report contains blocking findings" - and never prints a traceback.
+The workbook is always read - and any `WorkbookReadError` reported - before any
+`NPTC_TX_*` value is even parsed, so a corrupt workbook's message is never
+pre-empted by an unrelated configuration error.
 
 ## The report-only guarantee (FR-70)
 

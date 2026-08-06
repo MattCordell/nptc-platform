@@ -7,6 +7,7 @@ and CI proves it by blocking egress for this tree.
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 
 import openpyxl
@@ -252,6 +253,46 @@ def test_the_tag_warning_is_raised_once_even_though_both_editions_serve_it(
     assert len(grouped[FindingCode.UNEXPECTED_SEMANTIC_TAG]) == 1
 
 
+@pytest.mark.req("FR-99")
+def test_an_unexpected_semantic_tag_escapes_invisible_characters_in_the_fsn(
+    tmp_path: Path,
+) -> None:
+    """The served FSN is exactly the kind of text this transform exists to
+    surface defects in - an invisible character inside it must be named by
+    codepoint, never written raw into the report, the same rule every other
+    finding in this module already follows (see the sibling
+    CODE_NOT_WELL_FORMED message). Without this, the one character that
+    would explain the discrepancy to a reviewer is the one made invisible.
+    """
+    nbsp = "\u00a0"
+    code = REGIME_CODE
+    path = tmp_path / "tagged.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    _write_text_cell(sheet, 2, 2, code)
+    workbook.save(path)
+
+    stub = StubTerminologyClient(
+        concepts=[
+            StubConcept(
+                code=code,
+                fsn=f"Regime{nbsp}therapy (regime/therapy)",
+                parents=(PROCEDURE_ROOT_CODE,),
+            )
+        ]
+    )
+
+    outcome = check_terminology(read_workbook(path), sweep=TerminologySweep(stub))
+
+    tagged = [f for f in outcome.findings if f.code == FindingCode.UNEXPECTED_SEMANTIC_TAG]
+    assert len(tagged) == 1
+    assert nbsp not in tagged[0].message
+    assert "<U+00A0>" in tagged[0].message
+
+
 @pytest.mark.req("FR-74")
 def test_a_clean_binding_produces_no_finding_at_all(
     bindings_workbook: Path, client: StubTerminologyClient
@@ -261,6 +302,36 @@ def test_a_clean_binding_produces_no_finding_at_all(
     assert all(
         finding.location != "Requesting!B2" for findings in grouped.values() for finding in findings
     )
+
+
+@pytest.mark.req("FR-06")
+def test_a_non_text_code_cell_is_excluded_from_terminology_checking_entirely(
+    tmp_path: Path, client: StubTerminologyClient
+) -> None:
+    """``cell_defects.py`` already owns the type defect for a non-text code
+    cell (``CODE_CELL_INVALID_TYPE`` for a date, ``CODE_CELL_NOT_TEXT`` for a
+    number) - this pass must not also submit the cell's rendered text (an
+    ISO date string, a plain digit string for a number) as though it were a
+    transcribed code, which would either report a second, misleading
+    ``CODE_NOT_WELL_FORMED`` finding or - worse - silently validate a code
+    the docstring's own de-duplication discipline says belongs solely to the
+    cell-type scanner."""
+    path = tmp_path / "wrong_types.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    sheet.cell(row=2, column=2, value=datetime.date(2024, 1, 5))  # CellType.DATE
+    sheet.cell(row=3, column=2, value=int(GOOD_CODE))  # CellType.NUMBER
+    workbook.save(path)
+
+    outcome = check_terminology(read_workbook(path), sweep=TerminologySweep(client))
+
+    assert outcome.findings == ()
+    assert outcome.run.codes_checked == 0
+    assert outcome.run.codes_not_checked == 2
+    assert client.requests == ()
 
 
 @pytest.mark.req("FR-72")
@@ -329,6 +400,23 @@ def test_asking_for_no_editions_at_all_is_refused(
     with pytest.raises(ValueError, match="at least one edition"):
         check_terminology(
             read_workbook(bindings_workbook), sweep=TerminologySweep(client), editions=()
+        )
+
+
+@pytest.mark.req("FR-74")
+def test_duplicate_edition_labels_are_refused(
+    bindings_workbook: Path, client: StubTerminologyClient
+) -> None:
+    """A pinned and an unpinned edition sharing a label (FR-49's
+    reproduce-a-historical-run case) would otherwise silently collapse in
+    the per-edition results dict below - both sweeps run against the shared
+    server, but one result is simply discarded, understating what was
+    actually validated."""
+    with pytest.raises(ValueError, match="distinct edition labels"):
+        check_terminology(
+            read_workbook(bindings_workbook),
+            sweep=TerminologySweep(client),
+            editions=[SNOMED_CT_AU, SNOMED_CT_AU.pinned_to("20250630")],
         )
 
 

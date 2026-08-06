@@ -33,7 +33,7 @@ from nptc_shared.terminology.sweep import SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible
 from nptc_transform.bands import FindingCode
 from nptc_transform.findings import Finding
-from nptc_transform.workbook import ColumnRole, Sheet
+from nptc_transform.workbook import CellType, ColumnRole, Sheet
 
 #: FR-74/FR-47: every code is validated against both editions, latest release
 #: of each (FR-49 - no version pinned, the server reports what it resolved).
@@ -42,10 +42,17 @@ DEFAULT_EDITIONS: tuple[Edition, ...] = (SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL)
 
 @dataclass(frozen=True)
 class CodeBinding:
-    """One code cell: the code it holds, and the cell it came from."""
+    """One code cell: the code it holds, the cell it came from, and the
+    cell's original storage type - carried through so ``check_terminology``
+    can tell a genuine code apart from a non-text cell's rendered value
+    (a date's ISO string, a corrupted number's ``repr(float)``) without a
+    second, divergent notion of "what counts as a code cell" from
+    ``cell_defects.py``'s.
+    """
 
     code: str
     location: str
+    cell_type: CellType
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,12 @@ class TerminologyRun:
     codes_checked: int
     codes_not_checked: int
     editions: tuple[EditionResolution, ...]
+    #: Concepts resolved during this run for which no edition's sweep could
+    #: identify an FSN designation, summed across editions - see
+    #: ``SweepResult.unresolved_fsn_count``. Zero on a conformant server;
+    #: nonzero here is the operator-visible signal that FR-99's check did not
+    #: actually run for that many concepts, not a silent pass.
+    unresolved_fsn_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -90,7 +103,7 @@ def collect_code_bindings(sheets: Sequence[Sheet]) -> tuple[CodeBinding, ...]:
     FR-71 specifies for that defect.
     """
     bindings = [
-        CodeBinding(code=code, location=cell.reference)
+        CodeBinding(code=code, location=cell.reference, cell_type=cell.cell_type)
         for sheet in sheets
         for cell in sheet.cells
         if cell.role is ColumnRole.CODE and (code := cell.text.strip())
@@ -121,12 +134,30 @@ def check_terminology(
         # from every edition asked" is vacuously true and every code in the
         # workbook would be reported as not found.
         raise ValueError("check_terminology requires at least one edition")
+    edition_labels = [edition.label for edition in editions]
+    if len(set(edition_labels)) != len(edition_labels):
+        # Two editions sharing a label (e.g. a pinned and an unpinned AU pair
+        # for FR-49's reproduce-a-historical-run case) would silently
+        # collapse in the `results` dict below: both sweeps run, but one
+        # result is discarded, understating what was actually validated.
+        raise ValueError(
+            f"check_terminology requires distinct edition labels, got {edition_labels}"
+        )
 
     bindings = collect_code_bindings(sheets)
     findings: list[Finding] = []
 
     checkable: list[CodeBinding] = []
     for binding in bindings:
+        if binding.cell_type is not CellType.TEXT:
+            # cell_defects.py already owns this defect - CODE_CELL_NOT_TEXT
+            # or CODE_CELL_INVALID_TYPE, depending on shape - and reports it
+            # against this exact cell. Submitting the cell's rendered text
+            # anyway (an ISO date string, `repr(float)` in scientific
+            # notation for a precision-corrupted number) would report a
+            # second, misleading CODE_NOT_WELL_FORMED finding quoting
+            # something that was never a transcribed code to begin with.
+            continue
         if has_valid_check_digit(binding.code):
             checkable.append(binding)
             continue
@@ -155,6 +186,7 @@ def check_terminology(
                 EditionResolution(label=label, resolved_versions=result.resolved_versions)
                 for label, result in sorted(results.items())
             ),
+            unresolved_fsn_count=sum(result.unresolved_fsn_count for result in results.values()),
         ),
     )
 
@@ -244,8 +276,8 @@ def _findings_for(
                     location=binding.location,
                     message=(
                         f"code '{code}' is a procedure by subsumption but its {label} "
-                        f"semantic tag is '({tag.tag})', not '(procedure)': "
-                        f"'{tag.fully_specified_name}' (FR-99, warning only)"
+                        f"semantic tag is '({escape_invisible(tag.tag)})', not '(procedure)': "
+                        f"'{escape_invisible(tag.fully_specified_name)}' (FR-99, warning only)"
                     ),
                 )
             )

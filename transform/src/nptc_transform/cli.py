@@ -19,12 +19,12 @@ from typing import Annotated
 import typer
 
 from nptc_shared.terminology.config import TerminologyConfig
-from nptc_shared.terminology.errors import TerminologyError
+from nptc_shared.terminology.errors import TerminologyConfigError, TerminologyError
 from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
-from nptc_transform.pipeline import Mode, RunResult, run_transform
+from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
 
@@ -136,14 +136,33 @@ def run(
         raise typer.Exit(code=ExitCode.USAGE_ERROR)
 
     start = time.monotonic()
-    result: RunResult
+
+    # Read the workbook before opening any network connection: a corrupt or
+    # missing workbook is a usage error the operator needs to see, and a
+    # malformed NPTC_TX_* value should never pre-empt that clearer message
+    # just because client construction happened to run first.
     try:
-        with _terminology_sweep(check_terminology) as sweep:
-            result = run_transform(workbook, mode=Mode.REPORT_ONLY, sweep=sweep)
+        source, sheets = read_source(workbook)
     except WorkbookReadError as exc:
         # WorkbookReadError's own message already names the path and reason -
         # echo it as-is rather than wrapping it a second time.
         typer.echo(f"{exc}. Pass --workbook a valid, readable .xlsx file.", err=True)
+        raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
+
+    result: RunResult
+    try:
+        with _terminology_sweep(check_terminology) as sweep:
+            result = run_transform_sheets(source, sheets, mode=Mode.REPORT_ONLY, sweep=sweep)
+    except TerminologyConfigError as exc:
+        # A subclass of TerminologyError, caught ahead of it: a malformed
+        # NPTC_TX_* value is a deployment typo, not a server outage, and
+        # belongs in the usage-error exit code an operator or CI would fix
+        # rather than retry.
+        typer.echo(
+            f"invalid terminology configuration: {exc}. Check the NPTC_TX_* environment "
+            "variables (see docs/operations/configuration.md).",
+            err=True,
+        )
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     except TerminologyError as exc:
         # No report is written at all. A partial report - cell defects

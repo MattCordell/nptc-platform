@@ -25,10 +25,15 @@ to judgement:
    back with it) from "not in this edition at all". The delta is a small
    fraction of the catalogue; that is the entire reason this pass is
    affordable.
-3. **Bounded concurrency on that second pass**, ``max_concurrency`` at a time.
-4. **One** ``expand`` for the whole FR-84 hierarchy check:
-   ``(codes) MINUS <<71388002``. Anything the server returns is a code that
-   exists and is not a procedure.
+3. **Bounded concurrency on that second pass**, ``max_concurrency`` at a
+   time, submitted in batches rather than all at once - a failure in one
+   batch stops the next batch from ever being queued.
+4. **Chunked ``expand`` for the FR-84 hierarchy check too**:
+   ``(chunk) MINUS <<71388002`` over the same ``chunk_size`` chunks as the
+   status pass, not one request for the whole catalogue - at the PRD's
+   20,000-code planning ceiling a single disjunction is itself too large to
+   send (measured: ~340KB of percent-encoded ECL). Anything a chunk's
+   expansion returns is a code that exists and is not a procedure.
 
 Retry, ``Retry-After`` and exponential backoff live one layer down, in
 ``OntoserverClient`` - not repeated here, so a sweep against the stub and a
@@ -51,7 +56,11 @@ from nptc_shared.terminology.config import (
     DEFAULT_MAX_CONCURRENCY,
     TerminologyConfig,
 )
-from nptc_shared.terminology.errors import TerminologyError, TerminologyStatusError
+from nptc_shared.terminology.errors import (
+    TerminologyConfigError,
+    TerminologyError,
+    TerminologyStatusError,
+)
 from nptc_shared.terminology.models import (
     PROCEDURE_ROOT_CODE,
     Edition,
@@ -79,14 +88,40 @@ PROCEDURE_SEMANTIC_TAG = "procedure"
 #: instead of being raised - every other failure still propagates.
 _NOT_FOUND_ISSUE_CODES = frozenset({"not-found", "code-invalid", "invalid-code"})
 
+#: ``$lookup`` properties requested on every delta call. ``inactive`` is
+#: requested explicitly rather than relying on a server volunteering it
+#: unprompted: FHIR R4 does not require a server to return any property that
+#: wasn't asked for, and ``LookupResult.inactive`` coming back ``None`` (not
+#: reported, distinct from "reported false") would otherwise send an active
+#: code into the ``inactive`` bucket in ``run()`` below - a false blocking
+#: defect. The rest are FR-46's own inactivation-reason/historical-association
+#: table; requesting them costs nothing extra on a call already being made,
+#: and is what lets ``SweepResult.lookups`` make good on its own docstring's
+#: promise to issue #28.
+_LOOKUP_PROPERTIES: tuple[str, ...] = (
+    "inactive",
+    "inactivationReason",
+    "SAME_AS",
+    "MOVED_TO",
+    "POSSIBLY_EQUIVALENT_TO",
+    "WAS_A",
+    "REPLACED_BY",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ConceptTag:
-    """A concept's served FSN and the semantic tag read off it (FR-99)."""
+    """A concept's served FSN and the semantic tag read off it (FR-99).
+
+    ``tag`` is never ``None`` here: ``_unexpected_tags`` only constructs one
+    once it has already confirmed ``semantic_tag(fsn) is not None`` - an FSN
+    with no identifiable tag at all is a different, un-taggable case (see
+    ``unresolved_fsn_count``), not a ``ConceptTag`` with a missing ``tag``.
+    """
 
     code: str
     fully_specified_name: str
-    tag: str | None
+    tag: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +140,14 @@ class SweepResult:
     absent: tuple[str, ...] = ()
     hierarchy_violations: tuple[str, ...] = ()
     unexpected_semantic_tags: tuple[ConceptTag, ...] = ()
+    #: Concepts the bulk expansion returned with no identifiable FSN
+    #: designation - the FR-99 check could not run over them at all, because
+    #: "no tag observed" is not evidence of a wrong tag and cannot be turned
+    #: into a warning. Zero on a conformant server that honours
+    #: ``includeDesignations``; a persistently nonzero count means the FR-99
+    #: check is silently not running for those concepts and the server's
+    #: designation shape should be checked (see ADR-0005).
+    unresolved_fsn_count: int = 0
     #: Every ``$lookup`` the second pass resolved, by code - the raw material
     #: for FR-46's inactivation-reason/historical-association pairing, kept
     #: rather than discarded so the caller that needs it (issue #28, the
@@ -158,9 +201,11 @@ class TerminologySweep:
         procedure_root: str = PROCEDURE_ROOT_CODE,
     ) -> None:
         if chunk_size < 1:
-            raise ValueError(f"chunk_size must be at least 1, got {chunk_size}")
+            raise TerminologyConfigError(f"chunk_size must be at least 1, got {chunk_size}")
         if max_concurrency < 1:
-            raise ValueError(f"max_concurrency must be at least 1, got {max_concurrency}")
+            raise TerminologyConfigError(
+                f"max_concurrency must be at least 1, got {max_concurrency}"
+            )
         self._client = client
         self._chunk_size = chunk_size
         self._max_concurrency = max_concurrency
@@ -224,8 +269,14 @@ class TerminologySweep:
             else:
                 inactive.append(code)
 
-        violations = self._check_hierarchy(unique, edition=edition, versions=versions)
+        # Only codes known to exist go into the hierarchy check - an absent
+        # code (already reported as such) never appears in a disjunction
+        # sent to the server, which both shrinks the ECL and avoids relying
+        # on every server tolerating an unknown-concept reference inside one.
+        resolved_codes = tuple(sorted(active | set(inactive)))
+        violations = self._check_hierarchy(resolved_codes, edition=edition, versions=versions)
         violating = set(violations)
+        unexpected_tags, unresolved_fsn_count = _unexpected_tags(concepts, exclude=violating)
 
         return SweepResult(
             edition_label=edition.label,
@@ -233,7 +284,8 @@ class TerminologySweep:
             inactive=tuple(sorted(inactive)),
             absent=tuple(sorted(absent)),
             hierarchy_violations=violations,
-            unexpected_semantic_tags=_unexpected_tags(concepts, exclude=violating),
+            unexpected_semantic_tags=unexpected_tags,
+            unresolved_fsn_count=unresolved_fsn_count,
             lookups=tuple(
                 sorted(
                     (lookup for _code, lookup in lookups if lookup is not None),
@@ -307,6 +359,16 @@ class TerminologySweep:
         ``_is_absence``); any other failure propagates, aborting the sweep -
         an unreachable server must never be recorded as a catalogue of absent
         codes (FR-54).
+
+        Submitted in batches of ``max_concurrency``, not all at once:
+        ``Executor.map`` submits every future the moment it is called
+        (``[self.submit(...) for ...]``, eagerly, before any result is
+        consumed), so a failing lookup would not stop the remaining codes -
+        potentially thousands of them - from being queued and executed before
+        the exception ever surfaces to the caller. Batching means a failure
+        in one batch means the next batch is never submitted at all - at most
+        one batch's worth of extra requests beyond the failure, not the whole
+        remaining catalogue.
         """
         if not codes:
             return ()
@@ -315,17 +377,22 @@ class TerminologySweep:
             # would move every exception's traceback into a worker thread for
             # no concurrency in return.
             return tuple((code, self._lookup(code, edition=edition)) for code in codes)
+        results: list[tuple[str, LookupResult | None]] = []
         with ThreadPoolExecutor(
             max_workers=self._max_concurrency, thread_name_prefix="nptc-tx-sweep"
         ) as pool:
-            results = pool.map(lambda code: self._lookup(code, edition=edition), codes)
-            # `map` yields in input order and re-raises the first failure here,
-            # inside the `with`, so the pool is still shut down cleanly.
-            return tuple(zip(codes, results, strict=True))
+            for batch in _chunks(codes, self._max_concurrency):
+                futures = {pool.submit(self._lookup, code, edition=edition): code for code in batch}
+                for future in futures:
+                    # `.result()` re-raises here, inside the `with` and before
+                    # the next batch is ever submitted - the pool is still
+                    # shut down cleanly either way.
+                    results.append((futures[future], future.result()))
+        return tuple(results)
 
     def _lookup(self, code: str, *, edition: Edition) -> LookupResult | None:
         try:
-            return self._client.lookup(code, edition=edition)
+            return self._client.lookup(code, edition=edition, properties=_LOOKUP_PROPERTIES)
         except TerminologyError as exc:
             if _is_absence(exc):
                 return None
@@ -336,30 +403,52 @@ class TerminologySweep:
     def _check_hierarchy(
         self, codes: Sequence[str], *, edition: Edition, versions: set[str]
     ) -> tuple[str, ...]:
-        """One request: expand ``(codes) MINUS <<71388002`` (FR-84).
+        """Expands ``(chunk) MINUS <<71388002`` per chunk (FR-84).
+
+        Chunked the same way as ``_resolve_status`` - one unchunked
+        disjunction over the whole catalogue does not fit in a request at the
+        PRD's 20,000-code planning ceiling (measured with this module's own
+        ``ecl_set_of``/``implicit_value_set_url``: roughly 340KB of
+        percent-encoded ECL, more for 17-18 digit AU-extension codes). Per-
+        chunk results concatenate without loss, since the check is a
+        disjunction with no cross-chunk relationship. See ADR-0005.
+        """
+        violations: list[str] = []
+        for chunk in _chunks(codes, self._chunk_size):
+            violations.extend(
+                self._check_hierarchy_chunk(chunk, edition=edition, versions=versions)
+            )
+        return tuple(sorted(violations))
+
+    def _check_hierarchy_chunk(
+        self, chunk: Sequence[str], *, edition: Edition, versions: set[str]
+    ) -> tuple[str, ...]:
+        """One chunk's ``(chunk) MINUS <<71388002`` expansion, paged.
 
         Everything the server returns is a code that resolves in this edition
         and is not subsumed by the procedure root. A code that is absent from
         the edition cannot appear - an ECL enumerating codes only ever returns
         concepts that exist - so an AU-only code checked against the
         International edition is reported by the status pass as absent, not
-        here as a false violation.
+        here as a false violation. (The caller passes only resolved codes in
+        anyway - see ``run()`` - so an absent code is never even offered to
+        this ECL, rather than relying solely on server tolerance for one.)
 
         The parenthesised code list is a disjunction of *literal* codes, never
         ``<code``: ``<`` is ECL's descendant-of operator, and asking for a leaf
         procedure's descendants returns nothing, which would make this check
         pass every code forever (see ``snomed.ecl_set_of``).
 
-        Paging exists but should never engage: ``count`` asks for room for
-        every code handed in, and the expected result is empty. It engages
+        Paging exists but should rarely engage: ``count`` asks for room for
+        every code in the chunk, and the expected result is empty. It engages
         only if a server caps the page below the number of violations, in
         which case the alternative is under-reporting them.
         """
-        ecl = f"({ecl_set_of(codes)}) MINUS <<{self._procedure_root}"
+        ecl = f"({ecl_set_of(chunk)}) MINUS <<{self._procedure_root}"
         violations: list[str] = []
         offset = 0
         while True:
-            expansion = self._client.expand(ecl, edition=edition, count=len(codes), offset=offset)
+            expansion = self._client.expand(ecl, edition=edition, count=len(chunk), offset=offset)
             versions.update(expansion.resolved_versions)
             violations.extend(expansion.codes)
             if expansion.total is None or len(violations) >= expansion.total:
@@ -367,12 +456,12 @@ class TerminologySweep:
             if not expansion.concepts:
                 break
             offset += len(expansion.concepts)
-        return tuple(sorted(violations))
+        return tuple(violations)
 
 
 def _unexpected_tags(
     concepts: Iterable[ExpandedConcept], *, exclude: set[str]
-) -> tuple[ConceptTag, ...]:
+) -> tuple[tuple[ConceptTag, ...], int]:
     """FR-99: a concept under ``<<71388002`` whose tag is not ``(procedure)``.
 
     Read off the FSN designation the bulk expansion already returned - no
@@ -384,12 +473,24 @@ def _unexpected_tags(
     its tag is a symptom of an error already raised and repeating it as a
     warning is noise. A concept whose FSN the server did not return is also
     skipped - "no tag observed" is not evidence of a wrong tag, and inventing
-    a warning from missing data is worse than staying silent (FR-54).
+    a warning from missing data is worse than staying silent (FR-54) - but
+    counted in the returned ``unresolved_fsn_count``, since *every* concept
+    hitting this case (a server that doesn't honour ``includeDesignations``,
+    or tags ``use`` non-standardly) would otherwise make the whole check pass
+    silently and permanently, with nothing to show it never ran.
+
+    De-duplicates by code as it goes: ``_expand_chunk``'s paging loop
+    deliberately tolerates a server that ignores ``offset`` or overlaps pages
+    (see its own docstring), and without this a duplicated page would double
+    both a ``ConceptTag`` and the unresolved count.
     """
-    tagged: list[ConceptTag] = []
+    tagged: dict[str, ConceptTag] = {}
+    seen: set[str] = set()
+    unresolved = 0
     for concept in concepts:
-        if concept.code in exclude:
+        if concept.code in exclude or concept.code in seen:
             continue
+        seen.add(concept.code)
         fsn = next(
             (
                 designation.value
@@ -399,8 +500,9 @@ def _unexpected_tags(
             None,
         )
         if fsn is None:
+            unresolved += 1
             continue
         tag = semantic_tag(fsn)
         if tag is not None and tag != PROCEDURE_SEMANTIC_TAG:
-            tagged.append(ConceptTag(code=concept.code, fully_specified_name=fsn, tag=tag))
-    return tuple(sorted(tagged, key=lambda entry: entry.code))
+            tagged[concept.code] = ConceptTag(code=concept.code, fully_specified_name=fsn, tag=tag)
+    return tuple(sorted(tagged.values(), key=lambda entry: entry.code)), unresolved

@@ -538,7 +538,7 @@
   phase: p1
   title: "Every code binding MUST be subsumed by 71388002 |Procedure (procedure)|"
   status: implemented
-  notes: "One ValueSet/$expand of (codes) MINUS <<71388002 per edition in TerminologySweep, reported by the transform as OUT_OF_SCOPE_HIERARCHY in the blocking data-defect band (#27). NFR-38 test 13's call-count assertion is shared/tests/test_terminology_sweep.py. The backend's own enforcement at entry time lands with P1."
+  notes: "ceil(N/chunk_size) ValueSet/$expand calls of (chunk) MINUS <<71388002 per edition in TerminologySweep - chunked the same as the status pass, not one request for the whole catalogue, since a single disjunction is itself too large to send at the PRD's 20,000-code ceiling (~340KB of ECL; ADR-0005's 2026-08-07 amendment). Reported by the transform as OUT_OF_SCOPE_HIERARCHY in the blocking data-defect band (#27). NFR-38 test 13's call-count-not-per-code assertion is shared/tests/test_terminology_sweep.py. The backend's own enforcement at entry time lands with P1."
 - id: "FR-85"
   priority: MUST
   phase: p1
@@ -858,7 +858,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue one batch request rather than one per code) landed with #27."
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1

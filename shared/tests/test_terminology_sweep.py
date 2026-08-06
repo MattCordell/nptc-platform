@@ -16,6 +16,7 @@ import pytest
 from nptc_shared.terminology.config import TerminologyConfig
 from nptc_shared.terminology.errors import (
     OperationOutcomeIssue,
+    TerminologyConfigError,
     TerminologyStatusError,
     TerminologyTransportError,
 )
@@ -24,6 +25,7 @@ from nptc_shared.terminology.models import (
     SNOMED_CT_AU,
     SNOMED_CT_INTERNATIONAL,
     Edition,
+    ExpandedConcept,
     Expansion,
     Operation,
 )
@@ -174,9 +176,13 @@ def test_an_empty_catalogue_issues_no_requests_at_all() -> None:
 
 
 def test_a_chunk_size_below_one_is_refused_rather_than_looping_or_skipping() -> None:
-    with pytest.raises(ValueError, match="chunk_size"):
+    """One exception type for this floor regardless of construction path -
+    ``TerminologyConfig.__post_init__`` raises the same type on the
+    ``from_config`` path, and the CLI's ``except TerminologyError`` needs a
+    single type to catch."""
+    with pytest.raises(TerminologyConfigError, match="chunk_size"):
         TerminologySweep(_stub(), chunk_size=0)
-    with pytest.raises(ValueError, match="max_concurrency"):
+    with pytest.raises(TerminologyConfigError, match="max_concurrency"):
         TerminologySweep(_stub(), max_concurrency=0)
 
 
@@ -366,6 +372,101 @@ def test_only_the_delta_gets_a_lookup_and_an_inactive_code_is_reported_inactive(
 
 
 @pytest.mark.req("FR-52")
+def test_the_delta_lookup_requests_the_inactive_property_explicitly() -> None:
+    """The stub can't prove this - it ignores ``properties`` entirely and
+    always returns every seeded property regardless of what was asked for,
+    which is exactly why the underlying bug was invisible against it. FHIR R4
+    does not require a server to volunteer a property that wasn't requested,
+    so without an explicit ``property=inactive`` a code missing from the bulk
+    expansion for an unrelated reason (a truncated page, say) would come back
+    ``LookupResult.inactive is None`` and be misclassified as inactive - a
+    false blocking defect against a real binding."""
+    code = "122192001"
+    captured_properties: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("$expand"):
+            return httpx.Response(
+                200, json={"resourceType": "ValueSet", "expansion": {"total": 0, "contains": []}}
+            )
+        captured_properties.extend(request.url.params.get_list("property"))
+        return httpx.Response(
+            200,
+            json={
+                "resourceType": "Parameters",
+                "parameter": [
+                    {"name": "name", "valueString": "SNOMED CT"},
+                    {
+                        "name": "property",
+                        "part": [
+                            {"name": "code", "valueCode": "inactive"},
+                            {"name": "value", "valueBoolean": False},
+                        ],
+                    },
+                ],
+            },
+        )
+
+    client = OntoserverClient(
+        TerminologyConfig(base_url="https://tx.example.test/fhir"),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _seconds: None,
+    )
+
+    with client:
+        result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
+
+    assert "inactive" in captured_properties
+    assert result.active == (code,)
+
+
+class _CountingLookupClient(StubTerminologyClient):
+    """Counts every ``$lookup`` invocation and fails on ``fail_at``."""
+
+    def __init__(self, *, fail_at: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._fail_at = fail_at
+        self.lookup_count = 0
+
+    def lookup(
+        self,
+        code: str,
+        *,
+        edition: Edition,
+        properties: tuple[str, ...] = (),
+        display_language: str | None = None,
+    ) -> object:  # type: ignore[override]
+        self.lookup_count += 1
+        if code == self._fail_at:
+            raise TerminologyStatusError(
+                "CodeSystem/$lookup returned 503", operation=Operation.LOOKUP, status_code=503
+            )
+        return super().lookup(
+            code, edition=edition, properties=properties, display_language=display_language
+        )
+
+
+@pytest.mark.req("FR-52")
+def test_the_delta_pass_stops_after_the_failing_batch_rather_than_draining_the_queue() -> None:
+    """``Executor.map`` submits every future the instant it is called
+    (``[self.submit(...) for ...]``, eagerly), so a failure on any one code
+    would not stop the remaining codes - potentially thousands of them - from
+    being queued and executed before the exception ever surfaces. With
+    batched submission, a failure in the first batch means the second batch
+    is never submitted: 20 codes at max_concurrency=4 with the first code
+    failing caps total lookups at 4, not 20."""
+    codes = _codes(20)
+    client = _CountingLookupClient(
+        fail_at=codes[0], concepts=[_procedure(code, active=False) for code in codes]
+    )
+
+    with pytest.raises(TerminologyStatusError):
+        TerminologySweep(client, chunk_size=300, max_concurrency=4).run(codes, edition=SNOMED_CT_AU)
+
+    assert client.lookup_count <= 4
+
+
+@pytest.mark.req("FR-52")
 def test_a_code_the_server_does_not_have_is_absent_not_inactive() -> None:
     codes = _codes(2)
     client = _stub(_procedure(codes[0]), _procedure(codes[1], editions=("int",)))
@@ -428,6 +529,64 @@ def test_the_hierarchy_check_is_one_request_for_the_whole_catalogue() -> None:
 
 
 @pytest.mark.req("FR-84")
+def test_the_hierarchy_check_chunks_at_catalogue_scale_rather_than_one_request() -> None:
+    """A single disjunction over the whole catalogue does not fit in a
+    request at the PRD's 20,000-code planning ceiling (~340KB of
+    percent-encoded ECL, measured with this repo's own builders - see
+    ADR-0005). Chunked the same way the status pass is: 7 codes at
+    chunk_size=3 is ceil(7/3)=3 hierarchy requests, not 1."""
+    codes = _codes(7)
+    client = _stub(*(_procedure(code) for code in codes))
+
+    result = TerminologySweep(client, chunk_size=3).run(codes, edition=SNOMED_CT_AU)
+
+    assert len(_hierarchy_expansions(client)) == 3
+    assert result.hierarchy_violations == ()
+
+
+@pytest.mark.req("FR-84")
+def test_absent_codes_never_appear_in_the_hierarchy_ecl() -> None:
+    """A code the status pass already proved absent must not also be
+    concatenated into the disjunction sent for the hierarchy check - it
+    shrinks the ECL, and it stops a transcription-error code (unknown to the
+    server) from ever appearing in a request at all, rather than relying on
+    every server tolerating an unknown concept reference inside one.
+
+    ``codes[2]`` is registered but only for "int", not the "au" edition under
+    test here, so it is genuinely invisible to the AU bulk pass (an
+    unregistered code, by contrast, is treated by this stub as visible by
+    default - see ``_visible_in_edition``'s own docstring) and falls through
+    to the seeded not-found lookup.
+    """
+    codes = _codes(3)
+    client = _stub(
+        _procedure(codes[0]), _procedure(codes[1]), _procedure(codes[2], editions=("int",))
+    )
+    client.seed_error(Operation.LOOKUP, _not_found(codes[2]), key=codes[2])
+
+    result = TerminologySweep(client, chunk_size=300).run(codes, edition=SNOMED_CT_AU)
+
+    hierarchy = _hierarchy_expansions(client)
+    assert len(hierarchy) == 1
+    assert codes[2] not in hierarchy[0]
+    assert result.absent == (codes[2],)
+    assert result.hierarchy_violations == ()
+
+
+@pytest.mark.req("FR-84")
+def test_a_sweep_where_every_code_is_absent_makes_no_hierarchy_request_at_all() -> None:
+    codes = _codes(2)
+    client = _stub(*(_procedure(code, editions=("int",)) for code in codes))
+    for code in codes:
+        client.seed_error(Operation.LOOKUP, _not_found(code), key=code)
+
+    result = TerminologySweep(client).run(codes, edition=SNOMED_CT_AU)
+
+    assert result.absent == codes
+    assert _hierarchy_expansions(client) == ()
+
+
+@pytest.mark.req("FR-84")
 @pytest.mark.req("NFR-38")
 def test_a_code_outside_the_procedure_hierarchy_is_detected_by_that_one_request() -> None:
     """NFR-38 test 13's first half. The failure mode is not a false positive
@@ -486,15 +645,73 @@ def test_a_subsumed_concept_with_a_non_procedure_tag_is_a_warning_not_a_violatio
 
 
 @pytest.mark.req("FR-99")
-def test_the_semantic_tag_check_costs_no_additional_requests() -> None:
+def test_the_semantic_tag_check_costs_no_additional_requests_per_code() -> None:
+    """ "No additional requests" means no *per-code* $lookup/$validate-code -
+    the hierarchy check itself is chunked the same way the status pass is
+    (fix for catalogue-scale ECL size), so 4 codes at chunk_size=2 is 2 status
+    chunks plus 2 hierarchy chunks, not 2 + 1."""
     codes = _codes(4)
     client = _stub(*(_procedure(code, fsn=f"Fixture {code} (regime/therapy)") for code in codes))
 
     result = TerminologySweep(client, chunk_size=2).run(codes, edition=SNOMED_CT_AU)
 
     assert len(result.unexpected_semantic_tags) == 4
-    # Two chunk expansions plus the one FR-84 request, and nothing else.
-    assert len(client.requests) == 3
+    assert len(_expansions(client)) == 2
+    assert len(_hierarchy_expansions(client)) == 2
+    assert _lookups(client) == ()
+    assert len(client.requests) == 4
+
+
+class _OverlappingPageClient(StubTerminologyClient):
+    """Shifts each page back by one from what was actually requested,
+    reproducing a one-item overlap between consecutive pages - the
+    misbehaviour ``_expand_chunk``'s own docstring says the loop tolerates
+    rather than requires paging correctness from the server."""
+
+    def __init__(self, *, page_size: int, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._page_size = page_size
+
+    def expand(
+        self,
+        ecl: str,
+        *,
+        edition: Edition,
+        count: int | None = None,
+        offset: int = 0,
+        include_designations: bool = False,
+        display_language: str | None = None,
+        active_only: bool | None = None,
+    ) -> Expansion:
+        capped = self._page_size if count is None else min(count, self._page_size)
+        shifted = max(0, offset - 1)
+        return super().expand(
+            ecl,
+            edition=edition,
+            count=capped,
+            offset=shifted,
+            include_designations=include_designations,
+            display_language=display_language,
+            active_only=active_only,
+        )
+
+
+@pytest.mark.req("FR-99")
+def test_overlapping_pages_do_not_duplicate_a_concept_tag() -> None:
+    """The paging loop tolerates a server that overlaps pages by design (see
+    ``_expand_chunk``'s own docstring) - this proves that tolerance doesn't
+    leak into duplicated FR-99 findings when a code's page is fetched more
+    than once."""
+    codes = _codes(3)
+    client = _OverlappingPageClient(
+        page_size=2,
+        concepts=[_procedure(code, fsn=f"Fixture {code} (regime/therapy)") for code in codes],
+    )
+
+    result = TerminologySweep(client, chunk_size=300).run(codes, edition=SNOMED_CT_AU)
+
+    assert {tag.code for tag in result.unexpected_semantic_tags} == set(codes)
+    assert len(result.unexpected_semantic_tags) == 3
 
 
 @pytest.mark.req("FR-99")
@@ -511,17 +728,74 @@ def test_a_concept_already_out_of_the_hierarchy_is_not_also_tag_warned() -> None
     assert result.unexpected_semantic_tags == ()
 
 
+class _NoFsnDesignationClient(StubTerminologyClient):
+    """Returns every concept from a normal expansion, but with ``target``'s
+    designations stripped entirely - a server that returns the concept (so it
+    correctly resolves and sits under the procedure hierarchy) but without a
+    designation this client recognises as the FSN, e.g. one that doesn't
+    honour ``includeDesignations``, or tags ``use`` non-standardly."""
+
+    def __init__(self, *, target: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._target = target
+
+    def expand(
+        self,
+        ecl: str,
+        *,
+        edition: Edition,
+        count: int | None = None,
+        offset: int = 0,
+        include_designations: bool = False,
+        display_language: str | None = None,
+        active_only: bool | None = None,
+    ) -> Expansion:
+        expansion = super().expand(
+            ecl,
+            edition=edition,
+            count=count,
+            offset=offset,
+            include_designations=include_designations,
+            display_language=display_language,
+            active_only=active_only,
+        )
+        concepts = tuple(
+            ExpandedConcept(code=c.code, system=c.system, display=c.display, version=c.version)
+            if c.code == self._target
+            else c
+            for c in expansion.concepts
+        )
+        return Expansion(
+            concepts=concepts,
+            total=expansion.total,
+            offset=expansion.offset,
+            resolved_versions=expansion.resolved_versions,
+        )
+
+
 @pytest.mark.req("FR-99")
 def test_a_concept_whose_fsn_the_server_did_not_return_raises_no_tag_warning() -> None:
-    """No tag observed is not evidence of a wrong tag. The stub returns a
-    bare member with no designations for a code it holds no concept for."""
+    """No tag observed is not evidence of a wrong tag - a server that returns
+    a concept without a designation this client recognises as the FSN must
+    not be treated as a tag violation.
+
+    But the gap is not silent: it is exactly what ``unresolved_fsn_count``
+    exists to surface, since a server that never returns an identifiable FSN
+    for anything would otherwise make the FR-99 check pass permanently with
+    no signal it never ran. Uses a properly registered, procedure-hierarchy
+    concept (unlike a bare unregistered code, which this stub's own ECL
+    evaluator would report as an FR-84 violation - out of scope here) so the
+    unresolved-FSN path is exercised in isolation.
+    """
     code = "100000001"
-    client = _stub()
+    client = _NoFsnDesignationClient(target=code, concepts=[_procedure(code)])
 
     result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
 
     assert result.active == (code,)
+    assert result.hierarchy_violations == ()
     assert result.unexpected_semantic_tags == ()
+    assert result.unresolved_fsn_count == 1
 
 
 @pytest.mark.req("FR-48")

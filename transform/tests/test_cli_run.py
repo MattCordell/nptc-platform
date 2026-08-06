@@ -261,6 +261,65 @@ def test_a_run_without_check_terminology_records_that_no_sweep_ran(
     assert payload["terminology"] is None
 
 
+@pytest.mark.req("FR-52")
+def test_a_malformed_nptc_tx_chunk_size_is_a_usage_error_not_a_terminology_failure(
+    tmp_path: Path, clean_bindings_workbook: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``TerminologyConfigError`` is a ``TerminologyError`` subclass, but a
+    deployment typo is a usage error (exit 2) an operator should fix, not a
+    transient server failure (exit 3) that would get retried indefinitely
+    instead. Raised by ``TerminologyConfig.from_env()`` before the
+    ``OntoserverClient`` is ever constructed, so no stub is needed here."""
+    report_dir = tmp_path / "report"
+    monkeypatch.setenv("NPTC_TX_CHUNK_SIZE", "lots")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(clean_bindings_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--check-terminology",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert not report_dir.exists()
+    assert "invalid terminology configuration" in result.output
+    assert "terminology validation failed" not in result.output
+
+
+@pytest.mark.req("FR-70")
+def test_a_corrupt_workbook_reports_its_own_error_even_with_a_bad_nptc_tx_value(
+    tmp_path: Path, corrupt_workbook: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The workbook is read before any terminology configuration is even
+    touched - a simultaneously malformed ``NPTC_TX_*`` value must not
+    pre-empt the clearer, actionable workbook error with a config-specific
+    one the operator would have to untangle from the real problem."""
+    report_dir = tmp_path / "report"
+    monkeypatch.setenv("NPTC_TX_CHUNK_SIZE", "lots")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(corrupt_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--check-terminology",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "could not read workbook" in result.output
+    assert "invalid terminology configuration" not in result.output
+    assert not report_dir.exists()
+
+
 @pytest.mark.req("FR-54")
 def test_a_terminology_failure_writes_no_report_and_exits_three(
     tmp_path: Path, clean_bindings_workbook: Path, monkeypatch: pytest.MonkeyPatch

@@ -53,11 +53,13 @@ that they are untuned rather than burying the fact in a constant.
    FR-52 puts bounded concurrency on the second pass specifically, and the first pass is
    both the smaller number of requests (67 at the ceiling) and the more expensive request
    for the server to serve.
-4. **The FR-84 hierarchy check is one request for the whole catalogue**, not chunked — the
-   requirement and issue #27's acceptance criterion both say one. `OntoserverClient` already
-   switches `$expand` from GET to POST past a URL-length budget, which is what makes a
-   20,000-code ECL expressible at all. Paging exists in the loop but engages only if a
-   server caps the page below the number of violations found.
+4. **The FR-84 hierarchy check is chunked at `chunk_size`, the same as the status pass** —
+   see the 2026-08-07 amendment below for why this reverses the ADR's original position.
+   `OntoserverClient` already switches `$expand` from GET to POST past a URL-length budget,
+   which is what makes a single chunk's ECL expressible even past the GET budget; chunking
+   is what keeps any one request's body from growing without bound as the catalogue does.
+   Paging exists in the per-chunk loop but engages only if a server caps a chunk's page below
+   the number of violations found within it.
 5. **Both values are validated at construction**: a `chunk_size` or `max_concurrency` below
    1 raises `TerminologyConfigError` rather than being coerced to a default. A zero chunk
    makes no progress and a negative one slices to nothing; either would let a sweep report a
@@ -92,7 +94,7 @@ Record the result here as an amendment when it exists.
 | Hard-code 300 and 4 as constants, no environment variables | FR-52 explicitly requires the concurrency ceiling be configurable, and requires the chunk size be tuned per instance — which cannot be done if changing it is a code change and a release. |
 | Default the chunk size to 500 (the top of FR-52's range) to minimise requests | The failure at the top of the range is a rejected request, and the value of the extra 200 codes per chunk is a handful of round trips on a run that happens rarely. Optimising a seeding run's wall clock at the cost of a hard failure against an untested server is the wrong trade. |
 | Make the first pass concurrent as well | FR-52 places concurrency on the second pass, and the first pass is the heavier request. It is also where a mistake is least recoverable: 67 concurrent large ECL expansions against a shared public server is precisely the "inconsiderate" behaviour the requirement names. If the first pass ever dominates the wall clock, that is a measurement worth having before changing this. |
-| Chunk the FR-84 hierarchy check the same way as the status pass | Contradicts FR-84 and issue #27's acceptance criterion ("the subsumption check issues exactly one request, asserted by call count"), and the one-request property is itself the thing NFR-38 test 13 verifies. If a server ever refuses the full expression, chunking is the fallback — but it should be a deliberate, documented change with a failing request behind it, not a pre-emptive hedge. |
+| Leave the FR-84 hierarchy check as one unchunked request, accepting the risk | Rejected on 2026-08-07 — see the amendment below. A single disjunction over the whole catalogue is ~340KB of percent-encoded ECL at the PRD's 20,000-code planning ceiling (measured with this repo's own `ecl_set_of`/`implicit_value_set_url`), which a real server is very likely to reject outright, aborting the whole sweep over a check that is supposed to be one batch call, not "the one call that breaks the run at scale." |
 | Derive the concurrency ceiling from CPU count | The bound exists to be polite to a remote shared server; it has nothing to do with local cores. A 32-core CI runner would produce 32 concurrent requests for no reason at all. |
 | Tune the defaults now, by measuring against `tx.ontoserver.csiro.au` | NFR-37 keeps the test suite off the network, so a measurement made once by hand would not be re-checked by anything and would decay into a claim. Better to ship a documented, configurable, honestly-labelled default and record the measurement when someone runs the real seeding transform. |
 
@@ -111,3 +113,33 @@ Record the result here as an amendment when it exists.
   failure surfaces with the caller's own stack.
 - A future asynchronous client (`httpx.AsyncClient`) would replace the pool, not the
   interface — the two knobs and their semantics stay.
+- `_expand_chunk`'s `include_designations=True` fetches every designation of every
+  concept in a chunk (SNOMED CT concepts commonly carry 5–15: the FSN, every synonym, every
+  language reference set entry) in order to read exactly one - the FSN - for FR-99's
+  semantic-tag check. This multiplies each status-pass response body by roughly an order of
+  magnitude across every chunk request, which is a real cost on the axis FR-52 cares about
+  (server burden includes response size, not only request count). It is a deliberate,
+  weighed trade rather than an oversight: the alternative is a second request per concept to
+  fetch its FSN individually, which reintroduces exactly the per-code request pattern FR-52
+  forbids. If this ever needs revisiting, `OntoserverClient.expand`'s `display_language`
+  parameter (or a narrower server-side `designation` filter, where supported) is the lever -
+  not disabling `includeDesignations`, which would silently disable the FR-99 check instead
+  (see `unresolved_fsn_count`).
+
+## Amendments
+
+- 2026-08-07: **Decision item 4 reversed - the FR-84 hierarchy check is now chunked at
+  `chunk_size`, not one request for the whole catalogue.** Reviewed against the PRD's own
+  20,000-code planning ceiling: `(all codes) MINUS <<71388002` as a single disjunction is
+  ~340KB of percent-encoded ECL (more for 17–18 digit AU-extension identifiers), which
+  `OntoserverClient` would send as one large POST body past the GET-length budget - and a
+  real server or its reverse proxy rejecting that outright (413/414/400) would abort the
+  entire sweep over the one check that is supposed to be the batch-discipline showcase. This
+  reverses the original decision item 4 and the "chunk it the same way" row in Rejected
+  Alternatives, both edited in place above; the ADR's other decisions (the two defaults, the
+  sequential first pass, construction-time validation, inheriting retry from
+  `OntoserverClient`) are unaffected and this is not a full supersession. `_check_hierarchy`
+  now also receives only the codes the status/delta passes already proved resolved (not
+  every code handed to the sweep), which shrinks each chunk's ECL further and stops an
+  absent, possibly transcription-error code from ever being concatenated into a request sent
+  to the server at all.

@@ -10,6 +10,7 @@ network-dependent test being written in the first place. Its twin lives in
 
 from __future__ import annotations
 
+import socket
 import zipfile
 from pathlib import Path
 
@@ -21,10 +22,21 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 @pytest.fixture(autouse=True)
 def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Covers httpx's sync transport, its async counterpart (nothing uses it
+    today, but a future async terminology client passing this guard silently
+    would defeat the point of a local check), and the socket layer itself -
+    so "nothing may open a real socket" above is actually true, not just
+    "no real httpx request"."""
+
     def _refuse(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("transform/tests must not make a real HTTP request (NFR-37)")
 
+    async def _refuse_async(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("transform/tests must not make a real HTTP request (NFR-37)")
+
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async)
+    monkeypatch.setattr(socket.socket, "connect", _refuse)
 
 
 # FR-63's documented published header layout.
