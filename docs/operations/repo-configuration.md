@@ -70,6 +70,32 @@ gh label delete priority/may    --repo MattCordell/nptc-platform --yes
 Issue Types adopted instead) were checked at the same time and are already absent from the
 repo — no cleanup needed there.
 
+## Secret scanning and push protection
+
+Enabled by hand, 2026-08-06 (issue #108), once the repository went public and both
+became free without GitHub Advanced Security. Not file-based config — recorded here for
+the same reason the branch protection ruleset below is, so a fork or a mistaken change
+has a reproducible command to fall back on rather than only this record existing in one
+PR's history.
+
+```powershell
+gh api -X PATCH repos/MattCordell/nptc-platform -f 'security_and_analysis[secret_scanning][status]=enabled' -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'
+```
+
+### Verifying secret scanning took effect
+
+```powershell
+gh api repos/MattCordell/nptc-platform --jq '.security_and_analysis'
+```
+
+Settings alone don't prove push protection actually blocks anything — it was verified
+for real in #108 by pushing a disposable scratch branch containing fake Slack and
+Stripe API keys and confirming the push was rejected (`GH013: Repository rule
+violations found ... Push cannot contain secrets`). See `SECURITY.md` for the coverage
+caveat found during that test: fake AWS-access-key- and GitHub-PAT-shaped secrets did
+not trigger a block in the same session, so `security.yml`'s gitleaks scan stays in
+place as a complementary check rather than being superseded by this.
+
 ## Branch protection ruleset
 
 **Deferred, not yet applied.** Not needed yet: this is a single-committer
