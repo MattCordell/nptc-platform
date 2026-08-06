@@ -35,6 +35,20 @@ def is_invisible(ch: str) -> bool:
     return category == "Zs" and ch != " "
 
 
+def is_normalisable_space(ch: str) -> bool:
+    """True if ``ch`` is an invisible character with a single deterministic repair.
+
+    Only category ``Zs`` (a non-ASCII space, such as the non-breaking space
+    U+00A0 or narrow no-break space U+202F) collapses unambiguously to an
+    ordinary space with no loss of meaning - that is what makes it
+    auto-correctable (PRD FR-71). Every other invisible category (``Cc``
+    control, ``Cf`` format such as a zero-width space or bidi override,
+    ``Zl``/``Zp`` line/paragraph separators) has no single correct repair, so
+    a cell containing one cannot be corrected without a human decision.
+    """
+    return unicodedata.category(ch) == "Zs" and ch != " "
+
+
 @dataclass(frozen=True)
 class InvisibleCharacter:
     """One invisible character found in a string, by position."""
@@ -42,6 +56,7 @@ class InvisibleCharacter:
     offset: int
     codepoint: str
     name: str
+    normalisable: bool
 
 
 def find_invisible_characters(text: str) -> tuple[InvisibleCharacter, ...]:
@@ -51,7 +66,14 @@ def find_invisible_characters(text: str) -> tuple[InvisibleCharacter, ...]:
         if is_invisible(ch):
             codepoint = f"U+{ord(ch):04X}"
             name = unicodedata.name(ch, "<unnamed>")
-            found.append(InvisibleCharacter(offset=offset, codepoint=codepoint, name=name))
+            found.append(
+                InvisibleCharacter(
+                    offset=offset,
+                    codepoint=codepoint,
+                    name=name,
+                    normalisable=is_normalisable_space(ch),
+                )
+            )
     return tuple(found)
 
 

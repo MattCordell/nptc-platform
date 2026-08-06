@@ -124,8 +124,9 @@ def test_report_dir_pointing_at_a_file_is_a_usage_error(
 ) -> None:
     """An unwritable --report-dir must explain itself, not raise a traceback.
 
-    Exit 1 is reserved for P0-3's blocking findings, so a filesystem refusal
-    has to land on 2 with a message the operator can act on.
+    Exit 1 is reserved for the report containing blocking findings (FR-71),
+    so a filesystem refusal has to land on 2 with a message the operator can
+    act on.
     """
     not_a_dir = tmp_path / "report"
     not_a_dir.write_text("", encoding="utf-8")

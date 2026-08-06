@@ -15,6 +15,7 @@ from typing import Annotated
 import typer
 
 from nptc_transform import __version__
+from nptc_transform.bands import Band
 from nptc_transform.pipeline import Mode, run_transform
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
@@ -31,7 +32,7 @@ class ExitCode(IntEnum):
     """Process exit codes this CLI uses."""
 
     OK = 0
-    BLOCKING_FINDINGS = 1  # reserved for P0-3's band classification; unreachable today
+    BLOCKING_FINDINGS = 1  # any finding banded requires-human-decision or data-defect (FR-71)
     USAGE_ERROR = 2
 
 
@@ -110,7 +111,7 @@ def run(
         write_report(result, report_dir)
     except OSError as exc:
         # Anything the filesystem refuses is the operator's to fix, so say which
-        # path and why - never a traceback, and never exit 1, which P0-3 reserves
+        # path and why - never a traceback, and never exit 1, which is reserved
         # for "the report itself contains blocking findings".
         typer.echo(
             f"could not write the report into {report_dir}: {exc.strerror or exc}. "
@@ -120,6 +121,18 @@ def run(
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     elapsed = time.monotonic() - start
     typer.echo(f"nptc-transform: wrote report to {report_dir} in {elapsed:.2f}s", err=True)
+
+    band_counts = result.band_counts
+    summary = ", ".join(f"{band}={band_counts[band]}" for band in Band)
+    typer.echo(f"nptc-transform: bands: {summary}", err=True)
+
+    if result.has_blocking_findings:
+        typer.echo(
+            "nptc-transform: import blocked - the report contains at least one "
+            "requires-human-decision or data-defect finding (FR-71)",
+            err=True,
+        )
+        raise typer.Exit(code=ExitCode.BLOCKING_FINDINGS)
     raise typer.Exit(code=ExitCode.OK)
 
 

@@ -16,6 +16,7 @@ from nptc_shared.text import (
     find_invisible_characters,
     has_surrounding_whitespace,
     is_invisible,
+    is_normalisable_space,
 )
 
 NBSP = chr(0x00A0)  # non-breaking space (Zs)
@@ -106,3 +107,31 @@ def test_has_surrounding_whitespace(text: str, expected: bool) -> None:
 def test_has_surrounding_whitespace_is_true_for_a_trailing_non_breaking_space() -> None:
     # str.strip() also strips U+00A0, so this cell triggers both A.1 and A.3.
     assert has_surrounding_whitespace(f"term{NBSP}") is True
+
+
+@pytest.mark.parametrize(
+    ("ch", "expected"),
+    [
+        (NBSP, True),
+        (NNBSP, True),
+        (IDEOGRAPHIC_SPACE, True),
+        (ZWSP, False),
+        (ZWNJ, False),
+        (BOM, False),
+        (SOFT_HYPHEN, False),
+        ("\n", False),
+        (LINE_SEPARATOR, False),
+        (PARAGRAPH_SEPARATOR, False),
+        (" ", False),
+        ("A", False),
+    ],
+)
+def test_is_normalisable_space_only_true_for_non_ascii_zs(ch: str, expected: bool) -> None:
+    """Only Zs collapses unambiguously to an ordinary space with no loss of
+    meaning - every other invisible category has no single correct repair."""
+    assert is_normalisable_space(ch) is expected
+
+
+def test_find_invisible_characters_marks_normalisable_flag_per_character() -> None:
+    found = find_invisible_characters(f"term{NBSP}{ZWSP}")
+    assert [f.normalisable for f in found] == [True, False]

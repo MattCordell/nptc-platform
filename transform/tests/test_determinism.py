@@ -15,14 +15,17 @@ from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-def _run_cli(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _run_cli(
+    *args: str, env: dict[str, str] | None = None, expected_returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
         [sys.executable, "-m", "nptc_transform.cli", *args],
         capture_output=True,
         text=True,
-        check=True,
         env=env,
     )
+    assert result.returncode == expected_returncode, result.stderr
+    return result
 
 
 @pytest.mark.req("FR-73")
@@ -76,6 +79,39 @@ def test_report_bytes_carry_no_absolute_path_no_timestamp_no_crlf(
         assert str(tmp_path) not in text
         assert not ISO_DATE_RE.search(text)
         assert b"\r\n" not in raw
+
+
+@pytest.mark.req("FR-73")
+def test_banded_output_is_independent_of_pythonhashseed(
+    tmp_path: Path, annex_a_workbook: Path
+) -> None:
+    """The determinism guarantee must hold once findings carry a band, not
+    only on a workbook clean enough that band assignment is vacuous - a bare
+    ``band_for`` re-call proves nothing, since it's a pure dict lookup."""
+    out1 = tmp_path / "seed1"
+    out2 = tmp_path / "seed2"
+
+    _run_cli(
+        "run",
+        "--workbook",
+        str(annex_a_workbook),
+        "--report-dir",
+        str(out1),
+        env={**os.environ, "PYTHONHASHSEED": "1"},
+        expected_returncode=1,
+    )
+    _run_cli(
+        "run",
+        "--workbook",
+        str(annex_a_workbook),
+        "--report-dir",
+        str(out2),
+        env={**os.environ, "PYTHONHASHSEED": "2"},
+        expected_returncode=1,
+    )
+
+    for name in ("report.json", "report.md"):
+        assert (out1 / name).read_bytes() == (out2 / name).read_bytes()
 
 
 def test_run_result_sorts_findings_into_canonical_order() -> None:

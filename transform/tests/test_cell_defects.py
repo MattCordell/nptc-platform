@@ -8,6 +8,7 @@ import openpyxl
 import pytest
 from typer.testing import CliRunner
 
+from nptc_transform.bands import Band
 from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.cli import app
 from nptc_transform.findings import Finding
@@ -126,6 +127,20 @@ def test_short_code_as_number_flags_type_only_not_precision_risk(
     assert "NUMERIC_PRECISION_RISK" not in codes
 
 
+@pytest.mark.req("FR-71")
+@pytest.mark.parametrize("reference", ["Requesting!H17", "Requesting!H18"])
+def test_code_cell_holding_a_non_numeric_type_has_no_coercion(
+    annex_a_workbook: Path, reference: str
+) -> None:
+    """A boolean or formula in the code column (H17, H18) is not a number
+    that can be deterministically coerced to a string - unlike
+    CODE_CELL_NOT_TEXT, there is no correct SCTID to recover, so this must
+    land in a blocking band, not auto-correctable."""
+    sheets = read_workbook(annex_a_workbook)
+    finding = next(f for f in _findings_at(sheets, reference) if f.code == "CODE_CELL_INVALID_TYPE")
+    assert finding.band is Band.DATA_DEFECT
+
+
 @pytest.mark.req("FR-70")
 def test_leading_and_trailing_whitespace_on_fsn_flagged(annex_a_workbook: Path) -> None:
     sheets = read_workbook(annex_a_workbook)
@@ -158,44 +173,63 @@ def test_clean_row_produces_no_finding(annex_a_workbook: Path) -> None:
 def test_unrecognised_layout_flags_the_missing_code_column(
     unrecognised_layout_workbook: Path,
 ) -> None:
+    """Genuine FR-63 layout drift - some SPIA columns resolved, the code
+    column didn't - blocks import as a data defect (FR-71) and says how many
+    rows on the sheet went unscanned as a result."""
     sheets = read_workbook(unrecognised_layout_workbook)
     findings = scan_workbook(sheets)
     assert any(f.code == "UNRECOGNISED_LAYOUT" for f in findings)
     finding = next(f for f in findings if f.code == "UNRECOGNISED_LAYOUT")
     assert finding.location == "Requesting!A1"
     assert "Some Column" in finding.message
+    assert "1 data row(s)" in finding.message
+    assert finding.band is Band.DATA_DEFECT
 
 
 @pytest.mark.req("FR-70")
 def test_unrecognised_layout_sheet_gets_no_cell_level_noise(
     unrecognised_layout_workbook: Path,
 ) -> None:
-    """A sheet with no code column isn't SPIA data - it gets exactly the one
-    UNRECOGNISED_LAYOUT finding, not per-cell A.1/A.3 noise on top of it."""
+    """A sheet with a drifted code column isn't cell-scanned - it gets exactly
+    the one UNRECOGNISED_LAYOUT finding, not per-cell A.1/A.3 noise on top."""
     sheets = read_workbook(unrecognised_layout_workbook)
     findings = scan_workbook(sheets)
     assert len(findings) == 1
     assert findings[0].code == "UNRECOGNISED_LAYOUT"
 
 
-@pytest.mark.req("FR-70")
-def test_rev_history_style_sheet_is_not_scanned_cell_by_cell(tmp_path: Path) -> None:
-    """FR-63/FR-60: the published workbook's own ``Rev History`` worksheet is
-    a hand-written prose paragraph with no SPIA columns at all. A trailing
-    space in its prose and an ALT+ENTER line break inside a paragraph cell
-    must not turn into Appendix A findings - only the one layout finding."""
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = "Rev History"
-    sheet.append(["Release notes"])
-    sheet.append(["Line one.\nLine two, with a trailing space. "])
-    path = tmp_path / "rev_history.xlsx"
-    workbook.save(path)
-
-    sheets = read_workbook(path)
+@pytest.mark.req("FR-71")
+def test_total_header_drift_on_a_named_data_sheet_still_blocks(
+    total_header_drift_workbook: Path,
+) -> None:
+    """A ``Requesting`` sheet whose header row resolves zero SPIA column
+    roles (e.g. a banner row inserted above FR-63's real headers) produces
+    the same "no roles resolved" signal as a genuinely non-SPIA sheet - but
+    it isn't FR-63's documented ``Rev History`` case, so it must still block
+    as unrecognised layout rather than being waved through as informational
+    just because no column happened to be recognised."""
+    sheets = read_workbook(total_header_drift_workbook)
     findings = scan_workbook(sheets)
     assert len(findings) == 1
     assert findings[0].code == "UNRECOGNISED_LAYOUT"
+    assert "1 data row(s)" in findings[0].message
+    assert findings[0].band is Band.DATA_DEFECT
+
+
+@pytest.mark.req("FR-71")
+def test_no_spia_columns_sheet_is_informational_not_blocking(
+    no_spia_columns_workbook: Path,
+) -> None:
+    """FR-63/FR-60: the published workbook's own ``Rev History`` worksheet is
+    a hand-written prose paragraph with no SPIA columns at all. A trailing
+    space in its prose and an ALT+ENTER line break inside a paragraph cell
+    must not turn into Appendix A findings - only the one layout finding,
+    and it must not block the import the way genuine layout drift does."""
+    sheets = read_workbook(no_spia_columns_workbook)
+    findings = scan_workbook(sheets)
+    assert len(findings) == 1
+    assert findings[0].code == "SHEET_NOT_SPIA_DATA"
+    assert findings[0].band is Band.INFORMATIONAL
 
 
 @pytest.mark.req("FR-70")
@@ -219,12 +253,15 @@ def test_report_never_contains_a_raw_invisible_character(
     tmp_path: Path, annex_a_workbook: Path
 ) -> None:
     """NFR-38 test 2: no generated output may contain U+00A0 or U+202F, even
-    though every finding in this report is about them."""
+    though every finding in this report is about them.
+
+    ``annex_a_workbook`` carries blocking findings (FR-71), so exit 1 is
+    expected here - it is not the assertion this test exists to make."""
     report_dir = tmp_path / "report"
     result = runner.invoke(
         app, ["run", "--workbook", str(annex_a_workbook), "--report-dir", str(report_dir)]
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
 
     for name in ("report.json", "report.md"):
         text = (report_dir / name).read_text(encoding="utf-8")
@@ -268,9 +305,12 @@ def test_line_break_outside_a_free_text_column_is_still_flagged(tmp_path: Path) 
 
     sheets = read_workbook(path)
     finding = next(
-        f for f in _findings_at(sheets, "Requesting!A2") if f.code == "INVISIBLE_CHARACTER"
+        f
+        for f in _findings_at(sheets, "Requesting!A2")
+        if f.code == "INVISIBLE_CHARACTER_AMBIGUOUS"
     )
     assert "U+000A" in finding.message
+    assert finding.band is Band.REQUIRES_HUMAN_DECISION
 
 
 @pytest.mark.req("FR-70")
@@ -344,11 +384,12 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
 
     sheets = read_workbook(path)
     finding = next(
-        f for f in _findings_at(sheets, "Requesting!B2") if f.code == "SURROUNDING_WHITESPACE"
+        f for f in _findings_at(sheets, "Requesting!B2") if f.code == "WHITESPACE_ONLY_CELL"
     )
     assert "only whitespace" in finding.message
     assert "leading" not in finding.message
     assert "trailing" not in finding.message
+    assert finding.band is Band.REQUIRES_HUMAN_DECISION
 
 
 @pytest.mark.req("FR-70")
