@@ -1,4 +1,4 @@
-"""Pure SNOMED CT URI and ECL string builders.
+"""Pure SNOMED CT URI, ECL and FSN string helpers.
 
 No I/O, no FHIR parsing - just the string construction ``ontoserver.py`` and
 callers of this package share, kept in one place so it is never re-derived
@@ -7,11 +7,17 @@ slightly differently at two call sites.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from urllib.parse import quote
 
 from nptc_shared.sctid import has_valid_format
 from nptc_shared.terminology.models import Edition
+
+# The final parenthesised group of an FSN, and nothing nested inside another
+# group: "Microscopy (acid fast bacilli) (procedure)" has to yield "procedure",
+# never "acid fast bacilli) (procedure".
+_SEMANTIC_TAG = re.compile(r"\(([^()]*)\)\s*$")
 
 
 def implicit_value_set_url(ecl: str, edition: Edition) -> str:
@@ -57,3 +63,27 @@ def ecl_set_of(codes: Iterable[str]) -> str:
         if not has_valid_format(code):
             raise ValueError(f"{code!r} is not a valid SCTID (expected 6-18 digits)")
     return " OR ".join(values)
+
+
+def semantic_tag(fully_specified_name: str) -> str | None:
+    """The FSN's semantic tag - the text inside its final parenthesised group.
+
+    Reading the tag, never removing it: FR-83 puts the one legitimate strip in
+    the export renderer, and this function is deliberately not that. FR-99's
+    check is the caller here - a concept subsumed by ``<<71388002`` whose tag
+    is not ``procedure`` is a warning, and ``71388002`` \\|Procedure\\| really
+    does subsume ``243120004`` \\|Regime/therapy (regime/therapy)\\| (PRD
+    Appendix A.10), so the tag has to be read rather than inferred.
+
+    ``None`` when the value carries no trailing group at all, or an empty one
+    - and ``None`` is *not* the same as "the tag is not ``procedure``". A
+    caller acting on FR-99 must not treat an absent tag as a violation: it
+    means the label it was handed was not a served FSN (the SPIA workbook's
+    "Fully Specified Name" column contains no tags at all - Appendix A.8),
+    which is a different finding entirely.
+    """
+    match = _SEMANTIC_TAG.search(fully_specified_name)
+    if match is None:
+        return None
+    tag = match.group(1).strip()
+    return tag or None

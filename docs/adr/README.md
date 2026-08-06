@@ -50,3 +50,4 @@ If it's unclear which of the two a change is, it's a reversal: supersede.
 | [0002](0002-requirement-evidence-without-a-test.md) | Requirement evidence without a pytest test |
 | [0003](0003-terminology-client-in-shared.md) | Terminology client in shared/, with httpx as its first runtime dependency |
 | [0004](0004-informational-band-and-code-level-band-assignment.md) | A fourth, non-blocking `INFORMATIONAL` band; band assigned from the finding code, never from content |
+| [0005](0005-sweep-chunk-size-and-concurrency-defaults.md) | Batch sweep defaults — chunk size 300, delta concurrency 4, first pass sequential |

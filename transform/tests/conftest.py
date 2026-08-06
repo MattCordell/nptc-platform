@@ -1,13 +1,31 @@
-"""Shared fixtures for transform/tests."""
+"""Shared fixtures for transform/tests.
+
+Also carries the NFR-37 guard: nothing under ``transform/tests`` may open a
+real socket. ``ci.yml``'s ``transform-offline`` job proves the same thing with
+``iptables``, but only in CI and only after the fact; this fails locally, at
+the exact call, with a message naming the requirement - which is what stops a
+network-dependent test being written in the first place. Its twin lives in
+``shared/tests/conftest.py``.
+"""
 
 from __future__ import annotations
 
 import zipfile
 from pathlib import Path
 
+import httpx
 import openpyxl
 import pytest
 from openpyxl.worksheet.worksheet import Worksheet
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("transform/tests must not make a real HTTP request (NFR-37)")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _refuse)
+
 
 # FR-63's documented published header layout.
 HEADERS = [

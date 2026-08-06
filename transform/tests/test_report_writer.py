@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 from nptc_transform.report_writer import write_report
+from nptc_transform.terminology_check import EditionResolution, TerminologyRun
 
 
 def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
@@ -25,6 +29,62 @@ def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     # An unregistered code fails safe to data-defect (bands.band_for).
     assert "| B2 | INVISIBLE_CHAR | data-defect | zero-width space |" in markdown_text
+
+
+@pytest.mark.req("FR-48")
+def test_a_terminology_run_records_the_editions_it_resolved_against(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        terminology=TerminologyRun(
+            codes_checked=42,
+            codes_not_checked=1,
+            editions=(
+                EditionResolution(
+                    label="au",
+                    resolved_versions=(
+                        "http://snomed.info/sct/32506021000036107/version/20260531",
+                    ),
+                ),
+            ),
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["terminology"] == {
+        "codes_checked": 42,
+        "codes_not_checked": 1,
+        "editions": [
+            {
+                "label": "au",
+                "resolved_versions": ["http://snomed.info/sct/32506021000036107/version/20260531"],
+            }
+        ],
+    }
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "42 code(s) checked, 1 not checked" in markdown_text
+    assert "| au | http://snomed.info/sct/32506021000036107/version/20260531 |" in markdown_text
+
+
+@pytest.mark.req("FR-48")
+def test_a_run_with_no_terminology_pass_says_so_rather_than_omitting_it(tmp_path: Path) -> None:
+    """ "Not run" and "run, nothing found" are different facts. A report that
+    simply omits the section lets the first read as the second."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64), mode=Mode.REPORT_ONLY
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["terminology"] is None
+    assert "Terminology validation: `not run`" in (report_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:

@@ -7,10 +7,11 @@ determinism/idempotency contract (FR-73), delivered with backlog issue
 [P0-1](https://github.com/MattCordell/nptc-platform/issues/23); the
 workbook reader and PRD Appendix A.1-A.3 cell defect detection, delivered
 with backlog issue [P0-2](https://github.com/MattCordell/nptc-platform/issues/24);
-and the three-band defect classification engine, delivered with backlog issue
-[P0-3](https://github.com/MattCordell/nptc-platform/issues/25). It does not
-yet correct an auto-correctable finding, produce an import dataset, or
-validate a code against a live terminology server - see
+the three-band defect classification engine, delivered with backlog issue
+[P0-3](https://github.com/MattCordell/nptc-platform/issues/25); and batch
+terminology validation with the hierarchy check, delivered with backlog issue
+[P0-5](https://github.com/MattCordell/nptc-platform/issues/27). It does not
+yet correct an auto-correctable finding or produce an import dataset - see
 "Not implemented yet" below.
 
 ## Usage
@@ -25,6 +26,7 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode. **Not implemented yet** - see below. |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -36,6 +38,7 @@ to actually run.
 | `0` | Ran to completion and no finding blocks the import - check `band_counts` in `report.json` for auto-correctable findings even so. |
 | `1` | The report contains at least one finding banded `requires-human-decision` or `data-defect` (FR-71); the import must not proceed. Report-only mode still writes the report before exiting `1`. |
 | `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, or `--emit-dataset` was passed. |
+| `3` | `--check-terminology` was passed and the terminology sweep could not complete (server unreachable, rate limited past the retry budget, a malformed response). **No report is written at all** - a report with the cell defects complete and the terminology findings silently missing would look exactly like a run in which every code validated cleanly (FR-54). Re-run without `--check-terminology` for the cell-defect report alone. |
 
 A filesystem refusal on `--report-dir` reports the path and the reason on
 stderr and exits `2`. It never exits `1` - that code is reserved for
@@ -98,6 +101,11 @@ corrected, and each defect is reported under one of two codes chosen by
 | `CODE_CELL_NOT_TEXT` | A.2 | The code column holds a numeric cell rather than text (FR-06). The digits are intact, so coercing the number to a string deterministically recovers the SCTID. |
 | `CODE_CELL_INVALID_TYPE` | A.2 | The code column holds a date, boolean, formula or error cell rather than text. Unlike a number, there is no value to recover here - only a wrong one to report, so this is not treated the same as `CODE_CELL_NOT_TEXT`. |
 | `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) A cell whose raw value has already overflowed Excel's numeric range entirely (rare - a malformed numeric cell text openpyxl parses as `inf`) is flagged with a distinct message rather than a fabricated digit count. The digits are already gone by the time this fires, so there is nothing left to coerce. |
+| `CODE_NOT_WELL_FORMED` | - | The code cell's text (after stripping whitespace) is not a well-formed SCTID: not 6-18 digits, or the Verhoeff check digit fails (FR-06). Only raised when `--check-terminology` is passed, and the code is **not** submitted to the server - a malformed value reported as "not found" would read as a terminology outcome rather than as the transcription defect it is. |
+| `CODE_NOT_FOUND` | - | The code resolves in **no** validated edition (FR-71). A code present in SNOMED CT-AU but absent from International is *not* this - that is what Australian extension content looks like (FR-47) and produces no finding. |
+| `CODE_INACTIVE` | - | The concept is inactive in every edition that has it. Inactive in International while still active in AU is a *forecast*, not a current error (FR-47), and is deliberately not reported here - it belongs to the scheduled validation sweep, not to a seeding run. |
+| `OUT_OF_SCOPE_HIERARCHY` | - | The concept is not subsumed by `<<71388002` \|Procedure (procedure)\| (FR-84). See "Interpreting hierarchy violations" below. |
+| `UNEXPECTED_SEMANTIC_TAG` | - | The concept *is* subsumed by `<<71388002` but its FSN's semantic tag is not `(procedure)` (FR-99). A warning, not an error - see below. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -123,8 +131,8 @@ and this one together are the complete classification.
 |---|---|---|---|
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT` | The defect has one deterministic repair. **Not yet applied** - the report itemises it, but nothing is corrected on disk until P0-9's `--emit-dataset` lands. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
-| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
-| `informational` | No | `SHEET_NOT_SPIA_DATA` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see a sheet was skipped, without treating it as something to fix. |
+| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
 `requires-human-decision` or `data-defect` finding aborts the whole run, no
@@ -135,6 +143,72 @@ summary table, report this without needing to open the full finding list.
 An unrecognised finding code (there should never be one) fails safe to
 `data-defect` rather than being silently treated as clean.
 
+## Terminology validation (`--check-terminology`)
+
+Off by default. With the flag, every code cell in the workbook is validated
+against **both** SNOMED CT-AU and International (FR-74), at the latest release
+of each - no version is pinned, and the version the server reports it resolved
+against is recorded in the report (FR-48).
+
+### What it costs in requests
+
+The shape is fixed by FR-52 and is the reason this pass is usable at
+catalogue scale at all:
+
+1. **Bulk status.** `ceil(N / NPTC_TX_CHUNK_SIZE)` `ValueSet/$expand` calls per
+   edition over an ECL enumerating each chunk, with `activeOnly=true`. Codes
+   are de-duplicated first, so a concept bound by twenty rows costs one slot.
+2. **The delta only.** One `CodeSystem/$lookup` for each code the bulk pass did
+   not return - that is what separates "inactive" from "not in this edition" -
+   at most `NPTC_TX_MAX_CONCURRENCY` at a time.
+3. **One** `$expand` of `(codes) MINUS <<71388002` per edition for the whole
+   hierarchy check (FR-84).
+
+There is never one request per code per edition. A 429 is retried honouring
+`Retry-After` with exponential backoff, by the shared client (see the
+[terminology client architecture doc](../../architecture/terminology-client.md));
+if it persists past the retry budget the run exits `3` and writes nothing.
+
+### Interpreting hierarchy violations (`OUT_OF_SCOPE_HIERARCHY`, FR-84)
+
+The check expands `(every code) MINUS <<71388002` and reports whatever comes
+back. A code in that result is one that **exists in the edition** and is
+**not** a descendant of `71388002` \|Procedure (procedure)\|. A code that does
+not exist in the edition cannot appear here - an ECL enumerating codes only
+returns concepts that exist - so absence is always reported as `CODE_NOT_FOUND`
+and never as a hierarchy violation.
+
+What to do with one, in order:
+
+1. **Look the code up.** The usual cause is a binding to a concept in the wrong
+   hierarchy - an observable entity, a substance, a specimen, or a finding -
+   which reads as plausible in the spreadsheet because the label is right and
+   only the code is wrong.
+2. **Rebind, or justify the exception.** FR-84 gives exactly these two
+   remedies. There is no "acknowledge and continue" in the transform: the
+   finding is banded `data-defect` and the run exits `1` until the source is
+   corrected.
+3. **Check the message's edition list.** A violation reported for `int` but not
+   `au` means the concept sits under Procedure in the AU edition only, which is
+   worth a terminologist's eye rather than an immediate rebinding.
+
+Do **not** treat `UNEXPECTED_SEMANTIC_TAG` as a weaker form of the same thing.
+Subsumption does not imply the tag: `71388002` \|Procedure\| subsumes
+`243120004` \|Regime/therapy (regime/therapy)\|, so a structurally valid
+procedure binding can carry a different tag (PRD Appendix A.10). FR-99 makes
+that a warning precisely so it cannot abort a seeding run, and it is reported
+once per cell, informationally, alongside the served FSN so the tag can be
+judged in context.
+
+### Determinism with terminology on (FR-73)
+
+Two runs against the same workbook stay byte-identical only while the server
+resolves the same edition versions. That is the intended reading - the SNOMED
+release is an input to the run - and `report.json`'s `terminology` block is
+what records which release each edition resolved to. A run without
+`--check-terminology` reports `"terminology": null`, which is a different fact
+from a run that checked and found nothing.
+
 ## Not implemented yet
 
 The following are owned by later P0 issues (see the P0 milestone on GitHub
@@ -144,7 +218,7 @@ contain, but not the guarantees above:
 - **Applying the auto-correctable band's corrections** and emitting the import
   dataset, including the synthetic baseline release - P0-9
   (`--emit-dataset`)
-- Batch terminology validation and hierarchy check - P0-5
-- Designation reconciliation - P0-6
+- Designation reconciliation, and the rest of FR-45's check table (FSN drift,
+  preferred-term drift, inactivation reason and historical association) - P0-6
 - Misspelling and semantic-drift heuristics - P0-7
 - Report content grouped by defect class with cell references - P0-8

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL
-from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url
+from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url, semantic_tag
 
 
 def test_implicit_value_set_url_unpinned_edition_has_no_version_segment() -> None:
@@ -48,3 +48,28 @@ def test_ecl_set_of_never_emits_the_placeholder_less_than_notation() -> None:
     silently ask for descendants instead of the codes themselves."""
     result = ecl_set_of(["122192001", "71388002", "243120004"])
     assert "<" not in result
+
+
+@pytest.mark.req("FR-99")
+def test_semantic_tag_reads_the_final_parenthesised_group() -> None:
+    assert semantic_tag("Acanthamoeba culture (procedure)") == "procedure"
+    assert semantic_tag("Regime/therapy (regime/therapy)") == "regime/therapy"
+
+
+@pytest.mark.req("FR-99")
+def test_semantic_tag_of_an_fsn_with_an_internal_group_takes_only_the_last() -> None:
+    """PRD FR-83's own example: the tag is the *final* group, and an FSN can
+    carry a parenthesised phrase in its body ("Microscopy (acid fast
+    bacilli)") that is part of the term, not the tag."""
+    assert semantic_tag("Microscopy (acid fast bacilli) (procedure)") == "procedure"
+
+
+@pytest.mark.req("FR-99")
+def test_semantic_tag_is_none_when_there_is_no_trailing_group() -> None:
+    """The SPIA workbook's "Fully Specified Name" column carries no tags at
+    all (Appendix A.8). A caller acting on FR-99 must be able to tell "no tag
+    served" from "a tag that is not (procedure)" - reporting the former as a
+    warning would flag every row in the source."""
+    assert semantic_tag("Adenovirus nucleic acid detection") is None
+    assert semantic_tag("Trailing group is empty ()") is None
+    assert semantic_tag("(procedure) leading only") is None

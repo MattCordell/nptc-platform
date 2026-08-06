@@ -21,6 +21,8 @@ values (NFR-26).
 | `NPTC_TX_TOKEN` | `nptc_shared.terminology` (backend and transform) | *(empty — anonymous)* | Yes | Leave empty — `tx.ontoserver.csiro.au` accepts anonymous requests |
 | `NPTC_TX_TIMEOUT_SECONDS` | `nptc_shared.terminology` (backend and transform) | `30` | No | `30` is fine |
 | `NPTC_TX_MAX_RETRIES` | `nptc_shared.terminology` (backend and transform) | `3` | No | `3` is fine |
+| `NPTC_TX_CHUNK_SIZE` | `nptc_shared.terminology` batch sweep (FR-52) | `300` | No | `300` is fine; see the tuning note below |
+| `NPTC_TX_MAX_CONCURRENCY` | `nptc_shared.terminology` batch sweep (FR-52) | `4` | No | `4` is fine; raise only with the server operator's knowledge |
 
 The `POSTGRES_*` and `KEYCLOAK_*` variables above are read only by `deploy/compose.yml`.
 The `NPTC_TX_*` variables are the first read by Python code —
@@ -33,3 +35,24 @@ OAuth2 client-credentials is deferred. Retry backoff timings are `TerminologyCon
 constructor defaults, deliberately not environment variables: they are tuning constants,
 not deployment configuration. This table grows as later issues add services that read
 their own configuration.
+
+## Tuning the batch sweep (`NPTC_TX_CHUNK_SIZE`, `NPTC_TX_MAX_CONCURRENCY`)
+
+These two *are* environment variables rather than constructor defaults, because FR-52
+requires the chunk size to be tuned against the specific terminology server in use and the
+concurrency ceiling to be configurable.
+
+- `NPTC_TX_CHUNK_SIZE` is how many codes go into one `ValueSet/$expand` in the bulk status
+  pass. A sweep of N codes issues `ceil(N / NPTC_TX_CHUNK_SIZE)` expansions per edition.
+  FR-52's stated range is 200–500; the default is its midpoint.
+- `NPTC_TX_MAX_CONCURRENCY` bounds the *second* pass only — the individual
+  `CodeSystem/$lookup` calls for codes the bulk expansion did not resolve. The chunk
+  expansions themselves are sequential (ADR-0005).
+
+Both are validated on load: a value below 1 raises rather than falling back to the default,
+because a zero-sized chunk would let a sweep report a catalogue it never checked as clean.
+
+**The defaults are untuned** — a judgement inside FR-52's range, not a measurement.
+[ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md) records why, and the
+procedure for tuning them against a real instance the first time a seeding transform is run
+against one.
