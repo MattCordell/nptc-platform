@@ -50,7 +50,7 @@ class InvalidSCTIDError(ValueError):
 
 
 def has_valid_format(value: str) -> bool:
-    """True if ``value`` matches ``^\\d{6,18}$`` (FR-06)."""
+    """True if ``value`` matches ``^[0-9]{6,18}$`` (FR-06)."""
     return _SCTID_FORMAT.fullmatch(value) is not None
 
 
@@ -92,7 +92,7 @@ class SCTID:
                 "before it reached this constructor"
             )
         if not has_valid_format(self.value):
-            raise InvalidSCTIDError(f"{self.value!r} does not match ^\\d{{6,18}}$")
+            raise InvalidSCTIDError(f"{self.value!r} does not match ^[0-9]{{6,18}}$")
         if not has_valid_check_digit(self.value):
             raise InvalidSCTIDError(f"{self.value!r} fails Verhoeff check-digit validation")
 
