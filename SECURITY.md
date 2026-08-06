@@ -36,6 +36,8 @@ with. A stub module existing is not the same as a control being active.
 | Dependency vulnerability scanning, build fails on high/critical in production dependencies | `.github/workflows/security.yml` | NFR-25 | Active |
 | Static analysis (CodeQL) on every pull request, daily, on push to main, and on demand, failing the build on a high/critical (security-severity >= 7.0) finding | `.github/workflows/codeql.yml` | — | Active |
 | Secret scanning of git history on every PR and daily (gitleaks CLI, run directly rather than via the paid organisation-tier GitHub Action) | `.github/workflows/security.yml` | NFR-26 | Active |
+| GitHub native secret scanning and push protection (blocks a push containing a detected secret before it lands) | repo Settings > Code security | NFR-26 | Active |
+| Supply-chain/security-posture scoring (OpenSSF Scorecard) daily, on push to main, and on demand | `.github/workflows/scorecard.yml` | — | Active |
 | Dependency updates | `.github/dependabot.yml` | NFR-25 | Active |
 | No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 | Active |
 | Container image scanning before publication | — | NFR-25 | Planned (P4/P5, lands with the container images) |
@@ -79,10 +81,20 @@ someone checking the tab. Lower-severity findings stay advisory-only —
 `security-extended` on a pre-alpha codebase produces enough of those that gating on all
 of them would just teach reviewers to ignore a red run.
 
-**GitHub's native secret scanning and OpenSSF Scorecard aren't active yet (tracked
-in issue #108).** Unlike CodeQL's Security-tab integration above, neither of these
-was ever blocked specifically by Advanced Security or repository visibility —
-they're simply not set up yet. `security.yml` runs the open-source gitleaks CLI
-directly against git history on every PR and daily as an interim control, which
-native secret scanning would complement (not replace) with push-time blocking.
-Revisit both once issue #108 lands.
+**Native secret scanning and push protection are enabled (2026-08).** Neither was
+ever blocked by Advanced Security or repository visibility the way CodeQL's upload
+was above — they just hadn't been turned on. Verified for real, not just by reading
+the settings page: pushing a branch containing fake Slack and Stripe API keys was
+rejected outright with `GH013: Repository rule violations found ... Push cannot
+contain secrets`. Two synthetic AWS-access-key- and GitHub-PAT-shaped values did
+*not* trigger a block or an alert in the same testing session - GitHub's push
+protection only covers a specific, high-confidence subset of its supported patterns
+(some require a provider-validated checksum a random test string won't satisfy),
+so a real credential belonging to one of the less-reliably-detected formats could
+still land undetected. `security.yml`'s gitleaks CLI scan stays in place as a
+second, complementary check against the same class of mistake, since its pattern
+set doesn't fully overlap with GitHub's.
+
+**OpenSSF Scorecard is active (2026-08, issue #108).** `scorecard.yml` runs daily,
+on push to main, and on demand, publishing to the public Scorecard API/badge and
+uploading results to the Security tab alongside CodeQL's.
