@@ -147,6 +147,22 @@ def test_cli_exits_blocking_on_genuine_layout_drift(
 
 
 @pytest.mark.req("FR-71")
+def test_cli_exits_blocking_on_total_header_drift_on_a_named_data_sheet(
+    tmp_path: Path, total_header_drift_workbook: Path
+) -> None:
+    """Regression: a ``Requesting`` sheet resolving zero SPIA column roles
+    (e.g. a banner row above the real FR-63 headers) must still block, not be
+    waved through as informational just because no column was recognised -
+    the informational band is gated on FR-63's documented ``Rev History``
+    sheet name, not on the absence of a recognised column."""
+    result = runner.invoke(
+        app,
+        ["run", "--workbook", str(total_header_drift_workbook), "--report-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 1, result.output
+
+
+@pytest.mark.req("FR-71")
 def test_cli_does_not_block_on_a_sheet_that_is_not_spia_data(
     tmp_path: Path, no_spia_columns_workbook: Path
 ) -> None:

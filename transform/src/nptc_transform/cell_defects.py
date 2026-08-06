@@ -6,7 +6,10 @@ a severity band from the code alone without inspecting content (FR-70,
 FR-71): an invisible character normalises deterministically to a space
 (auto-correctable) or it doesn't (requires a human decision); a whitespace-
 padded cell strips deterministically to its content (auto-correctable) or
-stripping empties it entirely (requires a human decision).
+stripping empties it entirely (requires a human decision); a non-text code
+cell holding a number coerces deterministically to a string (auto-
+correctable) or holds a date/boolean/formula/error, for which no coercion to
+a valid SCTID exists (data defect).
 """
 
 from __future__ import annotations
@@ -39,6 +42,15 @@ NUMERIC_PRECISION_RISK_THRESHOLD = 16
 # ability to catch it.
 _FREE_TEXT_ROLES = frozenset({ColumnRole.GUIDANCE, ColumnRole.HISTORY})
 _LEGITIMATE_LINE_BREAKS = frozenset({"U+000A", "U+000D"})
+
+# FR-63 documents exactly one worksheet, by this exact name, that is
+# hand-written prose rather than SPIA data. Resolving zero SPIA column roles
+# is not itself evidence a sheet isn't SPIA data - a data sheet whose FR-63
+# header row has drifted entirely (for example, an inserted banner row above
+# it) produces the identical signal - so this positive allowlist, not the
+# absence of a recognised column, is what gates the informational band.
+# Anything else that resolves zero roles is unrecognised layout and blocks.
+_NON_SPIA_DATA_SHEET_NAMES = frozenset({"Rev History"})
 
 
 def _digit_count(value: int) -> int:
@@ -101,10 +113,26 @@ def _scan_surrounding_whitespace(cell: Cell) -> Finding | None:
 def _scan_code_cell_type(cell: Cell) -> Finding | None:
     if cell.role is not ColumnRole.CODE or cell.cell_type is CellType.TEXT:
         return None
+    if cell.cell_type is CellType.NUMBER:
+        # The only case FR-71 names as auto-correctable: the digits are
+        # intact (unless NUMERIC_PRECISION_RISK also fires on this cell,
+        # which blocks the row regardless), so coercing to a string
+        # deterministically recovers the SCTID.
+        return Finding(
+            code=FindingCode.CODE_CELL_NOT_TEXT,
+            location=cell.reference,
+            message=f"code cell stored as {cell.cell_type.value}, not text (FR-06)",
+        )
+    # A date, boolean, formula or error in the code column has no
+    # deterministic coercion to a valid SCTID string - unlike a number, there
+    # is no value to recover, only a wrong one to report (FR-06, FR-70).
     return Finding(
-        code=FindingCode.CODE_CELL_NOT_TEXT,
+        code=FindingCode.CODE_CELL_INVALID_TYPE,
         location=cell.reference,
-        message=f"code cell stored as {cell.cell_type.value}, not text (FR-06)",
+        message=(
+            f"code cell stored as {cell.cell_type.value}, not text (FR-06); "
+            "no deterministic coercion to a valid SCTID exists for this cell type"
+        ),
     )
 
 
@@ -157,15 +185,17 @@ def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
 def _scan_layout(sheet: Sheet) -> Finding | None:
     """Reports a sheet the code column can't be found on - splitting *why*.
 
-    A sheet with no SPIA column recognised at all (FR-63's own ``Rev
-    History`` worksheet is exactly this: hand-written prose, not SPIA data)
-    isn't a layout defect - it's reported so an operator can see the sheet
-    was skipped, but it must not block the import the way a genuinely
-    drifted SPIA sheet does. A sheet that resolves *some* SPIA columns but
-    not the code column has drifted (FR-63) and every one of its rows went
-    unscanned for Appendix A.2/A.3 defects - that's the case FR-71's data-
-    defect band exists for, so the message says how many rows were skipped
-    rather than letting a low ``finding_count`` read as "nearly clean".
+    Only a sheet named in ``_NON_SPIA_DATA_SHEET_NAMES`` (FR-63's own ``Rev
+    History`` worksheet is the sole documented case: hand-written prose, not
+    SPIA data) that also resolves zero SPIA column roles is treated as not
+    being SPIA data - reported so an operator can see the sheet was skipped,
+    but not blocking. Every other sheet that fails to resolve the code
+    column - whether it resolves some SPIA columns and not the code column,
+    or resolves none at all - has drifted (FR-63) and every one of its rows
+    went unscanned for Appendix A.2/A.3 defects; that's the case FR-71's
+    data-defect band exists for, so the message says how many rows were
+    skipped rather than letting a low ``finding_count`` read as "nearly
+    clean".
     """
     if not sheet.cells:
         return None
@@ -173,13 +203,16 @@ def _scan_layout(sheet: Sheet) -> Finding | None:
     if ColumnRole.CODE in roles:
         return None
     headers_text = ", ".join(escape_invisible(header) for header in sheet.headers) or "(no headers)"
-    if not roles:
+    unscanned_rows = len({cell.row for cell in sheet.cells})
+    if not roles and sheet.name in _NON_SPIA_DATA_SHEET_NAMES:
         return Finding(
             code=FindingCode.SHEET_NOT_SPIA_DATA,
             location=f"{sheet.name}!A1",
-            message=f"no column recognised as SPIA data; headers were: {headers_text}",
+            message=(
+                f"no column recognised as SPIA data; {unscanned_rows} data row(s) on "
+                f"this sheet were not scanned; headers were: {headers_text}"
+            ),
         )
-    unscanned_rows = len({cell.row for cell in sheet.cells})
     return Finding(
         code=FindingCode.UNRECOGNISED_LAYOUT,
         location=f"{sheet.name}!A1",

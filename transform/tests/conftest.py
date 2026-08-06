@@ -171,6 +171,12 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
         synonyms="   ",
     )
 
+    # FR-71 data-defect: a code cell holding a type with no deterministic
+    # coercion to a valid SCTID (unlike a number, there is no value to
+    # recover - only a wrong one to report).
+    add_row("Term with boolean code", True, "Term with boolean code", code_as_text=False)
+    add_row("Term with formula code", "=1+1", "Term with formula code", code_as_text=False)
+
     workbook.save(path)
     return path
 
@@ -213,6 +219,32 @@ def unrecognised_layout_workbook(tmp_path_factory: pytest.TempPathFactory) -> Pa
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Some Column"])
+    sheet.append(["value", "value"])
+    workbook.save(path)
+
+    return path
+
+
+@pytest.fixture(scope="session")
+def total_header_drift_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A named ``Requesting`` data sheet whose header row has drifted so
+    completely that it resolves *zero* SPIA column roles - for example, a
+    banner row inserted above the real FR-63 headers.
+
+    This produces the identical "no roles resolved" signal
+    ``no_spia_columns_workbook`` does, but it is not FR-63's documented
+    ``Rev History`` case - it is a genuine SPIA data sheet whose layout has
+    drifted, so it must still block the import (``UNRECOGNISED_LAYOUT``,
+    data defect), not be waved through as informational just because no
+    column happened to be recognised.
+    """
+    workbook_dir = tmp_path_factory.mktemp("total_header_drift")
+    path = workbook_dir / "total_header_drift.xlsx"
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Company confidential", "Do not distribute"])
     sheet.append(["value", "value"])
     workbook.save(path)
 

@@ -59,6 +59,7 @@ class FindingCode(StrEnum):
     SURROUNDING_WHITESPACE = "SURROUNDING_WHITESPACE"
     WHITESPACE_ONLY_CELL = "WHITESPACE_ONLY_CELL"
     CODE_CELL_NOT_TEXT = "CODE_CELL_NOT_TEXT"
+    CODE_CELL_INVALID_TYPE = "CODE_CELL_INVALID_TYPE"
     NUMERIC_PRECISION_RISK = "NUMERIC_PRECISION_RISK"
     UNRECOGNISED_LAYOUT = "UNRECOGNISED_LAYOUT"
     SHEET_NOT_SPIA_DATA = "SHEET_NOT_SPIA_DATA"
@@ -72,7 +73,9 @@ BAND_BY_CODE: dict[str, Band] = {
     # Requires human decision: no deterministic repair exists (FR-70).
     FindingCode.INVISIBLE_CHARACTER_AMBIGUOUS: Band.REQUIRES_HUMAN_DECISION,
     FindingCode.WHITESPACE_ONLY_CELL: Band.REQUIRES_HUMAN_DECISION,
-    # Data defect: the value is already lost, or the sheet's rows went unscanned.
+    # Data defect: the value is already lost or was never a valid SCTID to
+    # begin with, or the sheet's rows went unscanned.
+    FindingCode.CODE_CELL_INVALID_TYPE: Band.DATA_DEFECT,
     FindingCode.NUMERIC_PRECISION_RISK: Band.DATA_DEFECT,
     FindingCode.UNRECOGNISED_LAYOUT: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.

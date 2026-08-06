@@ -127,6 +127,20 @@ def test_short_code_as_number_flags_type_only_not_precision_risk(
     assert "NUMERIC_PRECISION_RISK" not in codes
 
 
+@pytest.mark.req("FR-71")
+@pytest.mark.parametrize("reference", ["Requesting!H17", "Requesting!H18"])
+def test_code_cell_holding_a_non_numeric_type_has_no_coercion(
+    annex_a_workbook: Path, reference: str
+) -> None:
+    """A boolean or formula in the code column (H17, H18) is not a number
+    that can be deterministically coerced to a string - unlike
+    CODE_CELL_NOT_TEXT, there is no correct SCTID to recover, so this must
+    land in a blocking band, not auto-correctable."""
+    sheets = read_workbook(annex_a_workbook)
+    finding = next(f for f in _findings_at(sheets, reference) if f.code == "CODE_CELL_INVALID_TYPE")
+    assert finding.band is Band.DATA_DEFECT
+
+
 @pytest.mark.req("FR-70")
 def test_leading_and_trailing_whitespace_on_fsn_flagged(annex_a_workbook: Path) -> None:
     sheets = read_workbook(annex_a_workbook)
@@ -182,6 +196,24 @@ def test_unrecognised_layout_sheet_gets_no_cell_level_noise(
     findings = scan_workbook(sheets)
     assert len(findings) == 1
     assert findings[0].code == "UNRECOGNISED_LAYOUT"
+
+
+@pytest.mark.req("FR-71")
+def test_total_header_drift_on_a_named_data_sheet_still_blocks(
+    total_header_drift_workbook: Path,
+) -> None:
+    """A ``Requesting`` sheet whose header row resolves zero SPIA column
+    roles (e.g. a banner row inserted above FR-63's real headers) produces
+    the same "no roles resolved" signal as a genuinely non-SPIA sheet - but
+    it isn't FR-63's documented ``Rev History`` case, so it must still block
+    as unrecognised layout rather than being waved through as informational
+    just because no column happened to be recognised."""
+    sheets = read_workbook(total_header_drift_workbook)
+    findings = scan_workbook(sheets)
+    assert len(findings) == 1
+    assert findings[0].code == "UNRECOGNISED_LAYOUT"
+    assert "1 data row(s)" in findings[0].message
+    assert findings[0].band is Band.DATA_DEFECT
 
 
 @pytest.mark.req("FR-71")
