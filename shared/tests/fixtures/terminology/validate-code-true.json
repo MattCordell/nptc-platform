@@ -1,0 +1,8 @@
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    { "name": "result", "valueBoolean": true },
+    { "name": "display", "valueString": "Acanthamoeba culture" },
+    { "name": "version", "valueString": "http://snomed.info/sct/32506021000036107/version/20260531" }
+  ]
+}

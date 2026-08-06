@@ -1,0 +1,295 @@
+"""Tests for StubTerminologyClient's own behaviour: seeding, its small ECL
+subset, and the not-seeded/unsupported failure modes (FR-53, NFR-37).
+
+The shared contract suite (``test_terminology_contract.py``) covers what the
+stub has in common with ``OntoserverClient``; this file covers what is
+specific to the stub - the concept-table-driven ``expand``/``lookup``/
+``subsumes``/``validate_code`` derivation and its ECL subset - none of which
+a real Ontoserver's behaviour needs to match.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from nptc_shared.terminology.models import (
+    PROCEDURE_ROOT_CODE,
+    SNOMED_CT_AU,
+    SNOMED_CT_INTERNATIONAL,
+    ConceptProperty,
+    Operation,
+    SubsumptionOutcome,
+)
+from nptc_shared.terminology.snomed import ecl_set_of
+from nptc_shared.terminology.stub import (
+    StubConcept,
+    StubEclNotSupportedError,
+    StubNotSeededError,
+    StubTerminologyClient,
+)
+
+
+def _client(*concepts: StubConcept) -> StubTerminologyClient:
+    return StubTerminologyClient(concepts=concepts)
+
+
+# -- expand: the ECL subset -------------------------------------------------
+
+
+def test_expand_evaluates_a_disjunction_of_literal_codes() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    result = client.expand("122192001 OR 71388002", edition=SNOMED_CT_AU)
+    assert set(result.codes) == {"122192001", "71388002"}
+
+
+def test_expand_descendants_or_self_includes_the_root() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", parents=("71388002",))
+    )
+    result = client.expand(f"<<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU)
+    assert set(result.codes) == {"71388002", "122192001"}
+
+
+def test_expand_strict_descendants_excludes_the_root() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", parents=("71388002",))
+    )
+    result = client.expand(f"<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU)
+    assert set(result.codes) == {"122192001"}
+
+
+def test_expand_follows_the_parents_chain_transitively() -> None:
+    client = _client(
+        StubConcept(code="A", fsn="A", parents=("B",)),
+        StubConcept(code="B", fsn="B", parents=("71388002",)),
+    )
+    result = client.expand(f"<<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU)
+    assert set(result.codes) == {"71388002", "A", "B"}
+
+
+def test_expand_fr84_minus_idiom_reports_no_violations_when_every_code_is_a_procedure() -> None:
+    """The target ergonomics: a test seeds concepts once, then the FR-84
+    ``(codes) MINUS <<71388002`` idiom just works, with no per-chunk seeding."""
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", parents=("71388002",))
+    )
+    codes = ["122192001", "71388002"]
+    violations = client.expand(
+        f"({ecl_set_of(codes)}) MINUS <<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU
+    )
+    assert violations.codes == ()
+    assert len(client.requests) == 1
+
+
+def test_expand_fr84_minus_idiom_reports_the_non_procedure_code_as_a_violation() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", parents=("71388002",))
+    )
+    codes = ["122192001", "71388002", "999999990"]
+    violations = client.expand(
+        f"({ecl_set_of(codes)}) MINUS <<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU
+    )
+    assert violations.codes == ("999999990",)
+
+
+def test_expand_edition_filters_the_descendant_closure() -> None:
+    client = _client(
+        StubConcept(
+            code="122192001",
+            fsn="Acanthamoeba culture (procedure)",
+            parents=("71388002",),
+            editions=("au",),
+        )
+    )
+    au_result = client.expand(f"<<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_AU)
+    international_result = client.expand(
+        f"<<{PROCEDURE_ROOT_CODE}", edition=SNOMED_CT_INTERNATIONAL
+    )
+    assert "122192001" in au_result.codes
+    assert "122192001" not in international_result.codes
+
+
+def test_expand_unsupported_ecl_raises_not_an_ecl_engine() -> None:
+    client = _client()
+    with pytest.raises(StubEclNotSupportedError, match="not an ECL engine"):
+        client.expand("122192001:246093002=50875003", edition=SNOMED_CT_AU)
+
+
+def test_seeded_expansion_takes_precedence_over_the_concept_table() -> None:
+    from nptc_shared.terminology.models import Expansion
+
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    seeded = Expansion(concepts=(), total=0)
+    client.seed_expansion("122192001", seeded, edition=SNOMED_CT_AU)
+    result = client.expand("122192001", edition=SNOMED_CT_AU)
+    assert result is seeded
+
+
+# -- lookup ------------------------------------------------------------------
+
+
+def test_lookup_derives_a_result_from_the_concept_table() -> None:
+    client = _client(
+        StubConcept(
+            code="122192001",
+            fsn="Acanthamoeba culture (procedure)",
+            preferred_terms={"en-x-sctlang-32570271-00003610-6": "Acanthamoeba culture"},
+        )
+    )
+    result = client.lookup("122192001", edition=SNOMED_CT_AU)
+    assert result.fully_specified_name == "Acanthamoeba culture (procedure)"
+    assert result.inactive is False
+
+
+def test_lookup_reports_inactivation_and_same_as_from_seeded_properties() -> None:
+    client = _client(
+        StubConcept(
+            code="873871000168106",
+            fsn="Fixture duplicate concept (procedure)",
+            active=False,
+            properties=(
+                ConceptProperty(code="inactivationReason", value="Duplicate", value_type="string"),
+                ConceptProperty(code="SAME_AS", value="122192001", value_type="code"),
+            ),
+        )
+    )
+    result = client.lookup("873871000168106", edition=SNOMED_CT_AU)
+    assert result.inactive is True
+    assert result.property_values("SAME_AS") == ("122192001",)
+
+
+def test_lookup_raises_when_the_stub_was_not_taught_the_code() -> None:
+    client = _client()
+    with pytest.raises(StubNotSeededError):
+        client.lookup("122192001", edition=SNOMED_CT_AU)
+
+
+def test_lookup_raises_when_the_concept_is_not_in_the_requested_edition() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", editions=("au",))
+    )
+    with pytest.raises(StubNotSeededError):
+        client.lookup("122192001", edition=SNOMED_CT_INTERNATIONAL)
+
+
+def test_seeded_lookup_takes_precedence_over_the_concept_table() -> None:
+    from nptc_shared.terminology.models import LookupResult
+
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    seeded = LookupResult(
+        code="122192001", system="http://snomed.info/sct", display="Seeded override"
+    )
+    client.seed_lookup("122192001", seeded, edition=SNOMED_CT_AU)
+    assert client.lookup("122192001", edition=SNOMED_CT_AU) is seeded
+
+
+# -- subsumes ------------------------------------------------------------------
+
+
+def test_subsumes_equivalent_for_identical_codes() -> None:
+    client = _client()
+    assert (
+        client.subsumes("71388002", "71388002", edition=SNOMED_CT_AU)
+        is SubsumptionOutcome.EQUIVALENT
+    )
+
+
+def test_subsumes_via_the_parents_closure() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", parents=("71388002",))
+    )
+    assert (
+        client.subsumes("71388002", "122192001", edition=SNOMED_CT_AU)
+        is SubsumptionOutcome.SUBSUMES
+    )
+    assert (
+        client.subsumes("122192001", "71388002", edition=SNOMED_CT_AU)
+        is SubsumptionOutcome.SUBSUMED_BY
+    )
+
+
+def test_subsumes_not_subsumed_for_unrelated_known_concepts() -> None:
+    client = _client(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"),
+        StubConcept(code="243120004", fsn="Regime/therapy (regime/therapy)"),
+    )
+    assert (
+        client.subsumes("122192001", "243120004", edition=SNOMED_CT_AU)
+        is SubsumptionOutcome.NOT_SUBSUMED
+    )
+
+
+def test_subsumes_raises_when_a_code_is_unknown_to_the_stub() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    with pytest.raises(StubNotSeededError):
+        client.subsumes("122192001", "999999990", edition=SNOMED_CT_AU)
+
+
+# -- validate_code -----------------------------------------------------------
+
+
+def test_validate_code_true_when_display_matches_a_known_designation() -> None:
+    client = _client(
+        StubConcept(
+            code="122192001",
+            fsn="Acanthamoeba culture (procedure)",
+            preferred_terms={"en-x-sctlang-32570271-00003610-6": "Acanthamoeba culture"},
+        )
+    )
+    result = client.validate_code("122192001", edition=SNOMED_CT_AU, display="Acanthamoeba culture")
+    assert result.result is True
+
+
+def test_validate_code_false_when_display_matches_no_designation() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    result = client.validate_code(
+        "122192001", edition=SNOMED_CT_AU, display="Acanthamoeba species culture"
+    )
+    assert result.result is False
+    assert result.message is not None
+
+
+def test_validate_code_with_no_display_is_true_for_a_known_code() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    result = client.validate_code("122192001", edition=SNOMED_CT_AU)
+    assert result.result is True
+
+
+def test_validate_code_raises_when_the_code_is_unknown() -> None:
+    client = _client()
+    with pytest.raises(StubNotSeededError):
+        client.validate_code("122192001", edition=SNOMED_CT_AU, display="Anything")
+
+
+# -- errors, introspection ---------------------------------------------------
+
+
+def test_seed_error_raises_the_configured_error_on_the_next_matching_call() -> None:
+    from nptc_shared.terminology.errors import TerminologyTransportError
+
+    client = _client()
+    configured = TerminologyTransportError("simulated outage", operation=Operation.LOOKUP)
+    client.seed_error(Operation.LOOKUP, configured, key="122192001")
+    with pytest.raises(TerminologyTransportError, match="simulated outage"):
+        client.lookup("122192001", edition=SNOMED_CT_AU)
+
+
+def test_requests_records_every_call_in_order() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    client.lookup("122192001", edition=SNOMED_CT_AU)
+    client.expand("122192001", edition=SNOMED_CT_AU)
+    assert [request.operation for request in client.requests] == [
+        Operation.LOOKUP,
+        Operation.EXPAND,
+    ]
+
+
+def test_reset_clears_the_request_log_but_not_seeded_data() -> None:
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    client.lookup("122192001", edition=SNOMED_CT_AU)
+    assert len(client.requests) == 1
+    client.reset()
+    assert client.requests == ()
+    # Seeded data survives the reset - a second call still resolves.
+    client.lookup("122192001", edition=SNOMED_CT_AU)
+    assert len(client.requests) == 1

@@ -351,8 +351,8 @@
   priority: MUST
   phase: p0
   title: "Terminology server access MUST be behind an interface with a stub implementation for testing"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc_shared.terminology: TerminologyClient Protocol, StubTerminologyClient (no network access) and OntoserverClient (httpx, against any FHIR R4 terminology server), one contract test suite runs against both (#26, ADR-0003). The chunked FR-52/FR-84 validation that consumes it lands with #27."
 - id: "FR-54"
   priority: SHOULD
   phase: p3

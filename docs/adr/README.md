@@ -48,3 +48,4 @@ If it's unclear which of the two a change is, it's a reversal: supersede.
 |---|---|
 | [0001](0001-technology-stack.md) | Technology stack |
 | [0002](0002-requirement-evidence-without-a-test.md) | Requirement evidence without a pytest test |
+| [0003](0003-terminology-client-in-shared.md) | Terminology client in shared/, with httpx as its first runtime dependency |

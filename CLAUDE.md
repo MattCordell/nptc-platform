@@ -49,7 +49,8 @@ each one):
 - `catalogue/` — entries, designations, code bindings
 - `registry/` — property registry, datatype handler registry (FR-77: `switch` on
   datatype belongs only here)
-- `terminology/` — FR-53 client interface, Ontoserver + stub implementations
+- `terminology/` — FR-53 client consumers (validation sweep, live check); the
+  client interface, stub and Ontoserver implementation live in `nptc_shared.terminology`
 - `submissions/` — workflow state machine, interest, comments
 - `validation/` — findings, sweep orchestration
 - `releases/` — snapshots, export config versions

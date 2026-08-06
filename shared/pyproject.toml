@@ -3,7 +3,7 @@ name = "nptc-shared"
 version = "0.0.0"
 description = "Code shared between the backend API and the P0 seeding transform: SCTID/Verhoeff validation, text normalisation, and the terminology client contract (FR-74)."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["httpx>=0.28"]
 
 [build-system]
 requires = ["hatchling"]

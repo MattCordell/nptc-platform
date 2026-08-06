@@ -1,5 +1,8 @@
-"""Terminology client interface, Ontoserver implementation and test stub (FR-53).
+"""The backend's consumers of the FR-53 terminology client contract.
 
-Consumed by both the backend and, via nptc_shared, the P0 transform (FR-74) - the
-contract itself lives in nptc_shared so both sides implement it identically.
+The contract, the stub, and the Ontoserver implementation all live in
+``nptc_shared.terminology`` (ADR-0003) so the backend and the P0 transform can
+never diverge (FR-74). What lives here is the backend-specific use of that
+client: the FR-45/FR-50 validation sweep and FR-26's live check during form
+completion.
 """

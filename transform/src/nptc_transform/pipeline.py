@@ -2,7 +2,8 @@
 
 This is the seam every later P0 issue plugs into: the workbook reader (P0-2)
 and cell-level defect detection now produce ``Finding`` values here; band
-classification (P0-3), terminology validation (P0-4/P0-5), designation
+classification (P0-3), batch terminology validation (P0-5, against the
+``nptc_shared.terminology`` client landed with P0-4), designation
 reconciliation (P0-6) and the misspelling/semantic-drift heuristics (P0-7)
 still plug in later. Nothing in this module classifies a finding into a
 severity band yet - it only defines the shapes and the run/report contract

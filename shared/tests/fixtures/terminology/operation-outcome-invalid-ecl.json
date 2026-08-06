@@ -1,0 +1,11 @@
+{
+  "resourceType": "OperationOutcome",
+  "issue": [
+    {
+      "severity": "error",
+      "code": "invalid",
+      "diagnostics": "Error processing ECL expression: unexpected token at position 4",
+      "expression": ["ValueSet.compose.include[0].filter[0].value"]
+    }
+  ]
+}
