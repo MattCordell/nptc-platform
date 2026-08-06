@@ -76,6 +76,9 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
     - 45 FSN rows with leading+trailing whitespace, 1 with leading only
       (row 15's pattern), 4 clean (A.3).
     - One fully clean row, to prove a clean cell produces no finding.
+    - One row with a trailing U+00A0 in the synonym cell - A.1 names synonym
+      cells, alongside preferred terms and code cells, as carrying this
+      defect.
     """
     workbook_dir = tmp_path_factory.mktemp("annex_a")
     path = workbook_dir / "annex_a.xlsx"
@@ -91,9 +94,12 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
         fsn: str,
         *,
         code_as_text: bool = True,
+        synonyms: str | None = None,
     ) -> int:
         row = sheet.max_row + 1
         sheet.cell(row=row, column=1, value=preferred_term)
+        if synonyms is not None:
+            sheet.cell(row=row, column=2, value=synonyms)
         if code_as_text:
             _write_text_cell(sheet, row, 8, str(code))
         else:
@@ -142,6 +148,15 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
     # Fully clean row - must produce no finding at all.
     add_row("Clean row", "666666666", "Clean row")
+
+    # A.1: trailing U+00A0 in a synonym cell - the PRD names synonym cells
+    # alongside preferred terms and code cells as carrying this defect.
+    add_row(
+        "Term with synonym space",
+        "777777777",
+        "Term with synonym space",
+        synonyms=f"Synonym one{NBSP}",
+    )
 
     workbook.save(path)
     return path
