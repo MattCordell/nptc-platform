@@ -131,6 +131,15 @@ def test_expand_rejects_an_unbalanced_paren_left_over_from_a_double_wrap() -> No
         client.expand("((122192001 OR 71388002) MINUS <<71388002)", edition=SNOMED_CT_AU)
 
 
+def test_expand_rejects_an_empty_term_rather_than_returning_an_empty_match_set() -> None:
+    """An empty parenthesised term ("()") is not a zero-element code list -
+    fabricating an empty match set for it is the same silent-empty-result
+    class as an un-expanded ValueSet."""
+    client = _client()
+    with pytest.raises(StubEclNotSupportedError):
+        client.expand("()", edition=SNOMED_CT_AU)
+
+
 def test_expand_active_only_excludes_known_inactive_concepts() -> None:
     client = _client(
         StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)", active=True),

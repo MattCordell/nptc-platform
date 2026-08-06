@@ -386,6 +386,14 @@ class StubTerminologyClient:
         if term.startswith("<"):
             return self._descendants_root(term[1:], edition=edition, include_self=False)
         pieces = [piece.strip() for piece in term.split(" OR ") if piece.strip()]
+        if not pieces:
+            # An empty term (e.g. "()") is not a code list, even a
+            # one-element one - fabricating an empty match set here is the
+            # same silent-empty-result class as an un-expanded ValueSet.
+            raise StubEclNotSupportedError(
+                f"the stub's ECL subset does not recognise {term!r} - it is not an ECL engine",
+                operation=Operation.EXPAND,
+            )
         for piece in pieces:
             if not has_valid_format(piece):
                 raise StubEclNotSupportedError(
