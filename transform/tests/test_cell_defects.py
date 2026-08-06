@@ -73,6 +73,22 @@ def test_trailing_nbsp_on_code_cell_flagged(annex_a_workbook: Path) -> None:
 
 
 @pytest.mark.req("FR-70")
+def test_trailing_nbsp_on_synonym_cell_flagged(annex_a_workbook: Path) -> None:
+    """PRD Appendix A.1: non-breaking spaces also appear in synonym cells,
+    not just preferred terms and code cells."""
+    sheets = read_workbook(annex_a_workbook)
+    findings = _findings_at(sheets, "Requesting!B14")
+    codes = {f.code for f in findings}
+    assert "INVISIBLE_CHARACTER" in codes
+    invisible = next(f for f in findings if f.code == "INVISIBLE_CHARACTER")
+    assert "U+00A0" in invisible.message
+    assert chr(0x00A0) not in invisible.message
+    # str.strip() also strips NBSP, so this is a deliberate second finding on
+    # the same cell (text.py: different defect classes, different remedies).
+    assert "SURROUNDING_WHITESPACE" in codes
+
+
+@pytest.mark.req("FR-70")
 def test_sixteen_and_eighteen_digit_codes_stored_as_text_are_clean(
     annex_a_workbook: Path,
 ) -> None:
