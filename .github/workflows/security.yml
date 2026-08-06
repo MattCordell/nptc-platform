@@ -1,11 +1,9 @@
 name: Security
 
-# OpenSSF Scorecard is deliberately NOT wired up here yet. The Scorecard
-# GitHub Action needs GitHub Advanced Security to publish results against a
-# private repository (this one - security_and_analysis is null via the API,
-# confirming Advanced Security isn't enabled), and would otherwise just fail
-# on every scheduled run. Add it when the repo goes public per the licence
-# decision in README.md, or if Advanced Security is enabled first.
+# OpenSSF Scorecard lives in its own workflow (scorecard.yml, issue #108),
+# not here - its trigger shape (push/schedule/dispatch, no pull_request) and
+# permissions (id-token: write for score publishing) differ enough from the
+# rest of this file's per-PR dependency/secret checks to keep separate.
 
 on:
   pull_request:

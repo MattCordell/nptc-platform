@@ -1,0 +1,74 @@
+name: Scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Daily, matching the cadence codeql.yml and security.yml already use for
+    # their own NFR-25 scheduled runs, rather than upstream's default weekly
+    # cron - a repo-configuration change (branch ruleset, workflow pinning)
+    # should show up in the score the same day it lands, not up to a week
+    # later.
+    - cron: "45 5 * * *"
+  workflow_dispatch:
+    # Trigger manually against main when you want an up-to-date score without
+    # waiting for the next push or the daily schedule.
+
+# No pull_request trigger: Scorecard evaluates repo-wide posture (branch
+# protection, dependency pinning, CI hardening) rather than a PR's diff, and
+# upstream's own workflow documents PR support as experimental (permission
+# issues on fork PRs uploading SARIF/publishing results). push + schedule +
+# workflow_dispatch covers this repo's single-committer, no-fork workflow.
+
+concurrency:
+  # Same reasoning as codeql.yml: give the daily schedule its own group so a
+  # push to main can't cancel an in-flight scheduled run.
+  group: scorecard-${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+  cancel-in-progress: true
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Needed to upload SARIF to the code-scanning API (Security tab).
+      security-events: write
+      # Needed for the GitHub OIDC token that verifies result authenticity
+      # when publish_results is true.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishes to the public Scorecard API/badge (scorecard.dev) - free,
+          # and how the OpenSSF's own weekly public-repo scan gets this repo's
+          # result without needing to run it themselves.
+          publish_results: true
+
+      - name: Upload SARIF as a build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 14
+
+      # Same codeql-action release (v4.37.5) already pinned in codeql.yml for
+      # init/analyze - upload-sarif is the same monorepo/tag, just a
+      # different subaction, so this keeps a single pinned version repo-wide
+      # instead of drifting to whatever tag upstream's own example currently
+      # references.
+      - name: Upload to code scanning (Security tab)
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
+        with:
+          sarif_file: results.sarif
