@@ -2,7 +2,8 @@
 
 Owns the envelope and the writing discipline (FR-73's determinism and
 idempotency), not the report *content* - the human-readable grouping by
-defect class with cell references is P0-8's.
+defect class with cell references is P0-8's. Band assignment itself (FR-71)
+is owned by ``Finding.band``; this module only ever reads it.
 
 Four rules keep every run byte-identical for identical input:
 
@@ -14,7 +15,8 @@ Four rules keep every run byte-identical for identical input:
 3. Every file is written ``encoding="utf-8"``, ``newline="\\n"`` - never the
    platform default, which is ``\\r\\n`` on Windows.
 4. Every collection is explicitly sorted before being written - never a
-   ``set``, never a ``dict`` relying on insertion order alone.
+   ``set``, never a ``dict`` relying on insertion order alone. Band counts
+   are rendered in ``Band``'s declaration order, for the same reason.
 """
 
 from __future__ import annotations
@@ -23,15 +25,17 @@ import json
 from pathlib import Path
 
 from nptc_transform import __version__
+from nptc_transform.bands import Band
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
 
 
 def _report_payload(result: RunResult) -> dict[str, object]:
+    band_counts = result.band_counts
     return {
         "schema_version": SCHEMA_VERSION,
         "tool_version": __version__,
@@ -41,11 +45,14 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         },
         "mode": str(result.mode),
         "finding_count": len(result.findings),
+        "blocking": result.has_blocking_findings,
+        "band_counts": {str(band): band_counts[band] for band in Band},
         "findings": [
             {
                 "code": finding.code,
                 "location": finding.location,
                 "message": finding.message,
+                "band": str(finding.band),
             }
             for finding in result.findings
         ],
@@ -77,21 +84,28 @@ def _escape_cell(value: str) -> str:
 
 
 def _render_markdown(result: RunResult) -> str:
+    band_counts = result.band_counts
     lines = [
         "# Transform report",
         "",
         f"- Source: `{result.source.filename}` (sha256 `{result.source.sha256}`)",
         f"- Mode: `{result.mode}`",
         f"- Findings: {len(result.findings)}",
+        f"- Blocking: `{result.has_blocking_findings}`",
         "",
+        "| Band | Count |",
+        "|---|---|",
     ]
+    lines.extend(f"| {band} | {band_counts[band]} |" for band in Band)
+    lines.append("")
     if result.findings:
-        lines.append("| Location | Code | Message |")
-        lines.append("|---|---|---|")
+        lines.append("| Location | Code | Band | Message |")
+        lines.append("|---|---|---|---|")
         for finding in result.findings:
             lines.append(
                 f"| {_escape_cell(finding.location)} "
                 f"| {_escape_cell(finding.code)} "
+                f"| {_escape_cell(str(finding.band))} "
                 f"| {_escape_cell(finding.message)} |"
             )
     else:

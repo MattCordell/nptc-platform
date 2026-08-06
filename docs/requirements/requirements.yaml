@@ -459,8 +459,8 @@
   priority: MUST
   phase: p0
   title: "The transform classifies every finding into one of three bands, and the band determines behaviour"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Band registry, per-finding band assignment, the blocking exit code and report band columns/counts land with P0-3/#25; automatic application of the auto-correctable band's corrections lands with P0-9/#31"
 - id: "FR-72"
   priority: MUST
   phase: p0

@@ -4,10 +4,13 @@
 defect report or an import dataset (PRD §12). This runbook covers the `run`
 command: the entrypoint, the report-only guarantee (FR-70) and the
 determinism/idempotency contract (FR-73), delivered with backlog issue
-[P0-1](https://github.com/MattCordell/nptc-platform/issues/23), and the
+[P0-1](https://github.com/MattCordell/nptc-platform/issues/23); the
 workbook reader and PRD Appendix A.1-A.3 cell defect detection, delivered
-with backlog issue [P0-2](https://github.com/MattCordell/nptc-platform/issues/24).
-It does not yet classify a finding into a severity band - see
+with backlog issue [P0-2](https://github.com/MattCordell/nptc-platform/issues/24);
+and the three-band defect classification engine, delivered with backlog issue
+[P0-3](https://github.com/MattCordell/nptc-platform/issues/25). It does not
+yet correct an auto-correctable finding, produce an import dataset, or
+validate a code against a live terminology server - see
 "Not implemented yet" below.
 
 ## Usage
@@ -30,12 +33,12 @@ to actually run.
 
 | Code | Meaning |
 |---|---|
-| `0` | Ran to completion. In report-only mode, this does not mean the workbook is clean - check `finding_count` in `report.json`. |
-| `1` | Reserved for blocking findings once band classification (P0-3) lands. Unreachable today. |
+| `0` | Ran to completion and no finding blocks the import - check `band_counts` in `report.json` for auto-correctable findings even so. |
+| `1` | The report contains at least one finding banded `requires-human-decision` or `data-defect` (FR-71); the import must not proceed. Report-only mode still writes the report before exiting `1`. |
 | `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, or `--emit-dataset` was passed. |
 
 A filesystem refusal on `--report-dir` reports the path and the reason on
-stderr and exits `2`. It never exits `1` - that code stays reserved for
+stderr and exits `2`. It never exits `1` - that code is reserved for
 "the report contains blocking findings" - and never prints a traceback.
 
 ## The report-only guarantee (FR-70)
@@ -83,24 +86,53 @@ term, FSN, and so on) by its header text, using the published layout FR-63
 documents (`RCPA Preferred term`, `Terminology binding (SNOMED CT-AU)`, ...).
 
 A cell is scanned for PRD Appendix A.1-A.3, detection only - nothing is
-corrected and no severity band is assigned (that's P0-3):
+corrected, and each defect is reported under one of two codes chosen by
+*shape*, so that band classification (below) never has to inspect content:
 
 | Finding code | Appendix | What it means |
 |---|---|---|
-| `INVISIBLE_CHARACTER` | A.1 | The cell's text contains a control, format, line/paragraph separator, or non-ASCII space character - for example a non-breaking space (U+00A0) or narrow no-break space (U+202F). Every such character is invisible on screen and named by codepoint in the finding, never reproduced literally. An ALT+ENTER line break (U+000A, and U+000D for a Windows-origin paste) is exempted **only** in the `Usage guidance` and `History` columns - ordinary multi-line formatting there, but still a defect anywhere else (a preferred term, an FSN, a code cell), since a line break in those is never legitimate. |
-| `SURROUNDING_WHITESPACE` | A.3 | The cell's text has leading and/or trailing whitespace. A cell that's nothing *but* whitespace is reported as "contains only whitespace" rather than a leading-and-trailing message that implies there's content between the two edges. |
+| `INVISIBLE_CHARACTER` | A.1 | The cell's text contains a non-ASCII space (category `Zs`) - for example a non-breaking space (U+00A0) or narrow no-break space (U+202F). It collapses deterministically to an ordinary space with no loss of meaning. Every such character is invisible on screen and named by codepoint in the finding, never reproduced literally. |
+| `INVISIBLE_CHARACTER_AMBIGUOUS` | A.1 | The cell's text contains a control, format, or line/paragraph separator character (a zero-width space, a bidi override, a stray line break, and so on) that has no single deterministic repair. An ALT+ENTER line break (U+000A, and U+000D for a Windows-origin paste) is exempted **only** in the `Usage guidance` and `History` columns - ordinary multi-line formatting there, but still a defect anywhere else (a preferred term, an FSN, a code cell), since a line break in those is never legitimate. |
+| `SURROUNDING_WHITESPACE` | A.3 | The cell's text has leading and/or trailing whitespace, but stripping it leaves real content behind. |
+| `WHITESPACE_ONLY_CELL` | A.3 | The cell's text is nothing *but* whitespace - stripping it would empty the cell entirely, which only a curator can confirm is the intended value. |
 | `CODE_CELL_NOT_TEXT` | A.2 | The code column holds a cell that isn't stored as text (FR-06). |
-| `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) A cell whose raw value has already overflowed Excel's numeric range entirely (rare - a malformed numeric cell text openpyxl parses as `inf`) is flagged with a distinct message rather than a fabricated digit count. |
-| `UNRECOGNISED_LAYOUT` | - | A sheet has data rows but no column recognised as the code column. Reported once per sheet, naming every header actually found, rather than silently skipping A.2 detection on a drifted workbook. Such a sheet gets no further cell-level scanning - the published workbook's own `Rev History` worksheet (FR-63, FR-60) is exactly this case: hand-written prose with no SPIA columns at all, not a sheet whose whitespace and line breaks are worth reporting on. |
+| `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) A cell whose raw value has already overflowed Excel's numeric range entirely (rare - a malformed numeric cell text openpyxl parses as `inf`) is flagged with a distinct message rather than a fabricated digit count. The digits are already gone by the time this fires, so there is nothing left to coerce. |
+| `UNRECOGNISED_LAYOUT` | - | A sheet resolves at least one SPIA column but not the code column: genuine FR-63 layout drift on a sheet that otherwise looks like SPIA data. Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
+| `SHEET_NOT_SPIA_DATA` | - | A sheet resolves no SPIA column at all - it isn't SPIA data to begin with. The published workbook's own `Rev History` worksheet (FR-63, FR-60) is exactly this case: hand-written prose with no SPIA columns, not a sheet whose whitespace and line breaks are worth reporting on. |
 
-A finding's `location` is a `Sheet!CellRef` reference (for example
-`Requesting!H16`); `UNRECOGNISED_LAYOUT` points at `Sheet!A1`, the header row.
+Either layout finding above means the sheet gets no further cell-level
+scanning. A finding's `location` is a `Sheet!CellRef` reference (for example
+`Requesting!H16`); both layout findings point at `Sheet!A1`, the header row.
 A clean cell produces no finding at all.
 
 **No generated report ever contains an invisible character itself** (NFR-38
-test 2), even though every `INVISIBLE_CHARACTER` finding is about one: the
-character is always named by its `U+XXXX` codepoint, never quoted verbatim -
-the same rule PRD Appendix A.1 applies to itself.
+test 2), even though every `INVISIBLE_CHARACTER`/`INVISIBLE_CHARACTER_AMBIGUOUS`
+finding is about one: the character is always named by its `U+XXXX`
+codepoint, never quoted verbatim - the same rule PRD Appendix A.1 applies to
+itself.
+
+## Band classification (FR-71)
+
+Every finding is classified into exactly one band, which determines whether
+the import can proceed. A finding's band is a pure function of its code
+(`nptc_transform.bands.band_for`) - never of its content - so the table above
+and this one together are the complete classification.
+
+| Band | Blocks import | Codes | What it means |
+|---|---|---|---|
+| `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT` | The defect has one deterministic repair. **Not yet applied** - the report itemises it, but nothing is corrected on disk until P0-9's `--emit-dataset` lands. |
+| `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
+| `data-defect` | Yes | `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see a sheet was skipped, without treating it as something to fix. |
+
+A run's exit code (above) is `1` if *any* finding blocks - a single
+`requires-human-decision` or `data-defect` finding aborts the whole run, no
+matter how many other findings are merely auto-correctable or informational.
+`report.json`'s `band_counts` and `blocking` fields, and `report.md`'s band
+summary table, report this without needing to open the full finding list.
+
+An unrecognised finding code (there should never be one) fails safe to
+`data-defect` rather than being silently treated as clean.
 
 ## Not implemented yet
 
@@ -108,10 +140,10 @@ The following are owned by later P0 issues (see the P0 milestone on GitHub
 for the current issue numbers) and will change what `report.json`/`report.md`
 contain, but not the guarantees above:
 
-- Three-band defect classification - P0-3
-- Terminology client and batch validation - P0-4, P0-5
+- **Applying the auto-correctable band's corrections** and emitting the import
+  dataset, including the synthetic baseline release - P0-9
+  (`--emit-dataset`)
+- Batch terminology validation and hierarchy check - P0-5
 - Designation reconciliation - P0-6
 - Misspelling and semantic-drift heuristics - P0-7
 - Report content grouped by defect class with cell references - P0-8
-- **`--emit-dataset`: import dataset emission and the synthetic baseline release** - P0-9
-- SCTID/Verhoeff library - P0-10

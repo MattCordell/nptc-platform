@@ -23,7 +23,8 @@ def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
     assert "INVISIBLE_CHAR" in json_text
 
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
-    assert "| B2 | INVISIBLE_CHAR | zero-width space |" in markdown_text
+    # An unregistered code fails safe to data-defect (bands.band_for).
+    assert "| B2 | INVISIBLE_CHAR | data-defect | zero-width space |" in markdown_text
 
 
 def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
@@ -49,10 +50,15 @@ def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
     assert b"\r\n" not in raw
 
     markdown_text = raw.decode("utf-8")
-    assert "| B2 | PIPE | value was 'a\\|b' |" in markdown_text
-    assert "| B3 | NEWLINE | line one<br>line two |" in markdown_text
+    assert "| B2 | PIPE | data-defect | value was 'a\\|b' |" in markdown_text
+    assert "| B3 | NEWLINE | data-defect | line one<br>line two |" in markdown_text
 
-    # Every table row still has exactly three columns.
-    rows = [line for line in markdown_text.splitlines() if line.startswith("| ")]
+    # Every row of the findings table still has exactly four columns - the
+    # band summary table above it has a different (two-column) shape and is
+    # excluded by locating the findings header explicitly.
+    lines = markdown_text.splitlines()
+    findings_header = lines.index("| Location | Code | Band | Message |")
+    rows = [line for line in lines[findings_header + 2 :] if line.startswith("| ")]
+    assert rows, "expected at least one findings row"
     for row in rows:
-        assert len(row.split(" | ")) == 3, row
+        assert len(row.split(" | ")) == 4, row

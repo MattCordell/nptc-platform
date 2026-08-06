@@ -26,6 +26,7 @@ HEADERS = [
 
 NBSP = chr(0x00A0)  # non-breaking space
 NNBSP = chr(0x202F)  # narrow no-break space
+ZWSP = chr(0x200B)  # zero width space - Cf, not Zs, so no deterministic repair
 
 
 def _write_text_cell(worksheet: Worksheet, row: int, column: int, value: str) -> None:
@@ -158,21 +159,84 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
         synonyms=f"Synonym one{NBSP}",
     )
 
+    # FR-71 requires-human-decision: a non-Zs invisible character has no
+    # single deterministic repair.
+    add_row(f"Term with zero width{ZWSP}", "888888888", "Term with zero width")
+    # FR-71 requires-human-decision: a synonym cell that's nothing but
+    # whitespace - stripping it would empty it entirely.
+    add_row(
+        "Term with blank synonym",
+        "999999999",
+        "Term with blank synonym",
+        synonyms="   ",
+    )
+
     workbook.save(path)
     return path
 
 
 @pytest.fixture(scope="session")
+def auto_correctable_only_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A workbook whose only defect is auto-correctable (FR-71) - no finding
+    in any other band. Distinct from ``sample_workbook``, which is fully
+    clean: this fixture exists to prove a run can carry findings and still
+    exit 0, because none of them block the import.
+    """
+    workbook_dir = tmp_path_factory.mktemp("auto_correctable_only")
+    path = workbook_dir / "auto_correctable_only.xlsx"
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    sheet.append([f"Aciclovir level{NBSP}", "", "", 11, "Chemical", "", "Serum", "", "x", 4, ""])
+    _write_text_cell(sheet, 2, 8, "12345678")
+    workbook.save(path)
+
+    return path
+
+
+@pytest.fixture(scope="session")
 def unrecognised_layout_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A workbook whose header row has no column recognisable as the code column."""
+    """A sheet that resolves *some* SPIA columns but not the code column.
+
+    This is genuine FR-63 layout drift - the code header itself has drifted
+    on an otherwise-recognisable SPIA sheet - not a sheet that isn't SPIA
+    data at all (that's ``no_spia_columns_workbook`` below). Every row on a
+    sheet like this went unscanned for Appendix A.2/A.3 defects, which is why
+    it's a blocking data defect rather than an informational notice.
+    """
     workbook_dir = tmp_path_factory.mktemp("unrecognised_layout")
     path = workbook_dir / "unrecognised_layout.xlsx"
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Requesting"
-    sheet.append(["Some Column", "Another Column"])
+    sheet.append(["RCPA Preferred term", "Some Column"])
     sheet.append(["value", "value"])
+    workbook.save(path)
+
+    return path
+
+
+@pytest.fixture(scope="session")
+def no_spia_columns_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A sheet with no column recognisable as SPIA data at all.
+
+    Reproduces the published workbook's own ``Rev History`` worksheet
+    (FR-63, FR-60): hand-written prose, not a drifted SPIA sheet. This is the
+    informational, non-blocking outcome of ``_scan_layout`` - the sheet is
+    still reported so an operator can see it was skipped, but it must not
+    abort the import the way genuine layout drift does.
+    """
+    workbook_dir = tmp_path_factory.mktemp("no_spia_columns")
+    path = workbook_dir / "no_spia_columns.xlsx"
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Rev History"
+    sheet.append(["Release notes"])
+    sheet.append(["Line one.\nLine two, with a trailing space. "])
     workbook.save(path)
 
     return path
