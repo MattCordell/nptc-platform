@@ -17,7 +17,7 @@ import pytest
 
 from nptc_shared.terminology.client import TerminologyClient
 from nptc_shared.terminology.errors import TerminologyError
-from nptc_shared.terminology.models import SNOMED_CT_AU, SubsumptionOutcome
+from nptc_shared.terminology.models import AU_LANGUAGE_TAG, SNOMED_CT_AU, SubsumptionOutcome
 
 ECL_TWO_CODES = "122192001 OR 71388002"
 ECL_FR84_CHECK = "(122192001 OR 71388002) MINUS <<71388002"
@@ -46,6 +46,27 @@ def test_expand_with_designations_keeps_the_fsn_verbatim_with_tag_intact(
     assert len(result.concepts) == 1
     fsn = next(d for d in result.concepts[0].designations if d.is_fully_specified_name)
     assert fsn.value == "Acanthamoeba culture (procedure)"
+
+
+@pytest.mark.req("FR-97")
+def test_expand_with_designations_and_display_language_reports_a_non_fsn_designation(
+    client: TerminologyClient,
+) -> None:
+    """FR-97's zero-extra-request path: the status pass's own bulk
+    ``$expand`` already carries enough to classify a published label without
+    a further per-code request - an FSN designation, at least one other
+    designation, and ``display`` set to the requested language's preferred
+    term."""
+    result = client.expand(
+        ECL_SINGLE_CONCEPT,
+        edition=SNOMED_CT_AU,
+        include_designations=True,
+        display_language=AU_LANGUAGE_TAG,
+    )
+    concept = result.concepts[0]
+    assert any(d.is_fully_specified_name for d in concept.designations)
+    assert any(not d.is_fully_specified_name for d in concept.designations)
+    assert concept.display == "Acanthamoeba culture"
 
 
 @pytest.mark.req("FR-53")

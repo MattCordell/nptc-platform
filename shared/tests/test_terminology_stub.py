@@ -184,6 +184,51 @@ def test_expand_literal_code_disjunction_respects_edition_membership() -> None:
     assert international_result.codes == ()
 
 
+@pytest.mark.req("FR-97")
+def test_expand_with_designations_includes_synonyms() -> None:
+    """Regression: ``expand`` used to emit only the FSN and preferred terms in
+    ``include_designations`` mode, silently dropping ``StubConcept.synonyms``
+    while ``lookup`` included them - so FR-97's "matches another active
+    designation on the concept" outcome was unreachable through the bulk
+    ``$expand`` pass the sweep actually drives, only through the much rarer
+    delta ``$lookup``."""
+    client = _client(
+        StubConcept(
+            code="122192001",
+            fsn="Acanthamoeba culture (procedure)",
+            synonyms=("Acanthamoeba species culture",),
+        )
+    )
+    result = client.expand("122192001", edition=SNOMED_CT_AU, include_designations=True)
+    values = {designation.value for designation in result.concepts[0].designations}
+    assert "Acanthamoeba species culture" in values
+
+
+@pytest.mark.req("FR-97")
+def test_expand_honours_display_language() -> None:
+    """Regression: ``expand`` used to ignore ``display_language`` entirely,
+    always reporting the first preferred term in dict-insertion order (or the
+    FSN) as ``display`` - so an AU-edition expansion's ``display`` could be
+    a non-AU preferred term wearing an AU label."""
+    client = _client(
+        StubConcept(
+            code="122192001",
+            fsn="Acanthamoeba culture (procedure)",
+            preferred_terms={
+                "en-x-sctlang-32570271-00003610-6": "Acanthamoeba culture",
+                "en-other": "Some other preferred term",
+            },
+        )
+    )
+    result = client.expand(
+        "122192001",
+        edition=SNOMED_CT_AU,
+        include_designations=True,
+        display_language="en-x-sctlang-32570271-00003610-6",
+    )
+    assert result.concepts[0].display == "Acanthamoeba culture"
+
+
 def test_seeded_expansion_takes_precedence_over_the_concept_table() -> None:
     from nptc_shared.terminology.models import Expansion
 

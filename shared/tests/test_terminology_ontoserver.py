@@ -98,6 +98,42 @@ def test_expand_url_parameter_round_trips_to_the_implicit_value_set_url() -> Non
     assert captured["url_param"] == implicit_value_set_url("<<71388002", SNOMED_CT_AU)
 
 
+@pytest.mark.req("FR-97")
+def test_expand_sends_display_language_on_the_query_string_when_given() -> None:
+    """The contract suite cannot distinguish "sent and honoured" from "not
+    sent" - both implementations are seeded from the same canned body
+    regardless of what was asked for. This is the assertion that
+    ``display_language`` actually reaches the wire, which is what FR-97's
+    reconciliation and FR-82's preferred-term comparison both depend on."""
+    captured: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["display_language"] = request.url.params.get("displayLanguage")
+        return httpx.Response(200, json=_expansion_body())
+
+    client = _client(handler)
+    client.expand(
+        "122192001",
+        edition=SNOMED_CT_AU,
+        include_designations=True,
+        display_language="en-x-sctlang-32570271-00003610-6",
+    )
+    assert captured["display_language"] == "en-x-sctlang-32570271-00003610-6"
+
+
+@pytest.mark.req("FR-97")
+def test_expand_omits_display_language_when_not_given() -> None:
+    captured: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["display_language"] = request.url.params.get("displayLanguage")
+        return httpx.Response(200, json=_expansion_body())
+
+    client = _client(handler)
+    client.expand("122192001", edition=SNOMED_CT_AU)
+    assert captured["display_language"] is None
+
+
 def test_pinned_edition_includes_the_version_segment() -> None:
     pinned = SNOMED_CT_AU.pinned_to("20260531")
     captured: dict[str, str | None] = {}

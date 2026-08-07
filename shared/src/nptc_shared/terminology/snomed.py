@@ -87,3 +87,36 @@ def semantic_tag(fully_specified_name: str) -> str | None:
         return None
     tag = match.group(1).strip()
     return tag or None
+
+
+def strip_semantic_tag(fully_specified_name: str) -> str:
+    """``fully_specified_name`` with its final parenthesised group removed, once.
+
+    FR-83 puts the one legitimate strip in the export renderer; this is a
+    second, narrowly scoped call site for FR-97's seeding-time reconciliation,
+    which needs "the tag-stripped FSN" purely as a value to compare against a
+    workbook label, never to store or display. The invariant FR-83 actually
+    protects - no double strip, because every input is a served FSN read
+    fresh off the wire rather than a value that might already be stripped -
+    holds here too: the caller reads this straight from a ``$expand``/
+    ``$lookup`` response in the same run and immediately discards the result
+    after one equality comparison (see ADR-0006).
+
+    Uses the same ``_SEMANTIC_TAG`` pattern as ``semantic_tag``, so the two
+    functions can never disagree about where the tag starts - PRD Appendix
+    A.10's row 29 caution (``Microscopy (acid fast bacilli) (procedure)``
+    strips to ``Microscopy (acid fast bacilli)``, not ``Microscopy``) applies
+    identically to both.
+
+    Returns ``fully_specified_name`` unchanged, never raises, when there is no
+    trailing parenthesised group at all - the same "not a served FSN" case
+    ``semantic_tag`` reports as ``None`` (Appendix A.8: the SPIA workbook's own
+    "Fully Specified Name" column carries no tags). Raising here would abort a
+    seeding run over a value that was never a served FSN to begin with; the
+    caller already counts this case separately (``unresolved_fsn_count``) and
+    falls through to comparing against the concept's raw designation set.
+    """
+    match = _SEMANTIC_TAG.search(fully_specified_name)
+    if match is None:
+        return fully_specified_name
+    return fully_specified_name[: match.start()].rstrip()

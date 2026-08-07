@@ -36,11 +36,16 @@ catalogue-wide hierarchy check is one `expand` call (see "Batch discipline" belo
 
 ## Editions and versions
 
-`Edition` (`models.py`) carries a SNOMED CT module id, a label (`"au"`/`"int"`), and an
+`Edition` (`models.py`) carries a SNOMED CT module id, a label (`"au"`/`"int"`), an
 optional pinned `version` (the release's effective time, always a `str` — never an
 `int`, the same FR-06 discipline applied to the one other all-digits token in this
-domain). `SNOMED_CT_AU` and `SNOMED_CT_INTERNATIONAL` are the two editions FR-47's
-dual-edition validation diffs against.
+domain), and an optional `display_language`. `SNOMED_CT_AU` and
+`SNOMED_CT_INTERNATIONAL` are the two editions FR-47's dual-edition validation diffs
+against; only `SNOMED_CT_AU` sets `display_language` (to `AU_LANGUAGE_TAG`), because
+that language reference set doesn't exist in the International edition — sending it on
+both would risk a server-side fallback returning some other language's preferred term
+labelled as if it were AU's. `Edition.pinned_to` carries `display_language` through
+unchanged, so FR-49's reproduce-a-historical-run path doesn't silently drop it.
 
 `Edition.system_version_uri` builds `http://snomed.info/sct/<module>[/version/<v>]`. With
 no `version` set (FR-49's normal operation), a request targets the latest release, and the
@@ -107,6 +112,20 @@ server that never returns an identifiable FSN for anything would otherwise make 
 pass silently and permanently, with nothing to show it never ran. Paging that overlaps
 (a server ignoring `offset`) is de-duplicated by code before either the tag list or that
 count is built, so a repeated page cannot double-count either one.
+
+FR-97's seeding-time designation reconciliation rides on the same bulk pass, for the same
+reason: `SweepResult.designations` is a deduplicated, sorted `ConceptDesignations` per
+active code — FSN, AU-language `display`, and every designation value the expansion
+returned — projected from the concepts `_unexpected_tags` already reads, at zero further
+requests. Only the labels that projection cannot settle locally cost anything:
+`TerminologySweep.confirm_labels` issues one `CodeSystem/$validate-code` per unique
+`(code, display)` pair still unmatched, batched and bounded the same way the delta
+`lookup` pass is (`nptc_transform.designation_check` is the caller — see the
+[transform runbook](../operations/runbooks/transform.md#interpreting-a-designation-finding-fr-97)
+for the four outcomes it classifies). Unlike the delta pass, a probe failure is never
+folded into "no match" — every code probed already resolved as active in this same sweep,
+so an error here is a contradiction with the status pass, not an answer, and propagates
+rather than becoming a false designation defect (FR-54).
 
 **A notation trap worth remembering.** The PRD writes this idiom as
 `(<code1> OR <code2> OR ... OR <codeN>) MINUS <<71388002` — those angle brackets around
@@ -193,8 +212,6 @@ with OntoserverClient() as client:
   AU. `TerminologySweep` reports status per edition and the transform combines them
   (`nptc_transform.terminology_check`), but the forecast, with its expected AU release date,
   belongs to the scheduled validation sweep.
-- Designation reconciliation at scale (FR-97) — issue #28. The sweep keeps every delta
-  `LookupResult` for it rather than discarding them.
 - FR-54's degradation *policy* — incomplete runs, cached prior results staying visible and
   dated. The sweep's obligation stops at raising; the transform CLI's response is to exit 3
   and write no report at all.

@@ -17,6 +17,7 @@ from nptc_shared.text import (
     has_surrounding_whitespace,
     is_invisible,
     is_normalisable_space,
+    normalise_for_comparison,
 )
 
 NBSP = chr(0x00A0)  # non-breaking space (Zs)
@@ -135,3 +136,61 @@ def test_is_normalisable_space_only_true_for_non_ascii_zs(ch: str, expected: boo
 def test_find_invisible_characters_marks_normalisable_flag_per_character() -> None:
     found = find_invisible_characters(f"term{NBSP}{ZWSP}")
     assert [f.normalisable for f in found] == [True, False]
+
+
+@pytest.mark.req("FR-82")
+def test_normalise_for_comparison_composes_combining_marks() -> None:
+    # "e" + COMBINING ACUTE ACCENT (U+0301) vs the single precomposed "e"
+    decomposed = "e" + chr(0x0301)
+    precomposed = chr(0x00E9)
+    assert decomposed != precomposed
+    assert normalise_for_comparison(decomposed) == normalise_for_comparison(precomposed)
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_does_not_fold_compatibility_equivalents() -> None:
+    # U+00B5 MICRO SIGN and U+03BC GREEK SMALL LETTER MU are NFKC-equivalent
+    # but genuinely different characters in pathology designations - folding
+    # them would turn a real designation difference into a false match.
+    micro_sign = chr(0x00B5)
+    greek_mu = chr(0x03BC)
+    assert normalise_for_comparison(f"{micro_sign}g/L") != normalise_for_comparison(
+        f"{greek_mu}g/L"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_preserves_case() -> None:
+    assert normalise_for_comparison("Acanthamoeba culture") != normalise_for_comparison(
+        "acanthamoeba culture"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_strips_edge_whitespace_including_non_breaking_space() -> None:
+    assert normalise_for_comparison(f"{NBSP}Acanthamoeba culture{NBSP}") == "Acanthamoeba culture"
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_collapses_an_interior_non_breaking_space() -> None:
+    """Regression: only the *edges* used to be handled (via ``.strip()``), so
+    an interior non-breaking space - present in the PRD's own sample data -
+    survived into the comparison and silently defeated it. Collapsing every
+    normalisable space, not only the edge ones, is what lets a label FR-71
+    would auto-correct still reconcile as if it already had been."""
+    assert (
+        normalise_for_comparison(f"Microscopy (acid fast{NBSP}bacilli)")
+        == "Microscopy (acid fast bacilli)"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_does_not_collapse_a_non_normalisable_invisible_character() -> (
+    None
+):
+    """A zero-width space (``Cf``, not ``Zs``) has no single deterministic
+    repair (FR-71) - it must survive normalisation so a caller can still
+    detect it and skip reconciliation, rather than being silently absorbed
+    the way a non-breaking space is."""
+    result = normalise_for_comparison(f"Microscopy (acid fast{ZWSP}bacilli)")
+    assert ZWSP in result

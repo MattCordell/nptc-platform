@@ -68,6 +68,10 @@ class FindingCode(StrEnum):
     CODE_INACTIVE = "CODE_INACTIVE"
     OUT_OF_SCOPE_HIERARCHY = "OUT_OF_SCOPE_HIERARCHY"
     UNEXPECTED_SEMANTIC_TAG = "UNEXPECTED_SEMANTIC_TAG"
+    LABEL_DESIGNATION_DRIFT = "LABEL_DESIGNATION_DRIFT"
+    LABEL_BOUND_TO_OTHER_CONCEPT = "LABEL_BOUND_TO_OTHER_CONCEPT"
+    LABEL_MATCHES_NO_DESIGNATION = "LABEL_MATCHES_NO_DESIGNATION"
+    LABEL_DIFFERS_FROM_PREFERRED_TERM = "LABEL_DIFFERS_FROM_PREFERRED_TERM"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -92,6 +96,15 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.CODE_NOT_FOUND: Band.DATA_DEFECT,
     FindingCode.CODE_INACTIVE: Band.DATA_DEFECT,
     FindingCode.OUT_OF_SCOPE_HIERARCHY: Band.DATA_DEFECT,
+    # FR-97's two blocking outcomes, named verbatim in FR-71's own data-defect
+    # column: "stored text matching no designation on the concept, or
+    # matching the FSN of a different concept". Both are the transcription
+    # error PRD:856 calls "the most dangerous outcome" - a plausible label
+    # paired with the wrong code - and both abort rather than repair, because
+    # which half (the code or the label) is wrong cannot be decided
+    # automatically.
+    FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT: Band.DATA_DEFECT,
+    FindingCode.LABEL_MATCHES_NO_DESIGNATION: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
     # FR-99 is explicit that an unexpected semantic tag is a warning and not
@@ -100,6 +113,15 @@ BAND_BY_CODE: dict[str, Band] = {
     # blocking band here would abort the import over a concept that is a
     # perfectly valid procedure binding.
     FindingCode.UNEXPECTED_SEMANTIC_TAG: Band.INFORMATIONAL,
+    # FR-71 is explicit that a published label which is merely a synonym or a
+    # superseded FSN is *not* a data defect: "the catalogue lagging the
+    # terminology is expected rather than defective". FR-97 has the transform
+    # seed the served FSN and only tell someone.
+    FindingCode.LABEL_DESIGNATION_DRIFT: Band.INFORMATIONAL,
+    # FR-97's separate, always-informational list: the current AU preferred
+    # term differs from the published label. Never blocking, regardless of
+    # the axis-1 outcome for the same cell.
+    FindingCode.LABEL_DIFFERS_FROM_PREFERRED_TERM: Band.INFORMATIONAL,
 }
 
 if set(BAND_BY_CODE) != set(FindingCode):

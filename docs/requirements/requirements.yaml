@@ -615,8 +615,8 @@
   priority: MUST
   phase: p0
   title: "The transform MUST produce a designation reconciliation report"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "designation_check.py classifies each SNOMED CT Fully Specified Name column value against SweepResult.designations, escalating a local miss to one CodeSystem/\\$validate-code via TerminologySweep.confirm_labels (the delta only, FR-52). LABEL_DESIGNATION_DRIFT and LABEL_DIFFERS_FROM_PREFERRED_TERM are informational; LABEL_BOUND_TO_OTHER_CONCEPT and LABEL_MATCHES_NO_DESIGNATION block. PRD row 22 (122192001) is the NFR-38 test 14 fixture (#28)."
 - id: "FR-98"
   priority: MUST
   phase: p1

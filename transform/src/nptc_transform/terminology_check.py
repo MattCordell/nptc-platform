@@ -25,7 +25,7 @@ Three things this module owns, none of which the engine can decide:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from nptc_shared.sctid import has_valid_check_digit
 from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL, Edition
@@ -86,10 +86,24 @@ class TerminologyRun:
 
 @dataclass(frozen=True)
 class TerminologyOutcome:
-    """The pass's findings, plus the provenance record of the run itself."""
+    """The pass's findings, plus the provenance record of the run itself.
+
+    ``bindings`` and ``results`` exist for ``designation_check.py`` (FR-97,
+    issue #28): the checkable code bindings and each edition's ``SweepResult``
+    this pass already produced, so the reconciliation pass can reuse them - a
+    code's cell type and Verhoeff validity, and its designation set, must not
+    be decided twice by two independently drifting notions of "checkable".
+    Reconciling only codes present in ``results`` is also what keeps a code
+    already reported ``CODE_NOT_FOUND``/``CODE_INACTIVE`` here from being
+    reconciled at all: an absent or inactive code was never resolved in any
+    edition's ``SweepResult.designations``, so it never reaches the
+    designation check's index.
+    """
 
     findings: tuple[Finding, ...]
     run: TerminologyRun
+    bindings: tuple[CodeBinding, ...] = ()
+    results: dict[str, SweepResult] = field(default_factory=dict)
 
 
 def collect_code_bindings(sheets: Sequence[Sheet]) -> tuple[CodeBinding, ...]:
@@ -188,6 +202,8 @@ def check_terminology(
             ),
             unresolved_fsn_count=sum(result.unresolved_fsn_count for result in results.values()),
         ),
+        bindings=tuple(checkable),
+        results=results,
     )
 
 

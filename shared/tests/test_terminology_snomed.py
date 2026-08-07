@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL
-from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url, semantic_tag
+from nptc_shared.terminology.snomed import (
+    ecl_set_of,
+    implicit_value_set_url,
+    semantic_tag,
+    strip_semantic_tag,
+)
 
 
 def test_implicit_value_set_url_unpinned_edition_has_no_version_segment() -> None:
@@ -73,3 +78,32 @@ def test_semantic_tag_is_none_when_there_is_no_trailing_group() -> None:
     assert semantic_tag("Adenovirus nucleic acid detection") is None
     assert semantic_tag("Trailing group is empty ()") is None
     assert semantic_tag("(procedure) leading only") is None
+
+
+@pytest.mark.req("FR-97")
+def test_strip_semantic_tag_removes_the_final_group_exactly_once() -> None:
+    assert strip_semantic_tag("Acanthamoeba culture (procedure)") == "Acanthamoeba culture"
+
+
+@pytest.mark.req("FR-97")
+def test_strip_semantic_tag_leaves_an_internal_parenthesised_phrase_intact() -> None:
+    """PRD Appendix A.10 row 29's caution: 391483001's FSN legitimately ends
+    in a parenthesised phrase that is part of the term, not the tag - the
+    correctly stripped label is "Microscopy (acid fast bacilli)", not
+    "Microscopy"."""
+    assert (
+        strip_semantic_tag("Microscopy (acid fast bacilli) (procedure)")
+        == "Microscopy (acid fast bacilli)"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_strip_semantic_tag_returns_the_input_unchanged_when_there_is_no_trailing_group() -> None:
+    """The SPIA workbook's "Fully Specified Name" column carries no tags at
+    all (Appendix A.8) - stripping a value that was never a served FSN must
+    not raise or silently mutate it, since the caller falls through to
+    comparing the untouched value against the concept's raw designation set."""
+    assert (
+        strip_semantic_tag("Adenovirus nucleic acid detection")
+        == "Adenovirus nucleic acid detection"
+    )
