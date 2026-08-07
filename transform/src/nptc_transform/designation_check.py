@@ -212,16 +212,27 @@ def _local_verdict(
     (``terminology_check._findings_for``), so a label valid in one edition is
     never a defect merely because a different edition's designation set
     doesn't happen to carry it too.
+
+    A label matching the FSN **with its tag intact** is treated the same as
+    matching the tag-stripped form - both are "this is genuinely the
+    concept's own FSN", never ``OTHER_DESIGNATION``. The workbook column
+    never carries a tag in practice (PRD Appendix A.8), but a label that
+    happens to is unambiguously the concept's own designation, not a
+    different, merely-active one - and ``_drift_finding``'s message asserts
+    "is not the FSN of this code", which would be false for exactly this
+    case if it fell through to that branch.
     """
     tag_stripped_fsns: set[str] = set()
+    full_fsns: set[str] = set()
     all_values: set[str] = set()
     for entry in entries.values():
         if entry.fully_specified_name is not None:
             tag_stripped_fsns.add(
                 normalise_for_comparison(strip_semantic_tag(entry.fully_specified_name))
             )
+            full_fsns.add(normalise_for_comparison(entry.fully_specified_name))
         all_values.update(normalise_for_comparison(value) for value in entry.values)
-    if normalised_label in tag_stripped_fsns:
+    if normalised_label in tag_stripped_fsns or normalised_label in full_fsns:
         return _LocalVerdict.STRIPPED_FSN
     if normalised_label in all_values:
         return _LocalVerdict.OTHER_DESIGNATION
@@ -394,9 +405,15 @@ def check_designations(
                 continue
             normalised_label = normalise_for_comparison(fsn_cell.text)
             if not normalised_label or find_invisible_characters(normalised_label):
-                # Blank/whitespace-only, or an interior invisible character
-                # .strip() cannot remove - both already owned by
-                # WHITESPACE_ONLY_CELL/INVISIBLE_CHARACTER_AMBIGUOUS.
+                # Blank/whitespace-only (WHITESPACE_ONLY_CELL, blocking), or a
+                # genuinely ambiguous invisible character with no
+                # deterministic repair (INVISIBLE_CHARACTER_AMBIGUOUS,
+                # blocking) - never a merely auto-correctable one, since
+                # normalise_for_comparison already collapses those (a
+                # non-breaking space, wherever it occurs) before this check
+                # runs. Skipping on a code that survives *that* would exempt
+                # a row from FR-97 through a non-blocking path, silently
+                # dropping the very transcription-error check H-07 exists for.
                 labels_not_reconciled += 1
                 continue
             code = code_cell.text.strip()

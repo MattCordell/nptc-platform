@@ -173,6 +173,25 @@ class LabelConfirmation:
     the workload" - the same discipline this module has enforced since
     FR-52's batch sweep: never one such call per row of a large catalogue,
     only for the rows a cheaper pass could not already resolve.
+
+    ``matched`` is exactly the server's own ``result`` boolean, trusted as
+    the FHIR R4 ``$validate-code`` contract defines it: "whether the code
+    (system/code/display) is valid" - not re-derived from, or qualified by,
+    ``message``. This is a stated precondition, not an oversight: the spec
+    documents ``message`` as "error details, if result = false", not as a
+    caveat a caller should apply to a ``true`` result, and there is no
+    schema for what a free-text message would mean if it disagreed with
+    ``result`` - inferring one would be guessing at an undefined contract,
+    not implementing the defined one. The consequence is real and worth
+    naming rather than hiding: a non-conformant server that returns
+    ``result=true`` for a display it does not genuinely recognise (a
+    lenient acceptance-with-a-caveat, say) downgrades what should have been
+    a blocking FR-97 outcome to informational drift, because the design in
+    ADR-0006 makes the probe strictly monotone - trusting ``result`` this
+    way is *why* that monotonicity holds, not a gap in it. Guarding against
+    a non-conformant server is a decision to make deliberately (see
+    ``client.py``'s own trust boundary for the terminology server), not one
+    to smuggle in as free-text pattern-matching here.
     """
 
     code: str
@@ -211,10 +230,15 @@ class SweepResult:
     #: backend's findings) does not have to look the same codes up again.
     lookups: tuple[LookupResult, ...] = ()
     #: Every active concept's designation set, sorted by code - see
-    #: ``ConceptDesignations``. The zero-extra-request material for FR-97's
-    #: seeding-time reconciliation (issue #28): ``_resolve_status`` already
-    #: fetches this with ``includeDesignations`` for FR-99's own semantic-tag
-    #: check, so retaining it costs nothing further.
+    #: ``ConceptDesignations``. Covers both passes: the bulk pass's own
+    #: concepts cost nothing further (``_resolve_status`` already fetches
+    #: this with ``includeDesignations`` for FR-99's own semantic-tag check),
+    #: and a code the bulk pass missed but the delta ``$lookup`` confirmed
+    #: active still gets an entry, projected from that same lookup response -
+    #: "every active concept" here is a real guarantee, not just the common
+    #: case, so a caller (FR-97's reconciliation, FR-99's tag check) never
+    #: has to distinguish "no designations projected" from "concept
+    #: absent/inactive" for a code this field reports active.
     designations: tuple[ConceptDesignations, ...] = ()
     #: Every fully qualified version URI the server reported it resolved
     #: against, from any request in the sweep (FR-48). Normally one.
@@ -316,6 +340,7 @@ class TerminologySweep:
         inactive: list[str] = []
         absent: list[str] = []
         active = set(resolved)
+        delta_active_designations: list[ConceptDesignations] = []
         for code, lookup in lookups:
             if lookup is None:
                 absent.append(code)
@@ -329,6 +354,13 @@ class TerminologySweep:
             # code back to active.
             if lookup.inactive is False:
                 active.add(code)
+                # This code never reached `concepts` at all (that is why it
+                # was in the delta), so `_project_designations` below has
+                # nothing to project it from - without this, it would be
+                # reported active with no designation entry, and a caller
+                # could not tell that apart from "absent/inactive" (see
+                # `SweepResult.designations`'s own docstring).
+                delta_active_designations.append(_designations_from_lookup(lookup))
             else:
                 inactive.append(code)
 
@@ -339,7 +371,15 @@ class TerminologySweep:
         resolved_codes = tuple(sorted(active | set(inactive)))
         violations = self._check_hierarchy(resolved_codes, edition=edition, versions=versions)
         violating = set(violations)
-        designations = _project_designations(concepts)
+        # Disjoint by construction - `delta_active_designations` only ever
+        # covers codes `concepts` does not - so concatenating before the sort
+        # can never collide two entries for the same code.
+        designations = tuple(
+            sorted(
+                (*_project_designations(concepts), *delta_active_designations),
+                key=lambda entry: entry.code,
+            )
+        )
         unexpected_tags, unresolved_fsn_count = _unexpected_tags(designations, exclude=violating)
 
         return SweepResult(
@@ -611,6 +651,27 @@ def _project_designations(concepts: Iterable[ExpandedConcept]) -> tuple[ConceptD
             values=values,
         )
     return tuple(sorted(projected.values(), key=lambda entry: entry.code))
+
+
+def _designations_from_lookup(lookup: LookupResult) -> ConceptDesignations:
+    """One delta-confirmed-active code's designation set, from the same
+    ``$lookup`` response ``run()`` already made for it.
+
+    The bulk expansion never returned this code at all - that is why it was
+    in the delta - so ``_project_designations`` has nothing to build an entry
+    from. Projecting one here from the lookup's own designations is what
+    makes ``SweepResult.designations``'s "every active concept" promise true
+    rather than "every active concept the bulk pass happened to return",
+    with no extra request: the lookup already happened, for FR-46's own
+    inactivation-reason/historical-association pairing.
+    """
+    values = tuple(sorted({designation.value for designation in lookup.designations}))
+    return ConceptDesignations(
+        code=lookup.code,
+        fully_specified_name=lookup.fully_specified_name,
+        display=lookup.display,
+        values=values,
+    )
 
 
 def _unexpected_tags(

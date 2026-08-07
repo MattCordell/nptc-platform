@@ -169,3 +169,28 @@ def test_normalise_for_comparison_preserves_case() -> None:
 @pytest.mark.req("FR-97")
 def test_normalise_for_comparison_strips_edge_whitespace_including_non_breaking_space() -> None:
     assert normalise_for_comparison(f"{NBSP}Acanthamoeba culture{NBSP}") == "Acanthamoeba culture"
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_collapses_an_interior_non_breaking_space() -> None:
+    """Regression: only the *edges* used to be handled (via ``.strip()``), so
+    an interior non-breaking space - present in the PRD's own sample data -
+    survived into the comparison and silently defeated it. Collapsing every
+    normalisable space, not only the edge ones, is what lets a label FR-71
+    would auto-correct still reconcile as if it already had been."""
+    assert (
+        normalise_for_comparison(f"Microscopy (acid fast{NBSP}bacilli)")
+        == "Microscopy (acid fast bacilli)"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_normalise_for_comparison_does_not_collapse_a_non_normalisable_invisible_character() -> (
+    None
+):
+    """A zero-width space (``Cf``, not ``Zs``) has no single deterministic
+    repair (FR-71) - it must survive normalisation so a caller can still
+    detect it and skip reconciliation, rather than being silently absorbed
+    the way a non-breaking space is."""
+    result = normalise_for_comparison(f"Microscopy (acid fast{ZWSP}bacilli)")
+    assert ZWSP in result

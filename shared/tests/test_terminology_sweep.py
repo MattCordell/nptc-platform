@@ -1000,6 +1000,26 @@ def test_designations_are_deduplicated_across_overlapping_pages() -> None:
 
 
 @pytest.mark.req("FR-97")
+def test_a_delta_confirmed_active_code_still_gets_a_designations_entry() -> None:
+    """A code the bulk expansion omitted (a server that under-reports a page,
+    say) but the delta ``$lookup`` confirmed active is exactly as active as
+    any code the bulk pass did return - ``designations`` must not silently
+    drop it, or a caller (FR-97's reconciliation, FR-99's tag check) cannot
+    tell "no designations projected" apart from "concept absent/inactive"
+    for a code this same result reports active."""
+    codes = _codes(2)
+    client = _OmittingClient(omitted=codes[1], concepts=[_procedure(code) for code in codes])
+
+    result = TerminologySweep(client).run(codes, edition=SNOMED_CT_AU)
+
+    assert result.active == codes
+    assert tuple(entry.code for entry in result.designations) == codes
+    delta_entry = result.designations[1]
+    assert delta_entry.fully_specified_name == f"Fixture concept {codes[1]} (procedure)"
+    assert f"Fixture concept {codes[1]}" in delta_entry.values
+
+
+@pytest.mark.req("FR-97")
 def test_a_concept_out_of_the_hierarchy_still_has_a_designation_entry() -> None:
     """Unlike ``unexpected_semantic_tags``, FR-97's reconciliation must not
     exclude a hierarchy violation: a label defect on that cell survives the

@@ -182,6 +182,29 @@ def test_a_label_matching_the_tag_stripped_fsn_produces_no_finding(
 
 
 @pytest.mark.req("FR-97")
+def test_a_label_matching_the_fsn_with_its_tag_intact_produces_no_finding(
+    tmp_path: Path, client: StubTerminologyClient
+) -> None:
+    """Regression: a label equal to the FULL, tagged FSN used to fall through
+    to ``LABEL_DESIGNATION_DRIFT`` with a message asserting "is not the FSN
+    of this code" - false, since it literally is. Unambiguously the
+    concept's own FSN, tag included, so axis 1 must treat it the same as the
+    tag-stripped match: no axis-1 finding at all. (Axis 2 is independent and
+    correctly still fires here: the label, tag included, is not the same
+    string as the current AU preferred term "Drift concept".)"""
+    workbook = _workbook(tmp_path, [(DRIFT_CODE, "Drift concept (procedure)")])
+    outcome = _outcome(workbook, client)
+
+    axis_one_codes = {
+        FindingCode.LABEL_DESIGNATION_DRIFT,
+        FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT,
+        FindingCode.LABEL_MATCHES_NO_DESIGNATION,
+    }
+    findings = _findings_for(outcome, DRIFT_CODE)
+    assert not [f for f in findings if f.code in axis_one_codes]
+
+
+@pytest.mark.req("FR-97")
 @pytest.mark.req("NFR-38")
 def test_a_label_matching_a_valid_synonym_is_informational_and_does_not_block(
     tmp_path: Path, client: StubTerminologyClient
@@ -405,6 +428,31 @@ def test_a_label_containing_an_interior_invisible_character_is_not_double_report
     outcome = _outcome(workbook, client)
 
     assert _findings_for(outcome, INTERIOR_INVISIBLE_CODE) == []
+
+
+@pytest.mark.req("FR-97")
+def test_an_interior_non_breaking_space_does_not_exempt_a_row_from_reconciliation(
+    tmp_path: Path, client: StubTerminologyClient
+) -> None:
+    """Regression: an interior non-breaking space used to make
+    ``find_invisible_characters`` see an invisible character and skip the
+    row entirely - silently converting a blocking `LABEL_BOUND_TO_OTHER_CONCEPT`
+    into no finding at all, through the same non-blocking `INVISIBLE_CHARACTER`
+    path a plain-space version of the same label would never take (H-07)."""
+    workbook = _workbook(
+        tmp_path,
+        [
+            (OTHER_CONCEPT_TARGET_CODE, "Target concept"),
+            (OTHER_CONCEPT_SOURCE_CODE, f"Target{NBSP}concept"),
+        ],
+    )
+    outcome = _outcome(workbook, client)
+
+    findings = _findings_for(outcome, OTHER_CONCEPT_SOURCE_CODE)
+    assert len(findings) == 1
+    assert findings[0].code == FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT
+    assert findings[0].band is Band.DATA_DEFECT
+    assert OTHER_CONCEPT_TARGET_CODE in findings[0].message
 
 
 @pytest.mark.req("FR-97")
