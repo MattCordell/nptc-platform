@@ -182,12 +182,23 @@ def _index_designation_values(
     designations_by_label: Mapping[str, Mapping[str, ConceptDesignations]],
 ) -> dict[str, set[str]]:
     """Every designation value resolved anywhere in this run, to the set of
-    codes it belongs to - the workbook-scoped material for outcome 3."""
+    codes it belongs to - the workbook-scoped material for outcome 3.
+
+    Includes each concept's tag-stripped FSN alongside its raw designation
+    values, for the same reason ``_local_verdict`` checks both for a code's
+    *own* entries: the workbook column never carries a tag (PRD Appendix
+    A.8), so the realistic transcription error is a label matching the
+    tag-stripped FSN of the *wrong* concept, not its tagged form.
+    """
     index: dict[str, set[str]] = defaultdict(set)
     for entries in designations_by_label.values():
         for entry in entries.values():
             for value in entry.values:
                 index[normalise_for_comparison(value)].add(entry.code)
+            if entry.fully_specified_name is not None:
+                index[normalise_for_comparison(strip_semantic_tag(entry.fully_specified_name))].add(
+                    entry.code
+                )
     return index
 
 

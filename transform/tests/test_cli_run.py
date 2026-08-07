@@ -241,6 +241,71 @@ def test_check_terminology_validates_the_bindings_and_records_the_run(
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["terminology"]["codes_checked"] == 1
     assert payload["finding_count"] == 0
+    # No "SNOMED CT Fully Specified Name" column on this fixture - every
+    # checkable code cell is a row FR-97 could not reconcile, not zero rows.
+    assert payload["designations"] == {
+        "labels_reconciled": 0,
+        "labels_not_reconciled": 1,
+        "label_confirmations": 0,
+    }
+
+
+@pytest.mark.req("FR-97")
+def test_check_terminology_blocks_on_a_designation_defect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end: a published label matching no designation on the bound
+    concept (PRD row 22's own shape) aborts the import through the CLI."""
+    workbook_path = tmp_path / "row22.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(
+        [
+            "RCPA Preferred term",
+            "Terminology binding (SNOMED CT-AU)",
+            "SNOMED CT Fully Specified Name",
+        ]
+    )
+    sheet.cell(row=2, column=1, value="Acanthamoeba culture")
+    code_cell = sheet.cell(row=2, column=2, value=CLEAN_CODE)
+    code_cell.data_type = "s"
+    sheet.cell(row=2, column=3, value="Acanthamoeba species culture")
+    workbook.save(workbook_path)
+
+    report_dir = tmp_path / "report"
+    _install_stub(
+        monkeypatch,
+        _ContextStub(
+            concepts=[
+                StubConcept(
+                    code=CLEAN_CODE,
+                    fsn="Acanthamoeba culture (procedure)",
+                    parents=(PROCEDURE_ROOT_CODE,),
+                )
+            ],
+            resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(workbook_path),
+            "--report-dir",
+            str(report_dir),
+            "--check-terminology",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "import blocked" in result.output
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["designations"]["labels_reconciled"] == 1
+    assert any(f["code"] == "LABEL_MATCHES_NO_DESIGNATION" for f in payload["findings"])
 
 
 @pytest.mark.req("FR-70")
@@ -259,6 +324,7 @@ def test_a_run_without_check_terminology_records_that_no_sweep_ran(
     assert result.exit_code == 0, result.output
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["terminology"] is None
+    assert payload["designations"] is None
 
 
 @pytest.mark.req("FR-52")
