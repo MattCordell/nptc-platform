@@ -25,6 +25,7 @@ useful, not the regulatory framework around it.
 | H-04 | Test not found when searched | A misspelled synonym never matches the query a requester types | FR-79 misspelling detection (flags for review, never auto-corrects) | Mitigation designed, not yet implemented |
 | H-05 | Order rejected downstream, or ordered against an inactivated concept | The catalogue references a SNOMED CT code that has since been inactivated | FR-45–FR-47 dual-edition validation, FR-56 publication gate | Mitigation designed, not yet implemented |
 | H-06 | Silent content change | A modification to catalogue content is undetected or unattributable | NFR-08–NFR-10 append-only, hash-chained audit log | Mitigation designed, not yet implemented |
+| H-07 | Wrong test ordered | A catalogue entry pairs a plausible published label with the SNOMED code of a different concept — the label reads correctly to a requester while the transcribed pairing carries the wrong concept downstream | FR-97 designation reconciliation blocks the seed import where the published label matches a designation of a different bound concept, or of none at all | Implemented for seeding (P0-6, #28); structurally prevented at steady state once designations are stored as served (FR-82) |
 
 ## Adding a hazard
 

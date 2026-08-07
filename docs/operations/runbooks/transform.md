@@ -8,9 +8,11 @@ determinism/idempotency contract (FR-73), delivered with backlog issue
 workbook reader and PRD Appendix A.1-A.3 cell defect detection, delivered
 with backlog issue [P0-2](https://github.com/MattCordell/nptc-platform/issues/24);
 the three-band defect classification engine, delivered with backlog issue
-[P0-3](https://github.com/MattCordell/nptc-platform/issues/25); and batch
+[P0-3](https://github.com/MattCordell/nptc-platform/issues/25); batch
 terminology validation with the hierarchy check, delivered with backlog issue
-[P0-5](https://github.com/MattCordell/nptc-platform/issues/27). It does not
+[P0-5](https://github.com/MattCordell/nptc-platform/issues/27); and
+designation reconciliation, delivered with backlog issue
+[P0-6](https://github.com/MattCordell/nptc-platform/issues/28). It does not
 yet correct an auto-correctable finding or produce an import dataset - see
 "Not implemented yet" below.
 
@@ -26,7 +28,7 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode. **Not implemented yet** - see below. |
-| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), and reconcile every published label against its bound concept's designation set (FR-97). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -109,6 +111,10 @@ corrected, and each defect is reported under one of two codes chosen by
 | `CODE_INACTIVE` | - | The concept is inactive in every edition that has it. Inactive in International while still active in AU is a *forecast*, not a current error (FR-47), and is deliberately not reported here - it belongs to the scheduled validation sweep, not to a seeding run. |
 | `OUT_OF_SCOPE_HIERARCHY` | - | The concept is not subsumed by `<<71388002` \|Procedure (procedure)\| (FR-84). See "Interpreting hierarchy violations" below. |
 | `UNEXPECTED_SEMANTIC_TAG` | - | The concept *is* subsumed by `<<71388002` but its FSN's semantic tag is not `(procedure)` (FR-99). A warning, not an error - see below. |
+| `LABEL_DESIGNATION_DRIFT` | - | The workbook's `SNOMED CT Fully Specified Name` column value isn't the concept's tag-stripped FSN, but it matches another active designation on the *same* concept - a valid synonym, or an FSN before it changed (FR-97). Informational: the served FSN is what would be seeded, not the stored value. |
+| `LABEL_BOUND_TO_OTHER_CONCEPT` | - | The column value matches no designation of the bound concept, but does match a designation of a *different* code bound elsewhere in the workbook (FR-97). Likely a transcription error pairing the wrong code with the right label, or the reverse - see "Interpreting a designation finding" below. |
+| `LABEL_MATCHES_NO_DESIGNATION` | - | The column value matches no designation on the bound concept, and no other bound concept's designation either (FR-97). The label is wrong, or was never a SNOMED designation at all. |
+| `LABEL_DIFFERS_FROM_PREFERRED_TERM` | - | The current SNOMED CT-AU preferred term differs from the column value, independently of the above (FR-97, FR-82) - informational, and reported even on a row with no other designation finding at all. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -134,8 +140,8 @@ and this one together are the complete classification.
 |---|---|---|---|
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT` | The defect has one deterministic repair. **Not yet applied** - the report itemises it, but nothing is corrected on disk until P0-9's `--emit-dataset` lands. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
-| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
-| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
+| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
 `requires-human-decision` or `data-defect` finding aborts the whole run, no
@@ -166,6 +172,12 @@ catalogue scale at all:
    at most `NPTC_TX_MAX_CONCURRENCY` at a time.
 3. **One** `$expand` of `(codes) MINUS <<71388002` per edition for the whole
    hierarchy check (FR-84).
+4. **One `CodeSystem/$validate-code` per label the first three steps' own
+   designation data couldn't already settle** (FR-97) - bounded by how many
+   published labels matched nothing locally, never by row count. On the PRD's
+   50-row sample this is 1 request, not 50: `report.json`'s `designations`
+   block prints the exact count (`label_confirmations`) so this stays
+   auditable rather than assumed.
 
 There is never one request per code per edition. A 429 is retried honouring
 `Retry-After` with exponential backoff, by the shared client (see the
@@ -203,6 +215,50 @@ that a warning precisely so it cannot abort a seeding run, and it is reported
 once per cell, informationally, alongside the served FSN so the tag can be
 judged in context.
 
+### Interpreting a designation finding (FR-97)
+
+The workbook's `SNOMED CT Fully Specified Name` column, despite its header,
+holds neither FSNs nor preferred terms consistently - it is free text RCPA-QAP
+typed over more than a decade. Each row's value is classified against the
+bound concept's whole designation set:
+
+| Outcome | Finding | Action |
+|---|---|---|
+| Matches the tag-stripped FSN | *(none - seeded silently)* | Nothing to do. |
+| Matches another active designation on the concept | `LABEL_DESIGNATION_DRIFT` | Nothing required; the served FSN is seeded, not the stored value. Review if the drift is unexpected. |
+| Matches a designation of a **different** bound concept | `LABEL_BOUND_TO_OTHER_CONCEPT` | Check both rows: the code or the label transcribed the wrong concept. This is the outcome most worth a careful look, because both halves can look individually correct. |
+| Matches no designation anywhere in the workbook | `LABEL_MATCHES_NO_DESIGNATION` | The label is wrong, or was never a SNOMED designation. Correct it at source. |
+
+**"Matches a designation of a different concept" is workbook-scoped, not
+catalogue-wide.** There is no reverse designation search in the FR-53 client
+contract, so this checks only against concepts *this workbook binds
+somewhere*. A label that happens to belong to some other SNOMED concept
+entirely reads as `LABEL_MATCHES_NO_DESIGNATION`, not
+`LABEL_BOUND_TO_OTHER_CONCEPT` - both block, so this only narrows *why*, never
+*whether*.
+
+**The server probe can only make an outcome more benign, never less.** A
+label matching nothing in the designations the bulk `$expand` already fetched
+gets one `CodeSystem/$validate-code` call; if the server confirms a match,
+the outcome downgrades to `LABEL_DESIGNATION_DRIFT`, but a rejection never
+escalates past whatever the workbook-scoped check above already found. A run
+can never abort *because* of the probe - only because the label already
+didn't match anything before it was asked.
+
+The comparison itself is Unicode NFC plus edge-whitespace stripping, never
+casefolding and never NFKC - two designations differing only in case, or in a
+compatibility-equivalent character (a micro sign vs. a Greek mu, for example),
+are treated as genuinely different, not folded into a false match. A label
+still carrying an interior invisible character after that stripping is
+skipped rather than reconciled - `INVISIBLE_CHARACTER`/
+`INVISIBLE_CHARACTER_AMBIGUOUS` already own that cell.
+
+`LABEL_DIFFERS_FROM_PREFERRED_TERM` is separate from all four outcomes above
+and always informational: it fires whenever the current SNOMED CT-AU
+preferred term differs from the column value, for every row the four-outcome
+check found benign - never for a row already reported as one of the two
+defects, so a single cell is never on both lists at once.
+
 ### Determinism with terminology on (FR-73)
 
 Two runs against the same workbook stay byte-identical only while the server
@@ -221,7 +277,12 @@ contain, but not the guarantees above:
 - **Applying the auto-correctable band's corrections** and emitting the import
   dataset, including the synthetic baseline release - P0-9
   (`--emit-dataset`)
-- Designation reconciliation, and the rest of FR-45's check table (FSN drift,
-  preferred-term drift, inactivation reason and historical association) - P0-6
 - Misspelling and semantic-drift heuristics - P0-7
 - Report content grouped by defect class with cell references - P0-8
+
+FR-45's own check table (FSN drift, preferred-term drift, inactivation reason
+and historical association) is the *steady-state* descendant of this pass,
+not part of it: it belongs to the backend's scheduled P3 validation sweep,
+run against catalogue entries already stored as served (FR-82), where
+"matches nothing" is structurally impossible - see FR-97's own PRD text for
+why that distinction matters.
