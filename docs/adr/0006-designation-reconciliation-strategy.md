@@ -52,8 +52,9 @@ would have run without a probe at all. This is what keeps a server whose `$valid
 display matching is imperfect (language-scoped, say) from turning a benign label into a
 false abort: the probe is a rescue, never an additional way to fail.
 
-**2. `strip_semantic_tag` lives in `nptc_shared.terminology.snomed`, beside `semantic_tag`
-- a second, narrowly scoped call site on FR-83's rule, not a violation of it.**
+**2. `strip_semantic_tag` lives in `nptc_shared.terminology.snomed`, beside
+`semantic_tag`, as a second, narrowly scoped call site on FR-83's rule, not a
+violation of it.**
 
 FR-83's argument for "only in the export renderer" is: exactly one call site, whose input
 is always a served FSN read fresh, so a double strip is structurally impossible. That
