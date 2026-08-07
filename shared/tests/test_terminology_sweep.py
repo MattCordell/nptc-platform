@@ -21,6 +21,7 @@ from nptc_shared.terminology.errors import (
     TerminologyTransportError,
 )
 from nptc_shared.terminology.models import (
+    AU_LANGUAGE_TAG,
     PROCEDURE_ROOT_CODE,
     SNOMED_CT_AU,
     SNOMED_CT_INTERNATIONAL,
@@ -28,10 +29,11 @@ from nptc_shared.terminology.models import (
     ExpandedConcept,
     Expansion,
     Operation,
+    ValidationResult,
 )
 from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
-from nptc_shared.terminology.sweep import SweepResult, TerminologySweep
+from nptc_shared.terminology.sweep import LabelConfirmation, SweepResult, TerminologySweep
 
 # Codes are arbitrary but well-formed (6-18 digits): ecl_set_of refuses
 # anything else, and screening for that is the caller's job (see
@@ -943,3 +945,158 @@ def test_a_429_during_a_sweep_honours_retry_after_and_completes() -> None:
     assert slept == [7.0]
     assert result.active == codes
     assert result.absent == ()
+
+
+# -- FR-97: SweepResult.designations -----------------------------------------
+
+
+@pytest.mark.req("FR-97")
+def test_designations_are_populated_from_the_bulk_expansion_at_no_extra_request_cost() -> None:
+    code = "122192001"
+    concept = StubConcept(
+        code=code,
+        fsn="Acanthamoeba culture (procedure)",
+        preferred_terms={AU_LANGUAGE_TAG: "Acanthamoeba culture"},
+        synonyms=("Acanthamoeba species culture",),
+    )
+    client = _stub(concept)
+
+    result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
+
+    assert len(result.designations) == 1
+    entry = result.designations[0]
+    assert entry.code == code
+    assert entry.fully_specified_name == "Acanthamoeba culture (procedure)"
+    assert entry.display == "Acanthamoeba culture"
+    assert set(entry.values) == {
+        "Acanthamoeba culture (procedure)",
+        "Acanthamoeba culture",
+        "Acanthamoeba species culture",
+    }
+    assert _lookups(client) == ()
+
+
+@pytest.mark.req("FR-97")
+def test_designations_are_sorted_by_code() -> None:
+    codes = _codes(3)
+    client = _stub(*(_procedure(code) for code in reversed(codes)))
+
+    result = TerminologySweep(client).run(codes, edition=SNOMED_CT_AU)
+
+    assert tuple(entry.code for entry in result.designations) == codes
+
+
+@pytest.mark.req("FR-97")
+def test_designations_are_deduplicated_across_overlapping_pages() -> None:
+    """The paging loop tolerates a server that overlaps pages by design (see
+    ``_expand_chunk``'s own docstring) - this proves that tolerance doesn't
+    leak into a doubled designation set for FR-97's reconciliation."""
+    codes = _codes(3)
+    client = _OverlappingPageClient(page_size=2, concepts=[_procedure(code) for code in codes])
+
+    result = TerminologySweep(client, chunk_size=300).run(codes, edition=SNOMED_CT_AU)
+
+    assert tuple(entry.code for entry in result.designations) == codes
+
+
+@pytest.mark.req("FR-97")
+def test_a_concept_out_of_the_hierarchy_still_has_a_designation_entry() -> None:
+    """Unlike ``unexpected_semantic_tags``, FR-97's reconciliation must not
+    exclude a hierarchy violation: a label defect on that cell survives the
+    rebinding that would fix the hierarchy violation, so the two findings
+    describe different remediations of different cells' worth of content."""
+    code = "100000001"
+    client = _stub(_procedure(code, fsn="Fixture substance (substance)", parents=("105590001",)))
+
+    result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
+
+    assert result.hierarchy_violations == (code,)
+    assert tuple(entry.code for entry in result.designations) == (code,)
+
+
+@pytest.mark.req("FR-97")
+def test_unresolved_fsn_count_is_unaffected_by_the_designations_projection() -> None:
+    """Regression guard for folding ``_unexpected_tags`` onto the same
+    ``ConceptDesignations`` projection FR-97 reads: the FR-99 count must not
+    change, and the concept must still appear in ``designations`` with a
+    ``None`` FSN rather than being silently dropped."""
+    code = "100000001"
+    client = _NoFsnDesignationClient(target=code, concepts=[_procedure(code)])
+
+    result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
+
+    assert result.unresolved_fsn_count == 1
+    assert len(result.designations) == 1
+    assert result.designations[0].fully_specified_name is None
+
+
+# -- FR-49: Edition.pinned_to preserves display_language ---------------------
+
+
+@pytest.mark.req("FR-49")
+def test_pinning_an_edition_preserves_its_display_language() -> None:
+    """A silently dropped ``display_language`` on the pinned edition would
+    make FR-49's reproduce-a-historical-run path quietly wrong on exactly the
+    runs where reproducing past behaviour matters most."""
+    pinned = SNOMED_CT_AU.pinned_to("20260531")
+    assert pinned.display_language == SNOMED_CT_AU.display_language
+    assert pinned.display_language == AU_LANGUAGE_TAG
+
+
+# -- FR-97: TerminologySweep.confirm_labels ----------------------------------
+
+
+@pytest.mark.req("FR-97")
+def test_confirm_labels_issues_one_validate_code_per_unique_probe() -> None:
+    code = "122192001"
+    client = _stub(StubConcept(code=code, fsn="Acanthamoeba culture (procedure)"))
+    client.seed_validate_code(
+        code, ValidationResult(code=code, result=True, display="Acanthamoeba culture")
+    )
+
+    confirmations = TerminologySweep(client).confirm_labels(
+        [(code, "Acanthamoeba culture"), (code, "Acanthamoeba culture")], edition=SNOMED_CT_AU
+    )
+
+    validate_code_requests = [
+        r for r in client.requests if r.operation is Operation.CODE_SYSTEM_VALIDATE_CODE
+    ]
+    assert len(validate_code_requests) == 1
+    assert confirmations == (
+        LabelConfirmation(code=code, display="Acanthamoeba culture", matched=True, message=None),
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_confirm_labels_reports_a_server_rejection_with_its_message() -> None:
+    code = "122192001"
+    client = _stub(StubConcept(code=code, fsn="Acanthamoeba culture (procedure)"))
+
+    confirmations = TerminologySweep(client).confirm_labels(
+        [(code, "Acanthamoeba species culture")], edition=SNOMED_CT_AU
+    )
+
+    assert len(confirmations) == 1
+    assert confirmations[0].matched is False
+    assert confirmations[0].message is not None
+
+
+@pytest.mark.req("FR-97")
+def test_confirm_labels_propagates_a_server_failure_rather_than_treating_it_as_absence() -> None:
+    """Unlike ``_lookup``, a probe is only ever issued for a code this sweep
+    just resolved as active - so a failure here is a contradiction with the
+    status pass, not an answer, and must abort the run (FR-54) rather than
+    being folded into a "no match" outcome."""
+    code = "122192001"
+    client = _stub(StubConcept(code=code, fsn="Acanthamoeba culture (procedure)"))
+    client.seed_error(Operation.CODE_SYSTEM_VALIDATE_CODE, _not_found(code), key=code)
+
+    with pytest.raises(TerminologyStatusError):
+        TerminologySweep(client).confirm_labels([(code, "Anything")], edition=SNOMED_CT_AU)
+
+
+@pytest.mark.req("FR-97")
+def test_confirm_labels_of_an_empty_sequence_issues_no_requests() -> None:
+    client = _stub()
+    assert TerminologySweep(client).confirm_labels([], edition=SNOMED_CT_AU) == ()
+    assert client.requests == ()

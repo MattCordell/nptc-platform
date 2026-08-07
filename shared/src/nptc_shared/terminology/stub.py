@@ -197,7 +197,10 @@ class StubTerminologyClient:
         page = codes[offset : offset + count] if count is not None else codes[offset:]
         concepts = tuple(
             _expanded_concept_from_code(
-                code, self._concepts.get(code), include_designations=include_designations
+                code,
+                self._concepts.get(code),
+                include_designations=include_designations,
+                display_language=display_language,
             )
             for code in page
         )
@@ -418,25 +421,62 @@ class StubTerminologyClient:
         return self._descendants_or_self(root, edition=edition, include_self=include_self)
 
 
+def _designations_for(concept: StubConcept) -> tuple[Designation, ...]:
+    """Every designation a real server would serve for ``concept``.
+
+    One function for both ``expand`` and ``lookup``: the two used to compute
+    this independently, ``lookup`` including ``concept.synonyms`` and
+    ``expand`` silently dropping them, which made FR-97's "matches another
+    active designation on the concept" outcome unreachable through a bulk
+    ``$expand`` - only through the (much rarer) delta ``$lookup`` path. A
+    concept's designation set does not depend on which operation asked for
+    it, so neither should this.
+    """
+    return (
+        Designation(
+            value=concept.fsn, language="en", use_system=SNOMED_SYSTEM, use_code=FSN_USE_CODE
+        ),
+        *(
+            Designation(value=term, language=language)
+            for language, term in concept.preferred_terms.items()
+        ),
+        *(Designation(value=synonym, language="en") for synonym in concept.synonyms),
+    )
+
+
+def _display_for(concept: StubConcept, display_language: str | None) -> str:
+    """The preferred term ``display_language`` names, falling back sensibly.
+
+    Shared for the same reason as ``_designations_for``: ``expand`` used to
+    ignore ``display_language`` entirely (always the first preferred term in
+    dict-insertion order, or the FSN), while ``lookup`` honoured it - so an
+    AU-edition ``$expand`` reporting ``display`` for FR-82's preferred-term
+    comparison could silently be some other language's term wearing an AU
+    label. Falls back to ``AU_LANGUAGE_TAG`` when no language is requested at
+    all (matching this stub's long-standing ``lookup`` default), then to any
+    preferred term, then to the FSN.
+    """
+    display = concept.preferred_terms.get(display_language or AU_LANGUAGE_TAG)
+    if display is not None:
+        return display
+    return next(iter(concept.preferred_terms.values()), concept.fsn)
+
+
 def _expanded_concept_from_code(
-    code: str, concept: StubConcept | None, *, include_designations: bool
+    code: str,
+    concept: StubConcept | None,
+    *,
+    include_designations: bool,
+    display_language: str | None,
 ) -> ExpandedConcept:
     if concept is None:
         return ExpandedConcept(code=code, system=SNOMED_SYSTEM)
-    designations: tuple[Designation, ...] = ()
-    if include_designations:
-        designations = (
-            Designation(
-                value=concept.fsn, language="en", use_system=SNOMED_SYSTEM, use_code=FSN_USE_CODE
-            ),
-            *(
-                Designation(value=term, language=language)
-                for language, term in concept.preferred_terms.items()
-            ),
-        )
-    display = next(iter(concept.preferred_terms.values()), concept.fsn)
+    designations = _designations_for(concept) if include_designations else ()
     return ExpandedConcept(
-        code=code, system=SNOMED_SYSTEM, display=display, designations=designations
+        code=code,
+        system=SNOMED_SYSTEM,
+        display=_display_for(concept, display_language),
+        designations=designations,
     )
 
 
@@ -451,16 +491,6 @@ if TYPE_CHECKING:
 def _lookup_result_from_concept(
     concept: StubConcept, *, display_language: str | None, resolved_version: tuple[str, ...]
 ) -> LookupResult:
-    designations = [
-        Designation(
-            value=concept.fsn, language="en", use_system=SNOMED_SYSTEM, use_code=FSN_USE_CODE
-        ),
-        *(
-            Designation(value=term, language=language)
-            for language, term in concept.preferred_terms.items()
-        ),
-        *(Designation(value=synonym, language="en") for synonym in concept.synonyms),
-    ]
     properties = (
         ConceptProperty(
             code="inactive", value="false" if concept.active else "true", value_type="boolean"
@@ -468,15 +498,12 @@ def _lookup_result_from_concept(
         ConceptProperty(code="moduleId", value=concept.module_id, value_type="code"),
         *concept.properties,
     )
-    display = concept.preferred_terms.get(display_language or AU_LANGUAGE_TAG)
-    if display is None:
-        display = next(iter(concept.preferred_terms.values()), concept.fsn)
     return LookupResult(
         code=concept.code,
         system=SNOMED_SYSTEM,
         name="SNOMED CT",
-        display=display,
+        display=_display_for(concept, display_language),
         resolved_version=resolved_version[0] if resolved_version else None,
-        designations=tuple(designations),
+        designations=_designations_for(concept),
         properties=properties,
     )

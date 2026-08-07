@@ -97,3 +97,32 @@ def has_surrounding_whitespace(text: str) -> bool:
     character vs. strip the edge), and both findings are intended.
     """
     return bool(text) and text != text.strip()
+
+
+def normalise_for_comparison(text: str) -> str:
+    """``text`` in Unicode Normalization Form C, with edge whitespace removed.
+
+    FR-82 requires stored designations to compare "byte for byte after Unicode
+    normalisation" against the server, and FR-97's seeding-time reconciliation
+    is the first caller. NFC only, deliberately never NFKC: NFKC is
+    *compatibility* folding, which collapses distinctions the transform must
+    preserve rather than paper over - it maps U+00B5 MICRO SIGN to U+03BC GREEK
+    SMALL LETTER MU and folds ligatures and superscripts, all of which occur in
+    pathology designations. Folding them would make two genuinely different
+    strings compare equal, silently turning a real designation defect into a
+    false "matches" - the one direction with no report at all. NFC only
+    reorders combining marks into one canonical composed/decomposed form; it
+    never changes what a human reading the string would say it means.
+
+    No casefolding either: a case difference between a published label and a
+    served designation is a real editorial difference worth surfacing, not
+    noise to discard.
+
+    ``.strip()`` removes non-breaking spaces along with ordinary whitespace,
+    the same edge case ``has_surrounding_whitespace`` already reports as its
+    own, separately auto-correctable defect - this function exists only for
+    the *comparison*, never for what gets written into a message: a caller
+    quoting a value in a finding must always quote the original, unnormalised
+    text, so an operator sees what is actually in the cell.
+    """
+    return unicodedata.normalize("NFC", text).strip()

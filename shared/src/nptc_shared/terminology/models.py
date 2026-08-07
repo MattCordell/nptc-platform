@@ -66,12 +66,23 @@ class Edition:
     operation, where the server resolves the latest release and reports which
     one it used via ``system_version_uri`` on the response - that reported
     URI is what FR-48 requires be recorded, not this field.
+
+    ``display_language`` is which edition's preferred term a ``display``
+    value on a response actually is (FR-82) - an edition-level fact, since a
+    language reference set belongs to one edition and not another.
+    ``AU_LANGUAGE_TAG`` does not exist in the International edition, so it is
+    set only on ``SNOMED_CT_AU``: sending it on both would leave a caller
+    unable to tell "the server does not recognise this language reference set
+    and silently fell back to some other preferred term" from "this really is
+    the AU preferred term", which FR-97's designation reconciliation and its
+    AU-preferred-term-differs report both depend on getting right.
     """
 
     module_id: str
     label: str
     system: str = SNOMED_SYSTEM
     version: str | None = None
+    display_language: str | None = None
 
     @property
     def system_version_uri(self) -> str:
@@ -82,12 +93,16 @@ class Edition:
     def pinned_to(self, version: str) -> Edition:
         """This edition pinned to ``version`` (FR-49's reproduce-a-historical-run path)."""
         return Edition(
-            module_id=self.module_id, label=self.label, system=self.system, version=version
+            module_id=self.module_id,
+            label=self.label,
+            system=self.system,
+            version=version,
+            display_language=self.display_language,
         )
 
 
 #: The two editions FR-47's dual-edition validation diffs against.
-SNOMED_CT_AU = Edition(module_id="32506021000036107", label="au")
+SNOMED_CT_AU = Edition(module_id="32506021000036107", label="au", display_language=AU_LANGUAGE_TAG)
 SNOMED_CT_INTERNATIONAL = Edition(module_id="900000000000207008", label="int")
 
 

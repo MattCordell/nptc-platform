@@ -1,10 +1,11 @@
-"""The FR-52 batch validation sweep and the FR-84 hierarchy check.
+"""The FR-52 batch validation sweep, the FR-84 hierarchy check, and FR-97's
+designation reconciliation probe.
 
 Written once here, not in the transform, because FR-74 forbids a second
 validation implementation for the migration path: the P0 seeding transform
-(``nptc_transform.terminology_check``) and the backend's scheduled validation
-sweep both drive this module, over the same ``TerminologyClient`` contract
-(FR-53, ADR-0003).
+(``nptc_transform.terminology_check``, ``nptc_transform.designation_check``)
+and the backend's scheduled validation sweep both drive this module, over the
+same ``TerminologyClient`` contract (FR-53, ADR-0003).
 
 **This module's whole subject is request count.** FR-52 exists because one
 ``$validate-code`` per code per edition is 40,000 sequential requests at the
@@ -34,6 +35,11 @@ to judgement:
    20,000-code planning ceiling a single disjunction is itself too large to
    send (measured: ~340KB of percent-encoded ECL). Anything a chunk's
    expansion returns is a code that exists and is not a procedure.
+5. **``confirm_labels`` (FR-97) never issues one ``$validate-code`` per row.**
+   Its caller (``designation_check.py``) classifies published labels against
+   ``SweepResult.designations`` - itself already fetched for free by pass 1 -
+   and calls this only for the labels that check could not settle locally.
+   Bounded concurrency and batched submission, reusing pass 2's discipline.
 
 Retry, ``Retry-After`` and exponential backoff live one layer down, in
 ``OntoserverClient`` - not repeated here, so a sweep against the stub and a
@@ -71,7 +77,9 @@ from nptc_shared.terminology.snomed import ecl_set_of, semantic_tag
 
 __all__ = [
     "PROCEDURE_SEMANTIC_TAG",
+    "ConceptDesignations",
     "ConceptTag",
+    "LabelConfirmation",
     "SweepResult",
     "TerminologySweep",
 ]
@@ -125,6 +133,55 @@ class ConceptTag:
 
 
 @dataclass(frozen=True, slots=True)
+class ConceptDesignations:
+    """One active concept's designation set, as resolved by the status pass.
+
+    The raw material for FR-97's seeding-time designation reconciliation
+    (issue #28): rather than hand the caller the ``ExpandedConcept`` objects
+    the bulk ``$expand`` returned, this is a de-duplicated, sorted projection
+    of them - the expansion's own paging loop (``_expand_chunk``) tolerates a
+    server that returns overlapping pages, so the raw concepts are neither
+    de-duplicated nor sorted, and handing them out as-is would give a caller
+    a second, independent opportunity to disagree with ``_unexpected_tags``
+    about which of two duplicated pages won.
+    """
+
+    code: str
+    #: The served FSN, semantic tag intact (FR-82). ``None`` when the
+    #: expansion returned no identifiable FSN designation - the same case
+    #: ``SweepResult.unresolved_fsn_count`` counts.
+    fully_specified_name: str | None
+    #: The concept's ``display`` under this edition's ``display_language``
+    #: (FR-82) - the AU preferred term for the AU edition. ``None`` if the
+    #: server reported none.
+    display: str | None
+    #: Every designation value the expansion returned for this concept,
+    #: de-duplicated and sorted. Verbatim (FR-82): never stripped, never
+    #: normalised - a caller comparing against these applies its own
+    #: normalisation (see ``nptc_shared.text.normalise_for_comparison``).
+    values: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LabelConfirmation:
+    """One ``CodeSystem/$validate-code`` probe's answer (FR-97).
+
+    Reserved for the one case FR-97's designation reconciliation cannot
+    settle locally: a published label that matches nothing in the
+    designations a bulk ``$expand`` returned. ``client.py``'s own
+    ``validate_code`` docstring calls this "the delta ... where the delta is
+    the workload" - the same discipline this module has enforced since
+    FR-52's batch sweep: never one such call per row of a large catalogue,
+    only for the rows a cheaper pass could not already resolve.
+    """
+
+    code: str
+    display: str
+    matched: bool
+    message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SweepResult:
     """Everything one edition's sweep resolved.
 
@@ -153,14 +210,20 @@ class SweepResult:
     #: rather than discarded so the caller that needs it (issue #28, the
     #: backend's findings) does not have to look the same codes up again.
     lookups: tuple[LookupResult, ...] = ()
+    #: Every active concept's designation set, sorted by code - see
+    #: ``ConceptDesignations``. The zero-extra-request material for FR-97's
+    #: seeding-time reconciliation (issue #28): ``_resolve_status`` already
+    #: fetches this with ``includeDesignations`` for FR-99's own semantic-tag
+    #: check, so retaining it costs nothing further.
+    designations: tuple[ConceptDesignations, ...] = ()
     #: Every fully qualified version URI the server reported it resolved
     #: against, from any request in the sweep (FR-48). Normally one.
     resolved_versions: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _chunks(codes: Sequence[str], size: int) -> Iterable[Sequence[str]]:
-    for start in range(0, len(codes), size):
-        yield codes[start : start + size]
+def _chunks[T](items: Sequence[T], size: int) -> Iterable[Sequence[T]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _is_absence(exc: TerminologyError) -> bool:
@@ -276,7 +339,8 @@ class TerminologySweep:
         resolved_codes = tuple(sorted(active | set(inactive)))
         violations = self._check_hierarchy(resolved_codes, edition=edition, versions=versions)
         violating = set(violations)
-        unexpected_tags, unresolved_fsn_count = _unexpected_tags(concepts, exclude=violating)
+        designations = _project_designations(concepts)
+        unexpected_tags, unresolved_fsn_count = _unexpected_tags(designations, exclude=violating)
 
         return SweepResult(
             edition_label=edition.label,
@@ -292,7 +356,63 @@ class TerminologySweep:
                     key=lambda result: result.code,
                 )
             ),
+            designations=designations,
             resolved_versions=tuple(sorted(versions)),
+        )
+
+    # -- FR-97 -----------------------------------------------------------
+
+    def confirm_labels(
+        self, probes: Sequence[tuple[str, str]], *, edition: Edition
+    ) -> tuple[LabelConfirmation, ...]:
+        """One ``CodeSystem/$validate-code`` per unique ``(code, display)`` pair.
+
+        Reserved for FR-97's designation reconciliation, and only for the
+        rows a local check against ``SweepResult.designations`` could not
+        already settle - see ``client.py``'s own ``validate_code`` docstring.
+        ``probes`` is de-duplicated and sorted first, the same discipline as
+        ``run()`` and for the same reason: two rows citing the same code and
+        label cost one call, not two, and the request sequence depends on the
+        *set* of probes rather than row order (FR-73). Batched at
+        ``max_concurrency`` using the same submit-a-batch-then-wait discipline
+        as ``_resolve_delta``, reused rather than re-implemented, so a failure
+        in one batch stops the next from ever being queued.
+
+        Unlike ``_lookup``, this does **not** treat a "not found" answer as
+        data: every ``TerminologyError`` propagates, aborting the sweep. A
+        probe is only ever issued for a code this same sweep just resolved as
+        active in ``edition``, so a 404 here is a contradiction with the
+        status pass, not an answer to a question this call asked - and an
+        unreachable server must never be recorded as a catalogue of
+        designation defects (FR-54).
+        """
+        unique = tuple(sorted(set(probes)))
+        if not unique:
+            return ()
+        if self._max_concurrency == 1 or len(unique) == 1:
+            results = [self._confirm(code, display, edition=edition) for code, display in unique]
+        else:
+            results = []
+            with ThreadPoolExecutor(
+                max_workers=self._max_concurrency, thread_name_prefix="nptc-tx-sweep"
+            ) as pool:
+                for batch in _chunks(unique, self._max_concurrency):
+                    futures = [
+                        pool.submit(self._confirm, code, display, edition=edition)
+                        for code, display in batch
+                    ]
+                    # `.result()` re-raises here, inside the `with` and before
+                    # the next batch is ever submitted - see `_resolve_delta`.
+                    for future in futures:
+                        results.append(future.result())
+        return tuple(
+            sorted(results, key=lambda confirmation: (confirmation.code, confirmation.display))
+        )
+
+    def _confirm(self, code: str, display: str, *, edition: Edition) -> LabelConfirmation:
+        result = self._client.validate_code(code, edition=edition, display=display)
+        return LabelConfirmation(
+            code=code, display=display, matched=result.result, message=result.message
         )
 
     # -- pass 1: bulk status -------------------------------------------------
@@ -329,6 +449,7 @@ class TerminologySweep:
                 count=len(chunk),
                 offset=offset,
                 include_designations=True,
+                display_language=edition.display_language,
                 active_only=True,
             )
             versions.update(expansion.resolved_versions)
@@ -459,38 +580,21 @@ class TerminologySweep:
         return tuple(violations)
 
 
-def _unexpected_tags(
-    concepts: Iterable[ExpandedConcept], *, exclude: set[str]
-) -> tuple[tuple[ConceptTag, ...], int]:
-    """FR-99: a concept under ``<<71388002`` whose tag is not ``(procedure)``.
+def _project_designations(concepts: Iterable[ExpandedConcept]) -> tuple[ConceptDesignations, ...]:
+    """Reduces the bulk expansion's raw, possibly-duplicated concepts to one
+    de-duplicated, sorted ``ConceptDesignations`` per code.
 
-    Read off the FSN designation the bulk expansion already returned - no
-    extra request per code, which is what makes a per-concept check
-    affordable at catalogue scale (FR-52).
-
-    Two exclusions, both deliberate. A concept already reported as an FR-84
-    violation is skipped: it is out of the procedure hierarchy altogether, so
-    its tag is a symptom of an error already raised and repeating it as a
-    warning is noise. A concept whose FSN the server did not return is also
-    skipped - "no tag observed" is not evidence of a wrong tag, and inventing
-    a warning from missing data is worse than staying silent (FR-54) - but
-    counted in the returned ``unresolved_fsn_count``, since *every* concept
-    hitting this case (a server that doesn't honour ``includeDesignations``,
-    or tags ``use`` non-standardly) would otherwise make the whole check pass
-    silently and permanently, with nothing to show it never ran.
-
-    De-duplicates by code as it goes: ``_expand_chunk``'s paging loop
-    deliberately tolerates a server that ignores ``offset`` or overlaps pages
-    (see its own docstring), and without this a duplicated page would double
-    both a ``ConceptTag`` and the unresolved count.
+    ``_expand_chunk``'s paging loop deliberately tolerates a server that
+    ignores ``offset`` or overlaps pages (see its own docstring); without
+    this, a duplicated page would double a concept's designation values, and
+    two independent readers of the raw list (FR-97's reconciliation and
+    FR-99's tag check) could disagree about which of two duplicate pages won.
+    First occurrence wins, consistently for every field.
     """
-    tagged: dict[str, ConceptTag] = {}
-    seen: set[str] = set()
-    unresolved = 0
+    projected: dict[str, ConceptDesignations] = {}
     for concept in concepts:
-        if concept.code in exclude or concept.code in seen:
+        if concept.code in projected:
             continue
-        seen.add(concept.code)
         fsn = next(
             (
                 designation.value
@@ -499,10 +603,47 @@ def _unexpected_tags(
             ),
             None,
         )
-        if fsn is None:
+        values = tuple(sorted({designation.value for designation in concept.designations}))
+        projected[concept.code] = ConceptDesignations(
+            code=concept.code,
+            fully_specified_name=fsn,
+            display=concept.display,
+            values=values,
+        )
+    return tuple(sorted(projected.values(), key=lambda entry: entry.code))
+
+
+def _unexpected_tags(
+    designations: Iterable[ConceptDesignations], *, exclude: set[str]
+) -> tuple[tuple[ConceptTag, ...], int]:
+    """FR-99: a concept under ``<<71388002`` whose tag is not ``(procedure)``.
+
+    Read off the FSN the status pass already resolved - no extra request per
+    code, which is what makes a per-concept check affordable at catalogue
+    scale (FR-52).
+
+    Two exclusions, both deliberate. A concept already reported as an FR-84
+    violation is skipped: it is out of the procedure hierarchy altogether, so
+    its tag is a symptom of an error already raised and repeating it as a
+    warning is noise. A concept with no identifiable FSN is also skipped -
+    "no tag observed" is not evidence of a wrong tag, and inventing a warning
+    from missing data is worse than staying silent (FR-54) - but counted in
+    the returned ``unresolved_fsn_count``, since *every* concept hitting this
+    case (a server that doesn't honour ``includeDesignations``, or tags
+    ``use`` non-standardly) would otherwise make the whole check pass
+    silently and permanently, with nothing to show it never ran.
+    """
+    tagged: dict[str, ConceptTag] = {}
+    unresolved = 0
+    for entry in designations:
+        if entry.code in exclude:
+            continue
+        if entry.fully_specified_name is None:
             unresolved += 1
             continue
-        tag = semantic_tag(fsn)
+        tag = semantic_tag(entry.fully_specified_name)
         if tag is not None and tag != PROCEDURE_SEMANTIC_TAG:
-            tagged[concept.code] = ConceptTag(code=concept.code, fully_specified_name=fsn, tag=tag)
+            tagged[entry.code] = ConceptTag(
+                code=entry.code, fully_specified_name=entry.fully_specified_name, tag=tag
+            )
     return tuple(sorted(tagged.values(), key=lambda entry: entry.code)), unresolved

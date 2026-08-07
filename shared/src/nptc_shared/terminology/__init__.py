@@ -53,11 +53,18 @@ from nptc_shared.terminology.models import (
     ValidationResult,
 )
 from nptc_shared.terminology.ontoserver import OntoserverClient
-from nptc_shared.terminology.snomed import ecl_set_of, implicit_value_set_url, semantic_tag
+from nptc_shared.terminology.snomed import (
+    ecl_set_of,
+    implicit_value_set_url,
+    semantic_tag,
+    strip_semantic_tag,
+)
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_shared.terminology.sweep import (
     PROCEDURE_SEMANTIC_TAG,
+    ConceptDesignations,
     ConceptTag,
+    LabelConfirmation,
     SweepResult,
     TerminologySweep,
 )
@@ -73,12 +80,14 @@ __all__ = [
     "SNOMED_CT_AU",
     "SNOMED_CT_INTERNATIONAL",
     "SNOMED_SYSTEM",
+    "ConceptDesignations",
     "ConceptProperty",
     "ConceptTag",
     "Designation",
     "Edition",
     "ExpandedConcept",
     "Expansion",
+    "LabelConfirmation",
     "LookupResult",
     "OntoserverClient",
     "Operation",
@@ -102,4 +111,5 @@ __all__ = [
     "ecl_set_of",
     "implicit_value_set_url",
     "semantic_tag",
+    "strip_semantic_tag",
 ]
