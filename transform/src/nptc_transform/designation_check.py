@@ -441,7 +441,7 @@ def check_designations(
             is _LocalVerdict.NO_LOCAL_MATCH
         ):
             edition_label, _entry = _preferred_entry(candidate.entries)
-            probes_by_edition[edition_label].append((candidate.code, candidate.label.strip()))
+            probes_by_edition[edition_label].append((candidate.code, candidate.normalised_label))
 
     confirmations: dict[tuple[str, str], LabelConfirmation] = {}
     label_confirmations = 0
@@ -458,7 +458,7 @@ def check_designations(
 
     findings: list[Finding] = []
     for candidate in candidates:
-        confirmation = confirmations.get((candidate.code, candidate.label.strip()))
+        confirmation = confirmations.get((candidate.code, candidate.normalised_label))
         finding, benign = _axis_one(candidate, confirmation, value_index)
         if finding is not None:
             findings.append(finding)

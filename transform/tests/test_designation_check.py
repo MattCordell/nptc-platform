@@ -355,6 +355,37 @@ def test_a_validate_code_confirmation_downgrades_to_informational(
 
 
 @pytest.mark.req("FR-97")
+def test_an_interior_non_breaking_space_does_not_change_the_probe_verdict(
+    tmp_path: Path, client: StubTerminologyClient
+) -> None:
+    """Regression: the probe used to send the raw label while the local
+    check ran on the normalised one, so an interior non-breaking space
+    survived onto the wire and the server's exact-string comparison
+    correctly rejected a label the local check would have confirmed if
+    asked with the same normalisation - flipping an otherwise-benign row to
+    a blocking defect purely because of an auto-correctable whitespace
+    difference. The probe must be asked about the same string the local
+    check judged."""
+    client.seed_validate_code(
+        DOWNGRADE_CODE,
+        ValidationResult(code=DOWNGRADE_CODE, result=True, display="Server only synonym"),
+        display="Server only synonym",
+    )
+    workbook = _workbook(tmp_path, [(DOWNGRADE_CODE, f"Server{NBSP}only synonym")])
+    outcome = _outcome(workbook, client)
+
+    findings = _findings_for(outcome, DOWNGRADE_CODE)
+    drift_findings = [f for f in findings if f.code == FindingCode.LABEL_DESIGNATION_DRIFT]
+    assert len(drift_findings) == 1
+    assert not [
+        f
+        for f in findings
+        if f.code
+        in (FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT, FindingCode.LABEL_MATCHES_NO_DESIGNATION)
+    ]
+
+
+@pytest.mark.req("FR-97")
 def test_a_terminology_failure_during_the_delta_probe_fails_the_run(
     tmp_path: Path, client: StubTerminologyClient
 ) -> None:
