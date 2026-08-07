@@ -1,11 +1,12 @@
 """Orchestrates a single transform run.
 
 This is the seam every later P0 issue plugs into: the workbook reader (P0-2),
-cell-level defect detection and band classification (P0-3, FR-71) and batch
+cell-level defect detection and band classification (P0-3, FR-71), batch
 terminology validation (P0-5, over the ``nptc_shared.terminology`` client and
-sweep landed with P0-4/P0-5) now produce and classify ``Finding`` values here;
-designation reconciliation (P0-6) and the misspelling/semantic-drift
-heuristics (P0-7) still plug in later.
+sweep landed with P0-4/P0-5) and designation reconciliation (P0-6, FR-97,
+over the same sweep's results - see ``designation_check.py``) now produce and
+classify ``Finding`` values here; the misspelling/semantic-drift heuristics
+(P0-7) still plug in later.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from nptc_shared.terminology.models import Edition
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.bands import Band, blocks_import
 from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.terminology_check import (
     DEFAULT_EDITIONS,
@@ -61,6 +63,9 @@ class RunResult:
     #: sweep that found nothing, and is why this is not simply an empty
     #: record. The report says which of the two happened (FR-48).
     terminology: TerminologyRun | None = None
+    #: ``None`` under the same condition as ``terminology`` - designation
+    #: reconciliation (FR-97) rides on the same sweep and never runs without it.
+    designations: DesignationRun | None = None
 
     def __post_init__(self) -> None:
         sorted_findings = tuple(sorted(self.findings, key=Finding.sort_key))
@@ -133,11 +138,19 @@ def run_transform_sheets(
     if sweep is None:
         return RunResult(source=source, mode=mode, findings=findings)
     outcome = check_terminology(sheets, sweep=sweep, editions=editions)
+    designations = check_designations(
+        sheets,
+        sweep=sweep,
+        bindings=outcome.bindings,
+        results=outcome.results,
+        editions=editions,
+    )
     return RunResult(
         source=source,
         mode=mode,
-        findings=(*findings, *outcome.findings),
+        findings=(*findings, *outcome.findings, *designations.findings),
         terminology=outcome.run,
+        designations=designations.run,
     )
 
 

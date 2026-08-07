@@ -28,7 +28,7 @@ from nptc_transform import __version__
 from nptc_transform.bands import Band
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
@@ -61,6 +61,27 @@ def _terminology_payload(result: RunResult) -> object:
     }
 
 
+def _designations_payload(result: RunResult) -> object:
+    """FR-97's provenance block, or ``null`` if reconciliation never ran.
+
+    ``label_confirmations`` is not decoration: it is the only per-row request
+    this tool ever issues (``client.py``'s own ``validate_code`` docstring
+    reserves it for exactly this pass), and printing the count is what makes
+    "the delta is the workload" auditable rather than merely asserted. A run
+    where it approaches ``labels_reconciled`` is a run where something is
+    wrong with the server's designation serving, and nothing else here would
+    show it.
+    """
+    run = result.designations
+    if run is None:
+        return None
+    return {
+        "labels_reconciled": run.labels_reconciled,
+        "labels_not_reconciled": run.labels_not_reconciled,
+        "label_confirmations": run.label_confirmations,
+    }
+
+
 def _report_payload(result: RunResult) -> dict[str, object]:
     band_counts = result.band_counts
     return {
@@ -75,6 +96,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "blocking": result.has_blocking_findings,
         "band_counts": {str(band): band_counts[band] for band in Band},
         "terminology": _terminology_payload(result),
+        "designations": _designations_payload(result),
         "findings": [
             {
                 "code": finding.code,
@@ -150,6 +172,25 @@ def _render_terminology(result: RunResult) -> list[str]:
     return lines
 
 
+def _render_designations(result: RunResult) -> list[str]:
+    """The human-readable half of FR-97's provenance block.
+
+    Says "not run" explicitly, for the same reason ``_render_terminology``
+    does: a reader must not have to infer it from the absence of a
+    ``LABEL_*`` finding, which a clean workbook produces just as often as a
+    reconciliation pass that never ran at all.
+    """
+    run = result.designations
+    if run is None:
+        return ["- Designation reconciliation: `not run`", ""]
+    return [
+        f"- Designation reconciliation: {run.labels_reconciled} label(s) reconciled, "
+        f"{run.labels_not_reconciled} not reconciled, {run.label_confirmations} "
+        "confirmed against the server (FR-97)",
+        "",
+    ]
+
+
 def _render_markdown(result: RunResult) -> str:
     band_counts = result.band_counts
     lines = [
@@ -166,6 +207,7 @@ def _render_markdown(result: RunResult) -> str:
     lines.extend(f"| {band} | {band_counts[band]} |" for band in Band)
     lines.append("")
     lines.extend(_render_terminology(result))
+    lines.extend(_render_designations(result))
     if result.findings:
         lines.append("| Location | Code | Band | Message |")
         lines.append("|---|---|---|---|")

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from nptc_transform.designation_check import DesignationRun
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
-from nptc_transform.report_writer import write_report
+from nptc_transform.report_writer import SCHEMA_VERSION, write_report
 from nptc_transform.terminology_check import EditionResolution, TerminologyRun
 
 
@@ -110,6 +111,51 @@ def test_a_run_with_no_terminology_pass_says_so_rather_than_omitting_it(tmp_path
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["terminology"] is None
     assert "Terminology validation: `not run`" in (report_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_a_designation_run_records_its_provenance_counters(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        designations=DesignationRun(
+            labels_reconciled=48, labels_not_reconciled=2, label_confirmations=1
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == SCHEMA_VERSION
+    assert payload["designations"] == {
+        "labels_reconciled": 48,
+        "labels_not_reconciled": 2,
+        "label_confirmations": 1,
+    }
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "48 label(s) reconciled, 2 not reconciled, 1 confirmed against the server" in (
+        markdown_text
+    )
+
+
+@pytest.mark.req("FR-97")
+def test_a_run_with_no_designation_pass_says_so_rather_than_omitting_it(tmp_path: Path) -> None:
+    """ "Not run" and "run, nothing found" are different facts here too - a
+    clean workbook produces zero ``LABEL_*`` findings just as often as a
+    reconciliation pass that never ran."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64), mode=Mode.REPORT_ONLY
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["designations"] is None
+    assert "Designation reconciliation: `not run`" in (report_dir / "report.md").read_text(
         encoding="utf-8"
     )
 
