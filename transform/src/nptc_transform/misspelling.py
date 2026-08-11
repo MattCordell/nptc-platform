@@ -428,6 +428,16 @@ def _heuristic_two_candidates(
     the corpus. Without this, the scan is ``len(rare) * len(common)`` calls
     into ``near_match_distance`` before any DP even runs, which is the pass's
     measured cost centre on a multi-thousand-row workbook.
+
+    This is a constant-factor cut, not an asymptotic one: it shrinks each
+    rare key's candidate set to those sharing a length bucket, but a corpus
+    whose comparable tokens cluster into only a handful of distinct lengths
+    (an adversarial or synthetic worst case - real clinical vocabulary spans
+    a much wider length range) still degrades toward the unbucketed
+    ``len(rare) * len(common)`` shape. Closing that residual case properly
+    would mean an actual index (e.g. a SymSpell-style deletion-neighbourhood
+    lookup) rather than bucketing - out of scope here unless real catalogue
+    measurements show this heuristic, not length-bucketing, is insufficient.
     """
     keys = sorted(row_counts)
     keys_by_length: dict[int, list[str]] = defaultdict(list)
