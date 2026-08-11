@@ -507,8 +507,8 @@
   priority: SHOULD
   phase: p0
   title: "The transform SHOULD detect probable misspellings in designations"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "nptc-transform's PROBABLE_MISSPELLING/INCONSISTENT_SPELLING heuristics (intra-entry near-match, cross-entry corpus frequency, and a served-designation authority whitelist standing in for the PRD's domain word list) land with P0-7/#29, over nptc_shared.similarity (#29, ADR-0007). The PRD's own second half - the same check available on save in the application (FR-36) - is deferred to a follow-up PR against the backend."
 - id: "FR-80"
   priority: MUST
   phase: p2

@@ -8,11 +8,46 @@ import subprocess
 import sys
 from pathlib import Path
 
+import openpyxl
 import pytest
+from openpyxl.worksheet.worksheet import Worksheet
 
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 
 ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+_MISSPELLING_HEADERS = [
+    "RCPA Preferred term",
+    "RCPA Synonyms",
+    "Usage guidance",
+    "Length",
+    "Discipline",
+    "Subgroup",
+    "Specimen",
+    "Terminology binding (SNOMED CT-AU)",
+    "SNOMED CT Fully Specified Name",
+    "Version",
+    "History",
+]
+
+
+def _misspelling_workbook(tmp_path: Path) -> Path:
+    """A small fixture exercising both FR-79 heuristics (issue #29, P0-7):
+    an intra-entry near-match (``antental``/``Antenatal``) and a
+    cross-entry corpus-frequency pair (``Bilirubon``/``Bilirubin``) - see
+    ``test_misspelling.py`` for the same construction, in isolation."""
+    path = tmp_path / "misspelling_determinism.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet: Worksheet = workbook.active  # type: ignore[assignment]
+    sheet.title = "Requesting"
+    sheet.append(_MISSPELLING_HEADERS)
+    sheet.append(["Antenatal screen", "antental"])
+    sheet.append(["Bilirubon"])
+    sheet.append(["Bilirubin"])
+    sheet.append(["Bilirubin panel"])
+    sheet.append(["Bilirubin ratio"])
+    workbook.save(path)
+    return path
 
 
 def _run_cli(
@@ -112,6 +147,40 @@ def test_banded_output_is_independent_of_pythonhashseed(
 
     for name in ("report.json", "report.md"):
         assert (out1 / name).read_bytes() == (out2 / name).read_bytes()
+
+
+@pytest.mark.req("FR-73")
+@pytest.mark.req("FR-79")
+def test_misspelling_findings_are_independent_of_pythonhashseed(tmp_path: Path) -> None:
+    """The determinism guarantee must hold for the FR-79 heuristics too - the
+    corpus-wide row-count and tie-break logic (``misspelling.py``) build
+    ordinary ``dict``/``set`` structures internally, so this proves that
+    internal iteration order never leaks into the report."""
+    workbook = _misspelling_workbook(tmp_path)
+    out1 = tmp_path / "seed1"
+    out2 = tmp_path / "seed2"
+
+    _run_cli(
+        "run",
+        "--workbook",
+        str(workbook),
+        "--report-dir",
+        str(out1),
+        env={**os.environ, "PYTHONHASHSEED": "1"},
+    )
+    _run_cli(
+        "run",
+        "--workbook",
+        str(workbook),
+        "--report-dir",
+        str(out2),
+        env={**os.environ, "PYTHONHASHSEED": "2"},
+    )
+
+    for name in ("report.json", "report.md"):
+        assert (out1 / name).read_bytes() == (out2 / name).read_bytes()
+    assert "PROBABLE_MISSPELLING" in (out1 / "report.json").read_text(encoding="utf-8")
+    assert "INCONSISTENT_SPELLING" in (out1 / "report.json").read_text(encoding="utf-8")
 
 
 def test_run_result_sorts_findings_into_canonical_order() -> None:

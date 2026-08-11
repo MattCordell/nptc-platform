@@ -52,3 +52,4 @@ If it's unclear which of the two a change is, it's a reversal: supersede.
 | [0004](0004-informational-band-and-code-level-band-assignment.md) | A fourth, non-blocking `INFORMATIONAL` band; band assigned from the finding code, never from content |
 | [0005](0005-sweep-chunk-size-and-concurrency-defaults.md) | Batch sweep defaults — chunk size 300, delta concurrency 4, first pass sequential |
 | [0006](0006-designation-reconciliation-strategy.md) | Designation reconciliation strategy — local-first classification, a monotone server probe, and a workbook-scoped index for the "wrong concept" outcome |
+| [0007](0007-misspelling-detection-heuristics.md) | Misspelling detection heuristics — banded Levenshtein in `shared/`, no new dependency, thresholds as constants |

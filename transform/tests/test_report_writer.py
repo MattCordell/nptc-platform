@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nptc_transform.designation_check import DesignationRun
+from nptc_transform.misspelling import THRESHOLDS, AuthoritySource, MisspellingRun
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 from nptc_transform.report_writer import SCHEMA_VERSION, write_report
 from nptc_transform.terminology_check import EditionResolution, TerminologyRun
@@ -156,6 +157,70 @@ def test_a_run_with_no_designation_pass_says_so_rather_than_omitting_it(tmp_path
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["designations"] is None
     assert "Designation reconciliation: `not run`" in (report_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.req("FR-79")
+def test_a_misspelling_run_records_its_thresholds_verbatim(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        misspellings=MisspellingRun(
+            cells_scanned=10,
+            tokens_considered=20,
+            probable_misspelling_count=1,
+            inconsistent_spelling_count=2,
+            authority_source=AuthoritySource.SWEEP,
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == SCHEMA_VERSION == 5
+    assert payload["misspellings"]["thresholds"] == THRESHOLDS
+    assert payload["misspellings"]["authority_source"] == "SWEEP"
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "1 probable misspelling(s), 2 inconsistent spelling(s)" in markdown_text
+    assert "authority whitelist is empty" not in markdown_text
+
+
+@pytest.mark.req("FR-79")
+def test_a_workbook_only_misspelling_run_states_the_precision_caveat_explicitly(
+    tmp_path: Path,
+) -> None:
+    """A sweep-backed run and a workbook-only run must not read the same in
+    the report - the reliability difference is exactly what a reader needs
+    to know before acting on a finding."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        misspellings=MisspellingRun(authority_source=AuthoritySource.WORKBOOK_ONLY),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["misspellings"]["authority_source"] == "WORKBOOK_ONLY"
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "authority whitelist is empty" in markdown_text
+
+
+@pytest.mark.req("FR-79")
+def test_a_run_with_no_misspelling_pass_says_so_rather_than_omitting_it(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64), mode=Mode.REPORT_ONLY
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["misspellings"] is None
+    assert "Misspelling detection: `not run`" in (report_dir / "report.md").read_text(
         encoding="utf-8"
     )
 
