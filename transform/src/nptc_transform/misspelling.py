@@ -208,19 +208,31 @@ def _reference_extras(
 
 def _corpus_index(entries: Sequence[_Entry]) -> tuple[dict[str, int], dict[str, str]]:
     """Corpus-wide, per ``token_key``: the number of *entries* carrying it at
-    least once, and the lexicographically smallest surface form observed for
-    it (for deterministic display, FR-73) - never occurrence/cell counts.
+    least once, and the surface form seen in the most entries (ties broken
+    lexicographically, for deterministic display, FR-73) - never
+    occurrence/cell counts.
+
+    The representative surface must be the common one, not merely the
+    alphabetically-first one: a message citing "the far more common"
+    spelling has to actually be the more common spelling, not whichever
+    variant happens to sort first (e.g. a single-entry ``ANTENATAL`` sorting
+    before a 200-entry ``Antenatal``).
     """
     row_counts: dict[str, int] = defaultdict(int)
-    surface_by_key: dict[str, str] = {}
+    surface_counts: dict[str, dict[str, int]] = defaultdict(dict)
     for entry in entries:
-        seen: set[str] = set()
+        surfaces_by_key: dict[str, set[str]] = defaultdict(set)
         for _cell, surface, key in _entry_tokens(entry):
-            seen.add(key)
-            if key not in surface_by_key or surface < surface_by_key[key]:
-                surface_by_key[key] = surface
-        for key in seen:
+            surfaces_by_key[key].add(surface)
+        for key, surfaces in surfaces_by_key.items():
             row_counts[key] += 1
+            counts = surface_counts[key]
+            for surface in surfaces:
+                counts[surface] = counts.get(surface, 0) + 1
+    surface_by_key = {
+        key: min(counts, key=lambda surface: (-counts[surface], surface))
+        for key, counts in surface_counts.items()
+    }
     return dict(row_counts), surface_by_key
 
 
@@ -252,15 +264,24 @@ def _can_be_suspect(surface: str, cell: Cell | None) -> bool:
     return cell is not None and surface != surface.upper()
 
 
+@dataclass(frozen=True)
+class _Side:
+    """One side of a near-match pair under consideration by ``_decide_suspect``.
+
+    A `(surface, key, role, cell)` quartet, named once: the two-sided
+    signature this replaces passed it twice per call, positionally, which is
+    an arg-order transposition hazard for no benefit.
+    """
+
+    surface: str
+    key: str
+    role: ColumnRole | None
+    cell: Cell | None
+
+
 def _decide_suspect(
-    a_surface: str,
-    a_key: str,
-    a_role: ColumnRole | None,
-    a_cell: Cell | None,
-    b_surface: str,
-    b_key: str,
-    b_role: ColumnRole | None,
-    b_cell: Cell | None,
+    a: _Side,
+    b: _Side,
     authority: frozenset[str],
     row_counts: Mapping[str, int],
 ) -> tuple[str, str, Cell, str, str] | None:
@@ -278,30 +299,30 @@ def _decide_suspect(
     (``_can_be_suspect``), in which case the pairing contributes nothing
     rather than being redirected onto the other side without evidence.
     """
-    a_in_authority = a_key in authority
-    b_in_authority = b_key in authority
+    a_in_authority = a.key in authority
+    b_in_authority = b.key in authority
     if a_in_authority != b_in_authority:
         a_is_suspect = not a_in_authority
     else:
-        count_a, count_b = row_counts.get(a_key, 0), row_counts.get(b_key, 0)
+        count_a, count_b = row_counts.get(a.key, 0), row_counts.get(b.key, 0)
         if count_a != count_b:
             a_is_suspect = count_a < count_b
         else:
-            roles = {a_role, b_role}
-            if a_role != b_role and roles == {ColumnRole.PREFERRED_TERM, ColumnRole.SYNONYMS}:
-                a_is_suspect = a_role is ColumnRole.SYNONYMS
+            roles = {a.role, b.role}
+            if a.role != b.role and roles == {ColumnRole.PREFERRED_TERM, ColumnRole.SYNONYMS}:
+                a_is_suspect = a.role is ColumnRole.SYNONYMS
             else:
                 return None
 
     if a_is_suspect:
-        if not _can_be_suspect(a_surface, a_cell):
+        if not _can_be_suspect(a.surface, a.cell):
             return None
-        assert a_cell is not None
-        return (a_surface, a_key, a_cell, b_surface, b_key)
-    if not _can_be_suspect(b_surface, b_cell):
+        assert a.cell is not None
+        return (a.surface, a.key, a.cell, b.surface, b.key)
+    if not _can_be_suspect(b.surface, b.cell):
         return None
-    assert b_cell is not None
-    return (b_surface, b_key, b_cell, a_surface, a_key)
+    assert b.cell is not None
+    return (b.surface, b.key, b.cell, a.surface, a.key)
 
 
 def _distance_words(distance: int) -> str:
@@ -351,31 +372,21 @@ def _heuristic_one(
     for entry in entries:
         own = _entry_tokens(entry)
         extra = _reference_extras(entry, designations_by_label)
-        candidates: list[tuple[str, str, ColumnRole | None, Cell | None]] = [
-            (surface, key, cell.role, cell) for cell, surface, key in own
+        candidates: list[_Side] = [
+            _Side(surface, key, cell.role, cell) for cell, surface, key in own
         ]
-        candidates.extend((surface, key, None, None) for surface, key in extra)
+        candidates.extend(_Side(surface, key, None, None) for surface, key in extra)
 
         for a_cell, a_surface, a_key in own:
+            a_side = _Side(a_surface, a_key, a_cell.role, a_cell)
             best: tuple[int, int, str, str] | None = None
-            for b_surface, b_key, b_role, b_cell in candidates:
-                if a_key == b_key:
+            for b_side in candidates:
+                if a_key == b_side.key:
                     continue
-                distance = near_match_distance(a_key, b_key)
+                distance = near_match_distance(a_key, b_side.key)
                 if distance is None:
                     continue
-                outcome = _decide_suspect(
-                    a_surface,
-                    a_key,
-                    a_cell.role,
-                    a_cell,
-                    b_surface,
-                    b_key,
-                    b_role,
-                    b_cell,
-                    authority,
-                    row_counts,
-                )
+                outcome = _decide_suspect(a_side, b_side, authority, row_counts)
                 if outcome is None:
                     continue
                 suspect_surface, suspect_key, suspect_cell, ref_surface, ref_key = outcome
@@ -408,8 +419,31 @@ def _heuristic_two_candidates(
 ) -> dict[str, tuple[int, str, str]]:
     """For every rare ``token_key`` qualifying under the thresholds, the best
     common reference to cite: ``rare_key -> (distance, common_surface, common_key)``.
+
+    Candidate keys are bucketed by length first: ``near_match_distance``
+    can only ever admit a pair whose lengths differ by at most
+    ``MAX_EDIT_DISTANCE``, so a rare key of length *n* only has anything to
+    gain from common keys of length *n - MAX_EDIT_DISTANCE* through
+    *n + MAX_EDIT_DISTANCE* - a fixed, small window, rather than every key in
+    the corpus. Without this, the scan is ``len(rare) * len(common)`` calls
+    into ``near_match_distance`` before any DP even runs, which is the pass's
+    measured cost centre on a multi-thousand-row workbook.
+
+    This is a constant-factor cut, not an asymptotic one: it shrinks each
+    rare key's candidate set to those sharing a length bucket, but a corpus
+    whose comparable tokens cluster into only a handful of distinct lengths
+    (an adversarial or synthetic worst case - real clinical vocabulary spans
+    a much wider length range) still degrades toward the unbucketed
+    ``len(rare) * len(common)`` shape. Closing that residual case properly
+    would mean an actual index (e.g. a SymSpell-style deletion-neighbourhood
+    lookup) rather than bucketing - out of scope here unless real catalogue
+    measurements show this heuristic, not length-bucketing, is insufficient.
     """
     keys = sorted(row_counts)
+    keys_by_length: dict[int, list[str]] = defaultdict(list)
+    for key in keys:
+        keys_by_length[len(key)].append(key)
+
     result: dict[str, tuple[int, str, str]] = {}
     for rare_key in keys:
         if rare_key in authority:
@@ -418,7 +452,16 @@ def _heuristic_two_candidates(
         if rare_count > MAX_RARE_COUNT:
             continue
         best: tuple[int, int, str, str] | None = None
-        for common_key in keys:
+        rare_length = len(rare_key)
+        candidate_lengths = range(
+            rare_length - MAX_EDIT_DISTANCE, rare_length + MAX_EDIT_DISTANCE + 1
+        )
+        candidate_keys = (
+            common_key
+            for length in candidate_lengths
+            for common_key in keys_by_length.get(length, ())
+        )
+        for common_key in candidate_keys:
             if common_key == rare_key:
                 continue
             common_count = row_counts[common_key]
@@ -474,6 +517,8 @@ def check_misspellings(
             tokens_considered += 1
             if key not in h2_candidates:
                 continue
+            if not _can_be_suspect(surface, cell):
+                continue  # ADR-0007 Decision 5 applies to both heuristics, not just h1.
             if (cell.reference, key) in h1_findings:
                 continue  # heuristic 1 takes precedence for this cell/token.
             location_key = (cell.reference, key)

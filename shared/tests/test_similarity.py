@@ -98,6 +98,18 @@ def test_near_match_distance_ceiling_is_max_edit_distance_by_default() -> None:
     assert MAX_EDIT_DISTANCE == 2
 
 
+@pytest.mark.req("FR-79")
+def test_near_match_distance_honours_a_caller_supplied_ceiling_below_one() -> None:
+    """A caller-supplied ``max_distance`` is a real ceiling, not just a hint
+    to the second (distance-2) probe - this module is shared with FR-36's
+    on-save check, which may want a tighter ceiling than FR-79's own
+    default. 'urinery' and 'urinary' are distance 1 apart, which
+    ``max_distance=0`` must refuse."""
+    assert bounded_edit_distance("urinery", "urinary", max_distance=1) == 1
+    assert near_match_distance("urinery", "urinary", max_distance=0) is None
+    assert near_match_distance("urinery", "urinary", max_distance=1) == 1
+
+
 # -- tokenise: delimiter independence (FR-71, Annex A.4) ----------------------
 
 
