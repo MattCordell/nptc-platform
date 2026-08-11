@@ -367,6 +367,29 @@ def test_a_genuine_typo_that_coincides_with_an_unrelated_served_word_is_not_flag
     assert _misspelling_codes(outcome) == []
 
 
+@pytest.mark.req("FR-79")
+def test_an_all_uppercase_token_is_never_flagged_by_heuristic_two_either(
+    tmp_path: Path,
+) -> None:
+    """ADR-0007 Decision 5's all-uppercase suspect restriction applies "in
+    either heuristic" (this module's own docstring) - not just heuristic 1.
+    'ANTENATOL', corpus-rare (1 entry) against a corpus-common 'antenatal'
+    (3 entries), is exactly heuristic 2's shape - but rendered in caps, it
+    must be silent, the same way an uppercase heuristic-1 suspect is."""
+    workbook = _workbook(
+        tmp_path,
+        [
+            ("ANTENATOL", None, None),
+            ("antenatal screen", None, None),
+            ("antenatal panel", None, None),
+            ("antenatal profile", None, None),
+        ],
+    )
+    outcome = _outcome(workbook)
+
+    assert _misspelling_codes(outcome) == []
+
+
 # -- tie-break rule 4: no evidence, silence -----------------------------------
 
 

@@ -118,16 +118,24 @@ def bounded_edit_distance(a: str, b: str, *, max_distance: int) -> int | None:
     for i in range(1, len_a + 1):
         current = [sentinel] * (len_b + 1)
         current[0] = i
+        row_min = i if i <= max_distance else sentinel
         lo = max(1, i - max_distance)
         hi = min(len_b, i + max_distance)
         for j in range(lo, hi + 1):
             cost = 0 if a[i - 1] == b[j - 1] else 1
-            current[j] = min(
+            value = min(
                 previous[j] + 1,  # deletion from a
                 current[j - 1] + 1,  # insertion into a
                 previous[j - 1] + cost,  # substitution
             )
-        if min(current) > max_distance:
+            current[j] = value
+            if value < row_min:
+                row_min = value
+        # Equivalent to min(current), but computed inline over the populated
+        # band instead of a second O(len_b) pass over the whole row - every
+        # cell outside the band is still ``sentinel`` by construction, so it
+        # can never be the minimum.
+        if row_min > max_distance:
             return None
         previous = current
     result = previous[len_b]
@@ -135,17 +143,27 @@ def bounded_edit_distance(a: str, b: str, *, max_distance: int) -> int | None:
 
 
 def near_match_distance(a: str, b: str, *, max_distance: int = MAX_EDIT_DISTANCE) -> int | None:
-    """The admissible edit distance between ``a`` and ``b``, or ``None``.
+    """The admissible edit distance between ``a`` and ``b``, capped at
+    ``max_distance``, or ``None``.
 
-    Distance 1 is always admissible. Distance 2 is admissible only when the
-    *shorter* of the two tokens has length at least ``LONG_TOKEN_LENGTH`` -
-    below that, two edits is too large a fraction of a short word to be a
-    confident misspelling signal (``urine``/``urate``, both length 5, must
-    be refused even though they are exactly distance 2 apart).
+    Distance 1 is admissible whenever ``max_distance`` allows it. Distance 2
+    is admissible only when ``max_distance`` allows it *and* the *shorter*
+    of the two tokens has length at least ``LONG_TOKEN_LENGTH`` - below that,
+    two edits is too large a fraction of a short word to be a confident
+    misspelling signal (``urine``/``urate``, both length 5, must be refused
+    even though they are exactly distance 2 apart).
+
+    ``max_distance`` is a real ceiling, not just a hint to the second probe:
+    a caller passing ``max_distance=0`` must never see a distance-1 result
+    back (this module is shared with FR-36's on-save check, which may want a
+    tighter ceiling than FR-79's own default).
     """
-    distance = bounded_edit_distance(a, b, max_distance=1)
+    first_probe = min(1, max_distance)
+    distance = bounded_edit_distance(a, b, max_distance=first_probe)
     if distance is not None:
         return distance
+    if max_distance <= first_probe:
+        return None
     if min(len(a), len(b)) < LONG_TOKEN_LENGTH:
         return None
     return bounded_edit_distance(a, b, max_distance=max_distance)
