@@ -37,7 +37,7 @@ services:
       - nptc
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.0
+    image: quay.io/keycloak/keycloak:26.7.1
     restart: unless-stopped
     # start-dev: fine for the local/bootstrap stack this file targets. Realm
     # configuration as code (ADR-0001) and a production start mode land with
