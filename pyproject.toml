@@ -15,7 +15,7 @@ dev = [
     "pre-commit>=4.0",
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
-    "types-openpyxl>=3.1.5.20260724",
+    "types-openpyxl>=3.1.5.20260807",
 ]
 
 # --- uv workspace -----------------------------------------------------------
