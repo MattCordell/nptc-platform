@@ -25,6 +25,7 @@ from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.misspelling import MisspellingRun, check_misspellings
+from nptc_transform.semantic_drift import DriftRun, check_semantic_drift
 from nptc_transform.terminology_check import (
     DEFAULT_EDITIONS,
     TerminologyRun,
@@ -72,6 +73,12 @@ class RunResult:
     #: misspelling heuristics run whether or not a sweep is available; only
     #: the authority whitelist they use differs (``MisspellingRun.authority_source``).
     misspellings: MisspellingRun | None = None
+    #: ``None`` under the same condition as ``terminology``/``designations``:
+    #: FR-75's semantic-drift check needs a live ``sweep`` for its own
+    #: classification requests (``describe``, ``codes_without_attribute``,
+    #: ``codes_with_attribute_value``), unlike ``misspellings``, which never
+    #: issues one of its own.
+    drift: DriftRun | None = None
 
     def __post_init__(self) -> None:
         sorted_findings = tuple(sorted(self.findings, key=Finding.sort_key))
@@ -158,13 +165,27 @@ def run_transform_sheets(
         editions=editions,
     )
     misspellings = check_misspellings(sheets, results=outcome.results)
+    drift = check_semantic_drift(
+        sheets,
+        sweep=sweep,
+        bindings=outcome.bindings,
+        results=outcome.results,
+        editions=editions,
+    )
     return RunResult(
         source=source,
         mode=mode,
-        findings=(*findings, *outcome.findings, *designations.findings, *misspellings.findings),
+        findings=(
+            *findings,
+            *outcome.findings,
+            *designations.findings,
+            *misspellings.findings,
+            *drift.findings,
+        ),
         terminology=outcome.run,
         designations=designations.run,
         misspellings=misspellings.run,
+        drift=drift.run,
     )
 
 

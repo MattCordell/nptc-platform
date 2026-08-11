@@ -92,6 +92,79 @@ def test_expand_fr84_minus_idiom_reports_the_non_procedure_code_as_a_violation()
     assert violations.codes == ("999999990",)
 
 
+@pytest.mark.req("FR-75")
+def test_expand_minus_attribute_refinement_reports_codes_with_no_value() -> None:
+    """``(chunk) MINUS (* : attr = *)`` - ``codes_without_attribute``'s own ECL
+    shape (issue #29)."""
+    client = _client(
+        StubConcept(
+            code="47615003",
+            fsn="Acetone level (procedure)",
+            properties=(ConceptProperty(code="116686009", value="122575003", value_type="code"),),
+        ),
+        StubConcept(code="121960004", fsn="Adenovirus antigen level (procedure)"),
+    )
+    result = client.expand(
+        "(47615003 OR 121960004) MINUS (* : 116686009 = *)", edition=SNOMED_CT_AU
+    )
+    assert result.codes == ("121960004",)
+
+
+@pytest.mark.req("FR-75")
+def test_expand_and_attribute_refinement_reports_codes_with_a_subsumed_value() -> None:
+    """``(chunk) AND (* : attr = <<root)`` - ``codes_with_attribute_value``'s
+    own ECL shape, including the descendant closure on the value side."""
+    client = _client(
+        StubConcept(code="122575003", fsn="Urine specimen (specimen)"),
+        StubConcept(
+            code="47615003",
+            fsn="Acetone level (procedure)",
+            properties=(ConceptProperty(code="116686009", value="122575003", value_type="code"),),
+        ),
+        StubConcept(
+            code="121302000",
+            fsn="Hydroxymandelate level (procedure)",
+            properties=(ConceptProperty(code="116686009", value="119364003", value_type="code"),),
+        ),
+    )
+    result = client.expand(
+        "(47615003 OR 121302000) AND (* : 116686009 = <<122575003)", edition=SNOMED_CT_AU
+    )
+    assert result.codes == ("47615003",)
+
+
+@pytest.mark.req("FR-75")
+def test_expand_and_attribute_refinement_value_closure_catches_a_descendant_value() -> None:
+    """A concept whose ``Has specimen`` value is a *descendant* of the group
+    root (e.g. "Urine specimen from catheter" under "Urine specimen") must
+    still agree - dropping the ``<<`` on the value side would silently miss
+    it and report a false ``TERM_SPECIMEN_DIFFERS``."""
+    client = _client(
+        StubConcept(code="122575003", fsn="Urine specimen (specimen)"),
+        StubConcept(
+            code="122575099",
+            fsn="Urine specimen from catheter (specimen)",
+            parents=("122575003",),
+        ),
+        StubConcept(
+            code="47615003",
+            fsn="Acetone level (procedure)",
+            properties=(ConceptProperty(code="116686009", value="122575099", value_type="code"),),
+        ),
+    )
+    result = client.expand("(47615003) AND (* : 116686009 = <<122575003)", edition=SNOMED_CT_AU)
+    assert result.codes == ("47615003",)
+
+
+@pytest.mark.req("FR-75")
+def test_expand_attribute_refinement_outside_the_recognised_shape_still_raises() -> None:
+    """A comparison operator other than ``=`` is more ECL than this stub's
+    subset covers - it must raise, never silently match nothing."""
+    client = _client()
+    with pytest.raises(StubEclNotSupportedError):
+        client.expand("(* : 116686009 != *)", edition=SNOMED_CT_AU)
+
+
 def test_expand_edition_filters_the_descendant_closure() -> None:
     client = _client(
         StubConcept(

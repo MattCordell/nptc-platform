@@ -11,14 +11,21 @@ the test suite, where it would be even harder to notice.
 
 The ECL subset (``_evaluate_ecl``) is not an ECL engine: it recognises a
 disjunction of literal codes (what ``snomed.ecl_set_of`` emits), ``<<X``/``<X``
-against a seeded concept's ``parents``, and one top-level ``A MINUS B`` over
-those. That is exactly enough to make FR-84's
-``(codes) MINUS <<71388002`` idiom usable in a test without hand-seeding a
-distinct expansion for every chunk.
+against a seeded concept's ``parents``, one top-level ``A MINUS B`` and one
+top-level ``A AND B`` over those, and two attribute-refinement forms:
+``* : <attr> = *`` (any value at all present for ``<attr>``, matched against a
+seeded ``StubConcept.properties`` entry with that ``code``) and
+``* : <attr> = <<root>`` (the property's value subsumed by ``root``, reusing
+the same descendant-closure logic ``<<X`` already gives ``<X`` "for free").
+That is exactly enough to make FR-84's ``(codes) MINUS <<71388002`` idiom and
+FR-75's ``(codes) MINUS (* : attr = *)`` / ``(codes) AND (* : attr = <<root)``
+idioms usable in a test without hand-seeding a distinct expansion for every
+chunk.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -87,6 +94,17 @@ class StubRequest:
 
     operation: Operation
     detail: str
+
+
+#: FR-75's two attribute-refinement forms: ``* : <attr> = *`` and
+#: ``* : <attr> = <<root>``. Anchored end-to-end so a refinement this subset
+#: doesn't cover (a value comparison operator other than ``=``, a nested
+#: refinement, a cardinality) falls through to the disjunction fallback below
+#: and raises ``StubEclNotSupportedError`` rather than silently matching
+#: nothing.
+_ATTRIBUTE_REFINEMENT = re.compile(
+    r"^\*\s*:\s*(?P<attribute>\d{6,18})\s*=\s*(?P<value>\*|<<\d{6,18})$"
+)
 
 
 def _edition_key(edition: Edition | None) -> str | None:
@@ -378,6 +396,11 @@ class StubTerminologyClient:
             return self._evaluate_term(left.strip(), edition) - self._evaluate_term(
                 right.strip(), edition
             )
+        if " AND " in text:
+            left, right = text.split(" AND ", 1)
+            return self._evaluate_term(left.strip(), edition) & self._evaluate_term(
+                right.strip(), edition
+            )
         return self._evaluate_term(text, edition)
 
     def _evaluate_term(self, term: str, edition: Edition) -> frozenset[str]:
@@ -388,6 +411,11 @@ class StubTerminologyClient:
             return self._descendants_root(term[2:], edition=edition, include_self=True)
         if term.startswith("<"):
             return self._descendants_root(term[1:], edition=edition, include_self=False)
+        attribute_match = _ATTRIBUTE_REFINEMENT.match(term)
+        if attribute_match is not None:
+            return self._evaluate_attribute_refinement(
+                attribute_match.group("attribute"), attribute_match.group("value"), edition
+            )
         pieces = [piece.strip() for piece in term.split(" OR ") if piece.strip()]
         if not pieces:
             # An empty term (e.g. "()") is not a code list, even a
@@ -419,6 +447,36 @@ class StubTerminologyClient:
                 operation=Operation.EXPAND,
             )
         return self._descendants_or_self(root, edition=edition, include_self=include_self)
+
+    def _evaluate_attribute_refinement(
+        self, attribute: str, value_expr: str, edition: Edition
+    ) -> frozenset[str]:
+        """Every seeded concept carrying a ``ConceptProperty`` for ``attribute``.
+
+        ``value_expr`` is either ``"*"`` (any value at all - matches every
+        concept with a property whose ``code`` equals ``attribute``,
+        regardless of value) or ``"<<root>"`` (the property's ``value``
+        subsumed by ``root``, reusing ``_descendants_or_self`` so this can
+        never disagree with ``<<root>`` evaluated as a standalone term). Only
+        concepts visible in ``edition`` are considered, matching every other
+        term evaluator here.
+        """
+        allowed_values: frozenset[str] | None = None
+        if value_expr != "*":
+            allowed_values = self._descendants_or_self(
+                value_expr[2:], edition=edition, include_self=True
+            )
+        matches: set[str] = set()
+        for code, concept in self._concepts.items():
+            if edition.label not in concept.editions:
+                continue
+            for prop in concept.properties:
+                if prop.code != attribute:
+                    continue
+                if allowed_values is None or prop.value in allowed_values:
+                    matches.add(code)
+                    break
+        return frozenset(matches)
 
 
 def _designations_for(concept: StubConcept) -> tuple[Designation, ...]:

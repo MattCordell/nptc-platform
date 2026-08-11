@@ -33,6 +33,11 @@ AU_LANGUAGE_TAG = "en-x-sctlang-32570271-00003610-6"
 #: (FR-84).
 PROCEDURE_ROOT_CODE = "71388002"
 
+#: |Has specimen (attribute)| - the relationship FR-75's semantic-drift check
+#: reads off a bound concept to compare against the RCPA preferred term's own
+#: specimen wording (issue #29, P0-7).
+HAS_SPECIMEN_ATTRIBUTE = "116686009"
+
 
 class Operation(StrEnum):
     """A FHIR terminology operation. The value doubles as its request path,

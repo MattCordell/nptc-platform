@@ -566,58 +566,149 @@ class TerminologySweep:
     ) -> tuple[str, ...]:
         """Expands ``(chunk) MINUS <<71388002`` per chunk (FR-84).
 
-        Chunked the same way as ``_resolve_status`` - one unchunked
-        disjunction over the whole catalogue does not fit in a request at the
-        PRD's 20,000-code planning ceiling (measured with this module's own
-        ``ecl_set_of``/``implicit_value_set_url``: roughly 340KB of
-        percent-encoded ECL, more for 17-18 digit AU-extension codes). Per-
-        chunk results concatenate without loss, since the check is a
-        disjunction with no cross-chunk relationship. See ADR-0005.
+        A thin, byte-identical-ECL wrapper over ``_expand_combined`` - see
+        that method for the chunking rationale (ADR-0005). Kept as its own
+        named method rather than inlined at the one call site in ``run()``,
+        so a reader looking for "where does FR-84's check live" finds a
+        method named for it.
         """
-        violations: list[str] = []
-        for chunk in _chunks(codes, self._chunk_size):
-            violations.extend(
-                self._check_hierarchy_chunk(chunk, edition=edition, versions=versions)
-            )
-        return tuple(sorted(violations))
+        return self._expand_combined(
+            codes,
+            operator="MINUS",
+            rhs=f"<<{self._procedure_root}",
+            edition=edition,
+            versions=versions,
+        )
 
-    def _check_hierarchy_chunk(
-        self, chunk: Sequence[str], *, edition: Edition, versions: set[str]
+    def _expand_combined(
+        self, codes: Sequence[str], *, operator: str, rhs: str, edition: Edition, versions: set[str]
     ) -> tuple[str, ...]:
-        """One chunk's ``(chunk) MINUS <<71388002`` expansion, paged.
+        """Chunked ``(chunk) <operator> <rhs>``, one request per chunk of ``codes``.
 
-        Everything the server returns is a code that resolves in this edition
-        and is not subsumed by the procedure root. A code that is absent from
-        the edition cannot appear - an ECL enumerating codes only ever returns
-        concepts that exist - so an AU-only code checked against the
-        International edition is reported by the status pass as absent, not
-        here as a false violation. (The caller passes only resolved codes in
-        anyway - see ``run()`` - so an absent code is never even offered to
-        this ECL, rather than relying solely on server tolerance for one.)
+        Generalises what was originally ``_check_hierarchy``'s own MINUS-only
+        chunking loop to any right-hand ECL expression and either top-level
+        operator (``MINUS``/``AND``) - FR-75's specimen-attribute checks
+        (``codes_without_attribute``, ``codes_with_attribute_value``) need the
+        identical chunking discipline ADR-0005 measured for FR-84's hierarchy
+        check (~340KB of percent-encoded ECL for an unchunked disjunction at
+        the PRD's 20,000-code planning ceiling), so this is one implementation
+        parameterised rather than a second copy of the same loop. Produces
+        byte-identical ECL to the pre-existing FR-84 check for that call
+        shape - only the plumbing moved, not the behaviour.
 
-        The parenthesised code list is a disjunction of *literal* codes, never
-        ``<code``: ``<`` is ECL's descendant-of operator, and asking for a leaf
-        procedure's descendants returns nothing, which would make this check
-        pass every code forever (see ``snomed.ecl_set_of``).
+        A code absent from the edition cannot appear in any result here - an
+        ECL enumerating codes only ever returns concepts that exist - so the
+        caller is responsible for passing only codes it already knows resolve
+        (see ``run()``'s own comment on this for the hierarchy check).
 
         Paging exists but should rarely engage: ``count`` asks for room for
-        every code in the chunk, and the expected result is empty. It engages
-        only if a server caps the page below the number of violations, in
-        which case the alternative is under-reporting them.
+        every code in the chunk. It engages only if a server caps the page
+        below the number of matches, in which case the alternative is
+        under-reporting them.
         """
-        ecl = f"({ecl_set_of(chunk)}) MINUS <<{self._procedure_root}"
-        violations: list[str] = []
+        matches: list[str] = []
+        for chunk in _chunks(codes, self._chunk_size):
+            matches.extend(
+                self._expand_combined_chunk(
+                    chunk, operator=operator, rhs=rhs, edition=edition, versions=versions
+                )
+            )
+        return tuple(sorted(matches))
+
+    def _expand_combined_chunk(
+        self,
+        chunk: Sequence[str],
+        *,
+        operator: str,
+        rhs: str,
+        edition: Edition,
+        versions: set[str],
+    ) -> tuple[str, ...]:
+        ecl = f"({ecl_set_of(chunk)}) {operator} {rhs}"
+        matches: list[str] = []
         offset = 0
         while True:
             expansion = self._client.expand(ecl, edition=edition, count=len(chunk), offset=offset)
             versions.update(expansion.resolved_versions)
-            violations.extend(expansion.codes)
-            if expansion.total is None or len(violations) >= expansion.total:
+            matches.extend(expansion.codes)
+            if expansion.total is None or len(matches) >= expansion.total:
                 break
             if not expansion.concepts:
                 break
             offset += len(expansion.concepts)
-        return tuple(violations)
+        return tuple(matches)
+
+    # -- FR-75 -----------------------------------------------------------
+
+    def codes_without_attribute(
+        self, codes: Sequence[str], *, attribute: str, edition: Edition
+    ) -> tuple[str, ...]:
+        """Which of ``codes`` constrains no value at all for ``attribute``.
+
+        Chunked ``(chunk) MINUS (* : <attribute> = *)`` (issue #29's
+        semantic-drift check, FR-75): everything the server returns from a
+        chunk is a code that resolves in ``edition`` and carries no
+        relationship for ``attribute`` whatsoever - the raw material for
+        ``TERM_SPECIMEN_NOT_MODELLED``. ``codes`` should be restricted to the
+        set of codes a caller actually needs an answer for (never the whole
+        catalogue) - see ``semantic_drift.py``'s own request-count discipline.
+        """
+        versions: set[str] = set()
+        return self._expand_combined(
+            codes,
+            operator="MINUS",
+            rhs=f"(* : {attribute} = *)",
+            edition=edition,
+            versions=versions,
+        )
+
+    def codes_with_attribute_value(
+        self, codes: Sequence[str], *, attribute: str, root: str, edition: Edition
+    ) -> tuple[str, ...]:
+        """Which of ``codes`` constrains ``attribute`` to a value subsumed by ``root``.
+
+        Chunked ``(chunk) AND (* : <attribute> = <<root>)``. The ``<<`` on the
+        *value* side - not just wrapping the whole refinement - is deliberate:
+        it is what catches a descendant specimen value (e.g. "Urine specimen
+        from catheter" under "Urine specimen") as agreeing with ``root``,
+        rather than only an exact match. Dropping it would silently miss every
+        such descendant and report a false ``TERM_SPECIMEN_DIFFERS``.
+        """
+        versions: set[str] = set()
+        return self._expand_combined(
+            codes,
+            operator="AND",
+            rhs=f"(* : {attribute} = <<{root})",
+            edition=edition,
+            versions=versions,
+        )
+
+    def describe(
+        self, codes: Sequence[str], *, edition: Edition
+    ) -> tuple[ConceptDesignations, ...]:
+        """Every one of ``codes``'s designation sets, resolved directly - not
+        through a hierarchy expression.
+
+        Chunked ``$expand`` with ``includeDesignations=true`` over exactly
+        ``codes`` (reusing ``_expand_chunk``, the same paging/dedup-tolerant
+        primitive ``_resolve_status`` uses) and projected through the same
+        ``_project_designations`` FR-97 already relies on, so the two callers
+        can never disagree about which of two duplicated pages won.
+
+        Deliberately does **not** go through ``run()``: these are specimen
+        concepts (issue #29, FR-75), not procedures, and ``run()``'s FR-84
+        hierarchy check and FR-99 semantic-tag check would both misfire on
+        every one of them - a specimen concept is never subsumed by
+        ``<<71388002`` and never tagged ``(procedure)``.
+        """
+        unique = tuple(sorted(set(codes)))
+        if not unique:
+            return ()
+        versions: set[str] = set()
+        concepts: list[ExpandedConcept] = []
+        for chunk in _chunks(unique, self._chunk_size):
+            concepts.extend(self._expand_chunk(chunk, edition=edition, versions=versions))
+        return _project_designations(concepts)
 
 
 def _project_designations(concepts: Iterable[ExpandedConcept]) -> tuple[ConceptDesignations, ...]:
