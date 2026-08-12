@@ -171,7 +171,7 @@ def test_a_code_that_is_not_a_well_formed_sctid_is_reported_and_never_submitted(
     grouped = _findings(bindings_workbook, client)
 
     malformed = grouped[FindingCode.CODE_NOT_WELL_FORMED]
-    assert [finding.location for finding in malformed] == ["Requesting!B6"]
+    assert [str(finding.location) for finding in malformed] == ["Requesting!B6"]
     assert malformed[0].band is Band.DATA_DEFECT
     assert not [request for request in client.requests if MALFORMED_CODE in request.detail]
 
@@ -183,7 +183,7 @@ def test_a_code_absent_from_every_edition_is_a_blocking_data_defect(
     grouped = _findings(bindings_workbook, client)
 
     absent = grouped[FindingCode.CODE_NOT_FOUND]
-    assert [finding.location for finding in absent] == ["Requesting!B5"]
+    assert [str(finding.location) for finding in absent] == ["Requesting!B5"]
     assert absent[0].band is Band.DATA_DEFECT
     assert "au, int" in absent[0].message
 
@@ -198,7 +198,9 @@ def test_a_code_present_only_in_the_au_edition_is_not_a_finding(
     grouped = _findings(bindings_workbook, client)
 
     assert all(
-        finding.location != "Requesting!B4" for findings in grouped.values() for finding in findings
+        str(finding.location) != "Requesting!B4"
+        for findings in grouped.values()
+        for finding in findings
     )
 
 
@@ -209,7 +211,7 @@ def test_an_inactive_code_is_a_blocking_data_defect(
     grouped = _findings(bindings_workbook, client)
 
     inactive = grouped[FindingCode.CODE_INACTIVE]
-    assert [finding.location for finding in inactive] == ["Requesting!B7"]
+    assert [str(finding.location) for finding in inactive] == ["Requesting!B7"]
     assert inactive[0].band is Band.DATA_DEFECT
 
 
@@ -223,7 +225,7 @@ def test_a_code_outside_the_procedure_hierarchy_blocks_publication(
     grouped = _findings(bindings_workbook, client)
 
     violations = grouped[FindingCode.OUT_OF_SCOPE_HIERARCHY]
-    assert [finding.location for finding in violations] == ["Requesting!B8"]
+    assert [str(finding.location) for finding in violations] == ["Requesting!B8"]
     assert violations[0].band is Band.DATA_DEFECT
     assert "71388002" in violations[0].message
 
@@ -238,7 +240,7 @@ def test_an_unexpected_semantic_tag_is_a_warning_that_does_not_block(
     grouped = _findings(bindings_workbook, client)
 
     tagged = grouped[FindingCode.UNEXPECTED_SEMANTIC_TAG]
-    assert [finding.location for finding in tagged] == ["Requesting!B3"]
+    assert [str(finding.location) for finding in tagged] == ["Requesting!B3"]
     assert tagged[0].band is Band.INFORMATIONAL
     assert not blocks_import(tagged[0].band)
     assert "regime/therapy" in tagged[0].message
@@ -300,7 +302,9 @@ def test_a_clean_binding_produces_no_finding_at_all(
     grouped = _findings(bindings_workbook, client)
 
     assert all(
-        finding.location != "Requesting!B2" for findings in grouped.values() for finding in findings
+        str(finding.location) != "Requesting!B2"
+        for findings in grouped.values()
+        for finding in findings
     )
 
 
@@ -352,7 +356,7 @@ def test_a_code_bound_by_several_rows_is_reported_against_each_cell(
 
     outcome = check_terminology(read_workbook(path), sweep=TerminologySweep(client))
 
-    assert [finding.location for finding in outcome.findings] == [
+    assert [str(finding.location) for finding in outcome.findings] == [
         "Requesting!B2",
         "Requesting!B3",
     ]
@@ -385,7 +389,7 @@ def test_a_single_edition_run_is_supported_for_a_targeted_check(
     # AU-only content resolves here, so the absent-from-every-edition finding
     # must not fire for it just because International was not consulted.
     assert all(
-        finding.location != "Requesting!B4" or finding.code != FindingCode.CODE_NOT_FOUND
+        str(finding.location) != "Requesting!B4" or finding.code != FindingCode.CODE_NOT_FOUND
         for finding in outcome.findings
     )
 
@@ -492,7 +496,7 @@ def test_editions_of_the_international_edition_alone_report_au_only_content_abse
     )
 
     assert [
-        finding.location
+        str(finding.location)
         for finding in outcome.findings
         if finding.code == FindingCode.CODE_NOT_FOUND
     ] == ["Requesting!B4", "Requesting!B5"]

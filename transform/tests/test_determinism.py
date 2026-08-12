@@ -12,6 +12,7 @@ import openpyxl
 import pytest
 from openpyxl.worksheet.worksheet import Worksheet
 
+from nptc_transform.cellref import CellRef
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 
 ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -185,9 +186,9 @@ def test_misspelling_findings_are_independent_of_pythonhashseed(tmp_path: Path) 
 
 def test_run_result_sorts_findings_into_canonical_order() -> None:
     findings = (
-        Finding(code="B", location="B2", message="second"),
-        Finding(code="A", location="A1", message="first"),
-        Finding(code="A", location="A1", message="also"),
+        Finding(code="B", location=CellRef("Sheet", "B", 2), message="second"),
+        Finding(code="A", location=CellRef("Sheet", "A", 1), message="first"),
+        Finding(code="A", location=CellRef("Sheet", "A", 1), message="also"),
     )
 
     result = RunResult(
@@ -197,7 +198,33 @@ def test_run_result_sorts_findings_into_canonical_order() -> None:
     )
 
     assert result.findings == (
-        Finding(code="A", location="A1", message="also"),
-        Finding(code="A", location="A1", message="first"),
-        Finding(code="B", location="B2", message="second"),
+        Finding(code="A", location=CellRef("Sheet", "A", 1), message="also"),
+        Finding(code="A", location=CellRef("Sheet", "A", 1), message="first"),
+        Finding(code="B", location=CellRef("Sheet", "B", 2), message="second"),
     )
+
+
+def test_run_result_sorts_columns_numerically_not_lexicographically() -> None:
+    """Pins the ``CellRef.sort_key`` behaviour change this PR introduces:
+    ``B2`` now sorts before ``B10`` (row, numeric), and ``B1`` before ``AA1``
+    (column, numeric - never ``AA1`` before ``B1``, which plain string
+    comparison of the column letters alone would give). There are no
+    committed golden report fixtures this changes the shape of - both
+    ``test_idempotency.py`` and this module compare a live run against a
+    live run - so this test is what pins the new, intentionally-better
+    ordering going forward.
+    """
+    findings = (
+        Finding(code="X", location=CellRef("Sheet", "B", 10), message="b10"),
+        Finding(code="X", location=CellRef("Sheet", "AA", 1), message="aa1"),
+        Finding(code="X", location=CellRef("Sheet", "B", 2), message="b2"),
+        Finding(code="X", location=CellRef("Sheet", "B", 1), message="b1"),
+    )
+
+    result = RunResult(
+        source=SourceRef(filename="x.xlsx", sha256="0" * 64),
+        mode=Mode.REPORT_ONLY,
+        findings=findings,
+    )
+
+    assert [finding.message for finding in result.findings] == ["b1", "b2", "b10", "aa1"]

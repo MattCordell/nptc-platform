@@ -32,6 +32,7 @@ from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL
 from nptc_shared.terminology.sweep import SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible
 from nptc_transform.bands import FindingCode
+from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import CellType, ColumnRole, Sheet
 
@@ -51,7 +52,7 @@ class CodeBinding:
     """
 
     code: str
-    location: str
+    location: CellRef
     cell_type: CellType
 
 

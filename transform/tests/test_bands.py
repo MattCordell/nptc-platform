@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from nptc_transform.bands import BAND_BY_CODE, Band, FindingCode, band_for, blocks_import
 from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.cellref import CellRef
 from nptc_transform.cli import app
 from nptc_transform.findings import Finding
 from nptc_transform.pipeline import Mode, run_transform
@@ -35,7 +36,10 @@ def test_unrecognised_code_fails_safe_to_data_defect() -> None:
     principal failure mode of ``band_for`` is a detector emitting a code
     nobody registered, and the safe fallback is the band that blocks import."""
     assert band_for("SOME_FUTURE_CODE_NOBODY_REGISTERED") is Band.DATA_DEFECT
-    assert Finding(code="UNKNOWN", location="Z1", message="x").band is Band.DATA_DEFECT
+    assert (
+        Finding(code="UNKNOWN", location=CellRef("Sheet", "Z", 1), message="x").band
+        is Band.DATA_DEFECT
+    )
 
 
 @pytest.mark.req("FR-71")
@@ -98,7 +102,7 @@ def test_a_row_with_mixed_bands_is_blocked_by_its_worst_finding(annex_a_workbook
     the worst of its findings: blocked if any of them blocks, however many of
     the others are merely auto-correctable."""
     sheets = read_workbook(annex_a_workbook)
-    row_findings = [f for f in scan_workbook(sheets) if f.location == "Requesting!H8"]
+    row_findings = [f for f in scan_workbook(sheets) if str(f.location) == "Requesting!H8"]
     bands = {f.band for f in row_findings}
     assert Band.AUTO_CORRECTABLE in bands
     assert Band.DATA_DEFECT in bands

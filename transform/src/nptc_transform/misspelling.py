@@ -62,6 +62,7 @@ from nptc_shared.similarity import (
 from nptc_shared.terminology.sweep import ConceptDesignations, SweepResult
 from nptc_shared.text import escape_invisible
 from nptc_transform.bands import FindingCode
+from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
@@ -367,12 +368,12 @@ def _heuristic_one(
     designations_by_label: Mapping[str, Mapping[str, ConceptDesignations]],
     authority: frozenset[str],
     row_counts: Mapping[str, int],
-) -> dict[tuple[str, str], Finding]:
+) -> dict[tuple[CellRef, str], Finding]:
     """Intra-entry near-match. Returns findings keyed by ``(cell.reference,
     token_key)`` - the shape heuristic 2 needs to know which cells/tokens it
     must not also flag.
     """
-    findings: dict[tuple[str, str], Finding] = {}
+    findings: dict[tuple[CellRef, str], Finding] = {}
     for entry in entries:
         own = _entry_tokens(entry)
         extra = _reference_extras(entry, designations_by_label)
@@ -520,8 +521,8 @@ def check_misspellings(
     h1_findings = _heuristic_one(entries, designations_by_label, authority, row_counts)
     h2_candidates = _heuristic_two_candidates(row_counts, surface_by_key, authority)
 
-    h2_findings: dict[tuple[str, str], Finding] = {}
-    cells_scanned: set[str] = set()
+    h2_findings: dict[tuple[CellRef, str], Finding] = {}
+    cells_scanned: set[CellRef] = set()
     tokens_considered = 0
     for entry in entries:
         for cell in entry.cells:

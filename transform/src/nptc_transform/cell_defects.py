@@ -22,6 +22,7 @@ from nptc_shared.text import (
     has_surrounding_whitespace,
 )
 from nptc_transform.bands import FindingCode
+from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
@@ -207,7 +208,7 @@ def _scan_layout(sheet: Sheet) -> Finding | None:
     if not roles and sheet.name in _NON_SPIA_DATA_SHEET_NAMES:
         return Finding(
             code=FindingCode.SHEET_NOT_SPIA_DATA,
-            location=f"{sheet.name}!A1",
+            location=CellRef(sheet.name, "A", 1),
             message=(
                 f"no column recognised as SPIA data; {unscanned_rows} data row(s) on "
                 f"this sheet were not scanned; headers were: {headers_text}"
@@ -215,7 +216,7 @@ def _scan_layout(sheet: Sheet) -> Finding | None:
         )
     return Finding(
         code=FindingCode.UNRECOGNISED_LAYOUT,
-        location=f"{sheet.name}!A1",
+        location=CellRef(sheet.name, "A", 1),
         message=(
             f"no column recognised as the code column; {unscanned_rows} data row(s) on "
             f"this sheet were not scanned for cell defects; headers were: {headers_text}"

@@ -1,11 +1,12 @@
 """Writes the transform's report files.
 
-Owns the envelope and the writing discipline (FR-73's determinism and
-idempotency), not the report *content* - the human-readable grouping by
-defect class with cell references is P0-8's. Band assignment itself (FR-71)
-is owned by ``Finding.band``; this module only ever reads it.
+Owns the envelope, the writing discipline (FR-73's determinism and
+idempotency), and the human-readable grouping by defect class with structured
+cell references and a required action per class (FR-72, P0-8). Band
+assignment itself (FR-71) is owned by ``Finding.band``, and the action text
+per code by ``actions.action_for``; this module only ever reads them.
 
-Four rules keep every run byte-identical for identical input:
+Five rules keep every run byte-identical for identical input:
 
 1. No clock-derived value anywhere in the output. The run start, duration and
    tool banner go to stderr only (see ``cli.py``); operators get the date
@@ -16,23 +17,85 @@ Four rules keep every run byte-identical for identical input:
    platform default, which is ``\\r\\n`` on Windows.
 4. Every collection is explicitly sorted before being written - never a
    ``set``, never a ``dict`` relying on insertion order alone. Band counts
-   are rendered in ``Band``'s declaration order, for the same reason.
+   are rendered in ``BAND_REPORT_ORDER``, for the same reason - not
+   ``Band``'s own declaration order, which is unrelated to presentation.
+5. Defect classes are rendered in an explicit group order
+   (``BAND_REPORT_ORDER``, then declared ``FindingCode`` order, then the code
+   itself as a final tiebreak for an unregistered code) - never
+   ``json.dumps(sort_keys=True)``, which only sorts object *keys*, not array
+   elements, so it does not cover this at all. Findings within a group keep
+   ``RunResult``'s own canonical order, from a single stable partitioning
+   pass - never re-sorted a second time.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from nptc_transform import __version__
-from nptc_transform.bands import Band
+from nptc_transform.actions import action_for
+from nptc_transform.bands import BAND_REPORT_ORDER, Band, FindingCode, band_for, blocks_import
+from nptc_transform.cellref import CellRef
+from nptc_transform.findings import Finding
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
+
+#: Declared ``FindingCode`` order, computed once - the tiebreak
+#: ``_group_findings`` uses so an unregistered code (there should never be
+#: one - see ``bands.band_for``) sorts last rather than raising or sorting
+#: arbitrarily by insertion order.
+_CODE_ORDER: dict[str, int] = {code: index for index, code in enumerate(FindingCode)}
+
+
+@dataclass(frozen=True)
+class _DefectClass:
+    """One ``FindingCode``'s findings, grouped for FR-72's rendering.
+
+    Private to this module - nothing else consumes a grouped view of
+    findings, so there is no reason to make this a public type.
+    """
+
+    band: Band
+    code: str
+    findings: tuple[Finding, ...]
+
+
+def _group_findings(findings: tuple[Finding, ...]) -> tuple[_DefectClass, ...]:
+    """Partitions ``findings`` by code, in FR-72's group-presentation order.
+
+    A single stable pass: each finding is appended to its code's bucket in
+    the order it already appears in (``RunResult.findings`` is sorted by
+    ``Finding.sort_key`` before this ever runs), so a group's own findings
+    need no second sort. Only the *groups* are sorted, explicitly, by
+    ``(BAND_REPORT_ORDER.index(band), declared FindingCode order, code)`` -
+    never by dict/set iteration order, which is what
+    ``json.dumps(sort_keys=True)`` alone would leave to chance for the array
+    this produces.
+    """
+    grouped: dict[str, list[Finding]] = defaultdict(list)
+    for finding in findings:
+        grouped[finding.code].append(finding)
+    classes = [
+        _DefectClass(band=band_for(code), code=code, findings=tuple(items))
+        for code, items in grouped.items()
+    ]
+    classes.sort(
+        key=lambda defect_class: (
+            BAND_REPORT_ORDER.index(defect_class.band),
+            _CODE_ORDER.get(defect_class.code, len(FindingCode)),
+            defect_class.code,
+        )
+    )
+    return tuple(classes)
 
 
 def _terminology_payload(result: RunResult) -> object:
@@ -130,6 +193,37 @@ def _drift_payload(result: RunResult) -> object:
     }
 
 
+def _location_payload(location: CellRef) -> dict[str, object]:
+    return {
+        "sheet": location.sheet,
+        "column": location.column_letter,
+        "row": location.row,
+        "ref": str(location),
+    }
+
+
+def _defect_class_payload(defect_class: _DefectClass) -> dict[str, object]:
+    """One group's payload: ``code``/``band``/``action`` live here once, not
+    per finding - what "organised by defect class" means structurally.
+    ``blocks_import`` is denormalised deliberately: a consumer must never
+    re-implement ``blocks_import()`` from a band string of its own.
+    """
+    return {
+        "band": str(defect_class.band),
+        "blocks_import": blocks_import(defect_class.band),
+        "code": defect_class.code,
+        "action": action_for(defect_class.code),
+        "finding_count": len(defect_class.findings),
+        "findings": [
+            {
+                "location": _location_payload(finding.location),
+                "message": finding.message,
+            }
+            for finding in defect_class.findings
+        ],
+    }
+
+
 def _report_payload(result: RunResult) -> dict[str, object]:
     band_counts = result.band_counts
     return {
@@ -147,14 +241,8 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "designations": _designations_payload(result),
         "misspellings": _misspellings_payload(result),
         "drift": _drift_payload(result),
-        "findings": [
-            {
-                "code": finding.code,
-                "location": finding.location,
-                "message": finding.message,
-                "band": str(finding.band),
-            }
-            for finding in result.findings
+        "defect_classes": [
+            _defect_class_payload(defect_class) for defect_class in _group_findings(result.findings)
         ],
     }
 
@@ -173,6 +261,10 @@ def _escape_cell(value: str) -> str:
     mid-cell, and would put a literal ``\\r\\n`` into the file on Windows,
     violating rule 3 above). Both are escaped rather than stripped so the
     defect stays visible to the operator.
+
+    Not used for the Cell column: that value is wrapped in a code span
+    (``_code_span``), and backslash escapes are inert inside one per
+    CommonMark, so a backslash-escaped backtick would still close the span.
     """
     return (
         value.replace("\\", "\\\\")
@@ -181,6 +273,23 @@ def _escape_cell(value: str) -> str:
         .replace("\r", "<br>")
         .replace("\n", "<br>")
     )
+
+
+def _code_span(value: str) -> str:
+    """Wraps ``value`` in a Markdown code span, CommonMark-correct even when
+    ``value`` itself contains a backtick (legal in an Excel sheet name -
+    Excel forbids only ``: \\ / ? * [ ]``).
+
+    Backslash escapes are inert inside a code span, so the only way to put a
+    literal backtick inside one is a fence - a run of backticks - longer than
+    any backtick run already in ``value``. A leading/trailing space pads the
+    span when ``value`` itself starts or ends with a backtick, so that
+    backtick isn't read as part of the fence.
+    """
+    longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest_run + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
 
 
 def _render_terminology(result: RunResult) -> list[str]:
@@ -302,6 +411,63 @@ def _render_drift(result: RunResult) -> list[str]:
     return lines
 
 
+def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
+    """FR-72's grouped findings section: band, then defect class, then a
+    ``| Cell | Detail |`` table - code and band are the enclosing headings,
+    the required action its own paragraph above the table, so neither is
+    repeated per row the way the old flat table did.
+
+    Bands/codes with zero findings are omitted entirely - the opposite rule
+    to the provenance sections above, and deliberately so: the band-count
+    table already states the zero, so there is no "not run vs found nothing"
+    ambiguity here for an empty section to guard against, and one would be
+    pure noise.
+    """
+    lines = ["## Findings by defect class", ""]
+    if not classes:
+        lines.extend(["No findings.", ""])
+        return lines
+    lines.extend(
+        [
+            "Blocking classes first. Every finding cites the cell it came from as "
+            "`Sheet!ColumnRow` - open that sheet and cell in the published workbook.",
+            "",
+        ]
+    )
+    for band in BAND_REPORT_ORDER:
+        band_classes = [defect_class for defect_class in classes if defect_class.band is band]
+        if not band_classes:
+            continue
+        heading = f"### {band}"
+        if blocks_import(band):
+            heading += " - blocks import"
+        lines.append(heading)
+        lines.append("")
+        for defect_class in band_classes:
+            lines.append(f"#### `{defect_class.code}` - {len(defect_class.findings)} finding(s)")
+            lines.append("")
+            lines.append(f"**Required action:** {action_for(defect_class.code)}")
+            lines.append("")
+            lines.append("| Cell | Detail |")
+            lines.append("|---|---|")
+            for finding in defect_class.findings:
+                # The pipe is escaped before the fence goes on, not by
+                # `_escape_cell` - table-cell splitting happens before a code
+                # span's contents are parsed, so a backslash-escaped `|`
+                # still protects the row: the table parser consumes the
+                # backslash itself before the code span ever renders, the
+                # same way `\|` -> `|` inside a normal cell does.
+                #
+                # Not similarly escaped for a literal `\`: CellRef.sheet
+                # can't contain one - Excel and openpyxl both reject a
+                # backslash in a worksheet title - so there is nothing here
+                # for `_escape_cell`'s backslash-doubling step to protect.
+                ref = str(finding.location).replace("|", "\\|")
+                lines.append(f"| {_code_span(ref)} | {_escape_cell(finding.message)} |")
+            lines.append("")
+    return lines
+
+
 def _render_markdown(result: RunResult) -> str:
     band_counts = result.band_counts
     lines = [
@@ -315,25 +481,13 @@ def _render_markdown(result: RunResult) -> str:
         "| Band | Count |",
         "|---|---|",
     ]
-    lines.extend(f"| {band} | {band_counts[band]} |" for band in Band)
+    lines.extend(f"| {band} | {band_counts[band]} |" for band in BAND_REPORT_ORDER)
     lines.append("")
     lines.extend(_render_terminology(result))
     lines.extend(_render_designations(result))
     lines.extend(_render_misspellings(result))
     lines.extend(_render_drift(result))
-    if result.findings:
-        lines.append("| Location | Code | Band | Message |")
-        lines.append("|---|---|---|---|")
-        for finding in result.findings:
-            lines.append(
-                f"| {_escape_cell(finding.location)} "
-                f"| {_escape_cell(finding.code)} "
-                f"| {_escape_cell(str(finding.band))} "
-                f"| {_escape_cell(finding.message)} |"
-            )
-    else:
-        lines.append("No findings.")
-    lines.append("")
+    lines.extend(_render_defect_classes(_group_findings(result.findings)))
     return "\n".join(lines)
 
 

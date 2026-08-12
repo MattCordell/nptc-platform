@@ -465,8 +465,8 @@
   priority: MUST
   phase: p0
   title: "The defect report is machine-readable (JSON or CSV) and human-readable"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Grouped defect report lands with P0-8/#30 (ADR-0009): findings are grouped Band -> FindingCode (BAND_REPORT_ORDER, blocking bands first, never Band's own declaration order), report.json's flat findings list is replaced by defect_classes (schema_version 7) carrying band/blocks_import/action/finding_count once per group, Finding.location becomes a structured CellRef (nptc_transform.cellref) replacing the opaque Sheet!Cell string end-to-end, and actions.py's ACTION_BY_CODE states the required action for every FindingCode. No CSV - report.json plus report.md stay the only two output files."
 - id: "FR-73"
   priority: MUST
   phase: p0

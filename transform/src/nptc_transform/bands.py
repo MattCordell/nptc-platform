@@ -161,3 +161,21 @@ def band_for(code: str) -> Band:
     it should have blocked anyway, instead of silently passing as clean.
     """
     return BAND_BY_CODE.get(code, Band.DATA_DEFECT)
+
+
+#: The order findings are *presented* in a report (FR-72), blocking bands
+#: first - deliberately not ``Band``'s own declaration order, which faithfully
+#: transcribes FR-71's table plus ADR-0004's fourth-member narrative and must
+#: not be reordered for a presentation concern. Kept as its own name, applied
+#: to both the band-count table and the grouped findings sections
+#: (``report_writer.py``), so there is exactly one presentation order in the
+#: artefact rather than two that could drift apart.
+BAND_REPORT_ORDER: tuple[Band, ...] = (
+    Band.REQUIRES_HUMAN_DECISION,
+    Band.DATA_DEFECT,
+    Band.AUTO_CORRECTABLE,
+    Band.INFORMATIONAL,
+)
+
+if set(BAND_REPORT_ORDER) != set(Band) or len(BAND_REPORT_ORDER) != len(Band):
+    raise AssertionError("BAND_REPORT_ORDER must contain every Band member exactly once")

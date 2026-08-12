@@ -26,6 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 
 from nptc_shared.text import escape_invisible
+from nptc_transform.cellref import CellRef
 
 
 class _RawCell(Protocol):
@@ -134,8 +135,8 @@ class Cell:
     raw: object
 
     @property
-    def reference(self) -> str:
-        return f"{self.sheet}!{self.column_letter}{self.row}"
+    def reference(self) -> CellRef:
+        return CellRef(sheet=self.sheet, column_letter=self.column_letter, row=self.row)
 
 
 @dataclass(frozen=True)

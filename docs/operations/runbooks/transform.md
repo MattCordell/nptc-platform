@@ -15,7 +15,9 @@ reconciliation, delivered with backlog issue
 [P0-6](https://github.com/MattCordell/nptc-platform/issues/28); and the FR-79
 misspelling heuristics and the FR-75 semantic-drift review, both delivered
 with backlog issue
-[P0-7](https://github.com/MattCordell/nptc-platform/issues/29). It does not
+[P0-7](https://github.com/MattCordell/nptc-platform/issues/29); and the
+grouped, actionable defect report, delivered with backlog issue
+[P0-8](https://github.com/MattCordell/nptc-platform/issues/30). It does not
 yet correct an auto-correctable finding or produce an import dataset - see
 "Not implemented yet" below.
 
@@ -127,9 +129,14 @@ corrected, and each defect is reported under one of two codes chosen by
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
 Either layout finding above means the sheet gets no further cell-level
-scanning. A finding's `location` is a `Sheet!CellRef` reference (for example
-`Requesting!H16`); both layout findings point at `Sheet!A1`, the header row.
-A clean cell produces no finding at all.
+scanning. A finding's `location` is a structured `CellRef` (sheet name,
+column letters, row number - `nptc_transform.cellref`), not a plain string:
+rendered, it reads as `Sheet!CellRef` (for example `Requesting!H16`), but a
+consumer that needs the parts (the report renderer, a future export) reads
+them off the value directly rather than re-splitting the rendered string -
+a sheet name can itself contain `!`, which would make that split ambiguous.
+Both layout findings point at `Sheet!A1`, the header row. A clean cell
+produces no finding at all.
 
 **No generated report ever contains an invisible character itself** (NFR-38
 test 2), even though every `INVISIBLE_CHARACTER`/`INVISIBLE_CHARACTER_AMBIGUOUS`
@@ -159,6 +166,117 @@ summary table, report this without needing to open the full finding list.
 
 An unrecognised finding code (there should never be one) fails safe to
 `data-defect` rather than being silently treated as clean.
+
+## The report files (FR-72)
+
+`report.json` and `report.md` are the only two output files - no CSV.
+FR-72 asks for three things: the report must be machine-readable, must be
+human-readable, and the human-readable form must be organised by defect
+class, cite exact cell references, and state the required action. Both
+files satisfy all three from the same grouped data
+(`report_writer._group_findings`); neither is derived from the other.
+
+### `report.json` (`schema_version` 7)
+
+Findings are grouped by `code` into a `defect_classes` array - the flat,
+per-finding `findings` list schema 6 had is gone; nothing outside
+`transform/` reads `report.json`, so there was no reason to keep both and
+let the two copies drift.
+
+```json
+"defect_classes": [
+  {
+    "band": "requires-human-decision",
+    "blocks_import": true,
+    "code": "WHITESPACE_ONLY_CELL",
+    "action": "Confirm whether the cell is meant to be empty ...",
+    "finding_count": 2,
+    "findings": [
+      {
+        "location": {"sheet": "Requesting", "column": "B", "row": 12, "ref": "Requesting!B12"},
+        "message": "the cell contains only whitespace (U+00A0 x2)"
+      }
+    ]
+  }
+]
+```
+
+- `band`, `code` and `action` are stated once per group, not once per
+  finding - that is what "organised by defect class" means structurally.
+- `blocks_import` is denormalised deliberately onto the group: a consumer
+  must never re-derive it from the band string itself.
+- `location` carries the resolvable parts (`sheet`/`column`/`row`) plus
+  `ref`, the same rendered string `report.md` shows, as a convenience -
+  never the only form, since `Sheet!Q1!B12` is ambiguous for a sheet named
+  `Sales!Q1` in a way the three separate fields never are.
+- Group order is explicit: blocking bands first
+  (`nptc_transform.bands.BAND_REPORT_ORDER`), then each band's codes in
+  their declared `FindingCode` order, with an unregistered code sorting
+  last rather than raising. `json.dumps(sort_keys=True)` only sorts object
+  *keys*, never array elements, so this order is never left to chance.
+  Findings within a group keep the report's own canonical order for free.
+
+### `report.md`
+
+```markdown
+### requires-human-decision - blocks import
+
+#### `WHITESPACE_ONLY_CELL` - 2 finding(s)
+
+**Required action:** Confirm whether the cell is meant to be empty or to
+hold a value, and set it explicitly. The transform will not decide on your
+behalf that whitespace means empty. The import is blocked until the cell is
+corrected at source.
+
+| Cell | Detail |
+|---|---|
+| `Requesting!B12` | the cell contains only whitespace (U+00A0 x2) |
+```
+
+Blocking bands first, in the same `BAND_REPORT_ORDER` the JSON groups use -
+one presentation order for the whole artefact. A defect class with zero
+findings is omitted entirely (the band-count table above already states
+the zero, so there is no "not run vs found nothing" ambiguity for an empty
+section to guard against); a report with zero findings overall still emits
+the `## Findings by defect class` heading, followed by `No findings.`, so
+anchor links into the section stay stable either way. The `| Cell | Detail
+|` table carries only the cell and the message - the code and band are the
+enclosing headings, and the required action is its own paragraph above the
+table, so neither is repeated once per row the way schema 6's flat table did.
+
+Every `FindingCode` this transform can emit, its band and its required
+action:
+
+| Defect class | Band | Required action |
+|---|---|---|
+| `INVISIBLE_CHARACTER` | auto-correctable | No action required. The transform will normalise this invisible character to an ordinary space automatically once dataset emission (P0-9) lands. The import is not blocked. |
+| `SURROUNDING_WHITESPACE` | auto-correctable | No action required. The transform will strip the leading and/or trailing whitespace automatically once dataset emission (P0-9) lands. The import is not blocked. |
+| `CODE_CELL_NOT_TEXT` | auto-correctable | No action required. The transform will coerce this code cell to text, recovering the SCTID's digits exactly, automatically once dataset emission (P0-9) lands. The import is not blocked. |
+| `INVISIBLE_CHARACTER_AMBIGUOUS` | requires-human-decision | RCPA-QAP must open the cell and decide the correct value: this character has no deterministic repair. The import is blocked until the cell is corrected at source. |
+| `WHITESPACE_ONLY_CELL` | requires-human-decision | Confirm whether the cell is meant to be empty or to hold a value, and set it explicitly. The transform will not decide on your behalf that whitespace means empty. The import is blocked until the cell is corrected at source. |
+| `CODE_CELL_INVALID_TYPE` | data-defect | RCPA-QAP must retype this cell as text holding the correct SCTID at source; no coercion exists to recover a valid code from a date, boolean, formula or error cell. The import is blocked until it is corrected. |
+| `NUMERIC_PRECISION_RISK` | data-defect | RCPA-QAP must re-enter this cell as text holding the correct, full-precision SCTID at source; Excel has already corrupted the stored digits. The import is blocked until it is corrected. |
+| `UNRECOGNISED_LAYOUT` | data-defect | RCPA-QAP must restore this sheet's published header row so the transform can find the code column; every row on this sheet went unscanned as a result. The import is blocked until the layout is corrected. |
+| `CODE_NOT_WELL_FORMED` | data-defect | RCPA-QAP must correct this cell to a well-formed 6-18 digit SCTID with a valid Verhoeff check digit at source. The import is blocked until it is corrected. |
+| `CODE_NOT_FOUND` | data-defect | RCPA-QAP must rebind this cell to a code that resolves in at least one validated edition, or correct the transcription error. The import is blocked until it is corrected. |
+| `CODE_INACTIVE` | data-defect | RCPA-QAP must rebind this cell to an active concept; an inactive concept must not be published as a binding. The import is blocked until it is corrected. |
+| `OUT_OF_SCOPE_HIERARCHY` | data-defect | RCPA-QAP must rebind this cell to a concept subsumed by 71388002 (Procedure), or document why the exception is justified (FR-84). The import is blocked until it is resolved. |
+| `LABEL_BOUND_TO_OTHER_CONCEPT` | data-defect | RCPA-QAP must check both the code and the label against each other: one is a transcription error pairing the wrong code with the right label, or the reverse (FR-97). The import is blocked until it is corrected at source. |
+| `LABEL_MATCHES_NO_DESIGNATION` | data-defect | RCPA-QAP must correct the published label at source; it matches no designation of the bound code, or of any other code bound elsewhere in this workbook (FR-97). The import is blocked until it is corrected. |
+| `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
+| `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
+| `LABEL_DESIGNATION_DRIFT` | informational | No action required. The served FSN will be seeded in place of the stored label; review only if the drift is unexpected (FR-97). The import is not blocked. |
+| `LABEL_DIFFERS_FROM_PREFERRED_TERM` | informational | No action required. The current SNOMED CT-AU preferred term differs from the published label; review only if the drift is unexpected (FR-97, FR-82). The import is not blocked. |
+| `PROBABLE_MISSPELLING` | informational | No action required to proceed. A terminologist should review the flagged token against the cited in-entry reference and correct it manually if it is genuinely a misspelling; the transform never auto-corrects it (FR-79). The import is not blocked. |
+| `INCONSISTENT_SPELLING` | informational | No action required to proceed. A terminologist should review the flagged token against the cited corpus-common spelling and correct it manually if it is genuinely inconsistent; the transform never auto-corrects it (FR-79). The import is not blocked. |
+| `TERM_SPECIMEN_NOT_MODELLED` | informational | No action required to proceed. A terminologist should review whether the bound concept ought to model the asserted specimen (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
+| `TERM_SPECIMEN_DIFFERS` | informational | No action required to proceed. A terminologist should review whether the bound concept's modelled specimen agrees with the one asserted by the term (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
+| `TERM_TIMING_NOT_MODELLED` | informational | No action required to proceed. A terminologist should review whether the asserted timing is genuinely unmodelled (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
+
+This table is generated by hand from `nptc_transform.actions.ACTION_BY_CODE`
+and is kept in sync with it by a dedicated test
+(`transform/tests/test_actions.py::test_every_action_matches_the_runbooks_table`),
+so change both in the same PR.
 
 ## Terminology validation (`--check-terminology`)
 
@@ -405,7 +523,6 @@ contain, but not the guarantees above:
 - **Applying the auto-correctable band's corrections** and emitting the import
   dataset, including the synthetic baseline release - P0-9
   (`--emit-dataset`)
-- Report content grouped by defect class with cell references - P0-8
 - FR-36's "same check on save in the application" half of FR-79 - a second PR
   against the backend, not part of the transform
 

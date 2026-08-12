@@ -320,7 +320,8 @@ def test_check_terminology_run_reports_sweep_backed_misspellings(
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["misspellings"]["authority_source"] == "SWEEP"
     assert not any(
-        f["code"] in ("PROBABLE_MISSPELLING", "INCONSISTENT_SPELLING") for f in payload["findings"]
+        defect_class["code"] in ("PROBABLE_MISSPELLING", "INCONSISTENT_SPELLING")
+        for defect_class in payload["defect_classes"]
     )
 
 
@@ -379,7 +380,10 @@ def test_check_terminology_blocks_on_a_designation_defect(
     assert "import blocked" in result.output
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["designations"]["labels_reconciled"] == 1
-    assert any(f["code"] == "LABEL_MATCHES_NO_DESIGNATION" for f in payload["findings"])
+    assert any(
+        defect_class["code"] == "LABEL_MATCHES_NO_DESIGNATION"
+        for defect_class in payload["defect_classes"]
+    )
 
 
 @pytest.mark.req("FR-70")
