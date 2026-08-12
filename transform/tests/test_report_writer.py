@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from nptc_transform.actions import action_for
 from nptc_transform.cellref import CellRef
 from nptc_transform.designation_check import DesignationRun
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource, MisspellingRun
@@ -16,23 +17,44 @@ from nptc_transform.semantic_drift import DriftRun
 from nptc_transform.terminology_check import EditionResolution, TerminologyRun
 
 
-def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
+def test_write_report_renders_findings_grouped_by_defect_class(tmp_path: Path) -> None:
     result = RunResult(
         source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
         mode=Mode.REPORT_ONLY,
-        findings=(Finding(code="INVISIBLE_CHAR", location=CellRef("Sheet", "B", 2), message="zero-width space"),),
+        findings=(
+            Finding(
+                code="INVISIBLE_CHAR", location=CellRef("Sheet", "B", 2), message="zero-width space"
+            ),
+        ),
     )
     report_dir = tmp_path / "report"
 
     write_report(result, report_dir)
 
-    json_text = (report_dir / "report.json").read_text(encoding="utf-8")
-    assert '"finding_count": 1' in json_text
-    assert "INVISIBLE_CHAR" in json_text
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["finding_count"] == 1
+    # An unregistered code fails safe to data-defect (bands.band_for).
+    assert payload["defect_classes"] == [
+        {
+            "band": "data-defect",
+            "blocks_import": True,
+            "code": "INVISIBLE_CHAR",
+            "action": action_for("INVISIBLE_CHAR"),
+            "finding_count": 1,
+            "findings": [
+                {
+                    "location": {"sheet": "Sheet", "column": "B", "row": 2, "ref": "Sheet!B2"},
+                    "message": "zero-width space",
+                }
+            ],
+        }
+    ]
 
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
-    # An unregistered code fails safe to data-defect (bands.band_for).
-    assert "| Sheet!B2 | INVISIBLE_CHAR | data-defect | zero-width space |" in markdown_text
+    assert "### data-defect - blocks import" in markdown_text
+    assert "#### `INVISIBLE_CHAR` - 1 finding(s)" in markdown_text
+    assert f"**Required action:** {action_for('INVISIBLE_CHAR')}" in markdown_text
+    assert "| `Sheet!B2` | zero-width space |" in markdown_text
 
 
 @pytest.mark.req("FR-48")
@@ -181,7 +203,7 @@ def test_a_misspelling_run_records_its_thresholds_verbatim(tmp_path: Path) -> No
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 6
+    assert payload["schema_version"] == SCHEMA_VERSION == 7
     assert payload["misspellings"]["thresholds"] == THRESHOLDS
     assert payload["misspellings"]["authority_source"] == "SWEEP"
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
@@ -249,7 +271,7 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 6
+    assert payload["schema_version"] == SCHEMA_VERSION == 7
     assert payload["drift"] == {
         "rows_examined": 4,
         "rows_excluded": 1,
@@ -315,7 +337,9 @@ def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
         mode=Mode.REPORT_ONLY,
         findings=(
             Finding(code="PIPE", location=CellRef("Sheet", "B", 2), message="value was 'a|b'"),
-            Finding(code="NEWLINE", location=CellRef("Sheet", "B", 3), message="line one\r\nline two"),
+            Finding(
+                code="NEWLINE", location=CellRef("Sheet", "B", 3), message="line one\r\nline two"
+            ),
         ),
     )
     report_dir = tmp_path / "report"
@@ -326,15 +350,16 @@ def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
     assert b"\r\n" not in raw
 
     markdown_text = raw.decode("utf-8")
-    assert "| Sheet!B2 | PIPE | data-defect | value was 'a\\|b' |" in markdown_text
-    assert "| Sheet!B3 | NEWLINE | data-defect | line one<br>line two |" in markdown_text
+    assert "| `Sheet!B2` | value was 'a\\|b' |" in markdown_text
+    assert "| `Sheet!B3` | line one<br>line two |" in markdown_text
 
-    # Every row of the findings table still has exactly four columns - the
-    # band summary table above it has a different (two-column) shape and is
-    # excluded by locating the findings header explicitly.
+    # Every row of a findings table still has exactly two columns - the band
+    # summary table above it has the same shape by coincidence, so this
+    # locates the grouped findings section explicitly rather than assuming
+    # which table in the file it is checking.
     lines = markdown_text.splitlines()
-    findings_header = lines.index("| Location | Code | Band | Message |")
+    findings_header = lines.index("| Cell | Detail |")
     rows = [line for line in lines[findings_header + 2 :] if line.startswith("| ")]
     assert rows, "expected at least one findings row"
     for row in rows:
-        assert len(row.split(" | ")) == 4, row
+        assert len(row.split(" | ")) == 2, row
