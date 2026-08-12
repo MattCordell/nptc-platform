@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from nptc_transform.actions import ACTION_BY_CODE, action_for
 from nptc_transform.bands import Band, FindingCode, band_for
+
+_RUNBOOK = Path(__file__).resolve().parents[2] / "docs" / "operations" / "runbooks" / "transform.md"
 
 
 @pytest.mark.req("FR-72")
@@ -67,3 +71,16 @@ def test_ascii_only() -> None:
     in via a careless edit."""
     for code, action in ACTION_BY_CODE.items():
         assert action.isascii(), f"{code}: {action!r} contains a non-ASCII character"
+
+
+@pytest.mark.req("FR-72")
+def test_every_action_matches_the_runbooks_table() -> None:
+    """The runbook's ``| Defect class | Band | Required action |`` table
+    (``docs/operations/runbooks/transform.md``, "The report files (FR-72)")
+    is a second, hand-maintained copy of this registry's prose - a doc/code
+    drift risk this repo treats as worth guarding, not shrugging off as a
+    brittle test. Fails loudly, naming the code, if a future edit changes
+    one copy without the other."""
+    runbook_text = _RUNBOOK.read_text(encoding="utf-8")
+    for code, action in ACTION_BY_CODE.items():
+        assert action in runbook_text, f"{code}'s action text is stale in the runbook"
