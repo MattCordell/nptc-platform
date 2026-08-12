@@ -29,7 +29,7 @@ from nptc_transform.bands import Band
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
@@ -107,6 +107,29 @@ def _misspellings_payload(result: RunResult) -> object:
     }
 
 
+def _drift_payload(result: RunResult) -> object:
+    """FR-75's provenance block, or ``null`` if the pass never ran at all -
+    the same ``None``-vs-zero-findings distinction ``_designations_payload``
+    makes, and for the same reason: a clean run and a run that never contacted
+    the server must not read identically.
+    """
+    run = result.drift
+    if run is None:
+        return None
+    return {
+        "rows_examined": run.rows_examined,
+        "rows_excluded": run.rows_excluded,
+        "term_specimen_not_modelled_count": run.term_specimen_not_modelled_count,
+        "term_specimen_differs_count": run.term_specimen_differs_count,
+        "term_timing_not_modelled_count": run.term_timing_not_modelled_count,
+        "specimen_table_entries_unresolved": run.specimen_table_entries_unresolved,
+        "specimen_column_values_unmapped": run.specimen_column_values_unmapped,
+        "describe_requests": run.describe_requests,
+        "classification_requests": run.classification_requests,
+        "resolved_versions": list(run.resolved_versions),
+    }
+
+
 def _report_payload(result: RunResult) -> dict[str, object]:
     band_counts = result.band_counts
     return {
@@ -123,6 +146,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "terminology": _terminology_payload(result),
         "designations": _designations_payload(result),
         "misspellings": _misspellings_payload(result),
+        "drift": _drift_payload(result),
         "findings": [
             {
                 "code": finding.code,
@@ -246,6 +270,38 @@ def _render_misspellings(result: RunResult) -> list[str]:
     return lines
 
 
+def _render_drift(result: RunResult) -> list[str]:
+    """The human-readable half of FR-75's provenance block.
+
+    Says "not run" explicitly for the same reason ``_render_designations``
+    does, and calls out the two provenance counters only when nonzero - a
+    reader must not have to hunt for them in ``report.json`` when there is
+    nothing to say.
+    """
+    run = result.drift
+    if run is None:
+        return ["- Semantic drift review: `not run`", ""]
+    lines = [
+        f"- Semantic drift review: {run.rows_examined} row(s) examined, "
+        f"{run.rows_excluded} not examined, "
+        f"{run.term_specimen_not_modelled_count} unmodelled specimen assertion(s), "
+        f"{run.term_specimen_differs_count} differing specimen assertion(s), "
+        f"{run.term_timing_not_modelled_count} unmodelled timing assertion(s) (FR-75)",
+    ]
+    if run.specimen_table_entries_unresolved:
+        lines.append(
+            f"- {run.specimen_table_entries_unresolved} specimen-table concept(s) could not be "
+            "resolved against the server; those group(s) fall back to their hand-typed terms only"
+        )
+    if run.specimen_column_values_unmapped:
+        lines.append(
+            f"- {run.specimen_column_values_unmapped} distinct `Specimen` column value(s) map to "
+            "no group in the specimen table - a coverage gap, never fed back into classification"
+        )
+    lines.append("")
+    return lines
+
+
 def _render_markdown(result: RunResult) -> str:
     band_counts = result.band_counts
     lines = [
@@ -264,6 +320,7 @@ def _render_markdown(result: RunResult) -> str:
     lines.extend(_render_terminology(result))
     lines.extend(_render_designations(result))
     lines.extend(_render_misspellings(result))
+    lines.extend(_render_drift(result))
     if result.findings:
         lines.append("| Location | Code | Band | Message |")
         lines.append("|---|---|---|---|")

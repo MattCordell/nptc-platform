@@ -483,8 +483,8 @@
   priority: SHOULD
   phase: p0
   title: "The transform reports semantic mismatches between the RCPA preferred term and the bound SNOMED FSN as warnings for editorial review"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc-transform's TERM_SPECIMEN_NOT_MODELLED/TERM_SPECIMEN_DIFFERS/TERM_TIMING_NOT_MODELLED heuristics land with P0-7/#29 (ADR-0008): a hand-typed + server-augmented specimen table (nptc_transform.specimen_table) checked against each bound concept's own Has specimen (116686009) attribute value via chunked ECL set-membership (TerminologySweep.codes_without_attribute/codes_with_attribute_value/describe), never a per-row $lookup. All three codes are Band.INFORMATIONAL - candidates for editorial review (H-03), not confirmed defects."
 - id: "FR-76"
   priority: MUST
   phase: p0

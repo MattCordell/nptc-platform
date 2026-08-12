@@ -22,9 +22,11 @@ from nptc_shared.terminology.errors import (
 )
 from nptc_shared.terminology.models import (
     AU_LANGUAGE_TAG,
+    HAS_SPECIMEN_ATTRIBUTE,
     PROCEDURE_ROOT_CODE,
     SNOMED_CT_AU,
     SNOMED_CT_INTERNATIONAL,
+    ConceptProperty,
     Edition,
     ExpandedConcept,
     Expansion,
@@ -1120,3 +1122,122 @@ def test_confirm_labels_of_an_empty_sequence_issues_no_requests() -> None:
     client = _stub()
     assert TerminologySweep(client).confirm_labels([], edition=SNOMED_CT_AU) == ()
     assert client.requests == ()
+
+
+# -- FR-75: codes_without_attribute / codes_with_attribute_value / describe --
+
+
+def _specimen_bound(code: str, *, specimen: str, **kwargs: object) -> StubConcept:
+    return StubConcept(
+        code=code,
+        fsn=kwargs.pop("fsn", f"Fixture concept {code} (procedure)"),  # type: ignore[arg-type]
+        properties=(
+            ConceptProperty(code=HAS_SPECIMEN_ATTRIBUTE, value=specimen, value_type="code"),
+        ),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.req("FR-75")
+def test_codes_without_attribute_reports_only_codes_with_no_value_at_all() -> None:
+    modelled = _specimen_bound("100000001", specimen="122575003")
+    unmodelled = _procedure("100000002")
+    client = _stub(modelled, unmodelled)
+
+    result = TerminologySweep(client).codes_without_attribute(
+        ["100000001", "100000002"], attribute=HAS_SPECIMEN_ATTRIBUTE, edition=SNOMED_CT_AU
+    )
+
+    assert result == ("100000002",)
+
+
+@pytest.mark.req("FR-75")
+def test_codes_without_attribute_chunks_the_same_way_the_hierarchy_check_does() -> None:
+    codes = _codes(5)
+    client = _stub(*(_procedure(code) for code in codes))
+
+    TerminologySweep(client, chunk_size=2).codes_without_attribute(
+        codes, attribute=HAS_SPECIMEN_ATTRIBUTE, edition=SNOMED_CT_AU
+    )
+
+    minus_expansions = [
+        r.detail for r in client.requests if r.operation is Operation.EXPAND and "MINUS" in r.detail
+    ]
+    assert len(minus_expansions) == 3  # ceil(5 / 2)
+
+
+@pytest.mark.req("FR-75")
+def test_codes_with_attribute_value_reports_codes_whose_value_is_subsumed_by_root() -> None:
+    agrees = _specimen_bound("100000001", specimen="122575003")
+    differs = _specimen_bound("100000002", specimen="119364003")  # serum, not urine
+    client = _stub(agrees, differs)
+
+    result = TerminologySweep(client).codes_with_attribute_value(
+        ["100000001", "100000002"],
+        attribute=HAS_SPECIMEN_ATTRIBUTE,
+        root="122575003",
+        edition=SNOMED_CT_AU,
+    )
+
+    assert result == ("100000001",)
+
+
+@pytest.mark.req("FR-75")
+def test_codes_with_attribute_value_closure_catches_a_descendant_specimen_value() -> None:
+    """The ``<<`` on the value side, not just around the whole refinement -
+    a code whose value is a *descendant* of ``root`` still agrees."""
+    descendant_value = _procedure("122575099", parents=("122575003",))
+    bound = _specimen_bound("100000001", specimen="122575099")
+    client = _stub(descendant_value, bound)
+
+    result = TerminologySweep(client).codes_with_attribute_value(
+        ["100000001"], attribute=HAS_SPECIMEN_ATTRIBUTE, root="122575003", edition=SNOMED_CT_AU
+    )
+
+    assert result == ("100000001",)
+
+
+@pytest.mark.req("FR-75")
+def test_describe_resolves_every_code_directly_not_through_a_hierarchy_expression() -> None:
+    concept = StubConcept(
+        code="122575003", fsn="Urine specimen (specimen)", synonyms=("Urine sample",)
+    )
+    client = _stub(concept)
+
+    result = TerminologySweep(client).describe(["122575003"], edition=SNOMED_CT_AU)
+
+    assert len(result) == 1
+    assert result[0].code == "122575003"
+    assert result[0].fully_specified_name == "Urine specimen (specimen)"
+    assert "Urine sample" in result[0].values
+    assert _hierarchy_expansions(client) == ()  # never MINUS <<71388002
+
+
+@pytest.mark.req("FR-75")
+def test_describe_of_an_empty_sequence_issues_no_requests() -> None:
+    client = _stub()
+    assert TerminologySweep(client).describe([], edition=SNOMED_CT_AU) == ()
+    assert client.requests == ()
+
+
+@pytest.mark.req("FR-75")
+def test_describe_chunks_the_specimen_table_the_same_way_status_resolution_does() -> None:
+    codes = _codes(5)
+    client = _stub(*(_procedure(code) for code in codes))
+
+    TerminologySweep(client, chunk_size=2).describe(codes, edition=SNOMED_CT_AU)
+
+    assert len(_expansions(client)) == 3  # ceil(5 / 2), plain $expand, no MINUS/AND
+
+
+@pytest.mark.req("FR-75")
+def test_describe_never_runs_the_fr84_hierarchy_check_or_fr99_tag_check() -> None:
+    """Deliberate: these are specimen concepts, not procedures - ``run()``'s
+    FR-84/FR-99 checks would misfire on every one of them."""
+    concept = StubConcept(code="119339001", fsn="Stool specimen (specimen)")
+    client = _stub(concept)
+
+    TerminologySweep(client).describe(["119339001"], edition=SNOMED_CT_AU)
+
+    assert _hierarchy_expansions(client) == ()
+    assert len(client.requests) == 1

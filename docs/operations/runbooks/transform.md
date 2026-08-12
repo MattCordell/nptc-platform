@@ -13,7 +13,8 @@ terminology validation with the hierarchy check, delivered with backlog issue
 [P0-5](https://github.com/MattCordell/nptc-platform/issues/27); designation
 reconciliation, delivered with backlog issue
 [P0-6](https://github.com/MattCordell/nptc-platform/issues/28); and the FR-79
-misspelling heuristics, delivered with backlog issue
+misspelling heuristics and the FR-75 semantic-drift review, both delivered
+with backlog issue
 [P0-7](https://github.com/MattCordell/nptc-platform/issues/29). It does not
 yet correct an auto-correctable finding or produce an import dataset - see
 "Not implemented yet" below.
@@ -30,7 +31,7 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode. **Not implemented yet** - see below. |
-| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), and give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below), and run the FR-75 semantic-drift review of specimen/timing wording (see "Interpreting a semantic-drift finding" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -119,6 +120,9 @@ corrected, and each defect is reported under one of two codes chosen by
 | `LABEL_DIFFERS_FROM_PREFERRED_TERM` | - | The current SNOMED CT-AU preferred term differs from the column value, independently of the above (FR-97, FR-82) - informational, and reported even on a row with no other designation finding at all. |
 | `PROBABLE_MISSPELLING` | - | A preferred-term/synonym token differs by one or two characters from another designation in the *same* entry, or from the served FSN/designations of the concept that entry's code binds to (FR-79, H-04) - informational, never auto-corrected. See "Interpreting a misspelling finding" below. |
 | `INCONSISTENT_SPELLING` | - | A preferred-term/synonym token used in only one or two entries differs by one or two characters from a spelling used in many more, across the whole workbook (FR-79, H-04) - informational, never auto-corrected. |
+| `TERM_SPECIMEN_NOT_MODELLED` | - | The RCPA preferred term asserts a specimen (e.g. "urine", "CSF") the bound concept constrains no `Has specimen` (116686009) value for at all (FR-75, H-03) - informational, a candidate for editorial review. See "Interpreting a semantic-drift finding" below. |
+| `TERM_SPECIMEN_DIFFERS` | - | The RCPA preferred term asserts a specimen, and the bound concept *does* constrain a `Has specimen` value, but not one subsumed by the asserted specimen's root (FR-75, H-03) - informational. |
+| `TERM_TIMING_NOT_MODELLED` | - | The RCPA preferred term asserts a timing (e.g. "24 hour") that appears in neither the bound concept's own served designations nor its asserted specimen concept's - only reported when the specimen aspect itself is not asserted or already agrees (FR-75, H-03) - informational. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -145,7 +149,7 @@ and this one together are the complete classification.
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT` | The defect has one deterministic repair. **Not yet applied** - the report itemises it, but nothing is corrected on disk until P0-9's `--emit-dataset` lands. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
 | `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
-| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING`, `TERM_SPECIMEN_NOT_MODELLED`, `TERM_SPECIMEN_DIFFERS`, `TERM_TIMING_NOT_MODELLED` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
 `requires-human-decision` or `data-defect` finding aborts the whole run, no
@@ -182,6 +186,17 @@ catalogue scale at all:
    50-row sample this is 1 request, not 50: `report.json`'s `designations`
    block prints the exact count (`label_confirmations`) so this stays
    auditable rather than assumed.
+5. **The FR-75 semantic-drift review (H-03) costs `2 + G` further `$expand`-
+   style calls, never one per row and never one per code.** One call resolves
+   the whole specimen table's own vocabulary (`describe`); one classifies
+   which asserting codes constrain no `Has specimen` value at all
+   (`codes_without_attribute`); one more *per distinct specimen group still
+   asserted after the visibility filter* (`codes_with_attribute_value`,
+   `G` in the count above) - `G` is bounded by the size of the specimen
+   table (16 groups), never by the catalogue. A row whose own served
+   designations (or its asserted specimen concept's) already carry the
+   wording it asserts needs no classification call at all - see the worked
+   examples below.
 
 There is never one request per code per edition. A 429 is retried honouring
 `Retry-After` with exponential backoff, by the shared client (see the
@@ -312,6 +327,65 @@ Both codes are `Band.INFORMATIONAL` (never blocking) and are candidates for edit
 only - see ADR-0007's Rejected alternatives for why neither a blocking band nor
 auto-correction was considered acceptable (PRD:884: "Automatically 'fixing' a term in a
 clinical terminology on the basis of an edit-distance heuristic is not acceptable").
+
+### Interpreting a semantic-drift finding (FR-75)
+
+PRD Annex A.9's own worked examples show roughly as many benign rows as
+genuine ones - a false-positive rate that makes a blocking band indefensible
+(see ADR-0008). All three codes are `Band.INFORMATIONAL`: candidates for a
+terminologist's review, never automated corrections. Four worked rows from
+Annex A.9, run through this pass:
+
+| Term | Code | Bound concept's `Has specimen` | Outcome |
+|---|---|---|---|
+| `Acetone urine` | `47615003` | `122575003` (urine) | No finding - the asserted specimen (urine) agrees with the modelled value. |
+| `14-3-3 protein CSF` | `430551003` | `258450006` (CSF) | No finding, and no classification request at all - the term's own FSN literally contains "CSF", so the visibility filter suppresses it before any server call. |
+| `4-Hydroxy-3-methoxymandelate urine 24h` | `121302000` | *(none)* | `TERM_SPECIMEN_NOT_MODELLED` - the term asserts urine and a `24 h` timing, and the concept constrains no specimen at all. |
+| `Adenovirus Ag faeces` | `121960004` | *(none)* | `TERM_SPECIMEN_NOT_MODELLED` - asserts faeces, no specimen modelled. |
+
+**The check is a heuristic over free text, not a lookup.** A term's asserted
+specimen/timing comes from matching a small, hand-typed table of surface
+forms (`nptc_transform.specimen_table.SPECIMEN_TABLE`) against the RCPA
+preferred term, word-boundary and case-folded. The table is deliberately not
+exhaustive - see "The specimen table is an allowlist" below.
+
+**The free visibility filter is what keeps a row like row 7 silent.** Before
+any classification request is issued, a term whose own served designations
+(FSN, preferred term, any synonym, across every edition it resolved in) - or
+its asserted specimen concept's own served designations - already carry the
+wording it asserts needs no further check at all: the wording is expected,
+not drift. This is checked against *hand-typed table terms union whatever the
+specimen concept's own `describe()` call served* - a specimen concept with a
+served synonym the hand-typed table doesn't happen to list (e.g. CSF's own
+"CSF specimen"/"CSF - Cerebrospinal fluid sample") still suppresses a term
+that uses it, even though the table itself never mentions that exact wording.
+
+**Precedence: exactly one finding per row.** `TERM_SPECIMEN_NOT_MODELLED` >
+`TERM_SPECIMEN_DIFFERS` > `TERM_TIMING_NOT_MODELLED`. A row with both an
+unmodelled specimen and an unmodelled timing gets one finding, at the
+strongest code, whose message names both assertions - never two findings for
+the one row.
+
+**Unlike FR-97, a hierarchy violation (`OUT_OF_SCOPE_HIERARCHY`) is not
+excluded here.** A specimen/timing drift finding is about the term's own
+content, and survives whatever rebinding would fix the hierarchy violation -
+the two findings can, and sometimes should, fire on the same cell together.
+
+**The specimen table is an allowlist, never a finding generator.** A term
+asserting a specimen no group in the table covers is silently never
+inspected for that aspect at all. The mitigation is a coverage *audit*, never
+an assertion source: the workbook's own `Specimen` column (free text, not
+controlled vocabulary) is checked only for how many distinct values map to no
+group - `specimen_column_values_unmapped` in `report.json`'s `drift` block -
+so a systematically-uncovered specimen shows up as a number to investigate,
+not a silent zero.
+
+`specimen_table_entries_unresolved` is the same "the check did not actually
+run for that many, not a silent pass" signal `unresolved_fsn_count` already
+gives FR-99: a specimen-table SCTID the server didn't resolve at all still
+functions on its hand-typed terms alone, just without server augmentation -
+persistently nonzero here is worth investigating the server's response for
+that concept.
 
 ### Determinism with terminology on (FR-73)
 

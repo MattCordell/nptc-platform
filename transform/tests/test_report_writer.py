@@ -11,6 +11,7 @@ from nptc_transform.designation_check import DesignationRun
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource, MisspellingRun
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 from nptc_transform.report_writer import SCHEMA_VERSION, write_report
+from nptc_transform.semantic_drift import DriftRun
 from nptc_transform.terminology_check import EditionResolution, TerminologyRun
 
 
@@ -179,7 +180,7 @@ def test_a_misspelling_run_records_its_thresholds_verbatim(tmp_path: Path) -> No
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 5
+    assert payload["schema_version"] == SCHEMA_VERSION == 6
     assert payload["misspellings"]["thresholds"] == THRESHOLDS
     assert payload["misspellings"]["authority_source"] == "SWEEP"
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
@@ -221,6 +222,82 @@ def test_a_run_with_no_misspelling_pass_says_so_rather_than_omitting_it(tmp_path
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["misspellings"] is None
     assert "Misspelling detection: `not run`" in (report_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.req("FR-75")
+def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        drift=DriftRun(
+            rows_examined=4,
+            rows_excluded=1,
+            term_specimen_not_modelled_count=2,
+            term_specimen_differs_count=1,
+            term_timing_not_modelled_count=1,
+            specimen_table_entries_unresolved=1,
+            specimen_column_values_unmapped=1,
+            describe_requests=1,
+            classification_requests=3,
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == SCHEMA_VERSION == 6
+    assert payload["drift"] == {
+        "rows_examined": 4,
+        "rows_excluded": 1,
+        "term_specimen_not_modelled_count": 2,
+        "term_specimen_differs_count": 1,
+        "term_timing_not_modelled_count": 1,
+        "specimen_table_entries_unresolved": 1,
+        "specimen_column_values_unmapped": 1,
+        "describe_requests": 1,
+        "classification_requests": 3,
+        "resolved_versions": [],
+    }
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "4 row(s) examined, 1 not examined" in markdown_text
+    assert "1 specimen-table concept(s) could not be resolved" in markdown_text
+    assert "1 distinct `Specimen` column value(s) map to no group" in markdown_text
+
+
+@pytest.mark.req("FR-75")
+def test_a_drift_run_with_zero_unresolved_counters_omits_their_lines(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        drift=DriftRun(rows_examined=4, rows_excluded=0),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "could not be resolved" not in markdown_text
+    assert "map to no group" not in markdown_text
+
+
+@pytest.mark.req("FR-75")
+def test_a_run_with_no_drift_pass_says_so_rather_than_omitting_it(tmp_path: Path) -> None:
+    """ "Not run" and "run, nothing found" are different facts here too - a
+    clean workbook produces zero ``TERM_*`` findings just as often as a
+    semantic-drift pass that never ran."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64), mode=Mode.REPORT_ONLY
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["drift"] is None
+    assert "Semantic drift review: `not run`" in (report_dir / "report.md").read_text(
         encoding="utf-8"
     )
 

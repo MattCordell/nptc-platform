@@ -74,6 +74,9 @@ class FindingCode(StrEnum):
     LABEL_DIFFERS_FROM_PREFERRED_TERM = "LABEL_DIFFERS_FROM_PREFERRED_TERM"
     PROBABLE_MISSPELLING = "PROBABLE_MISSPELLING"
     INCONSISTENT_SPELLING = "INCONSISTENT_SPELLING"
+    TERM_SPECIMEN_NOT_MODELLED = "TERM_SPECIMEN_NOT_MODELLED"
+    TERM_SPECIMEN_DIFFERS = "TERM_SPECIMEN_DIFFERS"
+    TERM_TIMING_NOT_MODELLED = "TERM_TIMING_NOT_MODELLED"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -130,6 +133,15 @@ BAND_BY_CODE: dict[str, Band] = {
     # lost or a data defect at source" claim the data-defect band makes.
     FindingCode.PROBABLE_MISSPELLING: Band.INFORMATIONAL,
     FindingCode.INCONSISTENT_SPELLING: Band.INFORMATIONAL,
+    # FR-75/H-03: a semantic mismatch between the RCPA preferred term's own
+    # specimen/timing wording and the bound concept's modelled Has specimen
+    # value is a candidate for editorial review, never a confirmed defect -
+    # PRD Annex A.9's own worked examples show roughly as many benign rows as
+    # genuine ones, which makes a blocking band indefensible at that
+    # false-positive rate (see ADR-0008).
+    FindingCode.TERM_SPECIMEN_NOT_MODELLED: Band.INFORMATIONAL,
+    FindingCode.TERM_SPECIMEN_DIFFERS: Band.INFORMATIONAL,
+    FindingCode.TERM_TIMING_NOT_MODELLED: Band.INFORMATIONAL,
 }
 
 if set(BAND_BY_CODE) != set(FindingCode):
