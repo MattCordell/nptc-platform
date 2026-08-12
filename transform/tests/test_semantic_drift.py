@@ -333,6 +333,50 @@ def test_a_wrong_specimen_value_is_reported_as_differs(tmp_path: Path) -> None:
     assert findings[0].code == FindingCode.TERM_SPECIMEN_DIFFERS
 
 
+# -- duplicate bindings: same code, different asserted groups on each row ----
+
+
+@pytest.mark.req("FR-75")
+def test_a_duplicate_binding_is_classified_per_row_group_not_per_code(tmp_path: Path) -> None:
+    """The same SCTID bound by two rows, asserting two different specimen
+    groups - duplicate bindings do occur in the workbook. The concept's own
+    modelled ``Has specimen`` agrees with one group (urine) and disagrees
+    with the other (serum): only the serum row's classification may depend
+    on the serum-specific check. Keying ``differs`` by code alone would let
+    the serum row's disagreement bleed into the urine row, which genuinely
+    agrees and must report nothing."""
+    code = "700000099"
+    client = StubTerminologyClient(
+        concepts=[
+            StubConcept(
+                code=code,
+                fsn="Test analyte level (procedure)",
+                properties=(
+                    ConceptProperty(
+                        code=HAS_SPECIMEN_ATTRIBUTE, value=URINE_SPECIMEN_CODE, value_type="code"
+                    ),
+                ),
+            ),
+            _specimen_concept(URINE_SPECIMEN_CODE, "Urine specimen (specimen)"),
+            _specimen_concept(SERUM_SPECIMEN_CODE, "Serum specimen (specimen)"),
+        ]
+    )
+    workbook = _workbook(
+        tmp_path,
+        [
+            ("Test analyte urine", None, code),
+            ("Test analyte serum", None, code),
+        ],
+    )
+
+    outcome = _run(workbook, client)
+
+    findings = _drift_findings(outcome)
+    assert len(findings) == 1
+    assert findings[0].code == FindingCode.TERM_SPECIMEN_DIFFERS
+    assert "serum" in findings[0].message
+
+
 # -- timing only ---------------------------------------------------------------
 
 
@@ -363,6 +407,28 @@ def test_urine_24h_on_a_plain_urine_seeded_concept_is_timing_not_modelled_only(
     assert len(findings) == 1
     assert findings[0].code == FindingCode.TERM_TIMING_NOT_MODELLED
     assert "24 h" in findings[0].message
+
+
+@pytest.mark.req("FR-75")
+def test_a_differently_worded_but_matching_served_timing_suppresses_the_finding(
+    tmp_path: Path,
+) -> None:
+    """The label says '24h'; the bound concept's own FSN spells it out as
+    '24 hour'. A literal word-boundary match of the canonical string '24 h'
+    against that FSN text fails (no boundary between 'h' and the following
+    'o' in 'hour'), which would wrongly flag this row - the two must be
+    compared as canonicalised timings, not as literal substrings."""
+    code = "700000101"
+    client = StubTerminologyClient(
+        concepts=[
+            StubConcept(code=code, fsn="Test analyte 24 hour collection (procedure)"),
+        ]
+    )
+    workbook = _workbook(tmp_path, [("Test analyte 24h", None, code)])
+
+    outcome = _run(workbook, client)
+
+    assert _drift_findings(outcome) == []
 
 
 # -- the timing regex itself ---------------------------------------------------

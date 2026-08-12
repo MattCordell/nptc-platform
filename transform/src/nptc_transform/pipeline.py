@@ -170,7 +170,6 @@ def run_transform_sheets(
         sweep=sweep,
         bindings=outcome.bindings,
         results=outcome.results,
-        editions=editions,
     )
     return RunResult(
         source=source,

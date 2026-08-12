@@ -641,7 +641,12 @@ class TerminologySweep:
     # -- FR-75 -----------------------------------------------------------
 
     def codes_without_attribute(
-        self, codes: Sequence[str], *, attribute: str, edition: Edition
+        self,
+        codes: Sequence[str],
+        *,
+        attribute: str,
+        edition: Edition,
+        versions: set[str] | None = None,
     ) -> tuple[str, ...]:
         """Which of ``codes`` constrains no value at all for ``attribute``.
 
@@ -652,18 +657,32 @@ class TerminologySweep:
         ``TERM_SPECIMEN_NOT_MODELLED``. ``codes`` should be restricted to the
         set of codes a caller actually needs an answer for (never the whole
         catalogue) - see ``semantic_drift.py``'s own request-count discipline.
+
+        ``versions``, if given, is updated with every resolved version URI
+        this call's requests reported (FR-48) - the same discipline ``run()``
+        follows, threaded out rather than discarded since this call's caller
+        does not go through ``run()`` at all.
         """
-        versions: set[str] = set()
-        return self._expand_combined(
+        local_versions: set[str] = set()
+        result = self._expand_combined(
             codes,
             operator="MINUS",
             rhs=f"(* : {attribute} = *)",
             edition=edition,
-            versions=versions,
+            versions=local_versions,
         )
+        if versions is not None:
+            versions.update(local_versions)
+        return result
 
     def codes_with_attribute_value(
-        self, codes: Sequence[str], *, attribute: str, root: str, edition: Edition
+        self,
+        codes: Sequence[str],
+        *,
+        attribute: str,
+        root: str,
+        edition: Edition,
+        versions: set[str] | None = None,
     ) -> tuple[str, ...]:
         """Which of ``codes`` constrains ``attribute`` to a value subsumed by ``root``.
 
@@ -673,18 +692,24 @@ class TerminologySweep:
         from catheter" under "Urine specimen") as agreeing with ``root``,
         rather than only an exact match. Dropping it would silently miss every
         such descendant and report a false ``TERM_SPECIMEN_DIFFERS``.
+
+        ``versions``, if given, is updated the same way as
+        ``codes_without_attribute``'s own parameter of the same name.
         """
-        versions: set[str] = set()
-        return self._expand_combined(
+        local_versions: set[str] = set()
+        result = self._expand_combined(
             codes,
             operator="AND",
             rhs=f"(* : {attribute} = <<{root})",
             edition=edition,
-            versions=versions,
+            versions=local_versions,
         )
+        if versions is not None:
+            versions.update(local_versions)
+        return result
 
     def describe(
-        self, codes: Sequence[str], *, edition: Edition
+        self, codes: Sequence[str], *, edition: Edition, versions: set[str] | None = None
     ) -> tuple[ConceptDesignations, ...]:
         """Every one of ``codes``'s designation sets, resolved directly - not
         through a hierarchy expression.
@@ -700,14 +725,19 @@ class TerminologySweep:
         hierarchy check and FR-99 semantic-tag check would both misfire on
         every one of them - a specimen concept is never subsumed by
         ``<<71388002`` and never tagged ``(procedure)``.
+
+        ``versions``, if given, is updated the same way as
+        ``codes_without_attribute``'s own parameter of the same name.
         """
         unique = tuple(sorted(set(codes)))
         if not unique:
             return ()
-        versions: set[str] = set()
+        local_versions: set[str] = set()
         concepts: list[ExpandedConcept] = []
         for chunk in _chunks(unique, self._chunk_size):
-            concepts.extend(self._expand_chunk(chunk, edition=edition, versions=versions))
+            concepts.extend(self._expand_chunk(chunk, edition=edition, versions=local_versions))
+        if versions is not None:
+            versions.update(local_versions)
         return _project_designations(concepts)
 
 

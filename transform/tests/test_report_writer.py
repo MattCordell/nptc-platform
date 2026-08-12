@@ -259,6 +259,7 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
         "specimen_column_values_unmapped": 1,
         "describe_requests": 1,
         "classification_requests": 3,
+        "resolved_versions": [],
     }
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     assert "4 row(s) examined, 1 not examined" in markdown_text

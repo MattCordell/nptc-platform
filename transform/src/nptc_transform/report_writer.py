@@ -126,6 +126,7 @@ def _drift_payload(result: RunResult) -> object:
         "specimen_column_values_unmapped": run.specimen_column_values_unmapped,
         "describe_requests": run.describe_requests,
         "classification_requests": run.classification_requests,
+        "resolved_versions": list(run.resolved_versions),
     }
 
 

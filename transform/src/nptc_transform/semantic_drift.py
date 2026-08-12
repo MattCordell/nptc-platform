@@ -43,18 +43,19 @@ specimen never degrades to a silent zero findings with nothing to show for it.
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from nptc_shared.terminology.models import HAS_SPECIMEN_ATTRIBUTE, SNOMED_CT_AU, Edition
+from nptc_shared.terminology.models import HAS_SPECIMEN_ATTRIBUTE, SNOMED_CT_AU
 from nptc_shared.terminology.sweep import ConceptDesignations, SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible, normalise_for_comparison
 from nptc_transform.bands import FindingCode
 from nptc_transform.findings import Finding
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup, all_specimen_codes
-from nptc_transform.terminology_check import DEFAULT_EDITIONS, CodeBinding
+from nptc_transform.terminology_check import CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 #: Excluded from the ``Specimen`` column coverage audit (module docstring):
@@ -115,6 +116,11 @@ class DriftRun:
     #: unresolved row) - see ``check_semantic_drift``'s docstring for why this
     #: is not literally "describe_requests + classification_requests == 1 + G".
     classification_requests: int = 0
+    #: Every fully qualified version URI resolved across this pass's
+    #: ``describe``/``codes_without_attribute``/``codes_with_attribute_value``
+    #: calls (FR-48) - the same provenance ``SweepResult.resolved_versions``
+    #: carries for the terminology pass proper.
+    resolved_versions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -208,6 +214,21 @@ def _extract_timing(folded_label: str) -> str | None:
     return f"{number} {canonical_unit}"
 
 
+def _timing_visible_in(texts: Iterable[str], timing: str) -> bool:
+    """True if any of ``texts`` carries the same canonicalised timing
+    assertion as ``timing``.
+
+    Runs each text through ``_extract_timing`` rather than word-boundary
+    matching the canonical string (``"24 h"``) literally: a served
+    designation reading ``"24 hour urine specimen"`` or ``"24h urine"``
+    contains ``"24 h"`` as a substring with no word boundary between the "h"
+    and the following letter, so a literal match would never fire on wording
+    that plainly does carry the timing - the exact false positive this check
+    exists to prevent.
+    """
+    return any(_extract_timing(text) == timing for text in texts)
+
+
 def _designation_texts(entries: Mapping[str, ConceptDesignations]) -> list[str]:
     """Every folded FSN/display/designation-value string ``entries`` carries,
     across every edition - the search space for both the specimen visibility
@@ -287,7 +308,6 @@ def check_semantic_drift(
     sweep: TerminologySweep,
     bindings: Sequence[CodeBinding],
     results: Mapping[str, SweepResult],
-    editions: Sequence[Edition] = DEFAULT_EDITIONS,
 ) -> SemanticDriftOutcome:
     """Reconciles every row's RCPA preferred term against its bound concept's
     modelled ``Has specimen`` value and any timing wording (FR-75, issue #29).
@@ -326,6 +346,7 @@ def check_semantic_drift(
         for cells in _rows_by_role(sheet).values():
             code_cell = cells.get(ColumnRole.CODE)
             if code_cell is None or code_cell.reference not in checkable_locations:
+                rows_excluded += 1
                 continue
             label_cell = cells.get(ColumnRole.PREFERRED_TERM)
             if label_cell is None:
@@ -358,12 +379,14 @@ def check_semantic_drift(
 
     specimen_column_values_unmapped = _specimen_column_unmapped_count(sheets, SPECIMEN_TABLE)
 
+    resolved_versions: set[str] = set()
+
     # -- vocabulary: one describe() call over the whole specimen table -----
     table_codes = all_specimen_codes(SPECIMEN_TABLE)
-    described = sweep.describe(table_codes, edition=SNOMED_CT_AU)
+    described = sweep.describe(table_codes, edition=SNOMED_CT_AU, versions=resolved_versions)
     described_by_code = {entry.code: entry for entry in described}
     specimen_table_entries_unresolved = len(table_codes) - len(described_by_code)
-    describe_requests = 1 if table_codes else 0
+    describe_requests = math.ceil(len(table_codes) / sweep.chunk_size) if table_codes else 0
 
     group_effective_terms: dict[str, frozenset[str]] = {}
     for group in SPECIMEN_TABLE:
@@ -379,7 +402,6 @@ def check_semantic_drift(
 
     # -- visibility filter: which asserted rows still need classification --
     asserting_codes: dict[str, set[str]] = defaultdict(set)
-    visible: dict[str, bool] = {}
     for candidate in candidates:
         asserted = candidate.asserted_group
         if asserted is None:
@@ -388,24 +410,32 @@ def check_semantic_drift(
         is_visible = any(
             _any_term_matches(text, group_effective_terms[asserted.key]) for text in texts
         )
-        visible[candidate.code] = is_visible
         if not is_visible:
             asserting_codes[asserted.key].add(candidate.code)
 
     groups_by_key = {group.key: group for group in SPECIMEN_TABLE}
 
-    not_modelled: set[str] = set()
-    differs: set[str] = set()
+    # Keyed by (code, group.key), not code alone: the same SCTID can be bound
+    # by rows asserting different specimen groups (duplicate bindings occur
+    # in the workbook), and agreement is a per-(code, group) question - a
+    # code that agrees with group A but not group B must not have group B's
+    # verdict bleed into group A's row.
+    not_modelled: set[tuple[str, str]] = set()
+    differs: set[tuple[str, str]] = set()
     classification_requests = 0
     all_unresolved_codes = sorted({code for codes in asserting_codes.values() for code in codes})
     if all_unresolved_codes:
         without_result = frozenset(
             sweep.codes_without_attribute(
-                all_unresolved_codes, attribute=HAS_SPECIMEN_ATTRIBUTE, edition=SNOMED_CT_AU
+                all_unresolved_codes,
+                attribute=HAS_SPECIMEN_ATTRIBUTE,
+                edition=SNOMED_CT_AU,
+                versions=resolved_versions,
             )
         )
         classification_requests += 1
-        not_modelled = set(without_result)
+        for key, codes in asserting_codes.items():
+            not_modelled.update((code, key) for code in codes if code in without_result)
         for key, codes in sorted(asserting_codes.items()):
             group = groups_by_key[key]
             agrees = frozenset(
@@ -414,14 +444,15 @@ def check_semantic_drift(
                     attribute=HAS_SPECIMEN_ATTRIBUTE,
                     root=group.specimen_code,
                     edition=SNOMED_CT_AU,
+                    versions=resolved_versions,
                 )
             )
             classification_requests += 1
             for code in codes:
-                if code in not_modelled:
+                if (code, key) in not_modelled:
                     continue
                 if code not in agrees:
-                    differs.add(code)
+                    differs.add((code, key))
 
     findings: list[Finding] = []
     term_specimen_not_modelled_count = 0
@@ -429,11 +460,11 @@ def check_semantic_drift(
     term_timing_not_modelled_count = 0
     for candidate in candidates:
         asserted = candidate.asserted_group
-        if asserted is not None and candidate.code in not_modelled:
+        if asserted is not None and (candidate.code, asserted.key) in not_modelled:
             findings.append(_specimen_not_modelled_finding(candidate, asserted))
             term_specimen_not_modelled_count += 1
             continue
-        if asserted is not None and candidate.code in differs:
+        if asserted is not None and (candidate.code, asserted.key) in differs:
             findings.append(_specimen_differs_finding(candidate, asserted))
             term_specimen_differs_count += 1
             continue
@@ -441,9 +472,8 @@ def check_semantic_drift(
         # the visibility filter - only now does timing get its own check.
         if candidate.timing is None:
             continue
-        timing_terms = {candidate.timing}
         own_texts = _designation_texts(candidate.entries)
-        timing_visible = any(_any_term_matches(text, timing_terms) for text in own_texts)
+        timing_visible = _timing_visible_in(own_texts, candidate.timing)
         if not timing_visible and asserted is not None:
             described_group = described_by_code.get(asserted.specimen_code)
             if described_group is not None:
@@ -453,7 +483,7 @@ def check_semantic_drift(
                 if described_group.display is not None:
                     group_texts.append(_fold(described_group.display))
                 group_texts.extend(_fold(value) for value in described_group.values)
-                timing_visible = any(_any_term_matches(text, timing_terms) for text in group_texts)
+                timing_visible = _timing_visible_in(group_texts, candidate.timing)
         if not timing_visible:
             findings.append(_timing_not_modelled_finding(candidate))
             term_timing_not_modelled_count += 1
@@ -470,5 +500,6 @@ def check_semantic_drift(
             specimen_column_values_unmapped=specimen_column_values_unmapped,
             describe_requests=describe_requests,
             classification_requests=classification_requests,
+            resolved_versions=tuple(sorted(resolved_versions)),
         ),
     )
