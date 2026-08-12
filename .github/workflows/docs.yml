@@ -143,6 +143,11 @@ jobs:
           name: traceability-report
           path: docs/requirements/traceability.md
           retention-days: 30
+          # traceability_check.py can raise before writing the report (e.g. a
+          # malformed requirements.yaml - yaml.safe_load throws in
+          # load_requirements) - don't add an upload-artifact warning on top
+          # of that real failure.
+          if-no-files-found: ignore
 
   # Branch ruleset (F-7, deferred) will require this job once applied - see
   # the matching job in ci.yml.

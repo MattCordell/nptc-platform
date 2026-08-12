@@ -55,8 +55,9 @@ def _display_path(path: Path) -> str:
     one (e.g. under a test's tmp_path fixture, outside ROOT entirely).
 
     Always forward-slashed: str(Path) is backslash-separated on Windows, and this
-    value is embedded in the committed traceability.md, which must match byte-for-
-    byte regardless of which OS regenerated it (CI runs on ubuntu-latest)."""
+    value is embedded in the generated traceability.md - a stable, diffable
+    artefact regardless of which OS regenerated it (CI runs on ubuntu-latest;
+    a contributor regenerating it locally may be on Windows)."""
     try:
         return path.relative_to(ROOT).as_posix()
     except ValueError:
