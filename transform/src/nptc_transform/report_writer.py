@@ -31,6 +31,7 @@ Five rules keep every run byte-identical for identical input:
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -255,23 +256,40 @@ def _escape_cell(value: str) -> str:
     """Makes ``value`` safe to interpolate into a Markdown table cell.
 
     A finding's location or message is workbook-derived text, so it can contain
-    characters that break a table row or the surrounding markup: ``|`` (splits
-    the row into extra columns, silently truncating the rest), a line break
-    (ends the row mid-cell, and would put a literal ``\\r\\n`` into the file on
-    Windows, violating rule 3 above), and a backtick (a sheet name may
-    legally contain one - Excel forbids only ``: \\ / ? * [ ]`` - and the cell
-    column wraps its value in backticks, so an unescaped one would close that
-    code span mid-reference). All are escaped rather than stripped so the
+    the two characters that break a table row: ``|`` (splits the row into extra
+    columns, silently truncating the rest) and a line break (ends the row
+    mid-cell, and would put a literal ``\\r\\n`` into the file on Windows,
+    violating rule 3 above). Both are escaped rather than stripped so the
     defect stays visible to the operator.
+
+    Not used for the Cell column: that value is wrapped in a code span
+    (``_code_span``), and backslash escapes are inert inside one per
+    CommonMark, so a backslash-escaped backtick would still close the span.
     """
     return (
         value.replace("\\", "\\\\")
         .replace("|", "\\|")
-        .replace("`", "\\`")
         .replace("\r\n", "<br>")
         .replace("\r", "<br>")
         .replace("\n", "<br>")
     )
+
+
+def _code_span(value: str) -> str:
+    """Wraps ``value`` in a Markdown code span, CommonMark-correct even when
+    ``value`` itself contains a backtick (legal in an Excel sheet name -
+    Excel forbids only ``: \\ / ? * [ ]``).
+
+    Backslash escapes are inert inside a code span, so the only way to put a
+    literal backtick inside one is a fence - a run of backticks - longer than
+    any backtick run already in ``value``. A leading/trailing space pads the
+    span when ``value`` itself starts or ends with a backtick, so that
+    backtick isn't read as part of the fence.
+    """
+    longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest_run + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
 
 
 def _render_terminology(result: RunResult) -> list[str]:
@@ -433,9 +451,12 @@ def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
             lines.append("| Cell | Detail |")
             lines.append("|---|---|")
             for finding in defect_class.findings:
-                lines.append(
-                    f"| `{_escape_cell(str(finding.location))}` | {_escape_cell(finding.message)} |"
-                )
+                # The pipe is escaped before the fence goes on, not by
+                # `_escape_cell` - table-cell splitting happens before a code
+                # span's contents are parsed, so a backslash-escaped `|`
+                # still protects the row even though it renders literally.
+                ref = str(finding.location).replace("|", "\\|")
+                lines.append(f"| {_code_span(ref)} | {_escape_cell(finding.message)} |")
             lines.append("")
     return lines
 

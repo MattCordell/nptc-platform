@@ -31,7 +31,12 @@ from nptc_transform.report_writer import write_report
 _BAND_HEADING_RE = re.compile(r"^### (?P<band>.+?)(?: - blocks import)?$")
 _CODE_HEADING_RE = re.compile(r"^#### `(?P<code>.+)` - \d+ finding\(s\)$")
 _ACTION_RE = re.compile(r"^\*\*Required action:\*\* (?P<action>.+)$")
-_ROW_RE = re.compile(r"^\| `(?P<cell>.*)` \| (?P<detail>.*) \|$")
+
+#: The Cell column is a CommonMark code span whose fence is a backtick run
+#: longer than any run inside the value (``report_writer._code_span``), with
+#: an optional single space of padding - not always a single backtick - so
+#: the fence itself has to be captured and referred back to, not assumed.
+_ROW_RE = re.compile(r"^\| (?P<fence>`+) ?(?P<cell>.*?) ?(?P=fence) \| (?P<detail>.*) \|$")
 
 Finding_ = tuple[str, str, str, str]  # (band, code, ref, message)
 
@@ -39,9 +44,11 @@ Finding_ = tuple[str, str, str, str]  # (band, code, ref, message)
 def _unescape_cell(value: str) -> str:
     """Inverts ``report_writer._escape_cell`` for the specific escape shapes
     this test's own fixture data produces - not a general codec, since the
-    fixture never nests a literal backslash next to a literal pipe or
-    backtick."""
-    return value.replace("<br>", "\n").replace("\\|", "|").replace("\\`", "`").replace("\\\\", "\\")
+    fixture never nests a literal backslash next to a literal pipe. Does not
+    unescape a backtick: the Cell column no longer escapes one (it uses a
+    variable-length fence instead - see ``_ROW_RE``), and the Detail column
+    never did (a message's backtick is legal, unescaped Markdown)."""
+    return value.replace("<br>", "\n").replace("\\|", "|").replace("\\\\", "\\")
 
 
 def _findings_in_markdown(text: str) -> set[Finding_]:
@@ -200,13 +207,14 @@ def test_a_pipe_in_the_message_does_not_desynchronise_the_round_trip(tmp_path: P
 def test_a_backtick_in_the_cell_reference_does_not_close_the_code_span_early(
     tmp_path: Path,
 ) -> None:
-    """Principal failure mode for the cell column's backtick wrapping: a sheet
-    name may legally contain a backtick (Excel forbids only ``: \\ / ? * []``),
-    and an unescaped one would close the ``` `{ref}` ``` code span mid-
-    reference, splitting the cell into two columns for any Markdown renderer
-    - the same desynchronisation shape as an unescaped ``|``, but in the
-    delimiter added specifically for this rendering, not the escaping this
-    module already had."""
+    """Principal failure mode for the cell column's code span: a sheet name
+    may legally contain a backtick (Excel forbids only ``: \\ / ? * []``),
+    and backslash escapes are inert inside a code span (CommonMark), so
+    escaping it would not stop it from closing the span mid-reference -
+    ``_code_span`` uses a longer backtick fence instead. This is the same
+    desynchronisation shape an unescaped ``|`` has, but in the delimiter
+    added specifically for this rendering, not the escaping this module
+    already had for the row itself."""
     result = RunResult(
         source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
         mode=Mode.REPORT_ONLY,

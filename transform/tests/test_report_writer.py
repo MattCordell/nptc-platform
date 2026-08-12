@@ -58,6 +58,44 @@ def test_write_report_renders_findings_grouped_by_defect_class(tmp_path: Path) -
 
 
 @pytest.mark.req("FR-72")
+@pytest.mark.parametrize(
+    ("sheet", "rendered_cell"),
+    [
+        # A lone backtick: the fence must be longer than the longest run
+        # inside the value (here 1), so two backticks each side.
+        ("Q1`draft", "``Q1`draft!B2``"),
+        # A backtick at the very start of the *rendered ref* (sheet!col+row)
+        # needs a padding space on both sides, or the fence and the value's
+        # own backtick would visually run together. A trailing backtick in
+        # the sheet name doesn't trigger padding: the ref always ends in a
+        # row number, never at the sheet name's own boundary.
+        ("`draft", "`` `draft!B2 ``"),
+        ("draft`", "``draft`!B2``"),
+        # A run of two consecutive backticks forces a fence of three.
+        ("a``b", "```a``b!B2```"),
+    ],
+)
+def test_write_report_code_span_fences_a_backtick_in_the_sheet_name(
+    tmp_path: Path, sheet: str, rendered_cell: str
+) -> None:
+    """Exact-string pin for ``_code_span``: backslash escapes are inert
+    inside a Markdown code span, so the only CommonMark-correct way to put a
+    literal backtick inside one is a fence longer than any run already in
+    the value - never an escape."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        findings=(Finding(code="CODE_INACTIVE", location=CellRef(sheet, "B", 2), message="clean"),),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert f"| {rendered_cell} | clean |" in markdown_text
+
+
+@pytest.mark.req("FR-72")
 def test_write_report_with_no_findings_still_emits_the_heading(tmp_path: Path) -> None:
     """The runbook promises a specific shape for a clean run: the
     ``## Findings by defect class`` heading is always present, so anchor
