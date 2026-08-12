@@ -26,9 +26,10 @@ from pathlib import Path
 
 from nptc_transform import __version__
 from nptc_transform.bands import Band
+from nptc_transform.misspelling import THRESHOLDS, AuthoritySource
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
@@ -82,6 +83,30 @@ def _designations_payload(result: RunResult) -> object:
     }
 
 
+def _misspellings_payload(result: RunResult) -> object:
+    """FR-79's provenance block, or ``null`` if the pass never ran at all
+    (it always runs when the pipeline does, unlike ``terminology``/
+    ``designations`` - see ``RunResult.misspellings``'s docstring - so in
+    practice this is only ``null`` for a ``RunResult`` built by hand, e.g. in
+    a test).
+
+    ``thresholds`` is ``misspelling.THRESHOLDS`` echoed verbatim, not
+    restated: a reader must never have to cross-reference the source to know
+    what produced ``PROBABLE_MISSPELLING``/``INCONSISTENT_SPELLING``.
+    """
+    run = result.misspellings
+    if run is None:
+        return None
+    return {
+        "cells_scanned": run.cells_scanned,
+        "tokens_considered": run.tokens_considered,
+        "probable_misspelling_count": run.probable_misspelling_count,
+        "inconsistent_spelling_count": run.inconsistent_spelling_count,
+        "authority_source": str(run.authority_source),
+        "thresholds": dict(THRESHOLDS),
+    }
+
+
 def _report_payload(result: RunResult) -> dict[str, object]:
     band_counts = result.band_counts
     return {
@@ -97,6 +122,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "band_counts": {str(band): band_counts[band] for band in Band},
         "terminology": _terminology_payload(result),
         "designations": _designations_payload(result),
+        "misspellings": _misspellings_payload(result),
         "findings": [
             {
                 "code": finding.code,
@@ -191,6 +217,35 @@ def _render_designations(result: RunResult) -> list[str]:
     ]
 
 
+def _render_misspellings(result: RunResult) -> list[str]:
+    """The human-readable half of FR-79's provenance block.
+
+    Says "not run" explicitly for the same reason ``_render_designations``
+    does - and when the authority whitelist was empty (``WORKBOOK_ONLY``,
+    ``results=None`` upstream), states the precision caveat explicitly
+    rather than letting a reader assume every run has the same reliability.
+    """
+    run = result.misspellings
+    if run is None:
+        return ["- Misspelling detection: `not run`", ""]
+    lines = [
+        f"- Misspelling detection: {run.cells_scanned} cell(s) scanned, "
+        f"{run.tokens_considered} comparable token occurrence(s) considered, "
+        f"{run.probable_misspelling_count} probable misspelling(s), "
+        f"{run.inconsistent_spelling_count} inconsistent spelling(s) (FR-79)",
+    ]
+    if run.authority_source is AuthoritySource.WORKBOOK_ONLY:
+        lines.append(
+            "- No terminology sweep was available for this run: the authority "
+            "whitelist is empty, so precision is lower than a run with "
+            "`--check-terminology` - a genuine SNOMED-served spelling with no "
+            "corpus support of its own may be flagged that a sweep-backed run "
+            "would have recognised as authoritative and left alone."
+        )
+    lines.append("")
+    return lines
+
+
 def _render_markdown(result: RunResult) -> str:
     band_counts = result.band_counts
     lines = [
@@ -208,6 +263,7 @@ def _render_markdown(result: RunResult) -> str:
     lines.append("")
     lines.extend(_render_terminology(result))
     lines.extend(_render_designations(result))
+    lines.extend(_render_misspellings(result))
     if result.findings:
         lines.append("| Location | Code | Band | Message |")
         lines.append("|---|---|---|---|")

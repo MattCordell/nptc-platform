@@ -250,6 +250,80 @@ def test_check_terminology_validates_the_bindings_and_records_the_run(
     }
 
 
+@pytest.mark.req("FR-79")
+def test_check_terminology_run_reports_sweep_backed_misspellings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end through the CLI, not just via ``check_misspellings`` called
+    directly (``test_misspelling.py``'s own helper reimplements
+    ``pipeline.py``'s wiring rather than exercising it - see the review that
+    flagged this gap). A sweep-backed run must record
+    ``misspellings.authority_source == "SWEEP"`` in the report, and the
+    Amylase/Amylose whitelist suppression must hold with the real CLI ->
+    pipeline plumbing in between: a regression that silently downgrades
+    ``pipeline.py``'s ``check_misspellings(sheets, results=outcome.results)``
+    to the no-sweep ``check_misspellings(sheets)`` call must fail this test.
+    """
+    amylase_code, amylose_code = "700000010", "700000023"
+    workbook_path = tmp_path / "amylase.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    rows: list[tuple[str, str | None]] = [
+        ("Amylose", amylose_code),
+        ("Amylase", amylase_code),
+        ("Amylase panel", None),
+        ("Amylase ratio", None),
+    ]
+    for index, (term, code) in enumerate(rows, start=2):
+        sheet.cell(row=index, column=1, value=term)
+        if code is not None:
+            code_cell = sheet.cell(row=index, column=2, value=code)
+            code_cell.data_type = "s"
+    workbook.save(workbook_path)
+
+    report_dir = tmp_path / "report"
+    _install_stub(
+        monkeypatch,
+        _ContextStub(
+            concepts=[
+                StubConcept(
+                    code=amylase_code,
+                    fsn="Amylase (substance)",
+                    parents=(PROCEDURE_ROOT_CODE,),
+                ),
+                StubConcept(
+                    code=amylose_code,
+                    fsn="Amylose (substance)",
+                    parents=(PROCEDURE_ROOT_CODE,),
+                ),
+            ],
+            resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(workbook_path),
+            "--report-dir",
+            str(report_dir),
+            "--check-terminology",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["misspellings"]["authority_source"] == "SWEEP"
+    assert not any(
+        f["code"] in ("PROBABLE_MISSPELLING", "INCONSISTENT_SPELLING") for f in payload["findings"]
+    )
+
+
 @pytest.mark.req("FR-97")
 def test_check_terminology_blocks_on_a_designation_defect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

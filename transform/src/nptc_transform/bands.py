@@ -72,6 +72,8 @@ class FindingCode(StrEnum):
     LABEL_BOUND_TO_OTHER_CONCEPT = "LABEL_BOUND_TO_OTHER_CONCEPT"
     LABEL_MATCHES_NO_DESIGNATION = "LABEL_MATCHES_NO_DESIGNATION"
     LABEL_DIFFERS_FROM_PREFERRED_TERM = "LABEL_DIFFERS_FROM_PREFERRED_TERM"
+    PROBABLE_MISSPELLING = "PROBABLE_MISSPELLING"
+    INCONSISTENT_SPELLING = "INCONSISTENT_SPELLING"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -122,6 +124,12 @@ BAND_BY_CODE: dict[str, Band] = {
     # term differs from the published label. Never blocking, regardless of
     # the axis-1 outcome for the same cell.
     FindingCode.LABEL_DIFFERS_FROM_PREFERRED_TERM: Band.INFORMATIONAL,
+    # FR-79/H-04: both misspelling-heuristic codes are candidates for
+    # editorial review only - never auto-corrections, never blocking. A
+    # heuristic guess about spelling is not the kind of "value is already
+    # lost or a data defect at source" claim the data-defect band makes.
+    FindingCode.PROBABLE_MISSPELLING: Band.INFORMATIONAL,
+    FindingCode.INCONSISTENT_SPELLING: Band.INFORMATIONAL,
 }
 
 if set(BAND_BY_CODE) != set(FindingCode):

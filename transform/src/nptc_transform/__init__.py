@@ -16,9 +16,10 @@ hierarchy check landed with P0-5/#27: ``--check-terminology`` validates every
 code binding against both editions through ``nptc_shared.terminology.sweep``,
 which is the backend's engine too (FR-74), never a second one. The
 SCTID/Verhoeff library (P0-10/#32) and the terminology client interface
-(P0-4/#26) also landed, in ``nptc_shared``. Still open: designation
-reconciliation (P0-6/#28), misspelling/semantic-drift heuristics (P0-7/#29),
-report content grouped by defect class (P0-8/#30), and import dataset
+(P0-4/#26) also landed, in ``nptc_shared``. Designation reconciliation
+(P0-6/#28) and the FR-79 misspelling heuristics (P0-7/#29,
+``misspelling.py``, over ``nptc_shared.similarity``) landed next. Still
+open: report content grouped by defect class (P0-8/#30), and import dataset
 emission - including the auto-correctable band's "fixed automatically"
 behaviour - (P0-9/#31).
 """

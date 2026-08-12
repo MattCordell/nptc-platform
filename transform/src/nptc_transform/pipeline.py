@@ -3,10 +3,11 @@
 This is the seam every later P0 issue plugs into: the workbook reader (P0-2),
 cell-level defect detection and band classification (P0-3, FR-71), batch
 terminology validation (P0-5, over the ``nptc_shared.terminology`` client and
-sweep landed with P0-4/P0-5) and designation reconciliation (P0-6, FR-97,
-over the same sweep's results - see ``designation_check.py``) now produce and
-classify ``Finding`` values here; the misspelling/semantic-drift heuristics
-(P0-7) still plug in later.
+sweep landed with P0-4/P0-5), designation reconciliation (P0-6, FR-97,
+over the same sweep's results - see ``designation_check.py``) and the FR-79
+misspelling heuristics (P0-7, over the sweep's results when available - see
+``misspelling.py``) now produce and classify ``Finding`` values here; report
+content grouped by defect class (P0-8) still plugs in later.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from nptc_transform.bands import Band, blocks_import
 from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
+from nptc_transform.misspelling import MisspellingRun, check_misspellings
 from nptc_transform.terminology_check import (
     DEFAULT_EDITIONS,
     TerminologyRun,
@@ -66,6 +68,10 @@ class RunResult:
     #: ``None`` under the same condition as ``terminology`` - designation
     #: reconciliation (FR-97) rides on the same sweep and never runs without it.
     designations: DesignationRun | None = None
+    #: Never ``None`` - unlike ``terminology``/``designations``, the FR-79
+    #: misspelling heuristics run whether or not a sweep is available; only
+    #: the authority whitelist they use differs (``MisspellingRun.authority_source``).
+    misspellings: MisspellingRun | None = None
 
     def __post_init__(self) -> None:
         sorted_findings = tuple(sorted(self.findings, key=Finding.sort_key))
@@ -136,7 +142,13 @@ def run_transform_sheets(
     """
     findings = scan_workbook(sheets)
     if sweep is None:
-        return RunResult(source=source, mode=mode, findings=findings)
+        misspellings = check_misspellings(sheets)
+        return RunResult(
+            source=source,
+            mode=mode,
+            findings=(*findings, *misspellings.findings),
+            misspellings=misspellings.run,
+        )
     outcome = check_terminology(sheets, sweep=sweep, editions=editions)
     designations = check_designations(
         sheets,
@@ -145,12 +157,14 @@ def run_transform_sheets(
         results=outcome.results,
         editions=editions,
     )
+    misspellings = check_misspellings(sheets, results=outcome.results)
     return RunResult(
         source=source,
         mode=mode,
-        findings=(*findings, *outcome.findings, *designations.findings),
+        findings=(*findings, *outcome.findings, *designations.findings, *misspellings.findings),
         terminology=outcome.run,
         designations=designations.run,
+        misspellings=misspellings.run,
     )
 
 

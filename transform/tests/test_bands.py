@@ -52,6 +52,18 @@ def test_blocks_import_matches_fr71s_behaviour_table(band: Band, blocking: bool)
     assert blocks_import(band) is blocking
 
 
+@pytest.mark.req("FR-79")
+@pytest.mark.parametrize(
+    "code", [FindingCode.PROBABLE_MISSPELLING, FindingCode.INCONSISTENT_SPELLING]
+)
+def test_misspelling_codes_are_informational_and_non_blocking(code: FindingCode) -> None:
+    """FR-79's two heuristics are candidates for editorial review only -
+    never a data defect, never blocking (H-04's mitigation flags, never
+    auto-corrects)."""
+    assert band_for(code) is Band.INFORMATIONAL
+    assert blocks_import(band_for(code)) is False
+
+
 @pytest.mark.req("FR-71")
 def test_every_finding_from_the_annex_a_fixture_has_exactly_one_band(
     annex_a_workbook: Path,

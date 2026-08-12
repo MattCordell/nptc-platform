@@ -10,9 +10,11 @@ with backlog issue [P0-2](https://github.com/MattCordell/nptc-platform/issues/24
 the three-band defect classification engine, delivered with backlog issue
 [P0-3](https://github.com/MattCordell/nptc-platform/issues/25); batch
 terminology validation with the hierarchy check, delivered with backlog issue
-[P0-5](https://github.com/MattCordell/nptc-platform/issues/27); and
-designation reconciliation, delivered with backlog issue
-[P0-6](https://github.com/MattCordell/nptc-platform/issues/28). It does not
+[P0-5](https://github.com/MattCordell/nptc-platform/issues/27); designation
+reconciliation, delivered with backlog issue
+[P0-6](https://github.com/MattCordell/nptc-platform/issues/28); and the FR-79
+misspelling heuristics, delivered with backlog issue
+[P0-7](https://github.com/MattCordell/nptc-platform/issues/29). It does not
 yet correct an auto-correctable finding or produce an import dataset - see
 "Not implemented yet" below.
 
@@ -28,7 +30,7 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode. **Not implemented yet** - see below. |
-| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), and reconcile every published label against its bound concept's designation set (FR-97). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), and give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -115,6 +117,8 @@ corrected, and each defect is reported under one of two codes chosen by
 | `LABEL_BOUND_TO_OTHER_CONCEPT` | - | The column value matches no designation of the bound concept, but does match a designation of a *different* code bound elsewhere in the workbook (FR-97). Likely a transcription error pairing the wrong code with the right label, or the reverse - see "Interpreting a designation finding" below. |
 | `LABEL_MATCHES_NO_DESIGNATION` | - | The column value matches no designation on the bound concept, and no other bound concept's designation either (FR-97). The label is wrong, or was never a SNOMED designation at all. |
 | `LABEL_DIFFERS_FROM_PREFERRED_TERM` | - | The current SNOMED CT-AU preferred term differs from the column value, independently of the above (FR-97, FR-82) - informational, and reported even on a row with no other designation finding at all. |
+| `PROBABLE_MISSPELLING` | - | A preferred-term/synonym token differs by one or two characters from another designation in the *same* entry, or from the served FSN/designations of the concept that entry's code binds to (FR-79, H-04) - informational, never auto-corrected. See "Interpreting a misspelling finding" below. |
+| `INCONSISTENT_SPELLING` | - | A preferred-term/synonym token used in only one or two entries differs by one or two characters from a spelling used in many more, across the whole workbook (FR-79, H-04) - informational, never auto-corrected. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -141,7 +145,7 @@ and this one together are the complete classification.
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT` | The defect has one deterministic repair. **Not yet applied** - the report itemises it, but nothing is corrected on disk until P0-9's `--emit-dataset` lands. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
 | `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
-| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
 `requires-human-decision` or `data-defect` finding aborts the whole run, no
@@ -259,6 +263,56 @@ preferred term differs from the column value, for every row the four-outcome
 check found benign - never for a row already reported as one of the two
 defects, so a single cell is never on both lists at once.
 
+### Interpreting a misspelling finding (FR-79)
+
+The pass reads only the `RCPA Preferred term` and `RCPA Synonyms` columns, tokenises each
+cell (delimiter-independent - a comma, a semicolon, and a bare space are all equally valid
+separators, sidestepping FR-71's own unresolved question about which the `RCPA Synonyms`
+column actually uses), and runs two heuristics, in order of reliability:
+
+1. **Intra-entry near-match** (`PROBABLE_MISSPELLING`). A token in one entry's own
+   preferred-term/synonym cells is compared against every other comparable token in the
+   *same* entry, and - when `--check-terminology` ran - against the served designations and
+   FSN of the concept that entry's code binds to. This is the strongest signal: the correct
+   spelling is present right there, in the same row or on the server. It is what catches
+   PRD row 47/48's `Epinephine` even with only that one row present.
+2. **Cross-entry corpus frequency** (`INCONSISTENT_SPELLING`). A token used in only one or
+   two entries across the *whole* workbook that near-matches a token used in three or more,
+   with the common spelling at least three times as frequent - PRD row 51's `antental`
+   against the far more common `antenatal`.
+
+At most one finding per cell per token, across both heuristics: heuristic 1 always wins when
+both would fire for the same token.
+
+**The authority whitelist and its two precision regimes.** Every token that appears in a
+served designation or FSN, across every edition `--check-terminology` swept, can be cited as
+a *reference* but never itself flagged as a *suspect* - this is the PRD's own "domain word
+list assembled from the SNOMED FSNs" (PRD:880), read as a veto inside both heuristics rather
+than a third, separate check. `report.json`'s `misspellings.authority_source` records which
+of two honestly different regimes produced the findings in front of you:
+
+- **`SWEEP`** - `--check-terminology` ran, and the whitelist is built from what the server
+  actually served. Higher precision: a genuine SNOMED-served spelling that also happens to
+  be corpus-rare is correctly left alone.
+- **`WORKBOOK_ONLY`** - no sweep ran. Both heuristics still run in full, over the workbook's
+  own content alone, but the whitelist is empty - lower precision, and the report says so
+  explicitly in both `report.json` and `report.md` rather than reading identically to a
+  sweep-backed run.
+
+**Accepted, documented misses - do not "fix" these by narrowing the whitelist:**
+
+- A genuinely rare-but-correct word that also happens to be a real, served designation of
+  some entirely unrelated concept reads as authoritative and is never flagged, even if it
+  is, in a specific row, actually a typo. The whitelist cannot distinguish "genuinely this
+  word" from "coincidentally spelled the same as this word" - narrowing it to try would
+  reintroduce the false positives it exists to suppress on the common case (two genuinely
+  distinct, both-real, one-edit-apart analytes that are each legitimately served).
+
+Both codes are `Band.INFORMATIONAL` (never blocking) and are candidates for editorial review
+only - see ADR-0007's Rejected alternatives for why neither a blocking band nor
+auto-correction was considered acceptable (PRD:884: "Automatically 'fixing' a term in a
+clinical terminology on the basis of an edit-distance heuristic is not acceptable").
+
 ### Determinism with terminology on (FR-73)
 
 Two runs against the same workbook stay byte-identical only while the server
@@ -277,8 +331,9 @@ contain, but not the guarantees above:
 - **Applying the auto-correctable band's corrections** and emitting the import
   dataset, including the synthetic baseline release - P0-9
   (`--emit-dataset`)
-- Misspelling and semantic-drift heuristics - P0-7
 - Report content grouped by defect class with cell references - P0-8
+- FR-36's "same check on save in the application" half of FR-79 - a second PR
+  against the backend, not part of the transform
 
 FR-45's own check table (FSN drift, preferred-term drift, inactivation reason
 and historical association) is the *steady-state* descendant of this pass,
