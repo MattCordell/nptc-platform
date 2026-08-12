@@ -89,8 +89,10 @@ def test_report_only_is_the_default_and_writes_only_the_report_dir(
     assert not (Path.cwd() / "transform-report").exists()
 
 
-@pytest.mark.req("FR-70")
-def test_emit_dataset_refuses_and_writes_nothing(tmp_path: Path, sample_workbook: Path) -> None:
+@pytest.mark.req("FR-76")
+def test_emit_dataset_without_release_name_is_a_usage_error_and_writes_nothing(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
     report_dir = tmp_path / "report"
     before = _tree(tmp_path)
 
@@ -107,9 +109,130 @@ def test_emit_dataset_refuses_and_writes_nothing(tmp_path: Path, sample_workbook
     )
 
     assert result.exit_code == 2
-    assert "P0-9" in result.output
+    assert "--release-name" in result.output
     assert _tree(tmp_path) == before
     assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-76")
+def test_emit_dataset_with_a_malformed_release_name_is_a_usage_error(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--release-name" in result.output
+    assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-76")
+def test_release_name_without_emit_dataset_is_a_usage_error(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--release-name",
+            "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--emit-dataset" in result.output
+    assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-76")
+def test_emit_dataset_writes_the_report_and_the_import_dataset(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    report_dir = tmp_path / "report"
+    before = _tree(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (report_dir / "report.json").is_file()
+    assert (report_dir / "report.md").is_file()
+    assert (report_dir / "import-dataset.json").is_file()
+    assert _tree(tmp_path) - before == {
+        str(Path("report")),
+        str(Path("report/report.json")),
+        str(Path("report/report.md")),
+        str(Path("report/import-dataset.json")),
+    }
+
+    payload = json.loads((report_dir / "import-dataset.json").read_text(encoding="utf-8"))
+    assert payload["baseline_release"] == {
+        "name": "2026-06",
+        "note": "Synthetic baseline release representing the state at seeding (FR-76).",
+    }
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    assert entry["business_key"] == "NPTC-000001"
+    assert entry["code_bindings"][0]["code"] == "12345678"
+    assert isinstance(entry["code_bindings"][0]["code"], str)
+
+
+@pytest.mark.req("FR-71")
+def test_emit_dataset_blocks_on_a_blocking_finding_and_writes_no_dataset(
+    tmp_path: Path, annex_a_workbook: Path
+) -> None:
+    """A blocking finding aborts emission: exit 1, report written, no
+    dataset file (PRD:310's "the seeded baseline cannot be created until
+    RCPA-QAP resolves those collisions editorially")."""
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(annex_a_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert (report_dir / "report.json").is_file()
+    assert not (report_dir / "import-dataset.json").exists()
 
 
 @pytest.mark.req("FR-70")

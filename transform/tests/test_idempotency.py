@@ -86,6 +86,67 @@ def test_rerun_replaces_a_stale_report_rather_than_skipping_or_appending(
 
 
 @pytest.mark.req("FR-73")
+@pytest.mark.req("FR-76")
+def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    report_dir = tmp_path / "report"
+
+    args = [
+        "run",
+        "--workbook",
+        str(sample_workbook),
+        "--report-dir",
+        str(report_dir),
+        "--emit-dataset",
+        "--release-name",
+        "2026-06",
+    ]
+
+    first = runner.invoke(app, args)
+    assert first.exit_code == 0, first.output
+    before = (report_dir / "import-dataset.json").read_bytes()
+
+    second = runner.invoke(app, args)
+    assert second.exit_code == 0, second.output
+    after = (report_dir / "import-dataset.json").read_bytes()
+
+    assert before == after
+    assert sorted(p.name for p in report_dir.iterdir()) == [
+        "import-dataset.json",
+        "report.json",
+        "report.md",
+    ]
+
+
+@pytest.mark.req("FR-73")
+@pytest.mark.req("FR-76")
+def test_rerun_replaces_a_stale_import_dataset_rather_than_skipping_or_appending(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    report_dir = tmp_path / "report"
+    report_dir.mkdir(parents=True)
+    (report_dir / "import-dataset.json").write_text("not a real dataset", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (report_dir / "import-dataset.json").read_text(encoding="utf-8") != "not a real dataset"
+
+
+@pytest.mark.req("FR-73")
 @pytest.mark.req("FR-79")
 def test_rerun_over_the_misspelling_fixture_is_byte_identical(tmp_path: Path) -> None:
     workbook = _misspelling_workbook(tmp_path)

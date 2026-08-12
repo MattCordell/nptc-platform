@@ -3,7 +3,7 @@
 
 Kept as its own module, not a dict inside ``bands.py``: that module's own
 docstring stakes a precise claim ("this registry alone chooses the band"),
-and burying it under 23 x 1-3 sentences of operator prose would obscure
+and burying it under 27 x 1-3 sentences of operator prose would obscure
 ``BAND_BY_CODE``. What's worth copying from ``bands.py`` is the *pattern* -
 declare every code, assert completeness at import time, fail safe on an
 unregistered code - not the location.
@@ -24,22 +24,37 @@ from __future__ import annotations
 from nptc_transform.bands import Band, FindingCode, band_for
 
 ACTION_BY_CODE: dict[str, str] = {
-    # Auto-correctable: FR-71 names these examples directly. Not yet applied
-    # on disk (P0-9), but the import is not blocked on any of them.
+    # Auto-correctable: FR-71 names these examples directly. Applied when
+    # --emit-dataset writes the import dataset (P0-9); the import is not
+    # blocked on any of them either way.
     FindingCode.INVISIBLE_CHARACTER: (
-        "No action required. The transform will normalise this invisible "
-        "character to an ordinary space automatically once dataset emission "
-        "(P0-9) lands. The import is not blocked."
+        "No action required. The transform normalises this invisible "
+        "character to an ordinary space automatically. The import is not "
+        "blocked."
     ),
     FindingCode.SURROUNDING_WHITESPACE: (
-        "No action required. The transform will strip the leading and/or "
-        "trailing whitespace automatically once dataset emission (P0-9) "
-        "lands. The import is not blocked."
+        "No action required. The transform strips the leading and/or "
+        "trailing whitespace automatically. The import is not blocked."
     ),
     FindingCode.CODE_CELL_NOT_TEXT: (
-        "No action required. The transform will coerce this code cell to "
-        "text, recovering the SCTID's digits exactly, automatically once "
-        "dataset emission (P0-9) lands. The import is not blocked."
+        "No action required. The transform coerces this code cell to text, "
+        "recovering the SCTID's digits exactly, automatically. The import "
+        "is not blocked."
+    ),
+    FindingCode.EMPTY_SYNONYM_REMOVED: (
+        "No action required. The transform removes the empty synonym a "
+        "doubled delimiter produces automatically (FR-04). The import is "
+        "not blocked."
+    ),
+    FindingCode.SPECIMEN_UNCONSTRAINED_RESOLVED: (
+        "No action required. The transform records specimen_unconstrained "
+        "and emits no specimen code for 'Any' automatically (FR-89). The "
+        "import is not blocked."
+    ),
+    FindingCode.COMPOUND_VALUE_SPLIT: (
+        "No action required. The transform splits this compound value into "
+        "separate property values automatically (FR-90). The import is not "
+        "blocked."
     ),
     # Requires human decision: no deterministic repair exists (FR-70).
     FindingCode.INVISIBLE_CHARACTER_AMBIGUOUS: (
@@ -154,6 +169,12 @@ ACTION_BY_CODE: dict[str, str] = {
         "is a candidate for editorial review, not a confirmed defect. The "
         "import is not blocked."
     ),
+    FindingCode.SPECIMEN_VALUE_UNMAPPED: (
+        "No action required to proceed. A terminologist should review "
+        "whether this specimen value should be added to the specimen "
+        "table (FR-88); it is seeded with no specimen code in the meantime. "
+        "The import is not blocked."
+    ),
 }
 
 if set(ACTION_BY_CODE) != set(FindingCode):
@@ -164,8 +185,7 @@ if set(ACTION_BY_CODE) != set(FindingCode):
 
 _ACTION_BY_BAND: dict[Band, str] = {
     Band.AUTO_CORRECTABLE: (
-        "No action required. The transform will correct this automatically "
-        "once dataset emission (P0-9) lands. The import is not blocked."
+        "No action required. The transform corrects this automatically. The import is not blocked."
     ),
     Band.REQUIRES_HUMAN_DECISION: (
         "RCPA-QAP must open the cell and decide the correct value; no "

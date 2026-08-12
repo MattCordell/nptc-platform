@@ -15,6 +15,7 @@ a valid SCTID exists (data defect).
 from __future__ import annotations
 
 import math
+import re
 
 from nptc_shared.text import (
     escape_invisible,
@@ -24,6 +25,7 @@ from nptc_shared.text import (
 from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
+from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
 # PRD §2.1: "any SCTID of 16 digits or more entered into a numeric cell is
@@ -52,6 +54,90 @@ _LEGITIMATE_LINE_BREAKS = frozenset({"U+000A", "U+000D"})
 # absence of a recognised column, is what gates the informational band.
 # Anything else that resolves zero roles is unrecognised layout and blocks.
 _NON_SPIA_DATA_SHEET_NAMES = frozenset({"Rev History"})
+
+# FR-04/P0-9: FR-63's documented delimiter is a semicolon; a comma is
+# accepted as a fallback only when no semicolon is present at all, since at
+# least one published row (PRD Appendix A.10's "ADA RBC, ADA red cells")
+# uses a comma as its sole delimiter. Plain ``str.split`` (not a regex
+# collapsing runs of delimiters) is deliberate: a doubled delimiter must
+# produce an empty part here so ``has_empty_synonym_part`` can detect it,
+# not be silently absorbed before detection ever runs.
+_SYNONYM_DELIMITER = ";"
+_SYNONYM_FALLBACK_DELIMITER = ","
+
+# FR-90: "X or Y" is the only compound form the published Discipline/Subgroup
+# columns use.
+_COMPOUND_VALUE_RE = re.compile(r"\s+or\s+", re.IGNORECASE)
+
+# FR-88: the Specimen column's own documented delimiter, replaced by
+# cardinality 0..* in the import dataset.
+_SPECIMEN_DELIMITER = ";"
+
+# FR-89: the one specimen value that must never resolve to a specimen code.
+_SPECIMEN_ANY = "any"
+
+#: Every ``SpecimenGroup.terms`` surface form, casefolded, to the group it
+#: names - an *exact*-match index, deliberately not the word-boundary
+#: substring matching ``semantic_drift.py`` uses for its own free-text
+#: heuristic: seeding a specimen *code* requires certainty a heuristic
+#: cannot provide (see the module docstring's "verbatim always, code only
+#: where certain" precedent, FR-88/FR-92).
+_SPECIMEN_TERMS_TO_GROUP: dict[str, SpecimenGroup] = {
+    term: group for group in SPECIMEN_TABLE for term in group.terms
+}
+
+
+def split_synonyms(text: str) -> tuple[str, ...]:
+    """Splits a ``RCPA Synonyms`` cell into individual designation values (FR-04).
+
+    Empty parts produced by a doubled delimiter (``'Zovirax;;Cyclir'``) are
+    dropped silently here - ``has_empty_synonym_part`` is the function that
+    records one was found, so the two stay independently testable and the
+    emitted dataset never carries an empty designation.
+    """
+    delimiter = _SYNONYM_DELIMITER if _SYNONYM_DELIMITER in text else _SYNONYM_FALLBACK_DELIMITER
+    parts = (part.strip() for part in text.split(delimiter))
+    return tuple(part for part in parts if part)
+
+
+def has_empty_synonym_part(text: str) -> bool:
+    """True if splitting ``text`` on its synonym delimiter produces an empty
+    part - a doubled delimiter, or one with only whitespace between the two.
+    """
+    delimiter = _SYNONYM_DELIMITER if _SYNONYM_DELIMITER in text else _SYNONYM_FALLBACK_DELIMITER
+    return any(not part.strip() for part in text.split(delimiter))
+
+
+def split_compound_value(text: str) -> tuple[str, ...]:
+    """Splits a ``Discipline``/``Subgroup`` cell on ``'X or Y'`` (FR-90)."""
+    parts = (part.strip() for part in _COMPOUND_VALUE_RE.split(text))
+    return tuple(part for part in parts if part)
+
+
+def split_specimen_values(text: str) -> tuple[str, ...]:
+    """Splits a ``Specimen`` cell into individual asserted values (FR-88)."""
+    parts = (part.strip() for part in text.split(_SPECIMEN_DELIMITER))
+    return tuple(part for part in parts if part)
+
+
+def resolve_specimen_term(value: str) -> SpecimenGroup | None:
+    """The ``SpecimenGroup`` ``value`` names by an *exact*, casefolded match
+    against ``specimen_table.SPECIMEN_TABLE``'s own surface forms, or
+    ``None`` if it names none of them (``SPECIMEN_VALUE_UNMAPPED``, FR-88).
+    """
+    return _SPECIMEN_TERMS_TO_GROUP.get(value.strip().casefold())
+
+
+def resolves_code_column(sheet: Sheet) -> bool:
+    """True if ``sheet``'s header row resolves the code column.
+
+    The same gate ``_scan_layout`` uses to decide a sheet gets cell-level
+    scanning at all - exported so ``dataset.py`` can restrict entry-building
+    to the identical set of sheets, rather than a second, independently
+    drifting notion of "this sheet is SPIA data".
+    """
+    roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
+    return ColumnRole.CODE in roles
 
 
 def _digit_count(value: int) -> int:
@@ -169,6 +255,70 @@ def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
     )
 
 
+def _scan_empty_synonym(cell: Cell) -> Finding | None:
+    if cell.role is not ColumnRole.SYNONYMS or not has_empty_synonym_part(cell.text):
+        return None
+    header = escape_invisible(cell.header)
+    return Finding(
+        code=FindingCode.EMPTY_SYNONYM_REMOVED,
+        location=cell.reference,
+        message=(
+            f"'{header}' cell has a doubled delimiter; the empty synonym it "
+            "produces is removed (FR-04)"
+        ),
+    )
+
+
+def _scan_compound_value(cell: Cell) -> Finding | None:
+    if cell.role not in (ColumnRole.DISCIPLINE, ColumnRole.SUBGROUP):
+        return None
+    parts = split_compound_value(cell.text)
+    if len(parts) <= 1:
+        return None
+    header = escape_invisible(cell.header)
+    return Finding(
+        code=FindingCode.COMPOUND_VALUE_SPLIT,
+        location=cell.reference,
+        message=(
+            f"'{header}' cell holds a compound value '{escape_invisible(cell.text)}'; "
+            f"split into {len(parts)} values (FR-90)"
+        ),
+    )
+
+
+def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
+    if cell.role is not ColumnRole.SPECIMEN:
+        return ()
+    header = escape_invisible(cell.header)
+    findings: list[Finding] = []
+    for value in split_specimen_values(cell.text):
+        if value.casefold() == _SPECIMEN_ANY:
+            findings.append(
+                Finding(
+                    code=FindingCode.SPECIMEN_UNCONSTRAINED_RESOLVED,
+                    location=cell.reference,
+                    message=(
+                        f"'{header}' cell value 'Any' resolves to specimen_unconstrained; "
+                        "no specimen code is ever emitted for it (FR-89)"
+                    ),
+                )
+            )
+            continue
+        if resolve_specimen_term(value) is None:
+            findings.append(
+                Finding(
+                    code=FindingCode.SPECIMEN_VALUE_UNMAPPED,
+                    location=cell.reference,
+                    message=(
+                        f"'{header}' cell value '{escape_invisible(value)}' matches no "
+                        "entry in the specimen table; seeded verbatim with no specimen "
+                        "code (FR-88)"
+                    ),
+                )
+            )
+    return tuple(findings)
+
+
 def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
     findings: list[Finding] = list(_scan_invisible_characters(cell))
     findings.extend(
@@ -177,9 +327,12 @@ def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
             _scan_surrounding_whitespace(cell),
             _scan_code_cell_type(cell),
             _scan_numeric_precision_risk(cell),
+            _scan_empty_synonym(cell),
+            _scan_compound_value(cell),
         )
         if finding is not None
     )
+    findings.extend(_scan_specimen(cell))
     return tuple(findings)
 
 

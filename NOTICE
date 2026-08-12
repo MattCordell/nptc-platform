@@ -28,10 +28,17 @@ SNOMED CT
 SPIA Requesting terminology
   The Standardised Pathology Informatics in Australia (SPIA) Requesting terminology
   is maintained and published by the Royal College of Pathologists of Australasia
-  Quality Assurance Programs (RCPA-QAP) and is subject to RCPA copyright. This
-  repository contains no SPIA catalogue content. Any sample or fixture data derived
-  from the published workbook is used with RCPA-QAP's knowledge for the purpose of
-  building the platform that maintains it.
+  Quality Assurance Programs (RCPA-QAP) and is subject to RCPA copyright.
+
+  This repository contains one small excerpt of SPIA catalogue content:
+  transform/tests/fixtures/spia-requesting-sample.xlsx, a verbatim, unedited 50-row
+  excerpt of the published workbook, committed as a test fixture so the seeding
+  transform's import dataset emission (FR-70, FR-76) can be proven end to end,
+  offline, in CI. RCPA-QAP is aware this excerpt is used, in this form, for the
+  purpose of building the platform that maintains the terminology it publishes.
+  No other SPIA catalogue content is contained in this repository. Any other
+  sample or fixture data derived from the published workbook is synthetic, built
+  in-process for a specific test, and does not reproduce real SPIA content.
 
 Third-party dependencies
   Runtime and build dependencies are declared in the lock files under backend/,

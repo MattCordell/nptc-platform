@@ -453,14 +453,14 @@
   priority: MUST
   phase: p0
   title: "A command-line transform that reads the published SPIA workbook and produces either a validated import dataset or a detailed defect report"
-  status: in-progress
-  notes: "CLI entrypoint, --report-only default and the report writer land with P0-1/#23; the workbook reader and Appendix A.1-A.3 cell defect detection land with P0-2/#24; emitting the import dataset (P0-9) is still open"
+  status: implemented
+  notes: "CLI entrypoint, --report-only default and the report writer land with P0-1/#23; the workbook reader and Appendix A.1-A.3 cell defect detection land with P0-2/#24; import dataset emission (--emit-dataset --release-name, import-dataset.json) lands with P0-9/#31 (ADR-0010)"
 - id: "FR-71"
   priority: MUST
   phase: p0
   title: "The transform classifies every finding into one of three bands, and the band determines behaviour"
-  status: in-progress
-  notes: "Band registry, per-finding band assignment, the blocking exit code and report band columns/counts land with P0-3/#25; automatic application of the auto-correctable band's corrections lands with P0-9/#31"
+  status: implemented
+  notes: "Band registry, per-finding band assignment, the blocking exit code and report band columns/counts land with P0-3/#25; automatic application of the auto-correctable band's corrections (--emit-dataset) lands with P0-9/#31"
 - id: "FR-72"
   priority: MUST
   phase: p0
@@ -471,8 +471,8 @@
   priority: MUST
   phase: p0
   title: "The transform is idempotent and re-runnable"
-  status: in-progress
-  notes: "Determinism/idempotency harness and the no-clock/no-absolute-path report writer land with P0-1/#23; the guarantee is fully proven only once the pipeline transforms real content (P0-9)"
+  status: implemented
+  notes: "Determinism/idempotency harness and the no-clock/no-absolute-path report writer land with P0-1/#23; the guarantee is proven against real, transformed content once import dataset emission lands with P0-9/#31 (a committed real 50-row excerpt fixture, transform/tests/fixtures/spia-requesting-sample.xlsx)"
 - id: "FR-74"
   priority: MUST
   phase: p0
@@ -489,8 +489,8 @@
   priority: MUST
   phase: p0
   title: "The seeded data MUST be imported as a synthetic baseline release representing the state at seeding"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "The transform side lands with P0-9/#31 (ADR-0010): --emit-dataset --release-name YYYY-MM writes import-dataset.json's baseline_release block, a machine-generated release standing in for a curation cycle that never happened, so the first genuinely new release produces a meaningful diff (FR-60). Not implemented: the backend Release table and initial data load that actually import the dataset - backend/src/nptc/{catalogue,releases,db} are bare scaffolding and backend/migrations/ is empty until P1-1, so this stays in-progress rather than implemented."
 - id: "FR-77"
   priority: SHOULD
   phase: p1
@@ -562,19 +562,19 @@
   phase: p1
   title: "Specimen MUST be a coded property with cardinality 0..*, bound to a value set rooted at 123038009, replacing the semicolon-delimited string"
   status: planned
-  notes: ""
+  notes: "The transform's seeding-time treatment (P0-9/#31): a Specimen cell is split on ';' into 0..* provisional values; each is coded only on an exact match against nptc_transform.specimen_table.SPECIMEN_TABLE's surface forms (SPECIMEN_VALUE_UNMAPPED, informational, otherwise) - the migrate-verbatim-as-provisional-codes precedent FR-92 also follows. The governed value set itself, and its enforcement, belong to the backend registry (P1) and remain planned."
 - id: "FR-89"
   priority: MUST
   phase: p1
   title: "The value 'Any' MUST NOT be represented as a specimen code"
   status: planned
-  notes: ""
+  notes: "The transform's seeding-time treatment (P0-9/#31): 'Any' resolves to specimen_unconstrained: true and zero specimen values in import-dataset.json, never a specimen code (SPECIMEN_UNCONSTRAINED_RESOLVED, auto-correctable). Enforcing this at the backend registry level (P1) remains planned."
 - id: "FR-90"
   priority: MUST
   phase: p1
   title: "Discipline and Subgroup MUST each be implemented as a governed local code system owned by RCPA-QAP"
   status: planned
-  notes: ""
+  notes: "The transform's seeding-time treatment (P0-9/#31): a Discipline/Subgroup cell holding a compound 'X or Y' value is split into separate provisional property values (COMPOUND_VALUE_SPLIT, auto-correctable) rather than seeded as one string. The governed code system itself, owned by RCPA-QAP, belongs to the backend registry (P1) and remains planned."
 - id: "FR-91"
   priority: SHOULD
   phase: p1
@@ -586,7 +586,7 @@
   phase: p1
   title: "Subgroup migration MUST reconcile inconsistent classification axes and pluralisation before the code system is populated"
   status: planned
-  notes: ""
+  notes: "Out of scope for the transform's seeding-time treatment (P0-9/#31): compound-value splitting (see FR-90's note) migrates each hand-typed value verbatim as a provisional property value, and does not itself reconcile axis or pluralisation inconsistencies - that reconciliation belongs to the backend registry (P1) and remains planned."
 - id: "FR-93"
   priority: MUST
   phase: p4

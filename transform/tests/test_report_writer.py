@@ -266,7 +266,7 @@ def test_a_misspelling_run_records_its_thresholds_verbatim(tmp_path: Path) -> No
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 7
+    assert payload["schema_version"] == SCHEMA_VERSION == 8
     assert payload["misspellings"]["thresholds"] == THRESHOLDS
     assert payload["misspellings"]["authority_source"] == "SWEEP"
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
@@ -334,7 +334,7 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 7
+    assert payload["schema_version"] == SCHEMA_VERSION == 8
     assert payload["drift"] == {
         "rows_examined": 4,
         "rows_excluded": 1,

@@ -55,6 +55,7 @@ from nptc_shared.text import escape_invisible, normalise_for_comparison
 from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
+from nptc_transform.rows import group_rows
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup, all_specimen_codes
 from nptc_transform.terminology_check import CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
@@ -162,15 +163,15 @@ def _rows_by_role(sheet: Sheet) -> dict[int, dict[ColumnRole, Cell]]:
     """Groups ``sheet.cells`` by row, keeping the code, preferred-term and
     specimen-column cells.
 
-    Mirrors ``designation_check._rows_by_role``'s own minimal, private row
-    view rather than generalising it in place: that function is scoped to
-    exactly the two roles FR-97 needs, and widening it there risks changing
-    behaviour for a pass this PR must not touch.
+    A thin, role-filtered wrapper over ``rows.group_rows`` (issue #31, P0-9) -
+    see ``designation_check._rows_by_role``'s identical wrapper.
     """
     rows: dict[int, dict[ColumnRole, Cell]] = defaultdict(dict)
-    for cell in sheet.cells:
-        if cell.role in (ColumnRole.CODE, ColumnRole.PREFERRED_TERM, ColumnRole.SPECIMEN):
-            rows[cell.row][cell.role] = cell
+    for source_row in group_rows((sheet,)):
+        for role in (ColumnRole.CODE, ColumnRole.PREFERRED_TERM, ColumnRole.SPECIMEN):
+            cell = source_row.cells.get(role)
+            if cell is not None:
+                rows[source_row.row][role] = cell
     return rows
 
 

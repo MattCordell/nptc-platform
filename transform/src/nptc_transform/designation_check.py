@@ -98,6 +98,7 @@ from nptc_shared.text import escape_invisible, find_invisible_characters, normal
 from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
+from nptc_transform.rows import group_rows
 from nptc_transform.terminology_check import DEFAULT_EDITIONS, CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
@@ -160,14 +161,17 @@ class _Candidate:
 def _rows_by_role(sheet: Sheet) -> dict[int, dict[ColumnRole, Cell]]:
     """Groups ``sheet.cells`` by row, keeping only the code and FSN cells.
 
-    No row abstraction exists on ``Sheet``/``Cell`` themselves, and adding one
-    would ripple into ``cell_defects.py`` for no benefit there - this is a
-    private, minimal view built fresh for this one pass.
+    A thin, role-filtered wrapper over ``rows.group_rows`` (issue #31, P0-9) -
+    that function groups every role on a row; this keeps only the two this
+    pass reads, which is the only reason this wrapper still exists rather
+    than every call site using ``group_rows`` directly.
     """
     rows: dict[int, dict[ColumnRole, Cell]] = defaultdict(dict)
-    for cell in sheet.cells:
-        if cell.role in (ColumnRole.CODE, ColumnRole.FSN):
-            rows[cell.row][cell.role] = cell
+    for source_row in group_rows((sheet,)):
+        for role in (ColumnRole.CODE, ColumnRole.FSN):
+            cell = source_row.cells.get(role)
+            if cell is not None:
+                rows[source_row.row][role] = cell
     return rows
 
 
