@@ -129,7 +129,7 @@ def test_a_synonym_loses_to_the_preferred_term_with_no_sweep_at_all(tmp_path: Pa
     findings = _misspelling_codes(outcome)
     assert len(findings) == 1
     assert findings[0].code == FindingCode.PROBABLE_MISSPELLING
-    assert findings[0].location.endswith("!B2")  # the synonyms cell, not the preferred term
+    assert str(findings[0].location).endswith("!B2")  # the synonyms cell, not the preferred term
     assert "antental" in findings[0].message
     assert "Antenatal" in findings[0].message
 

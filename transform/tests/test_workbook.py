@@ -58,7 +58,7 @@ def test_reads_headers_and_assigns_roles(typed_workbook: Path) -> None:
 
 def test_empty_cells_are_skipped(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
-    references = {cell.reference for cell in sheets[0].cells}
+    references = {str(cell.reference) for cell in sheets[0].cells}
     # Row 2 only has A2 and B2 populated - C2/D2/E2 must not appear.
     assert "Requesting!C2" not in references
     assert "Requesting!D2" not in references
@@ -67,7 +67,7 @@ def test_empty_cells_are_skipped(typed_workbook: Path) -> None:
 
 def test_text_typed_code_cell_captured_verbatim(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
-    cell = next(c for c in sheets[0].cells if c.reference == "Requesting!B2")
+    cell = next(c for c in sheets[0].cells if str(c.reference) == "Requesting!B2")
     assert cell.cell_type is CellType.TEXT
     assert cell.role is ColumnRole.CODE
     assert cell.text == "12345678"
@@ -124,14 +124,14 @@ def test_eighteen_digit_code_stored_as_number_renders_via_repr_when_float(
 
 def test_formula_cell_captured_as_formula_not_its_cached_value(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
-    cell = next(c for c in sheets[0].cells if c.reference == "Requesting!C3")
+    cell = next(c for c in sheets[0].cells if str(c.reference) == "Requesting!C3")
     assert cell.cell_type is CellType.FORMULA
     assert cell.text == "=LEN(A3)"
 
 
 def test_date_cell_captured_as_date(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
-    cell = next(c for c in sheets[0].cells if c.reference == "Requesting!D3")
+    cell = next(c for c in sheets[0].cells if str(c.reference) == "Requesting!D3")
     assert cell.cell_type is CellType.DATE
     assert cell.text == "2025-02-01T00:00:00"
     assert cell.role is ColumnRole.VERSION
@@ -139,7 +139,7 @@ def test_date_cell_captured_as_date(typed_workbook: Path) -> None:
 
 def test_boolean_cell_captured_as_boolean_not_number(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
-    cell = next(c for c in sheets[0].cells if c.reference == "Requesting!E3")
+    cell = next(c for c in sheets[0].cells if str(c.reference) == "Requesting!E3")
     assert cell.cell_type is CellType.BOOLEAN
     assert cell.text == "TRUE"
 
@@ -162,7 +162,7 @@ def test_error_cell_captured_as_error(tmp_path: Path) -> None:
 def test_cell_reference_format(typed_workbook: Path) -> None:
     sheets = read_workbook(typed_workbook)
     cell = next(c for c in sheets[0].cells if c.column_letter == "A" and c.row == 2)
-    assert cell.reference == "Requesting!A2"
+    assert str(cell.reference) == "Requesting!A2"
 
 
 @pytest.mark.parametrize(
@@ -244,7 +244,7 @@ def test_sheet_title_with_invisible_character_is_escaped(tmp_path: Path) -> None
     sheets = read_workbook(path)
     assert chr(0x00A0) not in sheets[0].name
     assert "<U+00A0>" in sheets[0].name
-    assert chr(0x00A0) not in sheets[0].cells[0].reference
+    assert chr(0x00A0) not in str(sheets[0].cells[0].reference)
 
 
 def test_blank_header_cell_renders_as_empty_string(tmp_path: Path) -> None:

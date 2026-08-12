@@ -19,7 +19,7 @@ runner = CliRunner()
 
 def _findings_at(sheets: tuple[Sheet, ...], reference: str) -> list[Finding]:
     findings = scan_workbook(sheets)
-    return [f for f in findings if f.location == reference]
+    return [f for f in findings if str(f.location) == reference]
 
 
 @pytest.mark.req("FR-70")
@@ -180,7 +180,7 @@ def test_unrecognised_layout_flags_the_missing_code_column(
     findings = scan_workbook(sheets)
     assert any(f.code == "UNRECOGNISED_LAYOUT" for f in findings)
     finding = next(f for f in findings if f.code == "UNRECOGNISED_LAYOUT")
-    assert finding.location == "Requesting!A1"
+    assert str(finding.location) == "Requesting!A1"
     assert "Some Column" in finding.message
     assert "1 data row(s)" in finding.message
     assert finding.band is Band.DATA_DEFECT

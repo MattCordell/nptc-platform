@@ -53,6 +53,7 @@ from nptc_shared.terminology.models import HAS_SPECIMEN_ATTRIBUTE, SNOMED_CT_AU
 from nptc_shared.terminology.sweep import ConceptDesignations, SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible, normalise_for_comparison
 from nptc_transform.bands import FindingCode
+from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup, all_specimen_codes
 from nptc_transform.terminology_check import CodeBinding
@@ -334,7 +335,7 @@ def check_semantic_drift(
     than forcing an artificial merge that would either lose the visibility
     filter's vocabulary or collapse the NOT_MODELLED/DIFFERS distinction.
     """
-    checkable_locations = {binding.location for binding in bindings}
+    checkable_locations: set[CellRef] = {binding.location for binding in bindings}
     designations_by_label: dict[str, dict[str, ConceptDesignations]] = {
         label: {entry.code: entry for entry in result.designations}
         for label, result in results.items()

@@ -150,7 +150,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "findings": [
             {
                 "code": finding.code,
-                "location": finding.location,
+                "location": str(finding.location),
                 "message": finding.message,
                 "band": str(finding.band),
             }
@@ -326,7 +326,7 @@ def _render_markdown(result: RunResult) -> str:
         lines.append("|---|---|---|---|")
         for finding in result.findings:
             lines.append(
-                f"| {_escape_cell(finding.location)} "
+                f"| {_escape_cell(str(finding.location))} "
                 f"| {_escape_cell(finding.code)} "
                 f"| {_escape_cell(str(finding.band))} "
                 f"| {_escape_cell(finding.message)} |"

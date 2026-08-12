@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from nptc_transform.cellref import CellRef
 from nptc_transform.designation_check import DesignationRun
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource, MisspellingRun
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
@@ -19,7 +20,7 @@ def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
     result = RunResult(
         source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
         mode=Mode.REPORT_ONLY,
-        findings=(Finding(code="INVISIBLE_CHAR", location="B2", message="zero-width space"),),
+        findings=(Finding(code="INVISIBLE_CHAR", location=CellRef("Sheet", "B", 2), message="zero-width space"),),
     )
     report_dir = tmp_path / "report"
 
@@ -31,7 +32,7 @@ def test_write_report_renders_findings_in_both_files(tmp_path: Path) -> None:
 
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     # An unregistered code fails safe to data-defect (bands.band_for).
-    assert "| B2 | INVISIBLE_CHAR | data-defect | zero-width space |" in markdown_text
+    assert "| Sheet!B2 | INVISIBLE_CHAR | data-defect | zero-width space |" in markdown_text
 
 
 @pytest.mark.req("FR-48")
@@ -313,8 +314,8 @@ def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
         source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
         mode=Mode.REPORT_ONLY,
         findings=(
-            Finding(code="PIPE", location="B2", message="value was 'a|b'"),
-            Finding(code="NEWLINE", location="B3", message="line one\r\nline two"),
+            Finding(code="PIPE", location=CellRef("Sheet", "B", 2), message="value was 'a|b'"),
+            Finding(code="NEWLINE", location=CellRef("Sheet", "B", 3), message="line one\r\nline two"),
         ),
     )
     report_dir = tmp_path / "report"
@@ -325,8 +326,8 @@ def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:
     assert b"\r\n" not in raw
 
     markdown_text = raw.decode("utf-8")
-    assert "| B2 | PIPE | data-defect | value was 'a\\|b' |" in markdown_text
-    assert "| B3 | NEWLINE | data-defect | line one<br>line two |" in markdown_text
+    assert "| Sheet!B2 | PIPE | data-defect | value was 'a\\|b' |" in markdown_text
+    assert "| Sheet!B3 | NEWLINE | data-defect | line one<br>line two |" in markdown_text
 
     # Every row of the findings table still has exactly four columns - the
     # band summary table above it has a different (two-column) shape and is

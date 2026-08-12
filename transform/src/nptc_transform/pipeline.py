@@ -7,7 +7,8 @@ sweep landed with P0-4/P0-5), designation reconciliation (P0-6, FR-97,
 over the same sweep's results - see ``designation_check.py``) and the FR-79
 misspelling heuristics (P0-7, over the sweep's results when available - see
 ``misspelling.py``) now produce and classify ``Finding`` values here; report
-content grouped by defect class (P0-8) still plugs in later.
+content grouped by defect class with required actions (P0-8, FR-72) is
+``report_writer.py``'s.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from nptc_shared.terminology.models import Edition
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.bands import Band, blocks_import
 from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.cellref import CellRef as CellRef
 from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.misspelling import MisspellingRun, check_misspellings

@@ -96,6 +96,7 @@ from nptc_shared.terminology.sweep import (
 )
 from nptc_shared.text import escape_invisible, find_invisible_characters, normalise_for_comparison
 from nptc_transform.bands import FindingCode
+from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.terminology_check import DEFAULT_EDITIONS, CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
@@ -384,7 +385,7 @@ def check_designations(
     recomputed, so "which code cells are checkable" and "what did each
     edition resolve" are decided exactly once (FR-74).
     """
-    checkable_locations = {binding.location for binding in bindings}
+    checkable_locations: set[CellRef] = {binding.location for binding in bindings}
     designations_by_label: dict[str, dict[str, ConceptDesignations]] = {
         label: {entry.code: entry for entry in result.designations}
         for label, result in results.items()
