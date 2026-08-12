@@ -390,6 +390,66 @@ def test_an_all_uppercase_token_is_never_flagged_by_heuristic_two_either(
     assert _misspelling_codes(outcome) == []
 
 
+@pytest.mark.req("FR-79")
+def test_heuristic_two_still_matches_at_the_edge_of_the_length_bucket_window(
+    tmp_path: Path,
+) -> None:
+    """Pins ``_heuristic_two_candidates``'s length-bucketing window at its
+    boundary: 'gentamic' (8 chars) and 'Gentamicin' (10 chars) differ by
+    exactly ``MAX_EDIT_DISTANCE`` (2) characters - the far edge of the
+    ``rare_length +/- MAX_EDIT_DISTANCE`` window this heuristic scans.
+    Narrowing that window (e.g. to only the rare key's own length) passes
+    every other heuristic-2 test, since all of them use equal-length pairs -
+    this is the one that would catch it. Both tokens are at least
+    ``LONG_TOKEN_LENGTH`` (8) long, so distance 2 is admissible at all."""
+    workbook = _workbook(
+        tmp_path,
+        [
+            ("Gentamicin", None, None),
+            ("Gentamicin panel", None, None),
+            ("Gentamicin ratio", None, None),
+            ("Gentamic", None, None),
+        ],
+    )
+    outcome = _outcome(workbook)
+
+    findings = _misspelling_codes(outcome)
+    assert len(findings) == 1
+    assert findings[0].code == FindingCode.INCONSISTENT_SPELLING
+    assert "Gentamic" in findings[0].message
+    assert "Gentamicin" in findings[0].message
+
+
+@pytest.mark.req("FR-79")
+def test_the_inconsistent_spelling_message_quotes_the_most_frequent_surface(
+    tmp_path: Path,
+) -> None:
+    """'_corpus_index' must pick the representative surface by frequency,
+    not alphabetically: an all-uppercase 'ANTENATAL' (1 entry) sorts before
+    'Antenatal' (3 entries) lexicographically, but the far more common
+    spelling is 'Antenatal', and the finding message must say so. Reverting
+    to plain ``min(counts)`` (alphabetical only) passes every other test in
+    this suite - none of them assert which surface is quoted."""
+    workbook = _workbook(
+        tmp_path,
+        [
+            ("ANTENATAL", None, None),
+            ("Antenatal screen", None, None),
+            ("Antenatal panel", None, None),
+            ("Antenatal profile", None, None),
+            ("Antenatel", None, None),  # the rare typo
+        ],
+    )
+    outcome = _outcome(workbook)
+
+    findings = _misspelling_codes(outcome)
+    assert len(findings) == 1
+    assert findings[0].code == FindingCode.INCONSISTENT_SPELLING
+    assert "Antenatel" in findings[0].message
+    assert "Antenatal" in findings[0].message
+    assert "ANTENATAL" not in findings[0].message
+
+
 # -- tie-break rule 4: no evidence, silence -----------------------------------
 
 

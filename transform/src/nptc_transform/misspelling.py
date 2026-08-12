@@ -420,29 +420,33 @@ def _heuristic_two_candidates(
     """For every rare ``token_key`` qualifying under the thresholds, the best
     common reference to cite: ``rare_key -> (distance, common_surface, common_key)``.
 
-    Candidate keys are bucketed by length first: ``near_match_distance``
-    can only ever admit a pair whose lengths differ by at most
-    ``MAX_EDIT_DISTANCE``, so a rare key of length *n* only has anything to
-    gain from common keys of length *n - MAX_EDIT_DISTANCE* through
-    *n + MAX_EDIT_DISTANCE* - a fixed, small window, rather than every key in
-    the corpus. Without this, the scan is ``len(rare) * len(common)`` calls
-    into ``near_match_distance`` before any DP even runs, which is the pass's
-    measured cost centre on a multi-thousand-row workbook.
+    Candidate keys are bucketed by length, and restricted up front to keys
+    that pass the *count-only* half of the common-reference threshold
+    (``MIN_COMMON_COUNT`` - the ``COMMON_TO_RARE_RATIO`` half also depends on
+    the rare key's own count, so it cannot be applied until inside the
+    per-rare-key loop). This is a modest, honestly-scoped saving, not the
+    fix for this heuristic's cost centre: ``bounded_edit_distance`` already
+    rejects a length-incompatible pair in O(1) on its own first line, so
+    almost every call this bucketing removes was one that would have
+    returned ``None`` immediately anyway, never reaching the DP. Measured
+    against the unbucketed scan (see PR review on issue #29), the call
+    count drops sharply but the count of calls that actually reach the DP
+    - the real cost - does not; restricting the bucket to count-eligible
+    keys, as done here, buys a further ~1.2x by shrinking the candidate
+    lists themselves, but this is still not a structural fix.
 
-    This is a constant-factor cut, not an asymptotic one: it shrinks each
-    rare key's candidate set to those sharing a length bucket, but a corpus
-    whose comparable tokens cluster into only a handful of distinct lengths
-    (an adversarial or synthetic worst case - real clinical vocabulary spans
-    a much wider length range) still degrades toward the unbucketed
-    ``len(rare) * len(common)`` shape. Closing that residual case properly
-    would mean an actual index (e.g. a SymSpell-style deletion-neighbourhood
-    lookup) rather than bucketing - out of scope here unless real catalogue
-    measurements show this heuristic, not length-bucketing, is insufficient.
+    The heuristic's actual cost centre is the DP over the surviving,
+    length-compatible rare/common pairs, and that stays open: closing it
+    properly means an actual index (e.g. a SymSpell-style
+    deletion-neighbourhood lookup) rather than any bucketing scheme -
+    out of scope here unless real catalogue measurements show this
+    heuristic is a practical bottleneck on an actual SPIA-sized workbook.
     """
     keys = sorted(row_counts)
     keys_by_length: dict[int, list[str]] = defaultdict(list)
     for key in keys:
-        keys_by_length[len(key)].append(key)
+        if row_counts[key] >= MIN_COMMON_COUNT:
+            keys_by_length[len(key)].append(key)
 
     result: dict[str, tuple[int, str, str]] = {}
     for rare_key in keys:
