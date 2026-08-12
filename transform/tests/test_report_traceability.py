@@ -39,8 +39,9 @@ Finding_ = tuple[str, str, str, str]  # (band, code, ref, message)
 def _unescape_cell(value: str) -> str:
     """Inverts ``report_writer._escape_cell`` for the specific escape shapes
     this test's own fixture data produces - not a general codec, since the
-    fixture never nests a literal backslash next to a literal pipe."""
-    return value.replace("<br>", "\n").replace("\\|", "|").replace("\\\\", "\\")
+    fixture never nests a literal backslash next to a literal pipe or
+    backtick."""
+    return value.replace("<br>", "\n").replace("\\|", "|").replace("\\`", "`").replace("\\\\", "\\")
 
 
 def _findings_in_markdown(text: str) -> set[Finding_]:
@@ -137,6 +138,13 @@ def _build_result() -> RunResult:
             code=FindingCode.CODE_NOT_FOUND, location=CellRef("Sheet1", "F", 10), message="row ten"
         )
     )
+    findings.append(
+        Finding(
+            code=FindingCode.CODE_INACTIVE,
+            location=CellRef("Q1`draft", "G", 2),  # a sheet name containing '`'
+            message="clean message",
+        )
+    )
     return RunResult(
         source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
         mode=Mode.REPORT_ONLY,
@@ -175,6 +183,38 @@ def test_a_pipe_in_the_message_does_not_desynchronise_the_round_trip(tmp_path: P
                 code=FindingCode.CODE_NOT_WELL_FORMED,
                 location=CellRef("Sheet1", "B", 2),
                 message="value was 'a|b'",
+            ),
+        ),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+
+    assert _findings_in_markdown(markdown_text) == _findings_in_json(payload)
+
+
+@pytest.mark.req("FR-72")
+def test_a_backtick_in_the_cell_reference_does_not_close_the_code_span_early(
+    tmp_path: Path,
+) -> None:
+    """Principal failure mode for the cell column's backtick wrapping: a sheet
+    name may legally contain a backtick (Excel forbids only ``: \\ / ? * []``),
+    and an unescaped one would close the ``` `{ref}` ``` code span mid-
+    reference, splitting the cell into two columns for any Markdown renderer
+    - the same desynchronisation shape as an unescaped ``|``, but in the
+    delimiter added specifically for this rendering, not the escaping this
+    module already had."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        findings=(
+            Finding(
+                code=FindingCode.CODE_INACTIVE,
+                location=CellRef("Q1`draft", "B", 2),
+                message="clean message",
             ),
         ),
     )

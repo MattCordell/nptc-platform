@@ -23,7 +23,6 @@ from nptc_shared.terminology.models import Edition
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.bands import Band, blocks_import
 from nptc_transform.cell_defects import scan_workbook
-from nptc_transform.cellref import CellRef as CellRef
 from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.misspelling import MisspellingRun, check_misspellings

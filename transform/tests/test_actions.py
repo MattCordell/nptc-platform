@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,22 @@ from nptc_transform.actions import ACTION_BY_CODE, action_for
 from nptc_transform.bands import Band, FindingCode, band_for
 
 _RUNBOOK = Path(__file__).resolve().parents[2] / "docs" / "operations" / "runbooks" / "transform.md"
+
+#: Matches one data row of the runbook's ``| Defect class | Band | Required
+#: action |`` table, e.g. ``| `CODE_NOT_FOUND` | data-defect | ... |``.
+_RUNBOOK_ROW_RE = re.compile(r"^\| `(?P<code>[A-Z_]+)` \| (?P<band>[a-z-]+) \| (?P<action>.+) \|$")
+
+
+def _parse_runbook_table() -> dict[str, tuple[str, str]]:
+    """Returns ``{code: (band, action)}`` for every row of the runbook's
+    defect-class table, so a single test can verify both columns against
+    the registry at once - not just the action text."""
+    rows: dict[str, tuple[str, str]] = {}
+    for line in _RUNBOOK.read_text(encoding="utf-8").splitlines():
+        match = _RUNBOOK_ROW_RE.match(line)
+        if match:
+            rows[match["code"]] = (match["band"], match["action"])
+    return rows
 
 
 @pytest.mark.req("FR-72")
@@ -77,10 +94,19 @@ def test_ascii_only() -> None:
 def test_every_action_matches_the_runbooks_table() -> None:
     """The runbook's ``| Defect class | Band | Required action |`` table
     (``docs/operations/runbooks/transform.md``, "The report files (FR-72)")
-    is a second, hand-maintained copy of this registry's prose - a doc/code
-    drift risk this repo treats as worth guarding, not shrugging off as a
-    brittle test. Fails loudly, naming the code, if a future edit changes
-    one copy without the other."""
-    runbook_text = _RUNBOOK.read_text(encoding="utf-8")
+    is a second, hand-maintained copy of this registry's ``code``, ``band``
+    and action text - a doc/code drift risk this repo treats as worth
+    guarding, not shrugging off as a brittle test. Two-directional: a row
+    left behind for a removed/renamed ``FindingCode``, or a row whose Band
+    column disagrees with ``bands.band_for``, fails just as loudly as a
+    stale action string."""
+    rows = _parse_runbook_table()
+    assert set(rows) == set(FindingCode), (
+        "the runbook's defect-class table and FindingCode have drifted apart: "
+        f"only in runbook: {sorted(set(rows) - set(FindingCode))}, "
+        f"only in FindingCode: {sorted(set(FindingCode) - set(rows))}"
+    )
     for code, action in ACTION_BY_CODE.items():
-        assert action in runbook_text, f"{code}'s action text is stale in the runbook"
+        band, runbook_action = rows[code]
+        assert runbook_action == action, f"{code}'s action text is stale in the runbook"
+        assert band == str(band_for(code)), f"{code}'s Band column is stale in the runbook"

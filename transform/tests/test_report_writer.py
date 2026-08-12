@@ -57,6 +57,31 @@ def test_write_report_renders_findings_grouped_by_defect_class(tmp_path: Path) -
     assert "| `Sheet!B2` | zero-width space |" in markdown_text
 
 
+@pytest.mark.req("FR-72")
+def test_write_report_with_no_findings_still_emits_the_heading(tmp_path: Path) -> None:
+    """The runbook promises a specific shape for a clean run: the
+    ``## Findings by defect class`` heading is always present, so anchor
+    links into the section stay stable, followed by the literal sentence
+    ``No findings.`` - not an omitted section, and not an empty table."""
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        findings=(),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["defect_classes"] == []
+
+    markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
+    lines = markdown_text.splitlines()
+    heading_index = lines.index("## Findings by defect class")
+    assert lines[heading_index + 1] == ""
+    assert lines[heading_index + 2] == "No findings."
+
+
 @pytest.mark.req("FR-48")
 def test_a_terminology_run_records_the_editions_it_resolved_against(tmp_path: Path) -> None:
     result = RunResult(

@@ -17,7 +17,8 @@ Five rules keep every run byte-identical for identical input:
    platform default, which is ``\\r\\n`` on Windows.
 4. Every collection is explicitly sorted before being written - never a
    ``set``, never a ``dict`` relying on insertion order alone. Band counts
-   are rendered in ``Band``'s declaration order, for the same reason.
+   are rendered in ``BAND_REPORT_ORDER``, for the same reason - not
+   ``Band``'s own declaration order, which is unrelated to presentation.
 5. Defect classes are rendered in an explicit group order
    (``BAND_REPORT_ORDER``, then declared ``FindingCode`` order, then the code
    itself as a final tiebreak for an unregistered code) - never
@@ -254,15 +255,19 @@ def _escape_cell(value: str) -> str:
     """Makes ``value`` safe to interpolate into a Markdown table cell.
 
     A finding's location or message is workbook-derived text, so it can contain
-    the two characters that break a table row: ``|`` (splits the row into extra
-    columns, silently truncating the rest) and a line break (ends the row
-    mid-cell, and would put a literal ``\\r\\n`` into the file on Windows,
-    violating rule 3 above). Both are escaped rather than stripped so the
+    characters that break a table row or the surrounding markup: ``|`` (splits
+    the row into extra columns, silently truncating the rest), a line break
+    (ends the row mid-cell, and would put a literal ``\\r\\n`` into the file on
+    Windows, violating rule 3 above), and a backtick (a sheet name may
+    legally contain one - Excel forbids only ``: \\ / ? * [ ]`` - and the cell
+    column wraps its value in backticks, so an unescaped one would close that
+    code span mid-reference). All are escaped rather than stripped so the
     defect stays visible to the operator.
     """
     return (
         value.replace("\\", "\\\\")
         .replace("|", "\\|")
+        .replace("`", "\\`")
         .replace("\r\n", "<br>")
         .replace("\r", "<br>")
         .replace("\n", "<br>")
