@@ -329,6 +329,10 @@ def _distance_words(distance: int) -> str:
     return {1: "one character", 2: "two characters"}.get(distance, f"{distance} characters")
 
 
+def _entry_words(count: int) -> str:
+    return "1 entry" if count == 1 else f"{count} entries"
+
+
 def _probable_misspelling_finding(
     cell: Cell, surface: str, reference: str, distance: int
 ) -> Finding:
@@ -350,9 +354,9 @@ def _inconsistent_spelling_finding(
         code=FindingCode.INCONSISTENT_SPELLING,
         location=cell.reference,
         message=(
-            f"'{escape_invisible(surface)}' (used in {rare_count} entries across the "
+            f"'{escape_invisible(surface)}' (used in {_entry_words(rare_count)} across the "
             f"corpus) differs from the far more common '{escape_invisible(reference)}' "
-            f"(used in {common_count} entries) by {_distance_words(distance)}; a probable "
+            f"(used in {_entry_words(common_count)}) by {_distance_words(distance)}; a probable "
             "inconsistent spelling, flagged for editorial review; never auto-corrected (FR-79)"
         ),
     )
@@ -429,11 +433,12 @@ def _heuristic_two_candidates(
     rejects a length-incompatible pair in O(1) on its own first line, so
     almost every call this bucketing removes was one that would have
     returned ``None`` immediately anyway, never reaching the DP. Measured
-    against the unbucketed scan (see PR review on issue #29), the call
-    count drops sharply but the count of calls that actually reach the DP
-    - the real cost - does not; restricting the bucket to count-eligible
-    keys, as done here, buys a further ~1.2x by shrinking the candidate
-    lists themselves, but this is still not a structural fix.
+    against the unbucketed scan (see PR #124's review), the call count
+    drops sharply but the count of calls that actually reach the DP - the
+    real cost - does not; restricting the bucket to count-eligible keys, as
+    done here, buys a further 1.3x-1.5x by shrinking the candidate lists
+    themselves (149s -> 100.4s on a 6,000-row / 48,000-token-occurrence
+    workbook), but this is still not a structural fix.
 
     The heuristic's actual cost centre is the DP over the surviving,
     length-compatible rare/common pairs, and that stays open: closing it
@@ -443,10 +448,10 @@ def _heuristic_two_candidates(
     heuristic is a practical bottleneck on an actual SPIA-sized workbook.
     """
     keys = sorted(row_counts)
-    keys_by_length: dict[int, list[str]] = defaultdict(list)
+    common_keys_by_length: dict[int, list[str]] = defaultdict(list)
     for key in keys:
         if row_counts[key] >= MIN_COMMON_COUNT:
-            keys_by_length[len(key)].append(key)
+            common_keys_by_length[len(key)].append(key)
 
     result: dict[str, tuple[int, str, str]] = {}
     for rare_key in keys:
@@ -463,9 +468,13 @@ def _heuristic_two_candidates(
         candidate_keys = (
             common_key
             for length in candidate_lengths
-            for common_key in keys_by_length.get(length, ())
+            for common_key in common_keys_by_length.get(length, ())
         )
         for common_key in candidate_keys:
+            # Defence only, not reachable today: MAX_RARE_COUNT (2) <
+            # MIN_COMMON_COUNT (3), so a key already in common_keys_by_length
+            # can never equal a qualifying rare_key. Guards against a future
+            # change to either constant reintroducing self-matches.
             if common_key == rare_key:
                 continue
             common_count = row_counts[common_key]
