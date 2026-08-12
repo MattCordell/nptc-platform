@@ -454,7 +454,14 @@ def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
                 # The pipe is escaped before the fence goes on, not by
                 # `_escape_cell` - table-cell splitting happens before a code
                 # span's contents are parsed, so a backslash-escaped `|`
-                # still protects the row even though it renders literally.
+                # still protects the row: the table parser consumes the
+                # backslash itself before the code span ever renders, the
+                # same way `\|` -> `|` inside a normal cell does.
+                #
+                # Not similarly escaped for a literal `\`: CellRef.sheet
+                # can't contain one - Excel and openpyxl both reject a
+                # backslash in a worksheet title - so there is nothing here
+                # for `_escape_cell`'s backslash-doubling step to protect.
                 ref = str(finding.location).replace("|", "\\|")
                 lines.append(f"| {_code_span(ref)} | {_escape_cell(finding.message)} |")
             lines.append("")
