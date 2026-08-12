@@ -391,24 +391,34 @@ def test_an_all_uppercase_token_is_never_flagged_by_heuristic_two_either(
 
 
 @pytest.mark.req("FR-79")
-def test_heuristic_two_still_matches_at_the_edge_of_the_length_bucket_window(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("rare_surface", "rare_message_quoted"),
+    [
+        ("Gentamic", "'Gentamic'"),  # rare_length = common_length - MAX_EDIT_DISTANCE
+        ("Gentamicinnn", "'Gentamicinnn'"),  # rare_length = common_length + MAX_EDIT_DISTANCE
+    ],
+    ids=["shorter", "longer"],
+)
+def test_heuristic_two_still_matches_at_both_edges_of_the_length_bucket_window(
+    tmp_path: Path, rare_surface: str, rare_message_quoted: str
 ) -> None:
-    """Pins ``_heuristic_two_candidates``'s length-bucketing window at its
-    boundary: 'gentamic' (8 chars) and 'Gentamicin' (10 chars) differ by
-    exactly ``MAX_EDIT_DISTANCE`` (2) characters - the far edge of the
-    ``rare_length +/- MAX_EDIT_DISTANCE`` window this heuristic scans.
-    Narrowing that window (e.g. to only the rare key's own length) passes
-    every other heuristic-2 test, since all of them use equal-length pairs -
-    this is the one that would catch it. Both tokens are at least
-    ``LONG_TOKEN_LENGTH`` (8) long, so distance 2 is admissible at all."""
+    """Pins ``_heuristic_two_candidates``'s length-bucketing window at both
+    boundaries: 'Gentamic' (8 chars) is ``MAX_EDIT_DISTANCE`` (2) shorter
+    than 'Gentamicin' (10 chars), and 'Gentamicinnn' (12 chars, a doubled-
+    letter-style typo) is the same distance longer - the near and far edges
+    of the ``rare_length +/- MAX_EDIT_DISTANCE`` window this heuristic scans.
+    Narrowing the window to only one side (e.g. dropping the lower half,
+    ``range(rare_length, rare_length + MAX_EDIT_DISTANCE + 1)``) passes the
+    'shorter' case while missing the 'longer' one - both directions need
+    their own case. Every token here is at least ``LONG_TOKEN_LENGTH`` (8)
+    long, so distance 2 is admissible at all."""
     workbook = _workbook(
         tmp_path,
         [
             ("Gentamicin", None, None),
             ("Gentamicin panel", None, None),
             ("Gentamicin ratio", None, None),
-            ("Gentamic", None, None),
+            (rare_surface, None, None),
         ],
     )
     outcome = _outcome(workbook)
@@ -416,8 +426,8 @@ def test_heuristic_two_still_matches_at_the_edge_of_the_length_bucket_window(
     findings = _misspelling_codes(outcome)
     assert len(findings) == 1
     assert findings[0].code == FindingCode.INCONSISTENT_SPELLING
-    assert "Gentamic" in findings[0].message
-    assert "Gentamicin" in findings[0].message
+    assert rare_message_quoted in findings[0].message
+    assert "'Gentamicin'" in findings[0].message
 
 
 @pytest.mark.req("FR-79")
