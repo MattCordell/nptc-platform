@@ -45,10 +45,16 @@ Thumbs.db
 # every run, and named after whichever workbook was passed in, so committing it
 # would just be noise that goes stale.
 /out/
-# NOTE: docs/requirements/traceability.md is generated but IS committed, the
-# same way docs/api/openapi.json is: CI (F-5) regenerates it and fails the
-# build if that differs from what's committed, so it's always current and
-# still browsable on GitHub without downloading a CI artefact.
+# docs/requirements/traceability.md (F-5) used to be committed the same way
+# docs/api/openapi.json is, but unlike openapi.json it diverges byte-for-byte
+# between any two branches with different @pytest.mark.req markers or
+# requirements.yaml edits - every cherry-pick or rebase across such branches
+# hit a merge conflict in a file neither side cared about the content of
+# (issue #126). CI's `traceability` job (docs.yml) still regenerates and
+# validates it every run; it's just an uploaded build artefact now, not a
+# tracked file - run `uv run python scripts/traceability_check.py` locally to
+# produce it on demand.
+/docs/requirements/traceability.md
 
 # --- Local override files ---
 docker-compose.override.yml
