@@ -127,20 +127,22 @@ jobs:
       - name: Install workspace
         run: uv sync --all-packages --locked
 
+      # Exit code is the actual gate (stale @pytest.mark.req markers or
+      # requirements.yaml entries vs. the test suite) - docs/requirements/
+      # traceability.md itself is gitignored (issue #126: a generated file
+      # that diverged byte-for-byte between branches, causing merge conflicts
+      # in a file nobody hand-edits), so it's uploaded below rather than
+      # diffed against a committed copy.
       - name: traceability_check.py
         run: uv run python scripts/traceability_check.py
 
-      # docs/requirements/traceability.md is committed, not gitignored, so it's
-      # reviewable in a diff like any other generated-but-tracked artefact -
-      # this catches a PR that changed requirements.yaml or a test's
-      # @pytest.mark.req without regenerating the report to match.
-      - name: traceability.md is up to date
-        run: |
-          if ! git diff --exit-code -- docs/requirements/traceability.md; then
-            echo "::error::docs/requirements/traceability.md is stale - run"
-            echo "'uv run python scripts/traceability_check.py' and commit the result."
-            exit 1
-          fi
+      - name: Upload traceability.md
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: traceability-report
+          path: docs/requirements/traceability.md
+          retention-days: 30
 
   # Branch ruleset (F-7, deferred) will require this job once applied - see
   # the matching job in ci.yml.
