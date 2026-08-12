@@ -139,6 +139,34 @@ def test_emit_dataset_with_a_malformed_release_name_is_a_usage_error(
     assert not report_dir.exists()
 
 
+@pytest.mark.req("FR-57")
+def test_emit_dataset_with_an_impossible_month_is_a_usage_error(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    """The value lands verbatim in baseline_release.name, which FR-60 will
+    later diff against - an impossible month like '13' must be refused here,
+    not accepted and only discovered downstream."""
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-13",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--release-name" in result.output
+    assert not report_dir.exists()
+
+
 @pytest.mark.req("FR-76")
 def test_release_name_without_emit_dataset_is_a_usage_error(
     tmp_path: Path, sample_workbook: Path
@@ -232,6 +260,44 @@ def test_emit_dataset_blocks_on_a_blocking_finding_and_writes_no_dataset(
 
     assert result.exit_code == 1, result.output
     assert (report_dir / "report.json").is_file()
+    assert not (report_dir / "import-dataset.json").exists()
+
+
+@pytest.mark.req("FR-70")
+def test_emit_dataset_blocks_and_writes_no_dataset_for_a_row_missing_its_preferred_term(
+    tmp_path: Path,
+) -> None:
+    """A row that resolves a code binding but carries no 'RCPA Preferred
+    term' value must block emission, exactly like any other data defect -
+    silently omitting the row from import-dataset.json (as build_dataset did
+    before MISSING_PREFERRED_TERM existed) is the P0-9/#31 hazard this
+    regression guards against."""
+    workbook_path = tmp_path / "missing_preferred_term.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.cell(row=2, column=2, value="12345678").data_type = "s"
+    workbook.save(workbook_path)
+    report_dir = tmp_path / "report"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(workbook_path),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "MISSING_PREFERRED_TERM" in (report_dir / "report.json").read_text(encoding="utf-8")
     assert not (report_dir / "import-dataset.json").exists()
 
 

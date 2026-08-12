@@ -81,6 +81,7 @@ class FindingCode(StrEnum):
     TERM_SPECIMEN_NOT_MODELLED = "TERM_SPECIMEN_NOT_MODELLED"
     TERM_SPECIMEN_DIFFERS = "TERM_SPECIMEN_DIFFERS"
     TERM_TIMING_NOT_MODELLED = "TERM_TIMING_NOT_MODELLED"
+    MISSING_PREFERRED_TERM = "MISSING_PREFERRED_TERM"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -122,6 +123,12 @@ BAND_BY_CODE: dict[str, Band] = {
     # automatically.
     FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT: Band.DATA_DEFECT,
     FindingCode.LABEL_MATCHES_NO_DESIGNATION: Band.DATA_DEFECT,
+    # Data defect, P0-9/#31: a row that resolves a code binding but carries
+    # no 'RCPA Preferred term' has no preferred designation to seed - there is
+    # no deterministic repair, and silently omitting the row (as dataset.py
+    # did before this code existed) is exactly the "some rows were silently
+    # dropped" hazard ADR-0010 §8 blocks emission to prevent.
+    FindingCode.MISSING_PREFERRED_TERM: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
     # FR-99 is explicit that an unexpected semantic tag is a warning and not

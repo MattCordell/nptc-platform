@@ -47,7 +47,7 @@ to actually run.
 |---|---|
 | `0` | Ran to completion and no finding blocks the import - check `band_counts` in `report.json` for auto-correctable findings even so. |
 | `1` | The report contains at least one finding banded `requires-human-decision` or `data-defect` (FR-71); the import must not proceed. Report-only mode still writes the report before exiting `1`. |
-| `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, `--emit-dataset` was passed without a valid `--release-name` (or `--release-name` was passed without `--emit-dataset`), or (with `--check-terminology`) an `NPTC_TX_*` environment variable is malformed (e.g. `NPTC_TX_CHUNK_SIZE` not a positive integer) - a deployment typo, not a server outage, so it lands here rather than exit `3`. |
+| `2` | Usage error: the workbook doesn't exist or isn't readable, the workbook isn't a valid `.xlsx` (corrupt zip or unparsable worksheet XML), `--report-dir` names an existing file or can't be written to, both mode flags were passed together, `--emit-dataset` was passed without a valid `--release-name` (or `--release-name` was passed without `--emit-dataset`), the filesystem refuses to write `import-dataset.json` after `report.json`/`report.md` already wrote successfully, or (with `--check-terminology`) an `NPTC_TX_*` environment variable is malformed (e.g. `NPTC_TX_CHUNK_SIZE` not a positive integer) - a deployment typo, not a server outage, so it lands here rather than exit `3`. |
 | `3` | `--check-terminology` was passed and the terminology sweep could not complete (server unreachable, rate limited past the retry budget, a malformed response). **No report is written at all** - a report with the cell defects complete and the terminology findings silently missing would look exactly like a run in which every code validated cleanly (FR-54). Re-run without `--check-terminology` for the cell-defect report alone. |
 
 A filesystem refusal on `--report-dir` reports the path and the reason on
@@ -134,6 +134,7 @@ corrected, and each defect is reported under one of two codes chosen by
 | `TERM_SPECIMEN_DIFFERS` | - | The RCPA preferred term asserts a specimen, and the bound concept *does* constrain a `Has specimen` value, but not one subsumed by the asserted specimen's root (FR-75, H-03) - informational. |
 | `TERM_TIMING_NOT_MODELLED` | - | The RCPA preferred term asserts a timing (e.g. "24 hour") that appears in neither the bound concept's own served designations nor its asserted specimen concept's - only reported when the specimen aspect itself is not asserted or already agrees (FR-75, H-03) - informational. |
 | `SPECIMEN_VALUE_UNMAPPED` | - | A `Specimen` cell value matches no entry in `specimen_table.SPECIMEN_TABLE` by exact surface form (FR-88). It is seeded verbatim as a provisional property value with no specimen code - informational, never blocking; the table is an allowlist, not a finding generator. |
+| `MISSING_PREFERRED_TERM` | - | A row resolves a code binding but carries no `RCPA Preferred term` value (P0-9/#31). Row-level, not cell-level - the defect is the absence of a cell, so nothing can be recovered or coerced; the row would otherwise be silently omitted from the seeded baseline. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -164,7 +165,7 @@ and this one together are the complete classification.
 |---|---|---|---|
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT`, `EMPTY_SYNONYM_REMOVED`, `SPECIMEN_UNCONSTRAINED_RESOLVED`, `COMPOUND_VALUE_SPLIT` | The defect has one deterministic repair. Applied when `--emit-dataset` writes `import-dataset.json` (P0-9); the report itemises each one either way. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
-| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION`, `MISSING_PREFERRED_TERM` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
 | `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING`, `TERM_SPECIMEN_NOT_MODELLED`, `TERM_SPECIMEN_DIFFERS`, `TERM_TIMING_NOT_MODELLED`, `SPECIMEN_VALUE_UNMAPPED` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
@@ -190,7 +191,7 @@ files satisfy all three from the same grouped data
 Findings are grouped by `code` into a `defect_classes` array - the flat,
 per-finding `findings` list schema 6 had is gone; nothing outside
 `transform/` reads `report.json`, so there was no reason to keep both and
-let the two copies drift. Schema 8 (P0-9/#31) adds four new `FindingCode`
+let the two copies drift. Schema 8 (P0-9/#31) adds five new `FindingCode`
 values to the vocabulary `defect_classes` can carry - the shape is otherwise
 unchanged from schema 7.
 
@@ -277,6 +278,7 @@ action:
 | `OUT_OF_SCOPE_HIERARCHY` | data-defect | RCPA-QAP must rebind this cell to a concept subsumed by 71388002 (Procedure), or document why the exception is justified (FR-84). The import is blocked until it is resolved. |
 | `LABEL_BOUND_TO_OTHER_CONCEPT` | data-defect | RCPA-QAP must check both the code and the label against each other: one is a transcription error pairing the wrong code with the right label, or the reverse (FR-97). The import is blocked until it is corrected at source. |
 | `LABEL_MATCHES_NO_DESIGNATION` | data-defect | RCPA-QAP must correct the published label at source; it matches no designation of the bound code, or of any other code bound elsewhere in this workbook (FR-97). The import is blocked until it is corrected. |
+| `MISSING_PREFERRED_TERM` | data-defect | RCPA-QAP must supply the 'RCPA Preferred term' value for this row at source; no entry can be seeded without one. The import is blocked until it is corrected. |
 | `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
 | `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
 | `LABEL_DESIGNATION_DRIFT` | informational | No action required. The served FSN will be seeded in place of the stored label; review only if the drift is unexpected (FR-97). The import is not blocked. |
@@ -345,6 +347,14 @@ text, never its raw numeric value, and never passed through `int`/`float`.
 zero-padded six-digit sequence, numbered over entries in `(sheet name, row)`
 order - a stable order across runs is what keeps FR-73's byte-identical
 guarantee meaningful now that the pipeline transforms real content.
+**This numbering is positional, not content-derived**: it is stable only
+across re-runs of a byte-identical workbook. Inserting or deleting a data
+row between runs - including the expected remedy for a blocking finding,
+"fix at source and re-run" - shifts every subsequent entry's `business_key`
+onto a different clinical concept. Only the keys from the run that actually
+becomes the seeded baseline are ever authoritative; an earlier run's
+`import-dataset.json`, from before a source correction, must never be
+persisted or diffed against.
 
 **`Length`, `Version` and `History` are not carried as entry fields.**
 `Length` MUST NOT be storable (FR-85) - it is computed in the export layer.
@@ -359,13 +369,19 @@ against `specimen_table.SPECIMEN_TABLE`'s own surface forms - never the
 word-boundary substring heuristic the FR-75 semantic-drift review uses for
 its own, lower-stakes purpose. An unmapped value is still seeded, verbatim,
 with `code: null` (`SPECIMEN_VALUE_UNMAPPED`, informational, never
-blocking). `'Any'` yields zero specimen values plus
-`specimen_unconstrained: true` (FR-89) - never a specimen code, and never
-alongside another asserted specimen on the same row.
+blocking). `'Any'` sets `specimen_unconstrained: true` and yields no
+specimen value for itself (FR-89) - but does not discard any other value the
+same cell asserts. The published data is not guaranteed to keep `'Any'` from
+co-occurring with a named specimen on one row, and the dataset seeds exactly
+what the report already describes for that cell, never less.
 
 **A blocking finding aborts emission, not the report.** Exit `1`, the report
 is written as usual, and `import-dataset.json` is not written at all - a
-partial or defect-laden seeded baseline is worse than none (PRD:310).
+partial or defect-laden seeded baseline is worse than none (PRD:310). A
+filesystem refusal while writing `import-dataset.json` itself (exit `2`, see
+"Exit codes" above) is a different case: `report.json`/`report.md` have
+already been written successfully by that point, since the dataset is
+written only after the report - only the dataset file is missing.
 
 **Terminology-served enrichment is out of scope for P0-9.** Without
 `--check-terminology`, `edition_hint` is always `"unknown"` and

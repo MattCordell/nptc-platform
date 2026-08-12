@@ -10,6 +10,15 @@ stripping empties it entirely (requires a human decision); a non-text code
 cell holding a number coerces deterministically to a string (auto-
 correctable) or holds a date/boolean/formula/error, for which no coercion to
 a valid SCTID exists (data defect).
+
+The structural scans this module added for P0-9/#31 (``_scan_empty_synonym``,
+``_scan_compound_value``, ``_scan_specimen``) split ``cell.text`` after
+running it through ``corrections.apply_corrections`` first, the same
+normalisation ``dataset.py`` applies before splitting the same cell for
+emission. Splitting the raw text here while emission splits the corrected
+text would let an interior invisible character make the two disagree about
+how many values a cell holds - report-only claiming one outcome,
+``--emit-dataset`` producing another for the identical cell.
 """
 
 from __future__ import annotations
@@ -24,7 +33,9 @@ from nptc_shared.text import (
 )
 from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
+from nptc_transform.corrections import apply_corrections
 from nptc_transform.findings import Finding
+from nptc_transform.rows import SourceRow, group_rows
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
@@ -55,15 +66,18 @@ _LEGITIMATE_LINE_BREAKS = frozenset({"U+000A", "U+000D"})
 # Anything else that resolves zero roles is unrecognised layout and blocks.
 _NON_SPIA_DATA_SHEET_NAMES = frozenset({"Rev History"})
 
-# FR-04/P0-9: FR-63's documented delimiter is a semicolon; a comma is
+# FR-04/P0-9: FR-63's documented delimiter is a semicolon; comma-space is
 # accepted as a fallback only when no semicolon is present at all, since at
 # least one published row (PRD Appendix A.10's "ADA RBC, ADA red cells")
-# uses a comma as its sole delimiter. Plain ``str.split`` (not a regex
-# collapsing runs of delimiters) is deliberate: a doubled delimiter must
-# produce an empty part here so ``has_empty_synonym_part`` can detect it,
-# not be silently absorbed before detection ever runs.
+# uses it as its sole delimiter. The fallback requires the space - a bare
+# comma with no following space is ordinary SPIA vocabulary (e.g.
+# "1,25-dihydroxyvitamin D"), not a delimiter, and splitting on it would
+# shatter a real analyte name into two bogus designations. Plain ``str.split``
+# (not a regex collapsing runs of delimiters) is deliberate: a doubled
+# delimiter must produce an empty part here so ``has_empty_synonym_part`` can
+# detect it, not be silently absorbed before detection ever runs.
 _SYNONYM_DELIMITER = ";"
-_SYNONYM_FALLBACK_DELIMITER = ","
+_SYNONYM_FALLBACK_DELIMITER = ", "
 
 # FR-90: "X or Y" is the only compound form the published Discipline/Subgroup
 # columns use.
@@ -256,7 +270,9 @@ def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
 
 
 def _scan_empty_synonym(cell: Cell) -> Finding | None:
-    if cell.role is not ColumnRole.SYNONYMS or not has_empty_synonym_part(cell.text):
+    if cell.role is not ColumnRole.SYNONYMS or not has_empty_synonym_part(
+        apply_corrections(cell.text)
+    ):
         return None
     header = escape_invisible(cell.header)
     return Finding(
@@ -272,7 +288,7 @@ def _scan_empty_synonym(cell: Cell) -> Finding | None:
 def _scan_compound_value(cell: Cell) -> Finding | None:
     if cell.role not in (ColumnRole.DISCIPLINE, ColumnRole.SUBGROUP):
         return None
-    parts = split_compound_value(cell.text)
+    parts = split_compound_value(apply_corrections(cell.text))
     if len(parts) <= 1:
         return None
     header = escape_invisible(cell.header)
@@ -291,7 +307,7 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
         return ()
     header = escape_invisible(cell.header)
     findings: list[Finding] = []
-    for value in split_specimen_values(cell.text):
+    for value in split_specimen_values(apply_corrections(cell.text)):
         if value.casefold() == _SPECIMEN_ANY:
             findings.append(
                 Finding(
@@ -317,6 +333,29 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
                 )
             )
     return tuple(findings)
+
+
+def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
+    """A row that resolves a code binding but carries no 'RCPA Preferred
+    term' value has nothing to seed a designation from at all (P0-9/#31).
+
+    Row-level, not cell-level: there is no single defective cell to point
+    at, since the defect is the *absence* of one. Reported against the code
+    cell's own reference, the only cell on the row this check can be certain
+    exists - never silently dropping the row the way ``build_dataset`` did
+    before this code existed (ADR-0010 §8's own "nothing downstream can
+    distinguish 'every row is clean' from 'some rows were silently dropped'"
+    concern, applied to the report itself, not only to the dataset).
+    """
+    if ColumnRole.CODE not in row.cells or ColumnRole.PREFERRED_TERM in row.cells:
+        return None
+    code_cell = row.cells[ColumnRole.CODE]
+    return Finding(
+        code=FindingCode.MISSING_PREFERRED_TERM,
+        location=code_cell.reference,
+        message="row has a code binding but no 'RCPA Preferred term' value; no entry can be "
+        "seeded for this row",
+    )
 
 
 def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
@@ -384,14 +423,23 @@ def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
     sheet that doesn't already gets exactly one finding from ``_scan_layout``
     (``SHEET_NOT_SPIA_DATA`` or ``UNRECOGNISED_LAYOUT``, depending on whether
     it looks like SPIA data at all), and scanning its cells for A.1/A.3 would
-    just add noise, not defects.
+    just add noise, not defects. Every sheet that *does* also gets one
+    row-level pass (``_scan_missing_preferred_term``, P0-9/#31) - a defect
+    that is the absence of a cell, not the content of one, so it cannot be
+    found by ``_scan_cell`` iterating cells alone.
     """
     findings: list[Finding] = []
+    codeable_sheets: list[Sheet] = []
     for sheet in sheets:
         layout_finding = _scan_layout(sheet)
         if layout_finding is not None:
             findings.append(layout_finding)
             continue
+        codeable_sheets.append(sheet)
         for cell in sheet.cells:
             findings.extend(_scan_cell(cell))
+    for row in group_rows(codeable_sheets):
+        row_finding = _scan_missing_preferred_term(row)
+        if row_finding is not None:
+            findings.append(row_finding)
     return tuple(findings)

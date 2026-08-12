@@ -31,9 +31,12 @@ precedent). A specimen value's ``code`` is populated only on an *exact*
 - never the word-boundary substring heuristic ``semantic_drift.py`` uses for
 its own free-text review, which is calibrated for a different, lower-stakes
 purpose. An unmapped value is still seeded, verbatim, with no code
-(``SPECIMEN_VALUE_UNMAPPED``, informational). ``'Any'`` yields **zero**
-specimen values plus ``specimen_unconstrained: true`` (FR-89) - never a
-specimen code, and never alongside another asserted specimen on the same row.
+(``SPECIMEN_VALUE_UNMAPPED``, informational). ``'Any'`` sets
+``specimen_unconstrained: true`` and yields no specimen value for itself
+(FR-89), but does not discard any other value the same cell asserts: the
+published data is not guaranteed to keep 'Any' from co-occurring with a
+named specimen on one row, and this module must seed exactly what the report
+already describes for that cell, never less.
 
 **Terminology-served enrichment is out of scope for this issue.** Without
 ``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
@@ -47,6 +50,7 @@ widening this one's scope.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,8 +62,9 @@ from nptc_transform.cell_defects import (
     split_specimen_values,
     split_synonyms,
 )
-from nptc_transform.corrections import apply_corrections
+from nptc_transform.corrections import apply_corrections, correct_code_cell
 from nptc_transform.pipeline import RunResult
+from nptc_transform.rows import group_rows
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
@@ -164,7 +169,7 @@ def _optional_cell_text(cell: Cell | None) -> str | None:
     return _cell_text(cell) if cell is not None else None
 
 
-def _build_designations(row_cells: dict[ColumnRole, Cell]) -> tuple[Designation, ...]:
+def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designation, ...]:
     designations: list[Designation] = []
     preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
     if preferred_cell is not None:
@@ -185,7 +190,7 @@ def _build_designations(row_cells: dict[ColumnRole, Cell]) -> tuple[Designation,
     return tuple(designations)
 
 
-def _build_code_bindings(row_cells: dict[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
+def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
     code_cell = row_cells.get(ColumnRole.CODE)
     if code_cell is None:
         return ()
@@ -193,7 +198,7 @@ def _build_code_bindings(row_cells: dict[ColumnRole, Cell]) -> tuple[CodeBinding
     return (
         CodeBinding(
             system=_SNOMED_SYSTEM,
-            code=_cell_text(code_cell),
+            code=correct_code_cell(_cell_text(code_cell)),
             fsn=_optional_cell_text(fsn_cell),
             au_preferred_term=None,
             edition_hint="unknown",
@@ -202,7 +207,15 @@ def _build_code_bindings(row_cells: dict[ColumnRole, Cell]) -> tuple[CodeBinding
     )
 
 
-def _build_specimen(row_cells: dict[ColumnRole, Cell]) -> tuple[tuple[PropertyValue, ...], bool]:
+def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[tuple[PropertyValue, ...], bool]:
+    """Mirrors ``cell_defects._scan_specimen`` exactly: 'Any' sets
+    ``specimen_unconstrained`` but never short-circuits the remaining values
+    in the cell. The published data is not guaranteed to keep 'Any' from
+    co-occurring with a named specimen on the same row, so a co-occurring
+    named value is seeded alongside it rather than silently discarded - the
+    report already carries a finding for every value in the cell, named or
+    not, and this must seed exactly what the report describes.
+    """
     specimen_cell = row_cells.get(ColumnRole.SPECIMEN)
     if specimen_cell is None:
         return (), False
@@ -214,15 +227,11 @@ def _build_specimen(row_cells: dict[ColumnRole, Cell]) -> tuple[tuple[PropertyVa
             continue
         group = resolve_specimen_term(value)
         values.append(PropertyValue(value=value, code=group.specimen_code if group else None))
-    if unconstrained:
-        # FR-89: 'Any' yields specimen_unconstrained and zero specimen
-        # values - never alongside another asserted specimen on the same row.
-        return (), True
-    return tuple(values), False
+    return tuple(values), unconstrained
 
 
 def _build_compound_property(
-    row_cells: dict[ColumnRole, Cell], role: ColumnRole
+    row_cells: Mapping[ColumnRole, Cell], role: ColumnRole
 ) -> tuple[PropertyValue, ...]:
     cell = row_cells.get(role)
     if cell is None:
@@ -250,39 +259,40 @@ def build_dataset(
     codeable = sorted(
         (sheet for sheet in sheets if resolves_code_column(sheet)), key=lambda sheet: sheet.name
     )
-    for sheet in codeable:
-        rows: dict[int, dict[ColumnRole, Cell]] = {}
-        for cell in sheet.cells:
-            rows.setdefault(cell.row, {})[cell.role] = cell
-        for row_number in sorted(rows):
-            row_cells = rows[row_number]
-            preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
-            if preferred_cell is None:
-                continue
-            sequence += 1
-            specimen, unconstrained = _build_specimen(row_cells)
-            entries.append(
-                ImportEntry(
-                    business_key=_business_key(sequence),
-                    source=EntrySource(
-                        sheet=sheet.name,
-                        row=row_number,
-                        legacy_version=_optional_cell_text(row_cells.get(ColumnRole.VERSION)),
-                        legacy_history=_optional_cell_text(row_cells.get(ColumnRole.HISTORY)),
-                    ),
-                    preferred_term=_cell_text(preferred_cell),
-                    status="active",
-                    specimen_unconstrained=unconstrained,
-                    designations=_build_designations(row_cells),
-                    code_bindings=_build_code_bindings(row_cells),
-                    properties=EntryProperties(
-                        discipline=_build_compound_property(row_cells, ColumnRole.DISCIPLINE),
-                        subgroup=_build_compound_property(row_cells, ColumnRole.SUBGROUP),
-                        specimen=specimen,
-                        usage_guidance=_optional_cell_text(row_cells.get(ColumnRole.GUIDANCE)),
-                    ),
-                )
+    for source_row in group_rows(codeable):
+        row_cells = source_row.cells
+        preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
+        if preferred_cell is None:
+            # A row that resolves a code binding with no preferred term is
+            # MISSING_PREFERRED_TERM (cell_defects.py) - data-defect, so it
+            # already blocked emission before build_dataset was called; a
+            # row with neither a code nor a preferred term is simply not a
+            # SPIA data row at all. Either way, there is nothing to seed.
+            continue
+        sequence += 1
+        specimen, unconstrained = _build_specimen(row_cells)
+        entries.append(
+            ImportEntry(
+                business_key=_business_key(sequence),
+                source=EntrySource(
+                    sheet=source_row.sheet,
+                    row=source_row.row,
+                    legacy_version=_optional_cell_text(row_cells.get(ColumnRole.VERSION)),
+                    legacy_history=_optional_cell_text(row_cells.get(ColumnRole.HISTORY)),
+                ),
+                preferred_term=_cell_text(preferred_cell),
+                status="active",
+                specimen_unconstrained=unconstrained,
+                designations=_build_designations(row_cells),
+                code_bindings=_build_code_bindings(row_cells),
+                properties=EntryProperties(
+                    discipline=_build_compound_property(row_cells, ColumnRole.DISCIPLINE),
+                    subgroup=_build_compound_property(row_cells, ColumnRole.SUBGROUP),
+                    specimen=specimen,
+                    usage_guidance=_optional_cell_text(row_cells.get(ColumnRole.GUIDANCE)),
+                ),
             )
+        )
     return ImportDataset(
         source_filename=result.source.filename,
         source_sha256=result.source.sha256,

@@ -3,7 +3,7 @@
 
 Kept as its own module, not a dict inside ``bands.py``: that module's own
 docstring stakes a precise claim ("this registry alone chooses the band"),
-and burying it under 27 x 1-3 sentences of operator prose would obscure
+and burying it under 28 x 1-3 sentences of operator prose would obscure
 ``BAND_BY_CODE``. What's worth copying from ``bands.py`` is the *pattern* -
 declare every code, assert completeness at import time, fail safe on an
 unregistered code - not the location.
@@ -118,6 +118,11 @@ ACTION_BY_CODE: dict[str, str] = {
         "designation of the bound code, or of any other code bound elsewhere "
         "in this workbook (FR-97). The import is blocked until it is "
         "corrected."
+    ),
+    FindingCode.MISSING_PREFERRED_TERM: (
+        "RCPA-QAP must supply the 'RCPA Preferred term' value for this row at "
+        "source; no entry can be seeded without one. The import is blocked "
+        "until it is corrected."
     ),
     # Informational: not a defect at all - see bands.py's module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: (

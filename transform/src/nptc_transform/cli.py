@@ -33,7 +33,11 @@ from nptc_transform.workbook import WorkbookReadError
 #: FR-57's release-name convention, e.g. ``2026-06``. The name cannot be
 #: derived from the workbook or the clock - guessing it from either would
 #: break FR-73's determinism guarantee - so it is a required, validated flag.
-_RELEASE_NAME_RE = re.compile(r"^\d{4}-\d{2}$")
+#: The month group is constrained to 01-12, not just two digits: the value
+#: lands verbatim in ``baseline_release.name``, which FR-60 will later diff
+#: against, so an impossible month like ``2026-13`` must be refused here
+#: rather than accepted and only ever discovered downstream.
+_RELEASE_NAME_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 app = typer.Typer(
     name="nptc-transform",

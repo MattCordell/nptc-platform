@@ -142,6 +142,25 @@ def test_a_named_specimen_never_sets_unconstrained(tmp_path: Path) -> None:
     assert entry.properties.specimen == (PropertyValue(value="Serum", code="119364003"),)
 
 
+@pytest.mark.req("FR-89")
+def test_any_specimen_does_not_drop_a_co_occurring_named_specimen(tmp_path: Path) -> None:
+    """'Any' sets specimen_unconstrained, but must never discard another
+    value the same cell asserts - the published data is not guaranteed to
+    keep the two from co-occurring on one row, and dropping the named value
+    silently (with no finding anywhere) is exactly the data-loss hazard this
+    regression guards against."""
+    workbook_path = _workbook(
+        tmp_path,
+        [["A term", "", "", 11, "Chemical", "", "Any; Serum", "12345678", "A term", 4, ""]],
+    )
+
+    dataset = _build(workbook_path)
+
+    entry = dataset.entries[0]
+    assert entry.specimen_unconstrained is True
+    assert entry.properties.specimen == (PropertyValue(value="Serum", code="119364003"),)
+
+
 @pytest.mark.req("FR-88")
 def test_an_unmapped_specimen_value_is_seeded_verbatim_with_no_code(tmp_path: Path) -> None:
     workbook_path = _workbook(

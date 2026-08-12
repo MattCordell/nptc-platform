@@ -48,7 +48,13 @@ rather than synthetic fixture data standing in for it.
    six-digit sequence, numbered over entries in `(sheet name, row)` order. That ordering, not
    the workbook's own sheet order or any hash-derived order, is what keeps FR-73's
    byte-identical-output guarantee meaningful now that the pipeline actually transforms content
-   rather than only reporting on it.
+   rather than only reporting on it. **The numbering is positional, not content-derived**, and is
+   therefore stable only across re-runs of a byte-identical workbook: inserting or deleting a row
+   between runs - including the expected "fix at source and re-run" remedy for a blocking finding
+   - shifts every subsequent entry onto a different `business_key`. Only the run that actually
+   becomes the seeded baseline has authoritative keys; an earlier run's `import-dataset.json`,
+   produced before a source correction, must never be persisted or diffed against (see the
+   runbook's "The import dataset" section).
 4. **`Length`, `Version` and `History` are not carried as entry fields.** `Length` MUST NOT be
    storable (FR-85) - it is computed in the export layer, and carrying it here would let a
    seeded value silently disagree with what the export computes later. `Version`/`History` MUST
@@ -65,16 +71,21 @@ rather than synthetic fixture data standing in for it.
    over-match here. An unmapped value is still seeded, verbatim, with `code: null`
    (`SPECIMEN_VALUE_UNMAPPED`, informational, never blocking) - the same "migrate the existing
    strings verbatim as provisional codes rather than guessing at a structure" precedent FR-88/
-   FR-92 set. `'Any'` yields zero specimen values plus `specimen_unconstrained: true` (FR-89) -
-   never a specimen code, and never alongside another asserted specimen on the same row.
-6. **Four new `FindingCode` members, emitted in both modes.** `EMPTY_SYNONYM_REMOVED`,
+   FR-92 set. `'Any'` sets `specimen_unconstrained: true` and yields no specimen value for
+   itself (FR-89), but never discards another value the same cell asserts: the published data is
+   not guaranteed to keep `'Any'` from co-occurring with a named specimen on one row, and
+   `build_dataset` must seed exactly what the report already describes for that cell, never less.
+6. **Five new `FindingCode` members, emitted in both modes.** `EMPTY_SYNONYM_REMOVED`,
    `SPECIMEN_UNCONSTRAINED_RESOLVED` and `COMPOUND_VALUE_SPLIT` are auto-correctable (FR-71's own
    examples plus three narrowly-scoped structural repairs this issue adds); `SPECIMEN_VALUE_UNMAPPED`
-   is informational. All four are detected during the existing cell scan
-   (`cell_defects.scan_workbook`), not only when `--emit-dataset` runs - so `--report-only`
-   becomes a truthful preview of exactly what `--emit-dataset` will change, and a run without
-   `--emit-dataset` still surfaces them for review. `report.json`'s `schema_version` moves 7 -> 8
-   to mark the widened vocabulary, even though the report's own shape is unchanged.
+   is informational; `MISSING_PREFERRED_TERM` (a row that resolves a code binding but carries no
+   `RCPA Preferred term` value - there is nothing to seed a designation from) is data-defect,
+   blocking, and row-level rather than cell-level, since the defect is the absence of a cell.
+   All five are detected during the existing cell/row scan (`cell_defects.scan_workbook`), not
+   only when `--emit-dataset` runs - so `--report-only` becomes a truthful preview of exactly
+   what `--emit-dataset` will change, and a run without `--emit-dataset` still surfaces them for
+   review. `report.json`'s `schema_version` moves 7 -> 8 to mark the widened vocabulary, even
+   though the report's own shape is unchanged.
 7. **Terminology-served enrichment is deferred, not attempted partially.** FR-82 requires stored
    `fsn`/`au_preferred_term` to come from the server exactly as served once `--check-terminology`
    ran. Doing that here would need the per-code `SweepResult` threaded through further than
