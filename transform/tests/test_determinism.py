@@ -204,6 +204,76 @@ def test_run_result_sorts_findings_into_canonical_order() -> None:
     )
 
 
+@pytest.mark.req("FR-73")
+@pytest.mark.req("FR-76")
+def test_two_emit_dataset_runs_produce_a_byte_identical_import_dataset(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    out1 = tmp_path / "out1"
+    out2 = tmp_path / "out2"
+
+    _run_cli(
+        "run",
+        "--workbook",
+        str(sample_workbook),
+        "--report-dir",
+        str(out1),
+        "--emit-dataset",
+        "--release-name",
+        "2026-06",
+    )
+    _run_cli(
+        "run",
+        "--workbook",
+        str(sample_workbook),
+        "--report-dir",
+        str(out2),
+        "--emit-dataset",
+        "--release-name",
+        "2026-06",
+    )
+
+    assert (out1 / "import-dataset.json").read_bytes() == (
+        out2 / "import-dataset.json"
+    ).read_bytes()
+
+
+@pytest.mark.req("FR-73")
+@pytest.mark.req("FR-76")
+def test_import_dataset_is_independent_of_pythonhashseed(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    out1 = tmp_path / "seed1"
+    out2 = tmp_path / "seed2"
+
+    _run_cli(
+        "run",
+        "--workbook",
+        str(sample_workbook),
+        "--report-dir",
+        str(out1),
+        "--emit-dataset",
+        "--release-name",
+        "2026-06",
+        env={**os.environ, "PYTHONHASHSEED": "1"},
+    )
+    _run_cli(
+        "run",
+        "--workbook",
+        str(sample_workbook),
+        "--report-dir",
+        str(out2),
+        "--emit-dataset",
+        "--release-name",
+        "2026-06",
+        env={**os.environ, "PYTHONHASHSEED": "2"},
+    )
+
+    assert (out1 / "import-dataset.json").read_bytes() == (
+        out2 / "import-dataset.json"
+    ).read_bytes()
+
+
 def test_run_result_sorts_columns_numerically_not_lexicographically() -> None:
     """Pins the ``CellRef.sort_key`` behaviour change this PR introduces:
     ``B2`` now sorts before ``B10`` (row, numeric), and ``B1`` before ``AA1``

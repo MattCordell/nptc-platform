@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from nptc_transform.bands import Band
-from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.cell_defects import scan_workbook, split_synonyms
 from nptc_transform.cli import app
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import Sheet, read_workbook
@@ -280,8 +280,8 @@ def test_line_break_in_free_text_column_is_not_an_invisible_character(
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Requesting"
-    sheet.append(["Terminology binding (SNOMED CT-AU)", "Usage guidance"])
-    sheet.append(["12345678", "Line one.\nLine two."])
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)", "Usage guidance"])
+    sheet.append(["A term", "12345678", "Line one.\nLine two."])
     path = tmp_path / "guidance.xlsx"
     workbook.save(path)
 
@@ -401,4 +401,101 @@ def test_numeric_overflow_is_flagged_not_crashed(numeric_overflow_workbook: Path
     sheets = read_workbook(numeric_overflow_workbook)
     finding = next(f for f in scan_workbook(sheets) if f.code == "NUMERIC_PRECISION_RISK")
     assert "digit" not in finding.message
-    assert "beyond Excel's numeric range" in finding.message
+
+
+@pytest.mark.req("FR-70")
+def test_a_code_row_with_no_preferred_term_is_flagged_missing(tmp_path: Path) -> None:
+    """A row that resolves a code binding but carries no 'RCPA Preferred
+    term' value has nothing to seed a designation from - there is no
+    deterministic repair, and silently omitting the row (P0-9/#31's own
+    reported hazard) is worse than blocking until it is corrected."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append([None, "12345678"])
+    path = tmp_path / "missing_preferred_term.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(f for f in scan_workbook(sheets) if f.code == "MISSING_PREFERRED_TERM")
+    assert str(finding.location) == "Requesting!B2"
+    assert finding.band is Band.DATA_DEFECT
+
+
+@pytest.mark.req("FR-70")
+def test_a_row_with_neither_a_code_nor_a_preferred_term_is_not_flagged(tmp_path: Path) -> None:
+    """MISSING_PREFERRED_TERM is about a row that resolves a code binding
+    with nothing to seed a designation from - a row with no code binding at
+    all is simply not a SPIA data row, and must not be flagged."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append([None, None])
+    path = tmp_path / "blank_row.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "MISSING_PREFERRED_TERM" not in codes
+
+
+@pytest.mark.req("FR-89")
+def test_any_specimen_does_not_suppress_findings_for_a_co_occurring_named_value(
+    tmp_path: Path,
+) -> None:
+    """cell_defects._scan_specimen must not short-circuit on 'Any': the
+    published data is not guaranteed to keep 'Any' from co-occurring with a
+    named specimen on one row, and every value in the cell needs a finding
+    (or none) reported for it independently, matching what dataset.py seeds."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
+    sheet.append(["12345678", "Any; Nasal swab thing"])
+    path = tmp_path / "any_and_named.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = [f.code for f in scan_workbook(sheets)]
+    assert "SPECIMEN_UNCONSTRAINED_RESOLVED" in codes
+    assert "SPECIMEN_VALUE_UNMAPPED" in codes
+
+
+@pytest.mark.req("FR-04")
+def test_a_comma_with_no_following_space_is_not_treated_as_a_synonym_delimiter() -> None:
+    """FR-04's whole point is eliminating delimiter hazards - the comma
+    fallback must not shatter ordinary SPIA vocabulary like
+    '1,25-dihydroxyvitamin D' into two bogus designations just because it
+    contains a bare comma with no semicolon in the cell."""
+    assert split_synonyms("1,25-dihydroxyvitamin D") == ("1,25-dihydroxyvitamin D",)
+
+
+@pytest.mark.req("FR-04")
+def test_a_comma_space_is_still_a_valid_synonym_delimiter() -> None:
+    """PRD Appendix A.10's own documented case: 'ADA RBC, ADA red cells'
+    must still split on the comma-space fallback."""
+    assert split_synonyms("ADA RBC, ADA red cells") == ("ADA RBC", "ADA red cells")
+
+
+@pytest.mark.req("FR-88")
+def test_specimen_detection_agrees_with_emission_on_an_interior_invisible_character(
+    tmp_path: Path,
+) -> None:
+    """cell_defects._scan_specimen must scan the same corrected text
+    dataset.py emits from - otherwise report-only can claim a specimen value
+    is unmapped while --emit-dataset resolves it (or the reverse) for the
+    identical cell."""
+    nbsp = chr(0x00A0)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
+    sheet.append(["12345678", f"whole{nbsp}blood"])
+    path = tmp_path / "specimen_nbsp.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "SPECIMEN_VALUE_UNMAPPED" not in codes

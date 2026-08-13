@@ -44,7 +44,12 @@ from nptc_transform.findings import Finding
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource
 from nptc_transform.pipeline import RunResult
 
-SCHEMA_VERSION = 7
+#: Bumped 7 -> 8 for issue #31 (P0-9): four new ``FindingCode`` members
+#: (``EMPTY_SYNONYM_REMOVED``, ``SPECIMEN_UNCONSTRAINED_RESOLVED``,
+#: ``COMPOUND_VALUE_SPLIT``, ``SPECIMEN_VALUE_UNMAPPED``) can now appear in
+#: ``defect_classes`` - the shape is unchanged, but a consumer pinned to the
+#: old vocabulary should be able to tell the difference.
+SCHEMA_VERSION = 8
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"

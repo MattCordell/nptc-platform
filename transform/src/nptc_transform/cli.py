@@ -1,14 +1,15 @@
 """CLI entry point for the P0 seeding transform.
 
-``run`` (FR-70, FR-73) reads the SPIA workbook and writes a report. Report-only
-is the default mode; ``--emit-dataset`` is reserved for the mutating mode that
-lands with backlog issue P0-9. ``--check-terminology`` opts into the FR-52
-batch validation pass, which is the only part of the tool that opens a network
-connection.
+``run`` (FR-70, FR-73) reads the SPIA workbook and writes a report, or the
+import dataset (FR-76, issue #31, P0-9). Report-only is the default mode;
+``--emit-dataset`` opts into the mutating mode, and requires ``--release-name``.
+``--check-terminology`` opts into the FR-52 batch validation pass, which is
+the only part of the tool that opens a network connection.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -24,9 +25,19 @@ from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
+from nptc_transform.dataset import build_dataset, write_dataset
 from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
+
+#: FR-57's release-name convention, e.g. ``2026-06``. The name cannot be
+#: derived from the workbook or the clock - guessing it from either would
+#: break FR-73's determinism guarantee - so it is a required, validated flag.
+#: The month group is constrained to 01-12, not just two digits: the value
+#: lands verbatim in ``baseline_release.name``, which FR-60 will later diff
+#: against, so an impossible month like ``2026-13`` must be refused here
+#: rather than accepted and only ever discovered downstream.
+_RELEASE_NAME_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 app = typer.Typer(
     name="nptc-transform",
@@ -104,9 +115,17 @@ def run(
         bool,
         typer.Option(
             "--emit-dataset",
-            help="Emit the import dataset instead of a report. Not implemented yet (P0-9).",
+            help="Emit the import dataset instead of a report alone. Requires --release-name.",
         ),
     ] = False,
+    release_name: Annotated[
+        str | None,
+        typer.Option(
+            "--release-name",
+            help="The synthetic baseline release's name, YYYY-MM (FR-57), e.g. 2026-06. "
+            "Required with --emit-dataset; refused without it.",
+        ),
+    ] = None,
     check_terminology: Annotated[
         bool,
         typer.Option(
@@ -122,8 +141,10 @@ def run(
     Report-only by default (FR-70), and --report-only says so explicitly:
     writes report.json and report.md into --report-dir and nothing else. No
     file outside --report-dir is ever touched. --emit-dataset opts into the
-    mutating mode, which is not implemented yet. --check-terminology opts into
-    the batch validation pass, the only part of the run that uses the network.
+    mutating mode: it applies FR-71's auto-correctable band's repairs and
+    writes import-dataset.json alongside the report, and requires
+    --release-name (FR-76). --check-terminology opts into the batch
+    validation pass, the only part of the run that uses the network.
     """
     typer.echo(f"nptc-transform {__version__}: starting", err=True)
 
@@ -132,7 +153,14 @@ def run(
         raise typer.Exit(code=ExitCode.USAGE_ERROR)
 
     if emit_dataset:
-        typer.echo("dataset emission is not implemented yet (backlog P0-9)", err=True)
+        if release_name is None or not _RELEASE_NAME_RE.fullmatch(release_name):
+            typer.echo(
+                "--emit-dataset requires --release-name in YYYY-MM form (FR-57), e.g. 2026-06",
+                err=True,
+            )
+            raise typer.Exit(code=ExitCode.USAGE_ERROR)
+    elif release_name is not None:
+        typer.echo("--release-name requires --emit-dataset", err=True)
         raise typer.Exit(code=ExitCode.USAGE_ERROR)
 
     start = time.monotonic()
@@ -149,10 +177,12 @@ def run(
         typer.echo(f"{exc}. Pass --workbook a valid, readable .xlsx file.", err=True)
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
 
+    mode = Mode.EMIT_DATASET if emit_dataset else Mode.REPORT_ONLY
+
     result: RunResult
     try:
         with _terminology_sweep(check_terminology) as sweep:
-            result = run_transform_sheets(source, sheets, mode=Mode.REPORT_ONLY, sweep=sweep)
+            result = run_transform_sheets(source, sheets, mode=mode, sweep=sweep)
     except TerminologyConfigError as exc:
         # A subclass of TerminologyError, caught ahead of it: a malformed
         # NPTC_TX_* value is a deployment typo, not a server outage, and
@@ -201,6 +231,23 @@ def run(
             err=True,
         )
         raise typer.Exit(code=ExitCode.BLOCKING_FINDINGS)
+
+    if emit_dataset:
+        # release_name's YYYY-MM shape was already validated above; mypy
+        # cannot see that the earlier branch makes this unreachable as None.
+        assert release_name is not None
+        try:
+            dataset = build_dataset(sheets, result, release_name=release_name)
+            write_dataset(dataset, report_dir)
+        except OSError as exc:
+            typer.echo(
+                f"could not write the import dataset into {report_dir}: "
+                f"{exc.strerror or exc}. Pass --report-dir a writable directory path.",
+                err=True,
+            )
+            raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
+        typer.echo(f"nptc-transform: wrote import dataset to {report_dir}", err=True)
+
     raise typer.Exit(code=ExitCode.OK)
 
 

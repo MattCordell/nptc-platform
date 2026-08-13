@@ -59,6 +59,10 @@ class FindingCode(StrEnum):
     SURROUNDING_WHITESPACE = "SURROUNDING_WHITESPACE"
     WHITESPACE_ONLY_CELL = "WHITESPACE_ONLY_CELL"
     CODE_CELL_NOT_TEXT = "CODE_CELL_NOT_TEXT"
+    EMPTY_SYNONYM_REMOVED = "EMPTY_SYNONYM_REMOVED"
+    SPECIMEN_UNCONSTRAINED_RESOLVED = "SPECIMEN_UNCONSTRAINED_RESOLVED"
+    COMPOUND_VALUE_SPLIT = "COMPOUND_VALUE_SPLIT"
+    SPECIMEN_VALUE_UNMAPPED = "SPECIMEN_VALUE_UNMAPPED"
     CODE_CELL_INVALID_TYPE = "CODE_CELL_INVALID_TYPE"
     NUMERIC_PRECISION_RISK = "NUMERIC_PRECISION_RISK"
     UNRECOGNISED_LAYOUT = "UNRECOGNISED_LAYOUT"
@@ -77,6 +81,7 @@ class FindingCode(StrEnum):
     TERM_SPECIMEN_NOT_MODELLED = "TERM_SPECIMEN_NOT_MODELLED"
     TERM_SPECIMEN_DIFFERS = "TERM_SPECIMEN_DIFFERS"
     TERM_TIMING_NOT_MODELLED = "TERM_TIMING_NOT_MODELLED"
+    MISSING_PREFERRED_TERM = "MISSING_PREFERRED_TERM"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -84,6 +89,14 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.INVISIBLE_CHARACTER: Band.AUTO_CORRECTABLE,
     FindingCode.SURROUNDING_WHITESPACE: Band.AUTO_CORRECTABLE,
     FindingCode.CODE_CELL_NOT_TEXT: Band.AUTO_CORRECTABLE,
+    # Auto-correctable, P0-9/#31: a doubled synonym delimiter, a discipline/
+    # subgroup "X or Y" compound value, and "Any" as a specimen value each
+    # have exactly one deterministic repair - drop the empty synonym, split
+    # into separate property values, and resolve to specimen_unconstrained
+    # with no specimen code, respectively.
+    FindingCode.EMPTY_SYNONYM_REMOVED: Band.AUTO_CORRECTABLE,
+    FindingCode.SPECIMEN_UNCONSTRAINED_RESOLVED: Band.AUTO_CORRECTABLE,
+    FindingCode.COMPOUND_VALUE_SPLIT: Band.AUTO_CORRECTABLE,
     # Requires human decision: no deterministic repair exists (FR-70).
     FindingCode.INVISIBLE_CHARACTER_AMBIGUOUS: Band.REQUIRES_HUMAN_DECISION,
     FindingCode.WHITESPACE_ONLY_CELL: Band.REQUIRES_HUMAN_DECISION,
@@ -110,6 +123,12 @@ BAND_BY_CODE: dict[str, Band] = {
     # automatically.
     FindingCode.LABEL_BOUND_TO_OTHER_CONCEPT: Band.DATA_DEFECT,
     FindingCode.LABEL_MATCHES_NO_DESIGNATION: Band.DATA_DEFECT,
+    # Data defect, P0-9/#31: a row that resolves a code binding but carries
+    # no 'RCPA Preferred term' has no preferred designation to seed - there is
+    # no deterministic repair, and silently omitting the row (as dataset.py
+    # did before this code existed) is exactly the "some rows were silently
+    # dropped" hazard ADR-0010 §8 blocks emission to prevent.
+    FindingCode.MISSING_PREFERRED_TERM: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
     # FR-99 is explicit that an unexpected semantic tag is a warning and not
@@ -142,6 +161,12 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.TERM_SPECIMEN_NOT_MODELLED: Band.INFORMATIONAL,
     FindingCode.TERM_SPECIMEN_DIFFERS: Band.INFORMATIONAL,
     FindingCode.TERM_TIMING_NOT_MODELLED: Band.INFORMATIONAL,
+    # FR-88/P0-9: the specimen table is an allowlist, not a finding
+    # generator (mirrors semantic_drift.py's own principal-failure-mode
+    # mitigation) - a specimen value with no exact match is seeded verbatim
+    # as a provisional value with no code, never blocked, and this is the
+    # coverage signal that it happened.
+    FindingCode.SPECIMEN_VALUE_UNMAPPED: Band.INFORMATIONAL,
 }
 
 if set(BAND_BY_CODE) != set(FindingCode):
