@@ -392,6 +392,70 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
     assert finding.band is Band.REQUIRES_HUMAN_DECISION
 
 
+@pytest.mark.req("FR-06")
+def test_a_whitespace_only_code_cell_is_not_also_reported_as_malformed(tmp_path: Path) -> None:
+    """A blank-once-stripped code cell is ``WHITESPACE_ONLY_CELL`` - already
+    requires-human-decision - not a *second*, misleading ``CODE_NOT_WELL_FORMED``
+    finding quoting an empty string as if it were a transcribed code."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", "   "])
+    path = tmp_path / "whitespace_only_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in _findings_at(sheets, "Requesting!B2")}
+    assert codes == {"WHITESPACE_ONLY_CELL"}
+
+
+@pytest.mark.req("FR-06")
+def test_a_code_cell_with_an_ambiguous_invisible_character_is_not_also_reported_as_malformed(
+    tmp_path: Path,
+) -> None:
+    """A ZWSP inside a code cell is ``INVISIBLE_CHARACTER_AMBIGUOUS`` -
+    already requires-human-decision, with no deterministic repair - not a
+    second ``CODE_NOT_WELL_FORMED`` finding asking for a different
+    remediation on the same cell before the ambiguous character is even
+    resolved."""
+    zwsp = chr(0x200B)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", f"1000000{zwsp}6"])
+    path = tmp_path / "ambiguous_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in _findings_at(sheets, "Requesting!B2")}
+    assert codes == {"INVISIBLE_CHARACTER_AMBIGUOUS"}
+
+
+@pytest.mark.req("FR-06")
+def test_a_malformed_code_finding_quotes_the_raw_uncorrected_text(tmp_path: Path) -> None:
+    """The message must quote what's actually in the cell (escaped), not the
+    corrected text used for the check itself - an operator searching the
+    workbook for the corrected form won't find the character that's really
+    there."""
+    nbsp = chr(0x00A0)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", f"123{nbsp}456"])
+    path = tmp_path / "nbsp_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(
+        f for f in _findings_at(sheets, "Requesting!B2") if f.code == "CODE_NOT_WELL_FORMED"
+    )
+    assert "U+00A0" in finding.message
+    assert "123 456" not in finding.message
+
+
 @pytest.mark.req("FR-70")
 def test_numeric_overflow_is_flagged_not_crashed(numeric_overflow_workbook: Path) -> None:
     """A numeric cell whose raw text overflows a double (openpyxl's own
