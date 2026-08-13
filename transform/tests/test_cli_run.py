@@ -309,6 +309,48 @@ def test_a_blocking_run_removes_a_stale_dataset_from_an_earlier_successful_run(
     assert not (report_dir / "import-dataset.json").exists()
 
 
+@pytest.mark.req("FR-71")
+def test_a_report_only_run_removes_a_stale_dataset_from_an_earlier_successful_run(
+    tmp_path: Path, sample_workbook: Path
+) -> None:
+    """The same stale-dataset invariant as the blocked case, reached via the
+    success path instead: a run into the same ``--report-dir`` that omits
+    ``--emit-dataset`` refreshes the report but must not leave a previous
+    run's ``import-dataset.json`` sitting beside it either (issue #130)."""
+    report_dir = tmp_path / "report"
+
+    first = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    assert (report_dir / "import-dataset.json").is_file()
+
+    second = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+        ],
+    )
+
+    assert second.exit_code == 0, second.output
+    assert (report_dir / "report.json").is_file()
+    assert not (report_dir / "import-dataset.json").exists()
+
+
 @pytest.mark.req("FR-70")
 def test_emit_dataset_blocks_and_writes_no_dataset_for_a_row_missing_its_preferred_term(
     tmp_path: Path,

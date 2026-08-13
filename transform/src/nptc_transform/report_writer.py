@@ -308,8 +308,8 @@ def _render_terminology(result: RunResult) -> list[str]:
     if run is None:
         return ["- Terminology validation: `not run`", ""]
     lines = [
-        f"- Terminology validation: {run.codes_checked} code(s) checked, "
-        f"{run.codes_not_checked} not checked",
+        f"- Terminology validation: {run.codes_checked} distinct code(s) checked, "
+        f"{run.codes_not_checked} binding(s) not checked",
     ]
     if run.unresolved_fsn_count:
         # Not decoration: a nonzero count here means the FR-99 semantic-tag
