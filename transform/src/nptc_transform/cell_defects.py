@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import re
 
+from nptc_shared.sctid import has_valid_check_digit
 from nptc_shared.text import (
     escape_invisible,
     find_invisible_characters,
@@ -237,6 +238,51 @@ def _scan_code_cell_type(cell: Cell) -> Finding | None:
     )
 
 
+def _scan_code_well_formed(cell: Cell) -> Finding | None:
+    """Reports a text-typed code cell whose corrected text isn't a
+    well-formed SCTID (FR-06), so ``--emit-dataset`` alone (no
+    ``--check-terminology``) never seeds an unvalidated code.
+
+    Checks ``apply_corrections(cell.text)`` - the same text ``dataset.py``
+    seeds - not the raw text, so an interior invisible character that
+    collapses to a space (e.g. a code with an interior NBSP) is caught here
+    rather than slipping through as a "well-formed" cell. The message still
+    quotes the *raw*, escaped text: the corrected form is what the check
+    runs against, but it is the raw form an operator has to find in the
+    workbook and fix.
+
+    Only for ``CellType.TEXT``: a NUMBER or other-typed code cell is already
+    reported by ``_scan_code_cell_type`` (``CODE_CELL_NOT_TEXT`` or
+    ``CODE_CELL_INVALID_TYPE``), and checking well-formedness there too would
+    add a second, redundant finding for the same cell.
+
+    Never called on a cell that's blank once stripped (that's
+    ``WHITESPACE_ONLY_CELL``, a different, requires-human-decision defect -
+    #132 owns deciding whether an absent code should also be
+    ``CODE_NOT_WELL_FORMED``) or one carrying a non-normalisable invisible
+    character (``INVISIBLE_CHARACTER_AMBIGUOUS`` already blocks emission,
+    and the code may well be well-formed once that character is resolved -
+    reporting both asks for two different remediations on one cell).
+    """
+    if cell.role is not ColumnRole.CODE or cell.cell_type is not CellType.TEXT:
+        return None
+    raw = cell.text.strip()
+    if not raw:
+        return None
+    if any(not ic.normalisable for ic in find_invisible_characters(cell.text)):
+        return None
+    if has_valid_check_digit(apply_corrections(cell.text)):
+        return None
+    return Finding(
+        code=FindingCode.CODE_NOT_WELL_FORMED,
+        location=cell.reference,
+        message=(
+            f"code '{escape_invisible(raw)}' is not a well-formed SCTID "
+            "(6-18 digits with a valid Verhoeff check digit, FR-06)"
+        ),
+    )
+
+
 def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
     if cell.cell_type is not CellType.NUMBER:
         return None
@@ -365,6 +411,7 @@ def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
         for finding in (
             _scan_surrounding_whitespace(cell),
             _scan_code_cell_type(cell),
+            _scan_code_well_formed(cell),
             _scan_numeric_precision_risk(cell),
             _scan_empty_synonym(cell),
             _scan_compound_value(cell),
