@@ -155,7 +155,7 @@ def test_a_terminology_run_records_the_editions_it_resolved_against(tmp_path: Pa
         "unresolved_fsn_count": 0,
     }
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
-    assert "42 code(s) checked, 1 not checked" in markdown_text
+    assert "42 distinct code(s) checked, 1 binding(s) not checked" in markdown_text
     assert "| au | http://snomed.info/sct/32506021000036107/version/20260531 |" in markdown_text
     assert "no identifiable FSN designation" not in markdown_text
 

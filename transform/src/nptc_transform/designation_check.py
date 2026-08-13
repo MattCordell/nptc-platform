@@ -264,7 +264,7 @@ def _join(codes: Iterable[str]) -> str:
 def _truncate(message: str) -> str:
     if len(message) <= _MAX_SERVER_MESSAGE_LENGTH:
         return message
-    return message[:_MAX_SERVER_MESSAGE_LENGTH] + "…"
+    return message[: _MAX_SERVER_MESSAGE_LENGTH - 3] + "..."
 
 
 def _fsn_clause(entry: ConceptDesignations) -> str:

@@ -338,6 +338,31 @@ def test_a_non_text_code_cell_is_excluded_from_terminology_checking_entirely(
     assert client.requests == ()
 
 
+@pytest.mark.req("FR-06")
+def test_the_same_code_bound_by_a_checkable_and_an_excluded_cell_counts_one_not_checked(
+    tmp_path: Path, client: StubTerminologyClient
+) -> None:
+    """``codes_not_checked`` must count excluded *bindings*, not the
+    difference between two distinct-code sets: when the same SCTID string is
+    bound by one checkable (text) cell and one excluded (non-text) cell, the
+    excluded cell's binding still happened and was still skipped, even though
+    the code itself was checked via the other cell (issue #130)."""
+    path = tmp_path / "shared_code.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    _write_text_cell(sheet, 2, 2, GOOD_CODE)
+    sheet.cell(row=3, column=2, value=int(GOOD_CODE))  # CellType.NUMBER, excluded
+    workbook.save(path)
+
+    outcome = check_terminology(read_workbook(path), sweep=TerminologySweep(client))
+
+    assert outcome.run.codes_checked == 1
+    assert outcome.run.codes_not_checked == 1
+
+
 @pytest.mark.req("FR-72")
 def test_a_code_bound_by_several_rows_is_reported_against_each_cell(
     tmp_path: Path, client: StubTerminologyClient

@@ -25,7 +25,7 @@ from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
-from nptc_transform.dataset import build_dataset, write_dataset
+from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
 from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
@@ -54,6 +54,24 @@ class ExitCode(IntEnum):
     BLOCKING_FINDINGS = 1  # any finding banded requires-human-decision or data-defect (FR-71)
     USAGE_ERROR = 2
     TERMINOLOGY_UNAVAILABLE = 3  # the sweep could not complete (FR-54)
+
+
+def _remove_stale_dataset(report_dir: Path) -> None:
+    """Removes a previous run's ``import-dataset.json`` when this run will
+    not write a fresh one - the invariant is "the file exists iff this run
+    emitted it", so a run that will not emit one this time (report-only, or
+    blocked) must not leave an earlier run's dataset sitting beside its
+    refreshed report: a missing file is an unambiguous signal, a stale one
+    is not (issue #130)."""
+    try:
+        (report_dir / DATASET_JSON_NAME).unlink(missing_ok=True)
+    except OSError as exc:
+        typer.echo(
+            f"could not remove the stale import dataset in {report_dir}: "
+            f"{exc.strerror or exc}. Pass --report-dir a writable directory path.",
+            err=True,
+        )
+        raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
 
 
 @app.callback()
@@ -225,11 +243,15 @@ def run(
     typer.echo(f"nptc-transform: bands: {summary}", err=True)
 
     if result.has_blocking_findings:
+        # Echo the blocking signal before attempting any cleanup: a failed
+        # removal below must not suppress the FR-71 blocked message, nor the
+        # BLOCKING_FINDINGS exit code a CI caller branches on.
         typer.echo(
             "nptc-transform: import blocked - the report contains at least one "
             "requires-human-decision or data-defect finding (FR-71)",
             err=True,
         )
+        _remove_stale_dataset(report_dir)
         raise typer.Exit(code=ExitCode.BLOCKING_FINDINGS)
 
     if emit_dataset:
@@ -247,6 +269,11 @@ def run(
             )
             raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
         typer.echo(f"nptc-transform: wrote import dataset to {report_dir}", err=True)
+    else:
+        # This run will not emit a dataset either - the same stale-dataset
+        # invariant applies on the report-only success path, not just the
+        # blocked one.
+        _remove_stale_dataset(report_dir)
 
     raise typer.Exit(code=ExitCode.OK)
 

@@ -72,6 +72,17 @@ class TerminologyRun:
     the catalogue because those cells were malformed must not read as a run
     that validated all of it (the same reason ``UNRECOGNISED_LAYOUT`` reports
     its unscanned row count).
+
+    The two counts intentionally use different units, so they are not meant
+    to be added together: ``codes_checked`` is the number of *distinct codes*
+    the sweep actually queried (a code bound by three checkable cells still
+    counts once - the engine works in codes, FR-72's own docstring), while
+    ``codes_not_checked`` is the number of *bindings* excluded before the
+    sweep ran (one per skipped cell, even if its code string also reached the
+    server via a different, checkable cell) - counting bindings rather than
+    distinct codes is what keeps a binding that was genuinely skipped from
+    being silently absorbed by another cell that happened to share its code
+    string (issue #130).
     """
 
     codes_checked: int
@@ -196,7 +207,7 @@ def check_terminology(
         findings=tuple(findings),
         run=TerminologyRun(
             codes_checked=len(codes),
-            codes_not_checked=len({binding.code for binding in bindings}) - len(codes),
+            codes_not_checked=len(bindings) - len(checkable),
             editions=tuple(
                 EditionResolution(label=label, resolved_versions=result.resolved_versions)
                 for label, result in sorted(results.items())
