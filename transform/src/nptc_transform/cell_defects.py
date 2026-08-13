@@ -358,6 +358,29 @@ def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
     )
 
 
+def _scan_missing_code_binding(row: SourceRow) -> Finding | None:
+    """A row that carries a 'RCPA Preferred term' value but resolves no code
+    binding at all has nothing to bind an entry to (#132).
+
+    Mirror of ``_scan_missing_preferred_term`` for the opposite column.
+    Row-level, not cell-level, for the same reason: the defect is the
+    *absence* of a cell. Reported against the preferred-term cell's own
+    reference, the only cell on the row this check can be certain exists.
+    Unlike ``MISSING_PREFERRED_TERM``, ``build_dataset`` does not seed this
+    row at all - a code-less row is judged more likely to be layout (a
+    heading, a continuation line) than a genuine entry awaiting a code.
+    """
+    if ColumnRole.PREFERRED_TERM not in row.cells or ColumnRole.CODE in row.cells:
+        return None
+    term_cell = row.cells[ColumnRole.PREFERRED_TERM]
+    return Finding(
+        code=FindingCode.MISSING_CODE_BINDING,
+        location=term_cell.reference,
+        message="row has a 'RCPA Preferred term' value but no code binding; no entry can be "
+        "seeded for this row",
+    )
+
+
 def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
     findings: list[Finding] = list(_scan_invisible_characters(cell))
     findings.extend(
@@ -439,7 +462,10 @@ def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
         for cell in sheet.cells:
             findings.extend(_scan_cell(cell))
     for row in group_rows(codeable_sheets):
-        row_finding = _scan_missing_preferred_term(row)
-        if row_finding is not None:
-            findings.append(row_finding)
+        for row_finding in (
+            _scan_missing_preferred_term(row),
+            _scan_missing_code_binding(row),
+        ):
+            if row_finding is not None:
+                findings.append(row_finding)
     return tuple(findings)

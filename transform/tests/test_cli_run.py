@@ -551,8 +551,8 @@ def test_check_terminology_run_reports_sweep_backed_misspellings(
     rows: list[tuple[str, str | None]] = [
         ("Amylose", amylose_code),
         ("Amylase", amylase_code),
-        ("Amylase panel", None),
-        ("Amylase ratio", None),
+        ("Amylase panel", amylase_code),
+        ("Amylase ratio", amylase_code),
     ]
     for index, (term, code) in enumerate(rows, start=2):
         sheet.cell(row=index, column=1, value=term)

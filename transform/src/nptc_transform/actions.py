@@ -124,6 +124,12 @@ ACTION_BY_CODE: dict[str, str] = {
         "source; no entry can be seeded without one. The import is blocked "
         "until it is corrected."
     ),
+    FindingCode.MISSING_CODE_BINDING: (
+        "RCPA-QAP must supply a 'Terminology binding (SNOMED CT-AU)' value "
+        "for this row at source, or confirm the row is layout (for example a "
+        "heading) and remove it. No entry is seeded for this row until it is "
+        "corrected."
+    ),
     # Informational: not a defect at all - see bands.py's module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: (
         "No action required. This sheet is recognised as prose, not SPIA "

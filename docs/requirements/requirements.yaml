@@ -629,6 +629,12 @@
   title: "Where a binding is subsumed by <<71388002 but its semantic tag is not (procedure), raise a warning, not an error"
   status: implemented
   notes: "snomed.semantic_tag reads the FSN the bulk expansion already returned, so the check costs no extra requests; reported as UNEXPECTED_SEMANTIC_TAG in the non-blocking informational band, never alongside an FR-84 violation for the same concept (#27)."
+- id: "FR-100"
+  priority: MUST
+  phase: p0
+  title: "A row that carries a 'RCPA Preferred term' value but resolves no code binding is flagged MISSING_CODE_BINDING (data-defect) and is never seeded into the import dataset"
+  status: implemented
+  notes: "Mirror of FR-70/FR-71's MISSING_PREFERRED_TERM for the opposite column (#132); unlike that code, a code-less row is judged more likely to be layout (a heading, a continuation line) than a genuine entry awaiting a code, so build_dataset omits the row entirely rather than seeding it with an empty code_bindings list."
 - id: "NFR-01"
   priority: MUST
   phase: p1

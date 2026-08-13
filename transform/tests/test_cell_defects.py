@@ -439,6 +439,44 @@ def test_a_row_with_neither_a_code_nor_a_preferred_term_is_not_flagged(tmp_path:
     sheets = read_workbook(path)
     codes = {f.code for f in scan_workbook(sheets)}
     assert "MISSING_PREFERRED_TERM" not in codes
+    assert "MISSING_CODE_BINDING" not in codes
+
+
+@pytest.mark.req("FR-100")
+def test_a_preferred_term_row_with_no_code_is_flagged_missing_binding(tmp_path: Path) -> None:
+    """A row that carries a 'RCPA Preferred term' value but resolves no code
+    binding at all has nothing to bind an entry to (#132) - the mirror of
+    MISSING_PREFERRED_TERM for the opposite column."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["Full blood count", None])
+    path = tmp_path / "missing_code_binding.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(f for f in scan_workbook(sheets) if f.code == "MISSING_CODE_BINDING")
+    assert str(finding.location) == "Requesting!A2"
+    assert finding.band is Band.DATA_DEFECT
+
+
+@pytest.mark.req("FR-100")
+def test_a_fully_populated_row_is_not_flagged_missing_binding_or_term(tmp_path: Path) -> None:
+    """A row with both a preferred term and a code binding must trigger
+    neither MISSING_PREFERRED_TERM nor MISSING_CODE_BINDING."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["Full blood count", "12345678"])
+    path = tmp_path / "fully_populated_row.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "MISSING_PREFERRED_TERM" not in codes
+    assert "MISSING_CODE_BINDING" not in codes
 
 
 @pytest.mark.req("FR-89")

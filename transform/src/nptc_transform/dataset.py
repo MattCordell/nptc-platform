@@ -269,6 +269,12 @@ def build_dataset(
             # row with neither a code nor a preferred term is simply not a
             # SPIA data row at all. Either way, there is nothing to seed.
             continue
+        if ColumnRole.CODE not in row_cells:
+            # The mirror case (#132): a preferred term with no code binding
+            # is MISSING_CODE_BINDING - data-defect, so it already blocked
+            # emission before build_dataset was called. Never seeded with an
+            # empty code_bindings list - it is judged layout, not an entry.
+            continue
         sequence += 1
         specimen, unconstrained = _build_specimen(row_cells)
         entries.append(

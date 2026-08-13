@@ -88,6 +88,25 @@ def test_long_codes_round_trip_as_exact_strings(tmp_path: Path) -> None:
     assert all(isinstance(code, str) for code in emitted_codes)
 
 
+@pytest.mark.req("FR-100")
+def test_a_preferred_term_row_with_no_code_is_not_seeded(tmp_path: Path) -> None:
+    """A row that carries a preferred term but resolves no code binding is
+    MISSING_CODE_BINDING (data-defect, #132) - unlike MISSING_PREFERRED_TERM,
+    it is never seeded with an empty code_bindings list; it is omitted
+    entirely, since it is judged more likely to be layout than a genuine
+    entry awaiting a code."""
+    rows = [
+        ["A term with no code", "", "", 11, "Chemical", "", "Serum", None, "", 4, ""],
+        ["A term with a code", "", "", 11, "Chemical", "", "Serum", "12345678", "A term", 4, ""],
+    ]
+    workbook_path = _workbook(tmp_path, rows)
+
+    dataset = _build(workbook_path)
+
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].preferred_term == "A term with a code"
+
+
 @pytest.mark.req("FR-71")
 def test_the_three_auto_correctable_repairs_change_the_emitted_value(tmp_path: Path) -> None:
     nbsp = chr(0x00A0)
