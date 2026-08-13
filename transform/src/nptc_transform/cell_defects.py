@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import re
 
+from nptc_shared.sctid import has_valid_check_digit
 from nptc_shared.text import (
     escape_invisible,
     find_invisible_characters,
@@ -237,6 +238,36 @@ def _scan_code_cell_type(cell: Cell) -> Finding | None:
     )
 
 
+def _scan_code_well_formed(cell: Cell) -> Finding | None:
+    """Reports a text-typed code cell whose corrected text isn't a
+    well-formed SCTID (FR-06), so ``--emit-dataset`` alone (no
+    ``--check-terminology``) never seeds an unvalidated code.
+
+    Runs on ``apply_corrections(cell.text)`` - the same text ``dataset.py``
+    seeds - not the raw text, so an interior invisible character that
+    collapses to a space (e.g. a code with an interior NBSP) is caught here
+    rather than slipping through as a "well-formed" cell.
+
+    Only for ``CellType.TEXT``: a NUMBER or other-typed code cell is already
+    reported by ``_scan_code_cell_type`` (``CODE_CELL_NOT_TEXT`` or
+    ``CODE_CELL_INVALID_TYPE``), and checking well-formedness there too would
+    add a second, redundant finding for the same cell.
+    """
+    if cell.role is not ColumnRole.CODE or cell.cell_type is not CellType.TEXT:
+        return None
+    code = apply_corrections(cell.text)
+    if has_valid_check_digit(code):
+        return None
+    return Finding(
+        code=FindingCode.CODE_NOT_WELL_FORMED,
+        location=cell.reference,
+        message=(
+            f"code '{escape_invisible(code)}' is not a well-formed SCTID "
+            "(6-18 digits with a valid Verhoeff check digit, FR-06)"
+        ),
+    )
+
+
 def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
     if cell.cell_type is not CellType.NUMBER:
         return None
@@ -365,6 +396,7 @@ def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
         for finding in (
             _scan_surrounding_whitespace(cell),
             _scan_code_cell_type(cell),
+            _scan_code_well_formed(cell),
             _scan_numeric_precision_risk(cell),
             _scan_empty_synonym(cell),
             _scan_compound_value(cell),

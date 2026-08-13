@@ -173,31 +173,17 @@ def check_terminology(
     bindings = collect_code_bindings(sheets)
     findings: list[Finding] = []
 
-    checkable: list[CodeBinding] = []
-    for binding in bindings:
-        if binding.cell_type is not CellType.TEXT:
-            # cell_defects.py already owns this defect - CODE_CELL_NOT_TEXT
-            # or CODE_CELL_INVALID_TYPE, depending on shape - and reports it
-            # against this exact cell. Submitting the cell's rendered text
-            # anyway (an ISO date string, `repr(float)` in scientific
-            # notation for a precision-corrupted number) would report a
-            # second, misleading CODE_NOT_WELL_FORMED finding quoting
-            # something that was never a transcribed code to begin with.
-            continue
-        if has_valid_check_digit(binding.code):
-            checkable.append(binding)
-            continue
-        findings.append(
-            Finding(
-                code=FindingCode.CODE_NOT_WELL_FORMED,
-                location=binding.location,
-                message=(
-                    f"code '{escape_invisible(binding.code)}' is not a well-formed SCTID "
-                    "(6-18 digits with a valid Verhoeff check digit, FR-06); it was not "
-                    "submitted for terminology validation"
-                ),
-            )
-        )
+    # cell_defects.scan_workbook already owns well-formedness for every code
+    # cell (CODE_NOT_WELL_FORMED for a malformed text cell, CODE_CELL_NOT_TEXT
+    # or CODE_CELL_INVALID_TYPE for a non-text one) unconditionally, not only
+    # under --check-terminology. Reporting it again here would duplicate the
+    # same finding for the same cell; this loop only needs to decide which
+    # bindings are safe to submit for terminology validation.
+    checkable: list[CodeBinding] = [
+        binding
+        for binding in bindings
+        if binding.cell_type is CellType.TEXT and has_valid_check_digit(binding.code)
+    ]
 
     codes = tuple(sorted({binding.code for binding in checkable}))
     results = {edition.label: sweep.run(codes, edition=edition) for edition in editions}

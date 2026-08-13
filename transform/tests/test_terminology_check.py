@@ -24,6 +24,7 @@ from nptc_shared.terminology.models import (
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.bands import Band, FindingCode, blocks_import
+from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.findings import Finding
 from nptc_transform.pipeline import Mode, run_transform
 from nptc_transform.terminology_check import check_terminology
@@ -161,19 +162,36 @@ def test_every_code_is_validated_against_both_editions_in_batches(
 
 
 @pytest.mark.req("FR-06")
-def test_a_code_that_is_not_a_well_formed_sctid_is_reported_and_never_submitted(
+def test_a_code_that_is_not_a_well_formed_sctid_is_never_submitted(
     bindings_workbook: Path, client: StubTerminologyClient
 ) -> None:
-    """It fails the Verhoeff check digit, so it cannot be a real SCTID -
-    FR-71 bands that a data defect. Sending it anyway would report it as
-    "not found", which reads as a terminology outcome rather than as the
-    transcription defect it is."""
+    """It fails the Verhoeff check digit, so it cannot be a real SCTID.
+    Sending it anyway would report it as "not found", which reads as a
+    terminology outcome rather than as the transcription defect it is.
+
+    ``cell_defects.scan_workbook`` reports the ``CODE_NOT_WELL_FORMED``
+    finding itself (unconditionally, so ``--emit-dataset`` alone catches it
+    too, #131) - ``check_terminology`` only needs to filter the code out of
+    what it submits, not report it a second time."""
     grouped = _findings(bindings_workbook, client)
 
-    malformed = grouped[FindingCode.CODE_NOT_WELL_FORMED]
+    assert FindingCode.CODE_NOT_WELL_FORMED not in grouped
+    assert not [request for request in client.requests if MALFORMED_CODE in request.detail]
+
+
+@pytest.mark.req("FR-06")
+def test_a_code_that_is_not_a_well_formed_sctid_is_reported_by_the_shared_scan(
+    bindings_workbook: Path,
+) -> None:
+    """The same well-formedness finding ``check_terminology`` relies on being
+    absent from its own output (see above) must still exist somewhere -
+    ``cell_defects.scan_workbook`` is that one place, and it's what
+    ``--emit-dataset`` without ``--check-terminology`` now depends on."""
+    findings = scan_workbook(read_workbook(bindings_workbook))
+
+    malformed = [f for f in findings if f.code is FindingCode.CODE_NOT_WELL_FORMED]
     assert [str(finding.location) for finding in malformed] == ["Requesting!B6"]
     assert malformed[0].band is Band.DATA_DEFECT
-    assert not [request for request in client.requests if MALFORMED_CODE in request.detail]
 
 
 @pytest.mark.req("FR-74")

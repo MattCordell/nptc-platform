@@ -281,7 +281,7 @@ def test_line_break_in_free_text_column_is_not_an_invisible_character(
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)", "Usage guidance"])
-    sheet.append(["A term", "12345678", "Line one.\nLine two."])
+    sheet.append(["A term", "10000006", "Line one.\nLine two."])
     path = tmp_path / "guidance.xlsx"
     workbook.save(path)
 
@@ -299,7 +299,7 @@ def test_line_break_outside_a_free_text_column_is_still_flagged(tmp_path: Path) 
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
-    sheet.append(["Aciclovir\nlevel", "12345678"])
+    sheet.append(["Aciclovir\nlevel", "10000006"])
     path = tmp_path / "preferred_term_break.xlsx"
     workbook.save(path)
 
@@ -359,7 +359,7 @@ def test_numeric_precision_risk_fires_outside_the_code_column(tmp_path: Path) ->
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Version"])
-    sheet.append(["12345678", 1393151000168101])  # code column clean; Version corrupted-length
+    sheet.append(["10000006", 1393151000168101])  # code column clean; Version corrupted-length
     path = tmp_path / "version_precision.xlsx"
     workbook.save(path)
 
@@ -378,7 +378,7 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "RCPA Synonyms"])
-    sheet.append(["12345678", "   "])
+    sheet.append(["10000006", "   "])
     path = tmp_path / "whitespace_only.xlsx"
     workbook.save(path)
 
@@ -413,7 +413,7 @@ def test_a_code_row_with_no_preferred_term_is_flagged_missing(tmp_path: Path) ->
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
-    sheet.append([None, "12345678"])
+    sheet.append([None, "10000006"])
     path = tmp_path / "missing_preferred_term.xlsx"
     workbook.save(path)
 
@@ -453,7 +453,7 @@ def test_any_specimen_does_not_suppress_findings_for_a_co_occurring_named_value(
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["12345678", "Any; Nasal swab thing"])
+    sheet.append(["10000006", "Any; Nasal swab thing"])
     path = tmp_path / "any_and_named.xlsx"
     workbook.save(path)
 
@@ -492,7 +492,7 @@ def test_specimen_detection_agrees_with_emission_on_an_interior_invisible_charac
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["12345678", f"whole{nbsp}blood"])
+    sheet.append(["10000006", f"whole{nbsp}blood"])
     path = tmp_path / "specimen_nbsp.xlsx"
     workbook.save(path)
 
