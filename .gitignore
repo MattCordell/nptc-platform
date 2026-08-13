@@ -59,3 +59,8 @@ Thumbs.db
 # --- Local override files ---
 docker-compose.override.yml
 *.local.yml
+
+# --- Claude Code local state ---
+# Local agent config/cache (MCP server data, e.g. the Contracts Analyzer sqlite
+# db) - machine-local, not repo content.
+/.claude/
