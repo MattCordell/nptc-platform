@@ -196,7 +196,7 @@ def check_terminology(
         findings=tuple(findings),
         run=TerminologyRun(
             codes_checked=len(codes),
-            codes_not_checked=len({binding.code for binding in bindings}) - len(codes),
+            codes_not_checked=len(bindings) - len(checkable),
             editions=tuple(
                 EditionResolution(label=label, resolved_versions=result.resolved_versions)
                 for label, result in sorted(results.items())

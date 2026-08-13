@@ -25,7 +25,7 @@ from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
-from nptc_transform.dataset import build_dataset, write_dataset
+from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
 from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
@@ -225,6 +225,18 @@ def run(
     typer.echo(f"nptc-transform: bands: {summary}", err=True)
 
     if result.has_blocking_findings:
+        # A dataset written by an earlier, unblocked run must not survive
+        # sitting next to a report that now says the import is blocked - a
+        # missing file is an unambiguous signal, a stale one is not.
+        try:
+            (report_dir / DATASET_JSON_NAME).unlink(missing_ok=True)
+        except OSError as exc:
+            typer.echo(
+                f"could not remove the stale import dataset in {report_dir}: "
+                f"{exc.strerror or exc}. Pass --report-dir a writable directory path.",
+                err=True,
+            )
+            raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
         typer.echo(
             "nptc-transform: import blocked - the report contains at least one "
             "requires-human-decision or data-defect finding (FR-71)",

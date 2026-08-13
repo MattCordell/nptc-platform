@@ -135,9 +135,9 @@ ACTION_BY_CODE: dict[str, str] = {
         "import is not blocked."
     ),
     FindingCode.LABEL_DESIGNATION_DRIFT: (
-        "No action required. The served FSN will be seeded in place of the "
-        "stored label; review only if the drift is unexpected (FR-97). The "
-        "import is not blocked."
+        "No action required. Server-sourced FSN seeding is deferred (ADR-0010); "
+        "the published label is seeded as-is, and the drift is recorded for "
+        "editorial review only if unexpected (FR-97). The import is not blocked."
     ),
     FindingCode.LABEL_DIFFERS_FROM_PREFERRED_TERM: (
         "No action required. The current SNOMED CT-AU preferred term "

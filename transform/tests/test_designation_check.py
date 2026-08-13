@@ -545,7 +545,11 @@ def test_a_no_match_finding_truncates_a_long_server_message(
     findings = _findings_for(outcome, NO_MATCH_CODE)
     assert len(findings) == 1
     assert long_message not in findings[0].message
-    assert "…" in findings[0].message
+    assert "..." in findings[0].message
+    assert "…" not in findings[0].message
+    assert findings[0].message.isascii(), (
+        f"{findings[0].message!r} contains a non-ASCII character (NFR-38)"
+    )
 
 
 @pytest.mark.req("FR-97")

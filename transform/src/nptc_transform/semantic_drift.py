@@ -53,6 +53,7 @@ from nptc_shared.terminology.models import HAS_SPECIMEN_ATTRIBUTE, SNOMED_CT_AU
 from nptc_shared.terminology.sweep import ConceptDesignations, SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible, normalise_for_comparison
 from nptc_transform.bands import FindingCode
+from nptc_transform.cell_defects import split_specimen_values
 from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.rows import group_rows
@@ -297,10 +298,11 @@ def _specimen_column_unmapped_count(sheets: Sequence[Sheet], table: Sequence[Spe
         for cell in sheet.cells:
             if cell.role is not ColumnRole.SPECIMEN:
                 continue
-            folded = _fold(cell.text)
-            if not folded or folded in _EXCLUDED_SPECIMEN_COLUMN_VALUES:
-                continue
-            distinct_values.add(folded)
+            for value in split_specimen_values(cell.text):
+                folded = _fold(value)
+                if not folded or folded in _EXCLUDED_SPECIMEN_COLUMN_VALUES:
+                    continue
+                distinct_values.add(folded)
     return sum(1 for value in distinct_values if _longest_match(value, table) is None)
 
 
