@@ -107,6 +107,29 @@ def test_a_preferred_term_row_with_no_code_is_not_seeded(tmp_path: Path) -> None
     assert dataset.entries[0].preferred_term == "A term with a code"
 
 
+@pytest.mark.req("FR-100")
+def test_a_preferred_term_row_with_an_empty_string_code_cell_is_not_seeded(tmp_path: Path) -> None:
+    """A code cell that exists but holds only an empty string (readable
+    from a non-Excel-written .xlsx) must not be seeded as a bad binding -
+    ``build_dataset`` must agree with the report that this row has no code
+    binding at all (#132)."""
+    workbook_path = tmp_path / "empty_string_code_cell.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    sheet.cell(row=2, column=1, value="A term with an empty code cell")
+    sheet.cell(row=2, column=8, value="")
+    workbook.save(workbook_path)
+
+    sheets = read_workbook(workbook_path)
+    result: RunResult = run_transform(workbook_path, mode=Mode.EMIT_DATASET)
+    dataset = build_dataset(sheets, result, release_name="2026-06")
+
+    assert dataset.entries == ()
+
+
 @pytest.mark.req("FR-71")
 def test_the_three_auto_correctable_repairs_change_the_emitted_value(tmp_path: Path) -> None:
     nbsp = chr(0x00A0)

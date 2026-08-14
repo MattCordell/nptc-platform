@@ -462,6 +462,27 @@ def test_a_preferred_term_row_with_no_code_is_flagged_missing_binding(tmp_path: 
 
 
 @pytest.mark.req("FR-100")
+def test_a_preferred_term_row_with_an_empty_string_code_cell_is_flagged(tmp_path: Path) -> None:
+    """A code cell that exists but holds only an empty string - readable
+    from a non-Excel-written .xlsx, since ``_iter_sheet_cells`` only skips a
+    raw value of ``None`` - must count as no code binding, not a resolved
+    one, or the row reaches ``build_dataset`` as a bad binding (#132)."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.cell(row=2, column=1, value="Full blood count")
+    sheet.cell(row=2, column=2, value="")
+    path = tmp_path / "empty_string_code_cell.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(f for f in scan_workbook(sheets) if f.code == "MISSING_CODE_BINDING")
+    assert str(finding.location) == "Requesting!A2"
+    assert finding.band is Band.DATA_DEFECT
+
+
+@pytest.mark.req("FR-100")
 def test_a_fully_populated_row_is_not_flagged_missing_binding_or_term(tmp_path: Path) -> None:
     """A row with both a preferred term and a code binding must trigger
     neither MISSING_PREFERRED_TERM nor MISSING_CODE_BINDING."""

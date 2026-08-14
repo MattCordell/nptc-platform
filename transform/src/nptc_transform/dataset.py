@@ -190,10 +190,22 @@ def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designati
     return tuple(designations)
 
 
-def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
+def _has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
+    """True if ``row_cells`` resolves a non-empty code binding.
+
+    A code cell that exists but holds only empty/whitespace text does not
+    count - the same test ``cell_defects._scan_missing_code_binding`` and
+    ``terminology_check.collect_code_bindings`` already apply, so all three
+    agree on what "resolves a code binding" means (#132).
+    """
     code_cell = row_cells.get(ColumnRole.CODE)
-    if code_cell is None:
+    return code_cell is not None and bool(code_cell.text.strip())
+
+
+def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
+    if not _has_code_binding(row_cells):
         return ()
+    code_cell = row_cells[ColumnRole.CODE]
     fsn_cell = row_cells.get(ColumnRole.FSN)
     return (
         CodeBinding(
@@ -248,11 +260,13 @@ def build_dataset(
 ) -> ImportDataset:
     """Builds the import dataset from ``sheets`` and ``result`` (FR-70, FR-76).
 
-    Entries are numbered ``NPTC-000001``.. sequentially over rows carrying a
-    preferred term, in ``(sheet name, row)`` order - a stable order across
-    runs is what keeps FR-73's byte-identical guarantee meaningful once the
-    pipeline actually transforms content, not just when it happens to agree
-    with the workbook's own sheet order.
+    Entries are numbered ``NPTC-000001``.. sequentially over rows carrying
+    both a preferred term and a code binding, in ``(sheet name, row)`` order
+    - a stable order across runs is what keeps FR-73's byte-identical
+    guarantee meaningful once the pipeline actually transforms content, not
+    just when it happens to agree with the workbook's own sheet order. A row
+    skipped for either reason (FR-100) shifts every subsequent business key
+    down by one - there is no gap left for it.
     """
     entries: list[ImportEntry] = []
     sequence = 0
@@ -269,7 +283,7 @@ def build_dataset(
             # row with neither a code nor a preferred term is simply not a
             # SPIA data row at all. Either way, there is nothing to seed.
             continue
-        if ColumnRole.CODE not in row_cells:
+        if not _has_code_binding(row_cells):
             # The mirror case (#132): a preferred term with no code binding
             # is MISSING_CODE_BINDING - data-defect, so it already blocked
             # emission before build_dataset was called. Never seeded with an

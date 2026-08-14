@@ -369,8 +369,19 @@ def _scan_missing_code_binding(row: SourceRow) -> Finding | None:
     Unlike ``MISSING_PREFERRED_TERM``, ``build_dataset`` does not seed this
     row at all - a code-less row is judged more likely to be layout (a
     heading, a continuation line) than a genuine entry awaiting a code.
+
+    A code cell that exists but holds only empty/whitespace text counts as
+    no code binding, not a resolved one - the same ``.strip()`` test
+    ``terminology_check.collect_code_bindings`` already applies, so the two
+    modules agree on what "resolves a code binding" means. Without it, an
+    empty-string code cell (readable from a non-Excel-written workbook, even
+    though never produced by ``_iter_sheet_cells`` skipping ``None`` values)
+    would pass this check silently and reach ``build_dataset`` as a bad
+    binding - the exact defect this check exists to close.
     """
-    if ColumnRole.PREFERRED_TERM not in row.cells or ColumnRole.CODE in row.cells:
+    code_cell = row.cells.get(ColumnRole.CODE)
+    has_code = code_cell is not None and bool(code_cell.text.strip())
+    if ColumnRole.PREFERRED_TERM not in row.cells or has_code:
         return None
     term_cell = row.cells[ColumnRole.PREFERRED_TERM]
     return Finding(
@@ -446,9 +457,10 @@ def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
     sheet that doesn't already gets exactly one finding from ``_scan_layout``
     (``SHEET_NOT_SPIA_DATA`` or ``UNRECOGNISED_LAYOUT``, depending on whether
     it looks like SPIA data at all), and scanning its cells for A.1/A.3 would
-    just add noise, not defects. Every sheet that *does* also gets one
-    row-level pass (``_scan_missing_preferred_term``, P0-9/#31) - a defect
-    that is the absence of a cell, not the content of one, so it cannot be
+    just add noise, not defects. Every sheet that *does* also gets two
+    row-level passes, one per column - ``_scan_missing_preferred_term``
+    (P0-9/#31) and ``_scan_missing_code_binding`` (#132) - each a defect
+    that is the absence of a cell, not the content of one, so neither can be
     found by ``_scan_cell`` iterating cells alone.
     """
     findings: list[Finding] = []
