@@ -70,7 +70,7 @@
   phase: p1
   title: "SNOMED CT identifiers MUST be stored, transported and exported as strings at every layer"
   status: in-progress
-  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). The transform's terminology pass screens every code cell with it before submitting anything, reporting CODE_NOT_WELL_FORMED rather than letting a malformed value come back as 'not found' (#27). DB check constraint, API/JSON/CSV/xlsx layers still owed."
+  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). transform/nptc_transform/cell_defects.py screens every text-typed code cell with it unconditionally, after the same correction dataset.py applies before seeding, so CODE_NOT_WELL_FORMED blocks --emit-dataset on its own rather than only ever firing as a side effect of the opt-in --check-terminology network pass (#131); the terminology pass filters on the same check before submitting anything, rather than reporting it a second time (#27). DB check constraint, API/JSON/CSV/xlsx layers still owed."
 - id: "FR-07"
   priority: MUST
   phase: p1

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+from click.testing import Result
 from typer.testing import CliRunner
 
 from nptc_shared.terminology.errors import TerminologyTransportError
@@ -231,7 +232,7 @@ def test_emit_dataset_writes_the_report_and_the_import_dataset(
     assert len(payload["entries"]) == 1
     entry = payload["entries"][0]
     assert entry["business_key"] == "NPTC-000001"
-    assert entry["code_bindings"][0]["code"] == "12345678"
+    assert entry["code_bindings"][0]["code"] == "10000006"
     assert isinstance(entry["code_bindings"][0]["code"], str)
 
 
@@ -261,6 +262,106 @@ def test_emit_dataset_blocks_on_a_blocking_finding_and_writes_no_dataset(
     assert result.exit_code == 1, result.output
     assert (report_dir / "report.json").is_file()
     assert not (report_dir / "import-dataset.json").exists()
+
+
+def _run_emit_dataset(tmp_path: Path, workbook_path: Path) -> tuple[Path, Result]:
+    report_dir = tmp_path / "report"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(workbook_path),
+            "--report-dir",
+            str(report_dir),
+            "--emit-dataset",
+            "--release-name",
+            "2026-06",
+        ],
+    )
+    return report_dir, result
+
+
+def _workbook_with_code(tmp_path: Path, name: str, code: str) -> Path:
+    path = tmp_path / name
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.cell(row=2, column=1, value="A term")
+    code_cell = sheet.cell(row=2, column=2, value=code)
+    code_cell.data_type = "s"
+    workbook.save(path)
+    return path
+
+
+@pytest.mark.req("FR-06")
+def test_emit_dataset_alone_blocks_on_a_malformed_code_with_no_check_terminology(
+    tmp_path: Path,
+) -> None:
+    """Issue #131: ``--emit-dataset`` without ``--check-terminology`` must
+    not seed a code that isn't even a well-formed SCTID - well-formedness is
+    an offline, free check and must never be gated behind the opt-in
+    network validation pass."""
+    workbook_path = _workbook_with_code(tmp_path, "not_a_code.xlsx", "not-a-code")
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 1, result.output
+    assert "CODE_NOT_WELL_FORMED" in (report_dir / "report.json").read_text(encoding="utf-8")
+    assert not (report_dir / "import-dataset.json").exists()
+
+
+@pytest.mark.req("FR-06")
+def test_emit_dataset_alone_blocks_on_a_bad_check_digit_with_no_check_terminology(
+    tmp_path: Path,
+) -> None:
+    """Same as above, but for a code that has the right shape (6-18 digits)
+    and still fails the Verhoeff check digit - shape alone isn't enough."""
+    workbook_path = _workbook_with_code(tmp_path, "bad_check_digit.xlsx", "123456789")
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 1, result.output
+    assert "CODE_NOT_WELL_FORMED" in (report_dir / "report.json").read_text(encoding="utf-8")
+    assert not (report_dir / "import-dataset.json").exists()
+
+
+@pytest.mark.req("FR-06")
+def test_emit_dataset_alone_blocks_on_an_nbsp_that_corrects_to_an_interior_space(
+    tmp_path: Path,
+) -> None:
+    """An interior U+00A0 is corrected to an ordinary space before this
+    check runs (the same correction ``dataset.py`` applies before seeding),
+    so a code with an interior NBSP between two digit groups must be caught
+    once corrected - not judged well-formed because the raw, uncorrected
+    cell text happened to be all digits plus one invisible character."""
+    nbsp = chr(0x00A0)
+    workbook_path = _workbook_with_code(tmp_path, "nbsp_code.xlsx", f"123{nbsp}456")
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 1, result.output
+    assert "CODE_NOT_WELL_FORMED" in (report_dir / "report.json").read_text(encoding="utf-8")
+    assert not (report_dir / "import-dataset.json").exists()
+
+
+@pytest.mark.req("FR-06")
+def test_emit_dataset_alone_still_emits_cleanly_for_a_well_formed_code(
+    tmp_path: Path,
+) -> None:
+    """The companion positive case: a well-formed, Verhoeff-valid code still
+    emits with exit 0 and no new findings - this check must not flag codes
+    it has no business flagging."""
+    workbook_path = _workbook_with_code(tmp_path, "clean_code.xlsx", CLEAN_CODE)
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 0, result.output
+    assert "CODE_NOT_WELL_FORMED" not in (report_dir / "report.json").read_text(encoding="utf-8")
+    payload = json.loads((report_dir / "import-dataset.json").read_text(encoding="utf-8"))
+    assert payload["entries"][0]["code_bindings"][0]["code"] == CLEAN_CODE
 
 
 @pytest.mark.req("FR-71")

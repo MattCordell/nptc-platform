@@ -82,7 +82,7 @@ def sample_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
     sheet.append(HEADERS)
     row = ["Sample test", "", "", 11, "Chemical", "", "Serum", "", "Sample test", 4, ""]
     sheet.append(row)
-    _write_text_cell(sheet, 2, 8, "12345678")
+    _write_text_cell(sheet, 2, 8, "10000006")
     workbook.save(path)
 
     return path
@@ -141,9 +141,9 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # A.1: trailing U+00A0 on the preferred term.
     add_row(f"Aciclovir level{NBSP}", "111111111", "Aciclovir level")
     # A.1: two consecutive U+00A0.
-    add_row(f"Term with double space{NBSP}{NBSP}", "222222222", "Term with double space")
+    add_row(f"Term with double space{NBSP}{NBSP}", "222222224", "Term with double space")
     # A.1: U+202F followed by U+00A0.
-    add_row(f"Term with mixed space{NNBSP}{NBSP}", "333333333", "Term with mixed space")
+    add_row(f"Term with mixed space{NNBSP}{NBSP}", "333333330", "Term with mixed space")
     # A.1: trailing U+00A0 on a text-typed code cell.
     add_row("Clean term one", f"121309009{NBSP}", "Clean term one")
 
@@ -173,30 +173,30 @@ def annex_a_workbook(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # A.3: leading whitespace only.
     add_row(
         "Hydroxymandelate measurement",
-        "555555555",
+        "555555554",
         " 3-Methyl,4-hydroxymandelate measurement",
     )
 
     # Fully clean row - must produce no finding at all.
-    add_row("Clean row", "666666666", "Clean row")
+    add_row("Clean row", "666666660", "Clean row")
 
     # A.1: trailing U+00A0 in a synonym cell - the PRD names synonym cells
     # alongside preferred terms and code cells as carrying this defect.
     add_row(
         "Term with synonym space",
-        "777777777",
+        "777777771",
         "Term with synonym space",
         synonyms=f"Synonym one{NBSP}",
     )
 
     # FR-71 requires-human-decision: a non-Zs invisible character has no
     # single deterministic repair.
-    add_row(f"Term with zero width{ZWSP}", "888888888", "Term with zero width")
+    add_row(f"Term with zero width{ZWSP}", "888888881", "Term with zero width")
     # FR-71 requires-human-decision: a synonym cell that's nothing but
     # whitespace - stripping it would empty it entirely.
     add_row(
         "Term with blank synonym",
-        "999999999",
+        "999999994",
         "Term with blank synonym",
         synonyms="   ",
     )
@@ -226,7 +226,7 @@ def auto_correctable_only_workbook(tmp_path_factory: pytest.TempPathFactory) -> 
     sheet.title = "Requesting"
     sheet.append(HEADERS)
     sheet.append([f"Aciclovir level{NBSP}", "", "", 11, "Chemical", "", "Serum", "", "x", 4, ""])
-    _write_text_cell(sheet, 2, 8, "12345678")
+    _write_text_cell(sheet, 2, 8, "10000006")
     workbook.save(path)
 
     return path

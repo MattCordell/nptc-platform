@@ -281,7 +281,7 @@ def test_line_break_in_free_text_column_is_not_an_invisible_character(
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)", "Usage guidance"])
-    sheet.append(["A term", "12345678", "Line one.\nLine two."])
+    sheet.append(["A term", "10000006", "Line one.\nLine two."])
     path = tmp_path / "guidance.xlsx"
     workbook.save(path)
 
@@ -299,7 +299,7 @@ def test_line_break_outside_a_free_text_column_is_still_flagged(tmp_path: Path) 
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
-    sheet.append(["Aciclovir\nlevel", "12345678"])
+    sheet.append(["Aciclovir\nlevel", "10000006"])
     path = tmp_path / "preferred_term_break.xlsx"
     workbook.save(path)
 
@@ -359,7 +359,7 @@ def test_numeric_precision_risk_fires_outside_the_code_column(tmp_path: Path) ->
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Version"])
-    sheet.append(["12345678", 1393151000168101])  # code column clean; Version corrupted-length
+    sheet.append(["10000006", 1393151000168101])  # code column clean; Version corrupted-length
     path = tmp_path / "version_precision.xlsx"
     workbook.save(path)
 
@@ -378,7 +378,7 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "RCPA Synonyms"])
-    sheet.append(["12345678", "   "])
+    sheet.append(["10000006", "   "])
     path = tmp_path / "whitespace_only.xlsx"
     workbook.save(path)
 
@@ -390,6 +390,70 @@ def test_whitespace_only_cell_gets_a_distinct_message(tmp_path: Path) -> None:
     assert "leading" not in finding.message
     assert "trailing" not in finding.message
     assert finding.band is Band.REQUIRES_HUMAN_DECISION
+
+
+@pytest.mark.req("FR-06")
+def test_a_whitespace_only_code_cell_is_not_also_reported_as_malformed(tmp_path: Path) -> None:
+    """A blank-once-stripped code cell is ``WHITESPACE_ONLY_CELL`` - already
+    requires-human-decision - not a *second*, misleading ``CODE_NOT_WELL_FORMED``
+    finding quoting an empty string as if it were a transcribed code."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", "   "])
+    path = tmp_path / "whitespace_only_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in _findings_at(sheets, "Requesting!B2")}
+    assert codes == {"WHITESPACE_ONLY_CELL"}
+
+
+@pytest.mark.req("FR-06")
+def test_a_code_cell_with_an_ambiguous_invisible_character_is_not_also_reported_as_malformed(
+    tmp_path: Path,
+) -> None:
+    """A ZWSP inside a code cell is ``INVISIBLE_CHARACTER_AMBIGUOUS`` -
+    already requires-human-decision, with no deterministic repair - not a
+    second ``CODE_NOT_WELL_FORMED`` finding asking for a different
+    remediation on the same cell before the ambiguous character is even
+    resolved."""
+    zwsp = chr(0x200B)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", f"1000000{zwsp}6"])
+    path = tmp_path / "ambiguous_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in _findings_at(sheets, "Requesting!B2")}
+    assert codes == {"INVISIBLE_CHARACTER_AMBIGUOUS"}
+
+
+@pytest.mark.req("FR-06")
+def test_a_malformed_code_finding_quotes_the_raw_uncorrected_text(tmp_path: Path) -> None:
+    """The message must quote what's actually in the cell (escaped), not the
+    corrected text used for the check itself - an operator searching the
+    workbook for the corrected form won't find the character that's really
+    there."""
+    nbsp = chr(0x00A0)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.append(["A term", f"123{nbsp}456"])
+    path = tmp_path / "nbsp_code.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    finding = next(
+        f for f in _findings_at(sheets, "Requesting!B2") if f.code == "CODE_NOT_WELL_FORMED"
+    )
+    assert "U+00A0" in finding.message
+    assert "123 456" not in finding.message
 
 
 @pytest.mark.req("FR-70")
@@ -413,7 +477,7 @@ def test_a_code_row_with_no_preferred_term_is_flagged_missing(tmp_path: Path) ->
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
-    sheet.append([None, "12345678"])
+    sheet.append([None, "10000006"])
     path = tmp_path / "missing_preferred_term.xlsx"
     workbook.save(path)
 
@@ -512,7 +576,7 @@ def test_any_specimen_does_not_suppress_findings_for_a_co_occurring_named_value(
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["12345678", "Any; Nasal swab thing"])
+    sheet.append(["10000006", "Any; Nasal swab thing"])
     path = tmp_path / "any_and_named.xlsx"
     workbook.save(path)
 
@@ -551,7 +615,7 @@ def test_specimen_detection_agrees_with_emission_on_an_interior_invisible_charac
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["12345678", f"whole{nbsp}blood"])
+    sheet.append(["10000006", f"whole{nbsp}blood"])
     path = tmp_path / "specimen_nbsp.xlsx"
     workbook.save(path)
 

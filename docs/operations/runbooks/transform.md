@@ -68,6 +68,17 @@ finding aborts `import-dataset.json` specifically: the report is still
 written (exit `1`), but the dataset file is not (see "The import dataset"
 below) - a partial or defect-laden seeded baseline is worse than none.
 
+**Behaviour change (issue #131):** `CODE_NOT_WELL_FORMED` (FR-06) is now
+raised on every run, including `--emit-dataset` without
+`--check-terminology`. Before this change, a workbook whose code column
+held a non-digit value, a code of the wrong length, or a code that failed
+its Verhoeff check digit would emit `import-dataset.json` with that value
+seeded verbatim and exit `0`, as long as `--check-terminology` was not also
+passed - well-formedness was only ever checked as a side effect of the
+opt-in network validation pass. A run that was previously green can now
+exit `1` on a workbook with a malformed code, with no other change to the
+workbook or the invocation.
+
 ## The determinism and idempotency contract (FR-73)
 
 Running the transform twice against the same workbook, or re-running it into
@@ -119,7 +130,7 @@ corrected, and each defect is reported under one of two codes chosen by
 | `COMPOUND_VALUE_SPLIT` | - | A `Discipline` or `Subgroup` cell holds a compound `'X or Y'` value (FR-90). It is split into separate property values rather than seeded as one string. |
 | `CODE_CELL_INVALID_TYPE` | A.2 | The code column holds a date, boolean, formula or error cell rather than text. Unlike a number, there is no value to recover here - only a wrong one to report, so this is not treated the same as `CODE_CELL_NOT_TEXT`. |
 | `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) A cell whose raw value has already overflowed Excel's numeric range entirely (rare - a malformed numeric cell text openpyxl parses as `inf`) is flagged with a distinct message rather than a fabricated digit count. The digits are already gone by the time this fires, so there is nothing left to coerce. |
-| `CODE_NOT_WELL_FORMED` | - | The code cell's text (after stripping whitespace) is not a well-formed SCTID: not 6-18 digits, or the Verhoeff check digit fails (FR-06). Only raised when `--check-terminology` is passed, and the code is **not** submitted to the server - a malformed value reported as "not found" would read as a terminology outcome rather than as the transcription defect it is. |
+| `CODE_NOT_WELL_FORMED` | - | The code cell's text, after the same correction `--emit-dataset` applies before seeding (whitespace stripped, invisible characters normalised), is not a well-formed SCTID: not 6-18 digits, or the Verhoeff check digit fails (FR-06). Raised on **every** run, not only with `--check-terminology` - well-formedness is an offline, free check and must never be gated behind the opt-in network validation pass (issue #131). When `--check-terminology` also runs, the code is additionally **not** submitted to the server - a malformed value reported as "not found" would read as a terminology outcome rather than as the transcription defect it is. |
 | `CODE_NOT_FOUND` | - | The code resolves in **no** validated edition (FR-71). A code present in SNOMED CT-AU but absent from International is *not* this - that is what Australian extension content looks like (FR-47) and produces no finding. |
 | `CODE_INACTIVE` | - | The concept is inactive in every edition that has it. Inactive in International while still active in AU is a *forecast*, not a current error (FR-47), and is deliberately not reported here - it belongs to the scheduled validation sweep, not to a seeding run. |
 | `OUT_OF_SCOPE_HIERARCHY` | - | The concept is not subsumed by `<<71388002` \|Procedure (procedure)\| (FR-84). See "Interpreting hierarchy violations" below. |

@@ -418,7 +418,7 @@ def test_a_differently_worded_but_matching_served_timing_suppresses_the_finding(
     against that FSN text fails (no boundary between 'h' and the following
     'o' in 'hour'), which would wrongly flag this row - the two must be
     compared as canonicalised timings, not as literal substrings."""
-    code = "700000101"
+    code = "700000109"
     client = StubTerminologyClient(
         concepts=[
             StubConcept(code=code, fsn="Test analyte 24 hour collection (procedure)"),
