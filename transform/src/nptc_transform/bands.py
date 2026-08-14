@@ -82,6 +82,7 @@ class FindingCode(StrEnum):
     TERM_SPECIMEN_DIFFERS = "TERM_SPECIMEN_DIFFERS"
     TERM_TIMING_NOT_MODELLED = "TERM_TIMING_NOT_MODELLED"
     MISSING_PREFERRED_TERM = "MISSING_PREFERRED_TERM"
+    MISSING_CODE_BINDING = "MISSING_CODE_BINDING"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -129,6 +130,14 @@ BAND_BY_CODE: dict[str, Band] = {
     # did before this code existed) is exactly the "some rows were silently
     # dropped" hazard ADR-0010 §8 blocks emission to prevent.
     FindingCode.MISSING_PREFERRED_TERM: Band.DATA_DEFECT,
+    # Data defect, #132: the mirror case - a row carries a 'RCPA Preferred
+    # term' value but resolves no code binding at all. Treated the same as
+    # MISSING_PREFERRED_TERM rather than seeded with an empty binding list:
+    # a code-less row is judged more likely to be layout (a heading, a
+    # continuation line) than a genuine entry awaiting a code, so dataset.py
+    # omits it rather than seeding it, and this finding is what tells the
+    # operator it happened instead of it passing silently.
+    FindingCode.MISSING_CODE_BINDING: Band.DATA_DEFECT,
     # Informational: not a defect at all - see the module docstring.
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
     # FR-99 is explicit that an unexpected semantic tag is a warning and not

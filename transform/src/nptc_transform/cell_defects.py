@@ -381,6 +381,20 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
+def _row_has_code(row: SourceRow) -> bool:
+    """True if ``row`` resolves a non-empty code binding.
+
+    A code cell that exists but holds only empty/whitespace text does not
+    count - the same ``.strip()`` test ``terminology_check.collect_code_bindings``
+    and ``dataset._has_code_binding`` already apply, so every place that asks
+    "does this row have a code binding" agrees on the answer (#132). Shared
+    by both row-level scans below so neither can drift from the other's
+    notion of "has a code" and both fire, or neither does, for the same row.
+    """
+    code_cell = row.cells.get(ColumnRole.CODE)
+    return code_cell is not None and bool(code_cell.text.strip())
+
+
 def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
     """A row that resolves a code binding but carries no 'RCPA Preferred
     term' value has nothing to seed a designation from at all (P0-9/#31).
@@ -393,13 +407,36 @@ def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
     distinguish 'every row is clean' from 'some rows were silently dropped'"
     concern, applied to the report itself, not only to the dataset).
     """
-    if ColumnRole.CODE not in row.cells or ColumnRole.PREFERRED_TERM in row.cells:
+    if not _row_has_code(row) or ColumnRole.PREFERRED_TERM in row.cells:
         return None
     code_cell = row.cells[ColumnRole.CODE]
     return Finding(
         code=FindingCode.MISSING_PREFERRED_TERM,
         location=code_cell.reference,
         message="row has a code binding but no 'RCPA Preferred term' value; no entry can be "
+        "seeded for this row",
+    )
+
+
+def _scan_missing_code_binding(row: SourceRow) -> Finding | None:
+    """A row that carries a 'RCPA Preferred term' value but resolves no code
+    binding at all has nothing to bind an entry to (#132).
+
+    Mirror of ``_scan_missing_preferred_term`` for the opposite column.
+    Row-level, not cell-level, for the same reason: the defect is the
+    *absence* of a cell. Reported against the preferred-term cell's own
+    reference, the only cell on the row this check can be certain exists.
+    Unlike ``MISSING_PREFERRED_TERM``, ``build_dataset`` does not seed this
+    row at all - a code-less row is judged more likely to be layout (a
+    heading, a continuation line) than a genuine entry awaiting a code.
+    """
+    if ColumnRole.PREFERRED_TERM not in row.cells or _row_has_code(row):
+        return None
+    term_cell = row.cells[ColumnRole.PREFERRED_TERM]
+    return Finding(
+        code=FindingCode.MISSING_CODE_BINDING,
+        location=term_cell.reference,
+        message="row has a 'RCPA Preferred term' value but no code binding; no entry can be "
         "seeded for this row",
     )
 
@@ -470,9 +507,10 @@ def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
     sheet that doesn't already gets exactly one finding from ``_scan_layout``
     (``SHEET_NOT_SPIA_DATA`` or ``UNRECOGNISED_LAYOUT``, depending on whether
     it looks like SPIA data at all), and scanning its cells for A.1/A.3 would
-    just add noise, not defects. Every sheet that *does* also gets one
-    row-level pass (``_scan_missing_preferred_term``, P0-9/#31) - a defect
-    that is the absence of a cell, not the content of one, so it cannot be
+    just add noise, not defects. Every sheet that *does* also gets two
+    row-level passes, one per column - ``_scan_missing_preferred_term``
+    (P0-9/#31) and ``_scan_missing_code_binding`` (#132) - each a defect
+    that is the absence of a cell, not the content of one, so neither can be
     found by ``_scan_cell`` iterating cells alone.
     """
     findings: list[Finding] = []
@@ -486,7 +524,10 @@ def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
         for cell in sheet.cells:
             findings.extend(_scan_cell(cell))
     for row in group_rows(codeable_sheets):
-        row_finding = _scan_missing_preferred_term(row)
-        if row_finding is not None:
-            findings.append(row_finding)
+        for row_finding in (
+            _scan_missing_preferred_term(row),
+            _scan_missing_code_binding(row),
+        ):
+            if row_finding is not None:
+                findings.append(row_finding)
     return tuple(findings)

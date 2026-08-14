@@ -35,11 +35,11 @@ def _misspelling_workbook(tmp_path: Path) -> Path:
     sheet: Worksheet = workbook.active  # type: ignore[assignment]
     sheet.title = "Requesting"
     sheet.append(_MISSPELLING_HEADERS)
-    sheet.append(["Antenatal screen", "antental"])
-    sheet.append(["Bilirubon"])
-    sheet.append(["Bilirubin"])
-    sheet.append(["Bilirubin panel"])
-    sheet.append(["Bilirubin ratio"])
+    sheet.append(["Antenatal screen", "antental", "", "", "", "", "", "10000010"])
+    sheet.append(["Bilirubon", "", "", "", "", "", "", "10000023"])
+    sheet.append(["Bilirubin", "", "", "", "", "", "", "10000034"])
+    sheet.append(["Bilirubin panel", "", "", "", "", "", "", "10000047"])
+    sheet.append(["Bilirubin ratio", "", "", "", "", "", "", "10000052"])
     workbook.save(path)
     return path
 
