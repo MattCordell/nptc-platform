@@ -507,6 +507,29 @@ def test_a_row_with_neither_a_code_nor_a_preferred_term_is_not_flagged(tmp_path:
 
 
 @pytest.mark.req("FR-100")
+def test_a_whitespace_only_code_cell_with_no_preferred_term_is_not_flagged_missing_term(
+    tmp_path: Path,
+) -> None:
+    """A whitespace-only code cell does not resolve a code binding (#132), so
+    a row with one and no preferred term has neither cell meaningfully
+    present - it must not be flagged MISSING_PREFERRED_TERM as if the code
+    binding were real. Both row-level scans now share the same
+    ``_row_has_code`` test, so this row gets no finding from either."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
+    sheet.cell(row=2, column=2, value="   ")
+    path = tmp_path / "whitespace_only_code_no_term.xlsx"
+    workbook.save(path)
+
+    sheets = read_workbook(path)
+    codes = {f.code for f in scan_workbook(sheets)}
+    assert "MISSING_PREFERRED_TERM" not in codes
+    assert "MISSING_CODE_BINDING" not in codes
+
+
+@pytest.mark.req("FR-100")
 def test_a_preferred_term_row_with_no_code_is_flagged_missing_binding(tmp_path: Path) -> None:
     """A row that carries a 'RCPA Preferred term' value but resolves no code
     binding at all has nothing to bind an entry to (#132) - the mirror of
@@ -526,18 +549,20 @@ def test_a_preferred_term_row_with_no_code_is_flagged_missing_binding(tmp_path: 
 
 
 @pytest.mark.req("FR-100")
-def test_a_preferred_term_row_with_an_empty_string_code_cell_is_flagged(tmp_path: Path) -> None:
-    """A code cell that exists but holds only an empty string - readable
-    from a non-Excel-written .xlsx, since ``_iter_sheet_cells`` only skips a
-    raw value of ``None`` - must count as no code binding, not a resolved
-    one, or the row reaches ``build_dataset`` as a bad binding (#132)."""
+def test_a_preferred_term_row_with_a_whitespace_only_code_cell_is_flagged(tmp_path: Path) -> None:
+    """A code cell that exists but holds only whitespace must count as no
+    code binding, not a resolved one, or the row reaches ``build_dataset``
+    as a bad binding (#132). An empty *string* cell doesn't round-trip
+    through openpyxl - it's dropped on save, so ``read_workbook`` would see
+    no code cell at all - but a whitespace-only one does survive and is the
+    input shape that actually reaches this check."""
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["RCPA Preferred term", "Terminology binding (SNOMED CT-AU)"])
     sheet.cell(row=2, column=1, value="Full blood count")
-    sheet.cell(row=2, column=2, value="")
-    path = tmp_path / "empty_string_code_cell.xlsx"
+    sheet.cell(row=2, column=2, value="   ")
+    path = tmp_path / "whitespace_only_code_cell.xlsx"
     workbook.save(path)
 
     sheets = read_workbook(path)

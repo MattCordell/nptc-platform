@@ -108,19 +108,23 @@ def test_a_preferred_term_row_with_no_code_is_not_seeded(tmp_path: Path) -> None
 
 
 @pytest.mark.req("FR-100")
-def test_a_preferred_term_row_with_an_empty_string_code_cell_is_not_seeded(tmp_path: Path) -> None:
-    """A code cell that exists but holds only an empty string (readable
-    from a non-Excel-written .xlsx) must not be seeded as a bad binding -
-    ``build_dataset`` must agree with the report that this row has no code
-    binding at all (#132)."""
-    workbook_path = tmp_path / "empty_string_code_cell.xlsx"
+def test_a_preferred_term_row_with_a_whitespace_only_code_cell_is_not_seeded(
+    tmp_path: Path,
+) -> None:
+    """A code cell that exists but holds only whitespace must not be seeded
+    as a bad binding - ``build_dataset`` must agree with the report that
+    this row has no code binding at all (#132). An empty *string* cell
+    doesn't round-trip through openpyxl - it's dropped on save - but a
+    whitespace-only one does survive and is the input shape that actually
+    reaches this check."""
+    workbook_path = tmp_path / "whitespace_only_code_cell.xlsx"
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     assert sheet is not None
     sheet.title = "Requesting"
     sheet.append(HEADERS)
-    sheet.cell(row=2, column=1, value="A term with an empty code cell")
-    sheet.cell(row=2, column=8, value="")
+    sheet.cell(row=2, column=1, value="A term with a whitespace-only code cell")
+    sheet.cell(row=2, column=8, value="   ")
     workbook.save(workbook_path)
 
     sheets = read_workbook(workbook_path)

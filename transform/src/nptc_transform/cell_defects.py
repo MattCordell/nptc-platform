@@ -381,6 +381,20 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
+def _row_has_code(row: SourceRow) -> bool:
+    """True if ``row`` resolves a non-empty code binding.
+
+    A code cell that exists but holds only empty/whitespace text does not
+    count - the same ``.strip()`` test ``terminology_check.collect_code_bindings``
+    and ``dataset._has_code_binding`` already apply, so every place that asks
+    "does this row have a code binding" agrees on the answer (#132). Shared
+    by both row-level scans below so neither can drift from the other's
+    notion of "has a code" and both fire, or neither does, for the same row.
+    """
+    code_cell = row.cells.get(ColumnRole.CODE)
+    return code_cell is not None and bool(code_cell.text.strip())
+
+
 def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
     """A row that resolves a code binding but carries no 'RCPA Preferred
     term' value has nothing to seed a designation from at all (P0-9/#31).
@@ -393,7 +407,7 @@ def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
     distinguish 'every row is clean' from 'some rows were silently dropped'"
     concern, applied to the report itself, not only to the dataset).
     """
-    if ColumnRole.CODE not in row.cells or ColumnRole.PREFERRED_TERM in row.cells:
+    if not _row_has_code(row) or ColumnRole.PREFERRED_TERM in row.cells:
         return None
     code_cell = row.cells[ColumnRole.CODE]
     return Finding(
@@ -415,19 +429,8 @@ def _scan_missing_code_binding(row: SourceRow) -> Finding | None:
     Unlike ``MISSING_PREFERRED_TERM``, ``build_dataset`` does not seed this
     row at all - a code-less row is judged more likely to be layout (a
     heading, a continuation line) than a genuine entry awaiting a code.
-
-    A code cell that exists but holds only empty/whitespace text counts as
-    no code binding, not a resolved one - the same ``.strip()`` test
-    ``terminology_check.collect_code_bindings`` already applies, so the two
-    modules agree on what "resolves a code binding" means. Without it, an
-    empty-string code cell (readable from a non-Excel-written workbook, even
-    though never produced by ``_iter_sheet_cells`` skipping ``None`` values)
-    would pass this check silently and reach ``build_dataset`` as a bad
-    binding - the exact defect this check exists to close.
     """
-    code_cell = row.cells.get(ColumnRole.CODE)
-    has_code = code_cell is not None and bool(code_cell.text.strip())
-    if ColumnRole.PREFERRED_TERM not in row.cells or has_code:
+    if ColumnRole.PREFERRED_TERM not in row.cells or _row_has_code(row):
         return None
     term_cell = row.cells[ColumnRole.PREFERRED_TERM]
     return Finding(
