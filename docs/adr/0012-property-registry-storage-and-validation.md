@@ -37,13 +37,18 @@ document.** Columns, fixed against PRD SS6.5's field table: `id` UUID PK + `inde
 BIGINT `GENERATED ALWAYS AS IDENTITY` (mirroring
 [audit.py](../../backend/src/nptc/db/models/audit.py)'s `id`/`sequence` pair, for the ACL
 reason ADR-0011 proved - identity, not `serial`, so `INSERT` alone suffices without a
-separate sequence grant), `key` TEXT UNIQUE with
-`CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, `label` TEXT, `datatype` TEXT, `cardinality` TEXT,
-`scope` TEXT, `required_for_submission` BOOLEAN, `required_for_publication` BOOLEAN, the four
-binding columns (`binding_target`, `value_set_uri`, `strength`, `edition`), `filterable`
-BOOLEAN, `origin` TEXT, `status` TEXT, `display_order` INTEGER, plus `constraints` JSONB,
-`deprecated_at` TIMESTAMPTZ, `created_at`/`updated_at` TIMESTAMPTZ, and `row_version`
-INTEGER.
+separate sequence grant), `key` TEXT NOT NULL UNIQUE with
+`CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, `label` TEXT NOT NULL, `datatype` TEXT NOT NULL,
+`cardinality` TEXT NOT NULL, `scope` TEXT NOT NULL, `required_for_submission` BOOLEAN NOT
+NULL, `required_for_publication` BOOLEAN NOT NULL, the four binding columns
+(`binding_target`, `value_set_uri`, `strength`, `edition` - all nullable, populated only when
+`datatype = 'code'`), `filterable` BOOLEAN NOT NULL, `origin` TEXT NOT NULL, `status` TEXT
+NOT NULL, `display_order` INTEGER NOT NULL, `constraints` JSONB NOT NULL DEFAULT '{}',
+`deprecated_at` TIMESTAMPTZ (nullable - set only when `status = 'deprecated'`, tied to it by
+a CHECK below), `created_at`/`updated_at` TIMESTAMPTZ NOT NULL, and `row_version` INTEGER NOT
+NULL DEFAULT 1. Nullability is stated for every column, not left implicit: a "fully-constrained
+relational table" that leaves nullability unstated is a claim the schema doesn't actually
+back, and one CHECK below only holds because `datatype` is `NOT NULL` - see next paragraph.
 
 **`datatype` is plain TEXT with no CHECK and no Postgres ENUM; `cardinality`, `scope`,
 `origin`, `status` and the binding fields get named CHECKs.** A `CHECK (datatype IN (...))`
@@ -60,20 +65,57 @@ the round-trip reflection fingerprint.
 **FR-10's binding is four real columns, not a JSONB sub-document**, with
 `CHECK ((datatype = 'code') = (binding_target IS NOT NULL))` making a code-without-a-binding
 unrepresentable rather than merely refused by application code that a future write path could
-forget to call. Open-ended datatype parameters (a string's max length, a decimal's
-min/max, an allowed URL scheme list) go in a separate handler-owned `constraints` JSONB
-column - #137's ADR owns its interior; this one only reserves the column.
+forget to call. This CHECK is only meaningful because `datatype` is `NOT NULL` (previous
+paragraph): a nullable `datatype` would let `datatype = 'code'` evaluate to `NULL`, and
+Postgres treats a `NULL` CHECK result as a pass, silently reopening exactly the hole this
+constraint exists to close. A second, equally load-bearing CHECK,
+`CHECK (binding_target IS DISTINCT FROM 'value_set' OR value_set_uri IS NOT NULL)`, makes
+`value_set_uri`'s "required when `binding_target = 'value_set'`" (data-model.md) a schema
+invariant rather than a sentence a future implementer has to remember to enforce by hand;
+`IS DISTINCT FROM` rather than `<>` so a `NULL` `binding_target` (any non-`code` property)
+does not make the comparison itself `NULL` and mask a real violation. Open-ended datatype
+parameters (a string's max length, a decimal's min/max, an allowed URL scheme list) go in a
+separate handler-owned `constraints` JSONB column - #137's ADR owns its interior; this one
+only reserves the column.
 
 **`property_value` is one row per value**: `(entry_id, property_key, value JSONB, ordinal)`
-per PRD SS6.5, plus a `justification` column for FR-10's extensible-strength case. **The FK
-targets `property_definition(key)`, not a surrogate id** - FR-12 already rules out the usual
-objection to a natural key (that it might change), and the FK is what turns FR-11/FR-12 into
-referential integrity instead of business logic in a trigger (banned by PRD Section 14.1).
-`UNIQUE (entry_id, property_key, ordinal)` closes the TOCTOU race an application-level
-cardinality check cannot. Note the ordering dependency: `catalogue_entry` lands with #46-#48,
-so #51's `entry_id` FK target does not exist yet when #51 is implemented - #51 records this
-as an open item (add the FK in a follow-on migration once `catalogue_entry` exists) rather
-than silently dropping it.
+per PRD SS6.5, plus a `justification` column for FR-10's extensible-strength case, with
+`ordinal` `NOT NULL` `CHECK (ordinal >= 0)` and zero-based (the first value of a
+multi-valued property is `ordinal = 0`). **`(entry_id, property_key, ordinal)` is the primary
+key**, not a surrogate id plus a separate `UNIQUE` - it is already exactly what every write
+and every FK needs to address a value by, and a PK subsumes the uniqueness `property_value`
+requires. **The FK targets `property_definition(key)`, not a surrogate id** - FR-12 already
+rules out the usual objection to a natural key (that it might change).
+
+That FK does **not**, on its own, make FR-11/FR-12 unconditional. The default `RESTRICT` FK
+blocks deleting or renaming a
+`property_definition` row only *while a dependent `property_value` row exists* - a
+definition with zero recorded values is, as far as the FK is concerned, still deletable and
+renameable. What actually makes FR-11/FR-12 unconditional is the column-level privilege
+below (no `DELETE` grant at all; `key` excluded from the `UPDATE` grant column list),
+independent of whether any value has ever been recorded. The FK's real contribution is a
+second, defence-in-depth backstop specifically for a race between a privilege check and a
+concurrent insert: state each mechanism as what it actually covers, since #51/#55 read this
+paragraph as the specification.
+
+The primary key's uniqueness on `ordinal` closes only the trivial race - two inserts cannot
+land on the same ordinal slot for the same entry/property - **it does not enforce
+cardinality's upper bound**: a `0..1`/`1..1` property still admits concurrent inserts at
+`ordinal = 0` and `ordinal = 1`, both satisfying the key. Expressing "at most one value" at
+the schema level needs a predicate conditioned on the property's own cardinality, which a
+table-local CHECK cannot see (it cannot query `property_definition`) and a trigger is banned
+from expressing (PRD Section 14.1); the only schema-level route is a *generated* partial
+unique index per single-valued property (`ON property_value (entry_id) WHERE property_key =
+'<literal>'`), which is the same class of per-property, data-dependent DDL problem FR-13's
+index already is. This ADR does not resolve it: #52 enforces the upper bound at validation
+time and accepts the residual TOCTOU race an application check has; if that race proves to
+matter in practice, extending #54's generated-index machinery to cover cardinality (not only
+`filterable`) is the shortlisted fix, not a trigger.
+
+Note the ordering dependency: `catalogue_entry` lands with #46-#48, so #51's `entry_id` FK
+target does not exist yet when #51 is implemented - #51 records this as an open item (add
+the FK in a follow-on migration once `catalogue_entry` exists) rather than silently dropping
+it.
 
 **JSON Schema is derived from the definition row by the handler, memoised in-process against
 `(key, row_version)`, and persisted nowhere.** `row_version` rather than `key` alone as the
@@ -86,6 +128,22 @@ FR-10 sweep rather than a bespoke migration-time check. **No per-value schema ve
 that would put N live schema versions in the catalogue simultaneously and make every reader
 (export, search, sweep) special-case which version a given value was validated against,
 which is the exact failure the whole design exists to avoid.
+
+**`row_version` is owned by exactly one write path: SQLAlchemy's mapper-level optimistic
+concurrency (`version_id_col`) on `PropertyDefinition`'s ORM-mapped `UPDATE`** - not a
+migration, not a manual bump, and not database-generated (Postgres has no built-in per-row
+version counter, and a trigger-based one is banned by PRD Section 14.1). This only holds if
+every amendment to a `property_definition` row goes through that one mapped `UPDATE`: the
+bootstrap seeding command only `INSERT`s (so `row_version` starts at its `DEFAULT 1` and is
+never at risk on first creation), but a future admin-side raw-SQL fix, or a Core-style bulk
+update (`session.execute(update(PropertyDefinition)...)`, which goes through the ORM's
+`Session` but bypasses `version_id_col` enforcement all the same), would bump the row without
+bumping the counter - reintroducing FR-09's restart-shaped staleness through a different door.
+#52 states this as a hard rule (amendments MUST go through the mapped, identity-map-loaded
+`UPDATE`, never a `sqlalchemy.update(...)` Core construct, against this table) and its own
+tests assert `row_version` increments on every amendment path that exists at that point,
+since there is no static guard analogous to NFR-22's that can currently tell a Core-style
+bulk update of `property_definition` from any other table's.
 
 **FR-13 index strategy.** The PRD's single-vs-multi-valued split does not survive the
 row-per-value shape (multi-valuedness is rows, not a JSON array); the distinction that
@@ -109,6 +167,10 @@ Fix:
   need both for one property) is at most 33 bytes - provably under both the 39-byte target
   and Postgres's 63-byte identifier limit by construction, not by a length check. The key
   itself goes in `COMMENT ON INDEX`, resolving data-model.md's caveat for #54 specifically.
+  The `key` regex CHECK's own 63-character allowance is a key-hygiene limit, unrelated to
+  what makes the generated index names safe - that is the `index_seq` scheme above, which
+  doesn't reference `key` at all - so a future relaxation of the regex is not a truncation
+  risk to this naming scheme.
 - **Safe rendering in three layers**, the load-bearing one being the `key` regex CHECK
   above, which makes NFR-22's "validated against the registry" a database invariant rather
   than a hopeful application check; composition via `psycopg.sql.Identifier`/`Literal`
@@ -138,31 +200,55 @@ Fix:
   the fallback if it is not (`slot = 2` above). Also flag that at ~5,000 entries the planner
   may legitimately prefer a sequential scan, so #54's fixture needs a selective predicate and
   must not reach for `enable_seqscan = off` to force the issue.
+- **The numeric expression index presupposes cast-safe values - #54 must not assume it.**
+  `((value #>> '{}')::numeric)` fails `CREATE INDEX` outright the moment one retained
+  `decimal`/`positiveInt` value on record is not castable to `numeric`, and the retention
+  rule above (non-conforming values are kept, not rejected retroactively after a narrowing
+  amendment) is exactly what can produce one. #54 either requires a datatype-conformance
+  sweep to have passed with zero outstanding findings for that property before generating
+  this index shape, or the expression itself must be cast-safe. The same applies if a
+  datatype amendment (`string` -> `decimal`) is ever permitted on a property already
+  carrying values.
 
-**FR-11/FR-12 enforcement: column-level privilege and referential integrity, never a
-trigger.** `nptc_app` gets `UPDATE` at column level on every `property_definition` column
-except `key`, `id`, `index_seq`, `origin` and `created_at` (never table-level `UPDATE`, which
-would supersede the column list) - FR-12 reduces to "`INSERT` may set `key`, `UPDATE` may
-not touch it", failing with `42501` regardless of what the ORM or a future contributor
-believes. No `DELETE` grant at all on `property_definition`, for FR-11's unconditional form
-(below). `DELETE` **is** granted on `property_value` - removing a specimen from an entry is
-ordinary editing, not the case FR-11 protects against. The API layer refuses a delete
-attempt first with an actionable message (#55's AC, PRD SS17.2.5); the privilege is the
-backstop that proves the negative. Five tests, one refusal per test function for the
-`25P02` reason ADR-0011 recorded (a privilege error aborts the surrounding transaction, so a
-second assertion in the same function would be masked): `test_delete_property_definition_refused`
-(FR-11), `test_update_key_refused` (FR-12), `test_update_id_and_index_seq_refused` (both are
-surrogate/generated columns, never legitimately targeted by an application write),
-`test_update_origin_refused`, `test_update_created_at_refused`.
+**FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
+trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
+not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every
+`property_definition` column except `key`, `id`, `index_seq`, `origin` and `created_at`
+(never table-level `UPDATE`, which would supersede the column list) - FR-12 reduces to
+"`INSERT` may set `key`, `UPDATE` may not touch it", failing with `42501` regardless of what
+the ORM or a future contributor believes. No `DELETE` grant at all on `property_definition`,
+for FR-11's unconditional form (below). `DELETE` **is** granted on `property_value` -
+removing a specimen from an entry is ordinary editing, not the case FR-11 protects against.
+The API layer refuses a delete attempt first with an actionable message (#55's AC, PRD
+SS17.2.5); the privilege is the backstop that proves the negative.
+
+Six tests, one refusal per test function for the `25P02` reason ADR-0011 recorded (a
+privilege error aborts the surrounding transaction, so a second assertion in the same
+function would be masked): `test_delete_property_definition_refused` (FR-11),
+`test_update_key_refused` (FR-12), `test_update_id_refused`, `test_update_origin_refused`,
+`test_update_created_at_refused` - each asserting `42501`. `test_update_index_seq_refused` is
+the sixth and is a different kind of test: `index_seq` is `GENERATED ALWAYS AS IDENTITY`, so
+Postgres refuses an `UPDATE` targeting it with `428C9` regardless of any grant, before the
+privilege check is ever reached. It still belongs in this suite (it documents that
+`index_seq` is immutable), but it asserts `428C9`, not `42501`, and does not exercise the
+column-level grant at all - folding it into one of the other five would assert the wrong
+mechanism.
 
 **FR-11 is implemented in its stronger, unconditional form**: no `DELETE` grant on
 `property_definition` at all. The PRD's conditional test ("has it appeared in a published
 export?") is never asked, so it can never be got wrong.
 
+**`status` and `deprecated_at` are linked by a CHECK too**:
+`CHECK ((status = 'deprecated') = (deprecated_at IS NOT NULL))` - the same
+make-it-unrepresentable principle FR-10's binding CHECK applies, applied here to FR-11's
+deprecation state, so a deprecated definition with no recorded deprecation timestamp (or an
+active one carrying a stale one) cannot exist.
+
 **Cardinality's lower bound is enforced at the `required_for_submission` /
 `required_for_publication` gate**, not on every write, so a draft with holes stays saveable
-(FR-24). The upper bound is always enforced, race-safely, by the `UNIQUE (entry_id,
-property_key, ordinal)` constraint above.
+(FR-24). The upper bound is application-enforced by #52 at validation time, backed by - not
+fully closed by - the primary key's uniqueness on `ordinal`; see the `property_value`
+paragraph above for exactly what that constraint does and does not close.
 
 **The four `origin = 'system'` properties (Discipline, Subgroup, Specimen, Usage guidance)
 are seeded by an idempotent application bootstrap command, not `op.bulk_insert`** - a data
@@ -198,12 +284,16 @@ storage code path as an admin-defined one. `Length` is absent from the registry 
 ## Consequences
 
 - #51, #52, #54 and #55 each get a named deliverable from this ADR instead of choosing their
-  own shape: #51 the column list and the `entry_id` FK ordering note, #52 the
-  `(key, row_version)` memoisation contract, #54 the three index shapes plus the executor
-  shortlist, #55 the five privilege-refusal tests. FR-09's "no migration, no restart, no
-  deployment" is this ADR's own acceptance test for #51: it must be verified against a
-  running application (add a definition, observe it usable with no migration run and no
-  process restart), not inferred from the schema being capable of it in principle.
+  own shape: #51 the column list, nullability, the `(entry_id, property_key, ordinal)` PK and
+  the `entry_id` FK ordering note; #52 the `(key, row_version)` memoisation contract, the
+  single `row_version`-owning write path and its test, and cardinality's upper bound as an
+  application-enforced rule rather than a schema-closed one; #54 the three index shapes, the
+  numeric shape's cast-safety precondition, and the executor shortlist; #55 the six
+  privilege-refusal tests (five asserting `42501`, one asserting `428C9` for the generated
+  `index_seq` column, which the other five's mechanism does not cover). FR-09's "no migration,
+  no restart, no deployment" is this ADR's own acceptance test for #51: it must be verified
+  against a running application (add a definition, observe it usable with no migration run
+  and no process restart), not inferred from the schema being capable of it in principle.
 - data-model.md's 63-byte truncation caveat gains a resolution for #54 specifically (the
   `ix_propval_p{index_seq}_{slot}` scheme is truncation-proof by construction), while
   standing as written for every other future long name.

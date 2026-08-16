@@ -116,33 +116,40 @@ still-open question.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `UUID` | PK |
-| `index_seq` | `BIGINT` | `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
-| `key` | `TEXT` | `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
-| `label` | `TEXT` | Human-facing, changeable |
-| `datatype` | `TEXT` | No CHECK, no ENUM - FR-77's handler-module extension point |
-| `cardinality` | `TEXT` | CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
-| `scope` | `TEXT` | CHECK against `submission` / `maintenance` / `both` |
-| `required_for_submission` | `BOOLEAN` | |
-| `required_for_publication` | `BOOLEAN` | |
-| `binding_target` | `TEXT` | `value_set` or `local_code_system`; `NULL` unless `datatype = 'code'` (FR-10) |
-| `value_set_uri` | `TEXT` | Required when `binding_target = 'value_set'` |
-| `strength` | `TEXT` | `required` / `extensible` / `example` |
-| `edition` | `TEXT` | SNOMED edition the value set resolves against |
-| `constraints` | `JSONB` | Handler-owned datatype parameters (#137 owns its interior) |
-| `filterable` | `BOOLEAN` | Drives #54's index generation (FR-13) |
-| `origin` | `TEXT` | `system` or `admin_defined` |
-| `status` | `TEXT` | `active` or `deprecated` - no delete (FR-11) |
-| `display_order` | `INTEGER` | |
-| `deprecated_at` | `TIMESTAMPTZ` | Nullable |
-| `created_at` / `updated_at` | `TIMESTAMPTZ` | |
-| `row_version` | `INTEGER` | Cache key (with `key`) for #52's in-process JSON Schema memoisation |
+| `index_seq` | `BIGINT` | `NOT NULL`, `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
+| `key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
+| `label` | `TEXT` | `NOT NULL`. Human-facing, changeable |
+| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point |
+| `cardinality` | `TEXT` | `NOT NULL`, CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
+| `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` |
+| `required_for_submission` | `BOOLEAN` | `NOT NULL` |
+| `required_for_publication` | `BOOLEAN` | `NOT NULL` |
+| `binding_target` | `TEXT` | Nullable. `value_set` or `local_code_system`; `NULL` unless `datatype = 'code'` (FR-10) |
+| `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
+| `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` |
+| `edition` | `TEXT` | Nullable. SNOMED edition the value set resolves against |
+| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters (#137 owns its interior) |
+| `filterable` | `BOOLEAN` | `NOT NULL`. Drives #54's index generation (FR-13) |
+| `origin` | `TEXT` | `NOT NULL`. `system` or `admin_defined` |
+| `status` | `TEXT` | `NOT NULL`. `active` or `deprecated` - no delete (FR-11) |
+| `display_order` | `INTEGER` | `NOT NULL` |
+| `deprecated_at` | `TIMESTAMPTZ` | Nullable. `CHECK` ties it to `status = 'deprecated'` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL` |
+| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. Cache key (with `key`) for #52's in-process JSON Schema memoisation - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012) |
 
-`property_value` is one row per value: `(entry_id, property_key, value JSONB, ordinal)` plus
-`justification` (FR-10's extensible-strength case), with `UNIQUE (entry_id, property_key,
-ordinal)` and an FK on `property_key` to `property_definition(key)` - not a surrogate id, so
-FR-11/FR-12 are referential integrity rather than application logic. `property_value.entry_id`'s
-FK to `catalogue_entry` cannot be added until `catalogue_entry` lands with #46-#48; #51 tracks
-this as an open follow-on migration, not a silently dropped constraint.
+`property_value` is one row per value, with **`(entry_id, property_key, ordinal)` as the
+primary key** (not a surrogate id plus a separate `UNIQUE`) - `ordinal` `NOT NULL`,
+`CHECK (ordinal >= 0)`, zero-based - plus `value JSONB NOT NULL` and `justification`
+(nullable, FR-10's extensible-strength case). An FK on `property_key` to
+`property_definition(key)`, not a surrogate id, gives a real but *conditional* backstop for
+FR-11/FR-12 (it blocks deleting or renaming a definition only while a dependent value row
+exists); the unconditional guarantee for both comes from the column-level privilege below,
+not from this FK - see ADR-0012 for why the two must not be conflated. The PK's own
+uniqueness on `ordinal` closes only the duplicate-ordinal race, not cardinality's upper
+bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); #52 enforces the
+upper bound at validation time. `property_value.entry_id`'s FK to `catalogue_entry` cannot be
+added until `catalogue_entry` lands with #46-#48; #51 tracks this as an open follow-on
+migration, not a silently dropped constraint.
 
 `nptc_app` gets `UPDATE` at column level on `property_definition`, excluding `key`, `id`,
 `index_seq`, `origin` and `created_at`, and no `DELETE` grant at all (FR-11's unconditional
