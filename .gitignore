@@ -60,3 +60,8 @@ Thumbs.db
 docker-compose.override.yml
 *.local.yml
 P1-SEQUENCING.md
+
+# --- Claude Code local state ---
+# Session/plugin-local data (e.g. the healthcare plugin's data/healthcare/documents/
+# sqlite db) and settings.local.json are per-machine, never repo content.
+.claude/
