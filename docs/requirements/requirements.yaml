@@ -496,7 +496,7 @@
   phase: p1
   title: "The design MUST accommodate the addition of new datatypes to the registry, not only new properties, without a rebuild"
   status: planned
-  notes: ""
+  notes: "ADR-0013 (issue #137) fixes the design: an eleven-member DatatypeHandler Protocol, explicit construction via build_builtin_handlers(deps), ControlKind naming form controls after the interaction rather than the datatype, and a pure-ast backend/tests/test_datatype_dispatch.py guard banning datatype dispatch outside registry/datatypes/. Stays planned: this is a design record, not implementation - #53 owes the running application that proves it (ADR-0002's distinction)."
 - id: "FR-78"
   priority: MUST
   phase: p4
