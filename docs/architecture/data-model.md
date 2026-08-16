@@ -119,7 +119,7 @@ still-open question.
 | `index_seq` | `BIGINT` | `NOT NULL`, `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
 | `key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
 | `label` | `TEXT` | `NOT NULL`. Human-facing, changeable |
-| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point |
+| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point; the valid set is `DatatypeRegistry.known_datatypes()`, checked at write time, not a schema-level constraint (ADR-0013) |
 | `cardinality` | `TEXT` | `NOT NULL`, CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
 | `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` |
 | `required_for_submission` | `BOOLEAN` | `NOT NULL` |
@@ -128,7 +128,7 @@ still-open question.
 | `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
 | `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` |
 | `edition` | `TEXT` | Nullable. SNOMED edition the value set resolves against |
-| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters (#137 owns its interior) |
+| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters; interior validated by each handler's `constraints_schema()` (ADR-0013) |
 | `filterable` | `BOOLEAN` | `NOT NULL`. Drives #54's index generation (FR-13) |
 | `origin` | `TEXT` | `NOT NULL`. `system` or `admin_defined` |
 | `status` | `TEXT` | `NOT NULL`. `active` or `deprecated` - no delete (FR-11) |
