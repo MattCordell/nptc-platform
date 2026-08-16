@@ -18,9 +18,13 @@ Three rules:
    concern is runtime data reaching a query, not where the fixed literal
    text happens to be spelled.
 2. Any f-string *anywhere* (not just at a call site) whose literal parts
-   contain a SQL keyword fails - this catches SQL assembled into a
+   *start with* a SQL keyword fails - this catches SQL assembled into a
    variable above the call, which rule 1 alone would miss since the call
-   site only ever sees a bare ``Name``.
+   site only ever sees a bare ``Name``. Anchored to the start rather than
+   matched anywhere in the text: a real SQL statement starts with its verb,
+   and anchoring is what keeps an unrelated f-string like
+   ``f"failed to update {entity_id}"`` (a plausible future log message) from
+   tripping this rule the moment it happens to contain a keyword mid-sentence.
 3. Any string literal combining "GRANT ALL" with the ``audit_event`` table
    name fails outright (NFR-09 riding along on NFR-22's own machinery) -
    TRUNCATE is a distinct, owner-only privilege included in ``ALL`` and
@@ -37,6 +41,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,7 +51,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = [REPO_ROOT / "backend" / "src", REPO_ROOT / "backend" / "migrations"]
 
 _SQL_KEYWORD_RE = re.compile(
-    r"\b(select|insert|update|delete|drop|create|alter|grant|revoke|truncate)\b",
+    r"^\s*(select|insert|update|delete|drop|create|alter|grant|revoke|truncate)\b",
     re.IGNORECASE,
 )
 _GRANT_ALL_RE = re.compile(r"grant\s+all", re.IGNORECASE)
@@ -172,6 +177,13 @@ def test_no_dynamic_sql_or_grant_all_in_backend_source() -> None:
 
 
 def test_guard_flags_known_violations() -> None:
+    """A set of `{rule}` alone would let three of `_dynamic_sql_reason`'s
+    four distinct detections (f-string, `+` concatenation, `.format()`
+    call, and the separate rule-2 f-string-built-above-the-call case)
+    collapse into a single satisfied element - deleting any one of them
+    would still leave the set unchanged. Asserting an exact per-rule count
+    instead means each of the four bad_source cases below has to be
+    individually detected for this test to pass."""
     bad_source = """
 user_id = "1 OR 1=1"
 
@@ -197,6 +209,10 @@ def grant_all_on_audit():
     op.execute("GRANT ALL ON TABLE audit_event TO nptc_app;")
 """
     violations = _check_source(bad_source, "<positive-control>")
-    rules_found = {v.rule for v in violations}
+    rule_counts = Counter(v.rule for v in violations)
 
-    assert rules_found == {"dynamic-sql-arg", "sql-fstring", "grant-all-audit"}
+    # dynamic-sql-arg: direct_fstring, direct_concat, direct_format (3) -
+    # built_above's call site sees only a bare Name and is rule 2's job.
+    # sql-fstring: direct_fstring's and built_above's f-strings both start
+    # with a SQL keyword (2). grant-all-audit: grant_all_on_audit (1).
+    assert rule_counts == Counter({"dynamic-sql-arg": 3, "sql-fstring": 2, "grant-all-audit": 1})

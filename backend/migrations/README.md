@@ -19,9 +19,11 @@ uv run alembic revision --autogenerate -m "add a thing"
 
 `env.py` resolves the database connection two ways, in order: a live connection the test
 harness hands in directly (`config.attributes["connection"]`), or
-`NPTC_MIGRATION_DATABASE_URL` (`nptc.settings.Settings`) otherwise. There is no fallback to
-a hard-coded or `alembic.ini`-configured URL - a misconfigured environment fails loudly,
-naming the missing variable.
+`NPTC_MIGRATION_DATABASE_URL` (`nptc.settings.MigrationSettings`) otherwise -
+`MigrationSettings` is deliberately its own settings class, not the combined app
+`DatabaseSettings`, so running a migration never requires `NPTC_DATABASE_URL` too. There is
+no fallback to a hard-coded or `alembic.ini`-configured URL - a misconfigured environment
+fails loudly, naming the missing variable.
 
 `script.py.mako` is a repo-local revision template (modern typing syntax, no unused
 imports on a hand-written migration) with `ruff check --fix` and `ruff format` wired up as

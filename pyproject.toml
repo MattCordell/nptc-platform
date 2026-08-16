@@ -68,11 +68,12 @@ files = ["backend/src", "transform/src", "shared/src", "scripts", "backend/migra
 strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
-# Required for nptc.settings.Settings (issue #33, first pydantic-settings
-# consumer): without this plugin, mypy sees a BaseSettings subclass as a
-# plain class and demands every required field as an explicit __init__
-# kwarg, even though pydantic-settings populates them from the environment
-# at runtime and Settings() with no arguments is the correct call.
+# Required for nptc.settings.DatabaseSettings/MigrationSettings (issue #33,
+# first pydantic-settings consumer): without this plugin, mypy sees a
+# BaseSettings subclass as a plain class and demands every required field
+# as an explicit __init__ kwarg, even though pydantic-settings populates
+# them from the environment at runtime and e.g. MigrationSettings() with no
+# arguments is the correct call.
 plugins = ["pydantic.mypy"]
 
 # No [[tool.mypy.overrides]] relaxing scripts/tests/ - a former "module = 'tests.*'"

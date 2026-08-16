@@ -175,12 +175,18 @@ jobs:
       # Pulled *before* the network block below: testcontainers needs this
       # image already cached locally by the time the tests run, since a
       # cache miss would need the registry over the network this job is
-      # about to cut off. Parsed from deploy/compose.yml, not hand-pinned
-      # here - see backend/tests/conftest.py's _image_from_compose - so
-      # there remains exactly one place this tag is written down.
+      # about to cut off. Parsed with the same pyyaml-based reader
+      # backend/tests/conftest.py's _image_from_compose uses (rather than a
+      # second, ad hoc grep/sed parser that would silently pick up a
+      # trailing comment or quoting change compose.yml never intended as
+      # its pinned tag) - so there remains exactly one parser for this file.
       - name: Pull the Postgres image deploy/compose.yml pins
         run: |
-          IMAGE=$(grep 'image: postgres:' deploy/compose.yml | sed 's/^.*image: //')
+          IMAGE=$(uv run python -c "
+          import yaml
+          with open('deploy/compose.yml') as f:
+              print(yaml.safe_load(f)['services']['postgres']['image'])
+          ")
           docker pull "$IMAGE"
 
       # Same rationale as transform-offline below: the Docker daemon is

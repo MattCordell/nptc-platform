@@ -6,8 +6,10 @@ URL resolution has exactly two routes, tried in this order:
    harness hands in directly (Alembic's connection-sharing recipe), so
    tests run migrations against the same testcontainers Postgres the rest
    of the fixture graph uses, with no URL round-trip.
-2. ``Settings().migration_database_url`` - the operator path, documented in
-   docs/operations/upgrade.md.
+2. ``MigrationSettings().migration_database_url`` - the operator path,
+   documented in docs/operations/upgrade.md. A dedicated settings class,
+   not the combined app ``Settings`` - an operator running a migration
+   should never need ``NPTC_DATABASE_URL`` set too.
 
 Deliberately no fallback to ``config.get_main_option("sqlalchemy.url")``: no
 ``sqlalchemy.url`` is ever committed (NFR-26), and falling back to it would
@@ -28,7 +30,7 @@ from sqlalchemy.engine import Connection
 
 from nptc.db import models  # noqa: F401 -- side effect: registers every model with Base.metadata
 from nptc.db.base import Base
-from nptc.settings import Settings
+from nptc.settings import MigrationSettings
 
 config = context.config
 
@@ -52,7 +54,7 @@ def _run_migrations_with_connection(connection: Connection) -> None:
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without a live database connection (``--sql``)."""
     context.configure(
-        url=Settings().migration_database_url,
+        url=MigrationSettings().migration_database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -68,7 +70,7 @@ def run_migrations_online() -> None:
         _run_migrations_with_connection(cast(Connection, connection))
         return
 
-    connectable = create_engine(Settings().migration_database_url, poolclass=pool.NullPool)
+    connectable = create_engine(MigrationSettings().migration_database_url, poolclass=pool.NullPool)
     with connectable.connect() as new_connection:
         _run_migrations_with_connection(new_connection)
 

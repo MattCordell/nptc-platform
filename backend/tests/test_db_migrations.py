@@ -5,6 +5,7 @@ downgrade/upgrade fingerprint test, which does.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from nptc.db.models import (  # noqa: F401 -- import for side effect: populates 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
+_VERSION_PREFIX_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*")
 
 
 @pytest.mark.integration
@@ -46,13 +48,20 @@ def test_pg_trgm_and_unaccent_extensions_are_installed(db: Connection) -> None:
 @pytest.mark.req("NFR-39")
 @pytest.mark.integration
 def test_real_postgres_container_not_a_substitute(db: Connection) -> None:
-    """Asserts the version string names the exact tag deploy/compose.yml
-    pins - proof this is a real, specifically-versioned Postgres server,
-    not an in-memory substitute or a different version entirely."""
+    """Asserts the version string names the numeric version deploy/compose.yml
+    pins - proof this is a real, specifically-versioned Postgres server, not
+    an in-memory substitute or a different version entirely. Compares only
+    the leading numeric prefix of the tag (`18.4-alpine` -> `18.4`, `18` ->
+    `18`), not the whole tag verbatim - `postgres --version`-style output
+    never repeats a `-alpine`/`-bookworm` suffix, so a literal substring
+    match would fail the moment compose.yml pins a valid tag carrying one,
+    even though the version itself still matches."""
     compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
     image: str = compose["services"]["postgres"]["image"]
     tag = image.split(":", 1)[1]
+    match = _VERSION_PREFIX_RE.match(tag)
+    assert match is not None, f"compose Postgres tag {tag!r} has no numeric version prefix"
 
     version = db.execute(text("SELECT version()")).scalar_one()
 
-    assert tag in version
+    assert match.group() in version

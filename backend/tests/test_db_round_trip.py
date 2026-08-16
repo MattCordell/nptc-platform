@@ -55,17 +55,15 @@ def _downgrade_base(engine: Engine) -> None:
         connection.commit()
 
 
-def _normalize(value: Any) -> Any:
-    """Recursively sorts every list by its own canonical JSON text, so two
-    fingerprints of the same schema compare equal regardless of the order
-    Postgres's catalogs happen to return rows in - which can differ across
-    a DROP+CREATE even when the resulting schema is identical."""
-    if isinstance(value, list):
-        items = [_normalize(v) for v in value]
-        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, default=str))
-    if isinstance(value, dict):
-        return {key: _normalize(val) for key, val in value.items()}
-    return value
+def _sorted_by_json(items: list[Any]) -> list[Any]:
+    """Sorts a list of otherwise order-independent entries (which foreign
+    key comes first, which index comes first) by each entry's own canonical
+    JSON text - without touching anything *inside* an entry. A composite
+    index's `column_names` or a composite primary key's
+    `constrained_columns` is itself an ordered list where the order is
+    semantically significant, and must be compared verbatim, never
+    reordered - only the list of *entries* is reordered here."""
+    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, default=str))
 
 
 def _fingerprint(engine: Engine) -> dict[str, Any]:
@@ -80,33 +78,44 @@ def _fingerprint(engine: Engine) -> dict[str, Any]:
             columns.append(normalized_column)
         tables[table_name] = {
             "columns": columns,
+            # A single dict per table, its internal column order left
+            # exactly as reflection reported it - see _sorted_by_json.
             "primary_key": inspector.get_pk_constraint(table_name),
-            "foreign_keys": inspector.get_foreign_keys(table_name),
-            "unique_constraints": inspector.get_unique_constraints(table_name),
-            "check_constraints": inspector.get_check_constraints(table_name),
-            "indexes": inspector.get_indexes(table_name),
+            "foreign_keys": _sorted_by_json(inspector.get_foreign_keys(table_name)),
+            "unique_constraints": _sorted_by_json(inspector.get_unique_constraints(table_name)),
+            "check_constraints": _sorted_by_json(inspector.get_check_constraints(table_name)),
+            "indexes": _sorted_by_json(inspector.get_indexes(table_name)),
         }
 
     with engine.connect() as connection:
-        extensions = [
+        extensions = sorted(
             row[0] for row in connection.execute(text("SELECT extname FROM pg_extension"))
-        ]
-        grants = [
-            list(row)
-            for row in connection.execute(
-                text(
-                    "SELECT table_name, grantee, privilege_type "
-                    "FROM information_schema.role_table_grants "
-                    "WHERE table_schema = 'public'"
+        )
+        grants = _sorted_by_json(
+            [
+                list(row)
+                for row in connection.execute(
+                    text(
+                        "SELECT table_name, grantee, privilege_type "
+                        "FROM information_schema.role_table_grants "
+                        "WHERE table_schema = 'public'"
+                    )
                 )
-            )
-        ]
+            ]
+        )
 
-    return _normalize({"tables": tables, "extensions": extensions, "grants": grants})
+    return {"tables": tables, "extensions": extensions, "grants": grants}
 
 
 @pytest.fixture(scope="module")
-def roundtrip_engine(postgres_container: PostgresContainer) -> Iterator[Engine]:
+def roundtrip_engine(postgres_container: PostgresContainer, migrated: None) -> Iterator[Engine]:
+    # Depends on `migrated` (unused directly) purely for ordering: it forces
+    # the shared nptc_test database's own migration - and so the first-ever
+    # `CREATE ROLE nptc_app` in this cluster - to run before this fixture's
+    # migration does, regardless of test collection order. Without this,
+    # test_downgrade_base_then_upgrade_head_reproduces_the_same_schema's own
+    # comment about proving 0001's `IF NOT EXISTS` guard would only hold by
+    # accident of whichever test happened to run first.
     owner_url = make_url(postgres_container.get_connection_url())
 
     admin_engine = create_engine(owner_url.render_as_string(hide_password=False))

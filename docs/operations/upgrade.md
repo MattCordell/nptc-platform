@@ -59,6 +59,15 @@ the cluster after a full downgrade. If a role genuinely needs to be removed, tha
 manual operator step (`DROP ROLE nptc_app;`, after confirming it holds nothing elsewhere in
 the cluster), not something a migration can safely automate.
 
+The same downgrade also leaves `GRANT USAGE ON SCHEMA public TO nptc_app` in place - it is
+a schema-level grant, not a table-level one, and revoking it isn't necessary for the same
+reason dropping the role isn't: the role persisting with a stray schema grant is harmless,
+and the alternative (`REVOKE USAGE ... ; downgrade base` re-`GRANT`-ing it on every
+`upgrade head`) buys nothing. This is invisible to the round-trip fingerprint
+(`backend/tests/test_db_round_trip.py`), which only reflects
+`information_schema.role_table_grants` (table-level), not schema-level grants - noted here
+rather than left for a future reader to notice the gap unassisted.
+
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely

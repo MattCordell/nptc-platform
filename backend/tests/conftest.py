@@ -10,8 +10,13 @@ Fixture graph::
     postgres_container (session)  the container itself
     owner_engine        (session)  engine authenticating as the container's
                                     bootstrap superuser-equivalent role
-    migrated            (session, autouse)  `alembic upgrade head`, plus
-                                    provisioning the nptc_app_login role
+    migrated            (session)  `alembic upgrade head`, plus provisioning
+                                    the nptc_app_login role - requested
+                                    explicitly by db/app_engine, never
+                                    autouse, so a test needing neither a
+                                    container nor a connection (e.g.
+                                    test_settings.py, test_sql_parameterisation.py)
+                                    never starts Docker at all
     app_engine          (session)  engine authenticating as nptc_app_login
     db / app_db         (function) a connection in an outer transaction,
                                     rolled back after the test
@@ -90,7 +95,7 @@ def owner_engine(postgres_container: PostgresContainer) -> Iterator[Engine]:
         engine.dispose()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def migrated(owner_engine: Engine) -> None:
     """Applies every migration via `command.upgrade`, never
     `metadata.create_all` - the acceptance criteria are about the
@@ -102,11 +107,24 @@ def migrated(owner_engine: Engine) -> None:
     superuser connection using SET ROLE would still bypass some privilege
     checks, so only a genuinely separate authenticated login proves the
     grant is real.
+
+    Deliberately not `autouse`: a test needing neither a container nor a
+    connection (test_settings.py, test_sql_parameterisation.py) must not be
+    forced to start Docker just because it happens to live under
+    backend/tests. `db` and `app_engine` request this fixture explicitly
+    instead.
     """
     config = _alembic_config()
     with owner_engine.connect() as connection:
         config.attributes["connection"] = connection
         command.upgrade(config, "head")
+        # The role name and password are both fixed module constants, never
+        # runtime/user data, and CREATE ROLE/GRANT can't take a bound
+        # parameter in the first place - this is the one deliberate
+        # exception to NFR-22's guard, and it sits just outside
+        # backend/tests/test_sql_parameterisation.py's SCAN_DIRS (backend/src,
+        # backend/migrations) for exactly that reason. Do not copy this
+        # f-string shape into backend/src.
         connection.execute(
             text(f"CREATE ROLE {APP_LOGIN_ROLE} LOGIN PASSWORD '{APP_LOGIN_PASSWORD}'")
         )

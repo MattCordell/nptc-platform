@@ -5,7 +5,9 @@
 
 ## Context
 
-Every P1 backlog item is blocked on issue #33 (`P1-SEQUENCING.md`: "#33 before everything").
+Every P1 backlog item is blocked on issue #33 - the P1 milestone's own priority ordering
+puts it before every other P1 issue, since #35, #36, #42, #46-#48, #51-#55 and #138 all
+need a real schema, a role model, and a working migration/test harness to build on.
 Before this issue, `backend/src/nptc/db/` was a docstring-only stub, `backend/migrations/`
 held a placeholder README, there was no Alembic configuration, no backend settings module
 (`pydantic-settings` was declared but unused), and `backend/tests/` held a single
@@ -34,11 +36,16 @@ resolves the connection at runtime instead (below).
 
 **`backend/migrations/env.py` resolves a database connection by exactly two routes, tried
 in order:** `config.attributes["connection"]` (a live `Connection` the test harness hands
-in directly - Alembic's own connection-sharing recipe), then `Settings().migration_
-database_url` (the operator path, documented in `docs/operations/upgrade.md`). There is no
-third fallback to `config.get_main_option("sqlalchemy.url")` - a misconfigured environment
-must fail loudly, naming the missing variable, rather than silently attempting Alembic's
-own placeholder URL. `env.py` also guards `fileConfig()`: with no `alembic.ini` on disk,
+in directly - Alembic's own connection-sharing recipe), then
+`MigrationSettings().migration_database_url` (the operator path, documented in
+`docs/operations/upgrade.md`). `MigrationSettings` is a dedicated `pydantic-settings` class
+carrying only `migration_database_url`, separate from the app-facing `DatabaseSettings`
+(`nptc.settings`) which carries only `database_url` - both fields living on one combined
+class would mean `env.py` demanded `NPTC_DATABASE_URL` too, a variable Alembic has no use
+for at all. There is no third fallback to `config.get_main_option("sqlalchemy.url")` - a
+misconfigured environment must fail loudly, naming the missing variable, rather than
+silently attempting Alembic's own placeholder URL. `env.py` also guards `fileConfig()`:
+with no `alembic.ini` on disk,
 `config.config_file_name` is still the literal string `"alembic.ini"` (the CLI's own
 default when no ini file is found), and calling `fileConfig()` on that nonexistent path
 raises. This is the most likely "works in the test harness, breaks from the CLI" bug in the
@@ -73,8 +80,8 @@ proven empirically (`backend/tests/test_db_audit_privileges.py`), not assumed. T
 lives in the **same migration that creates the table** (`0002_audit_event.py`), not a later
 "permissions" migration - table ACLs (`pg_class.relacl`) are cluster state that lives and
 dies with the table itself, so a separate migration would leave the re-created table
-grant-less after a `downgrade base` → `upgrade head` round-trip, which is exactly the shape
-#35's re-assertion criterion exists to catch.
+grant-less after a `downgrade base` → `upgrade head` round-trip - exactly the shape issue #35's
+re-assertion criterion exists to catch.
 
 **`nptc.db.roles`** holds the app role name and every grant/revoke statement as plain string
 constants (never an f-string, `%`/`+` concatenation, or `.format()`), imported by both the
@@ -173,6 +180,8 @@ to prevent (ADR-0002; NFR-25/NFR-26 are existing precedent for the same restrain
 | `alembic.ini` in `backend/` or at the repo root | Breaks `script_location` resolution from the repo root (the load-bearing detail above), and duplicates configuration ownership that the root `pyproject.toml` already holds for every other tool. |
 | `pytest.mark.skipif` when Docker is absent | Docker is already a declared, non-optional prerequisite (`CONTRIBUTING.md`); a skip would let a broken or absent Docker daemon read as "tests passed" instead of "tests didn't run". |
 | `pg_dump --schema-only` text diff for the round-trip check | Needs a `pg_dump` binary matching the server version - absent on a Windows development machine, and version-skewed against PG18 on many Linux boxes. Reflection is pure SQLAlchemy and produces a diff pytest can render directly. |
+| One combined `Settings` class with both `database_url` and `migration_database_url` required | Caught in review: `env.py` instantiating that class to read `migration_database_url` would then also demand `NPTC_DATABASE_URL`, a variable Alembic never uses - an operator following `upgrade.md`'s "exactly one environment variable" claim would hit a `ValidationError` naming the wrong field. Split into `DatabaseSettings`/`MigrationSettings`, each carrying only the one field its own consumer needs. |
+| The `migrated` fixture as `autouse=True` | Caught in review: every test under `backend/tests` started Docker regardless of whether it touched a database, including `test_settings.py` and `test_sql_parameterisation.py`, whose own docstrings say they need neither. Made non-autouse; `db`/`app_engine` request it explicitly, and `test_db_round_trip.py`'s `roundtrip_engine` fixture requests it too, purely to keep the "0001's `IF NOT EXISTS` guard is proven" comment true regardless of test collection order. |
 
 ## Consequences
 
