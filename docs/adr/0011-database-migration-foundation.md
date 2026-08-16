@@ -128,14 +128,24 @@ TCP socket to the mapped container port. NFR-37 is proven for this tree instead 
 `docker pull` the pinned tag before blocking, `TESTCONTAINERS_RYUK_DISABLED=true` to avoid a
 second, post-block image pull for the Ryuk reaper (an ephemeral CI runner is discarded
 either way, so Ryuk's crash-cleanup role buys nothing there - do not set this flag for local
-development, where a long-lived machine still wants it), then the same `iptables` rules
-`transform-offline` uses. This proves the *test process* makes no other egress, not that the
-container makes none - container traffic transits `FORWARD`, not `OUTPUT`, and `-P FORWARD
-DROP` is deliberately not added on top, since it risks breaking the bridge networking the
-container itself needs for no NFR-37 gain. Adding `scripts/tests` to this job's run means
-every one of `testpaths`' four directories has now run under an egress block at least once
-(between this job and `transform-offline`), which is what actually justifies moving NFR-37
-to `implemented`.
+development, where a long-lived machine still wants it), then `iptables` rules close to
+`transform-offline`'s, plus one addition that job doesn't need: `-A OUTPUT -o docker0 -j
+ACCEPT`. Connecting from the host to a container's *published* port
+(`127.0.0.1:<mapped-port>`, exactly what the test process does to reach Postgres) gets its
+destination DNAT-rewritten to the container's bridge IP in the `nat` table before the
+`filter` table's `OUTPUT` chain ever evaluates the packet, so it egresses via `docker0`, not
+`lo` - a bare `-o lo` `ACCEPT` (what a first pass at this job shipped with) silently
+black-holes every connection to the test container instead of refusing it outright, which is
+what actually failed CI the first time this job ran for real, rather than merely being
+inferred from documentation. This proves the *test process* makes no other egress, not that
+the container makes none - container-to-internet traffic transits `FORWARD`, not `OUTPUT`,
+and `-P FORWARD DROP` is deliberately not added on top, since it risks breaking the bridge
+networking the container itself needs for no NFR-37 gain; `docker0` in the rule above is an
+`OUTPUT`-chain interface match on host-originated traffic, not a `FORWARD`-chain policy, so
+it does not change that scope. Adding `scripts/tests` to this job's run means every one of
+`testpaths`' four directories has now run under an egress block at least once (between this
+job and `transform-offline`), which is what actually justifies moving NFR-37 to
+`implemented`.
 
 **The downgrade/upgrade round-trip is checked with a reflection fingerprint, not
 `compare_metadata` alone**, and it runs against its own dedicated `nptc_roundtrip` database
