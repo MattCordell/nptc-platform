@@ -43,10 +43,14 @@ not evidence of implementation (ADR-0002's distinction, as ADR-0012 restated it)
 ## Decision
 
 **1. The contract is a `typing.Protocol` with eleven members.** Four are FR-77's own sentence
-(a JSON Schema fragment, a validation routine, a form control, a serialiser); seven are forced
-by the seams ADR-0012 left open (a `constraints`-interior schema, an index shape, filter
-support, a facet expression, a sort key, plus the `datatype` identity itself and a
-constructor). Handlers see a frozen `PropertyDefinitionSpec` view, never the ORM model - this
+(`json_schema_fragment`, `validate`, `form_control`, `serialise`); seven are forced by the
+seams ADR-0012 left open - the `datatype` identity property, `constraints_schema()` for the
+`constraints`-interior schema, `index_shape()`, `supported_filter_ops()` and `filter_clause()`
+(the two members FR-16's filtering needs), `facet_expression()`, and `sort_key()`. A Protocol
+has no constructor member of its own; a handler's own `__init__` (the `code` handler's
+`TerminologyClient` argument below) is part of the concrete class, not the eleven-member
+contract it satisfies. Handlers see a frozen `PropertyDefinitionSpec` view, never the ORM
+model - this
 is what keeps `nptc.registry` from importing `nptc.db`, and it is what lets
 [#53](https://github.com/MattCordell/nptc-platform/issues/53)'s test build every input by hand
 with no database. `validate()` is local and structural; FR-10's binding check reaches the
@@ -132,13 +136,21 @@ print-the-whole-list convention, same inline-source positive control asserting a
 per-rule `Counter`. Marked `@pytest.mark.req("FR-77")`. Runs in CI already (the `python` job's
 `uv run pytest`), no new tooling.
 
-- Scan `backend/src/nptc` and `backend/migrations`; exclude exactly one directory,
-  `backend/src/nptc/registry/datatypes/`. (`backend/tests` is outside `SCAN_DIRS`, so
+- **`SCAN_DIRS` is the exact same two paths as `test_sql_parameterisation.py`'s** -
+  `backend/src` and `backend/migrations`, not a narrower `backend/src/nptc` - so the two
+  guards genuinely share one constant rather than two constants that happen to look alike.
+  Scoping to `registry/datatypes/` is a separate, additional exclusion:
+  `backend/src/nptc/registry/datatypes/` is excluded from this guard only, not from
+  `test_sql_parameterisation.py`. (`backend/tests` is outside `SCAN_DIRS` either way, so
   [#53](https://github.com/MattCordell/nptc-platform/issues/53)'s synthetic test may use
   literals freely.)
-- **The known-datatype literal set is imported from `build_builtin_handlers`, not
-  hardcoded** - a hardcoded list would make the guard itself a second enumeration of the valid
-  set, i.e. the guard would itself violate FR-77.
+- **The known-datatype literal set is imported from `BUILTIN_DATATYPES`, not hardcoded** - the
+  module-level tuple in `datatypes/__init__.py` (SS10's Protocol block), not
+  `build_builtin_handlers` itself, which the guard cannot call without constructing a
+  `HandlerDeps`/`TerminologyClient` it has no business needing. A hardcoded list inside the
+  guard would make the guard itself a second enumeration of the valid set, i.e. the guard
+  would itself violate FR-77; `BUILTIN_DATATYPES` avoids that because it still lives inside
+  the handler package the guard is scoped around.
 - A "datatype-bearing expression" is recognised **by name, not by type** (the guard is
   syntactic and says so): `Attribute.attr == "datatype"`, `Name.id == "datatype"` or
   `*_datatype`, or a `Subscript` with a constant `"datatype"` slice.
@@ -147,16 +159,17 @@ per-rule `Counter`. Marked `@pytest.mark.req("FR-77")`. Runs in CI already (the 
   - `datatype-compare` - `Eq`/`NotEq`/`In`/`NotIn` against a string constant, or a
     tuple/list/set of them, on one side of the comparison.
   - `datatype-dispatch-table` - an `ast.Dict` with two or more keys, all string constants,
-    whose key set is a **subset** of the known datatypes.
+    whose key set is either a **subset** of the known datatypes, or a **superset** of them
+    (catches the "all five plus a `\"default\"`/`\"fallback\"` key" shape, which a subset test
+    alone would miss precisely because it is a superset).
   - `registry-imports-sibling` - an import inside `registry/**` naming `nptc.db`,
     `nptc.catalogue`, `nptc.exports`, `nptc.api`, `nptc.validation`, `nptc.submissions`,
     `nptc.releases`, or `nptc.jobs` (SS2's leaf rule made mechanical).
 - **Worked false-positive analysis** (this is what makes the design reviewable):
   `{"code": "12345", "system": "http://snomed.info/sct"}` is not flagged, because `"system"`
-  is not a datatype literal and rule 3 is a *subset* test, not an intersection test - that is
-  exactly why it is a subset test, not merely a happy accident of the example. `if
-  binding.code == "code":` is not flagged, because `.code` is not `.datatype`. A one-key
-  dispatch dict is an accepted gap.
+  is not a datatype literal and neither the subset nor the superset test matches a key set
+  that shares no elements with the known datatypes at all. `if binding.code == "code":` is not
+  flagged, because `.code` is not `.datatype`. A one-key dispatch dict is an accepted gap.
 - **A fifth rule is explicitly rejected**: "any bare string literal equal to a known
   datatype". `code`, `string` and `url` are ordinary English words and ordinary JSON keys
   elsewhere in this codebase; such a rule fires dozens of times on day one and gets suppressed
@@ -184,6 +197,9 @@ per-rule `Counter`. Marked `@pytest.mark.req("FR-77")`. Runs in CI already (the 
   4. The frontend and generated client.
   5. One handler branching on another datatype's name inside `registry/datatypes/`, excluded
      by construction.
+  6. A dispatch dict keyed on the known datatypes plus one extra `"default"`/`"fallback"` key -
+     the superset case the `datatype-dispatch-table` rule now also catches (added above after
+     review), named here anyway since it is the shape most likely to be written unthinkingly.
 
 **6. The contract lives in `backend/src/nptc/registry/`, not `shared/`.** ADR-0003's criterion
 is that *both* backend and transform need it (FR-74); not met here. The transform has no
@@ -221,14 +237,19 @@ then false with no test failing.
 `decimal`/`positiveInt` -> numeric expression index is a switch on datatype, so per FR-77 it
 belongs in the handler; **[#54](https://github.com/MattCordell/nptc-platform/issues/54)
 consumes an `IndexShape` it is handed, it does not compute one.** The handler declares the
-shape as a *value*, never as SQL text: `IndexShape(kind, expression, requires_conformance_sweep)`
-where `kind: IndexKind` (`GIN` or `EXPRESSION_BTREE`) names the physical index type and
-`expression: ValueExpression` is a closed three-member enum (`RAW_JSONB`, `TEXT_SCALAR`,
-`NUMERIC_SCALAR`) that #54 maps to fixed SQL fragments under `psycopg.sql.SQL`. Two reasons
-this beats a handler-supplied string: handlers stay free of SQL text entirely (a better
-NFR-22 posture - the guard cannot prove a handler-supplied string is a literal), and #54's
-`match` is over a set that does *not* grow when a datatype is added. **ADR-0012's cast-safety
-precondition becomes the machine-readable `requires_conformance_sweep` flag** rather than a
+shape as a *value*, never as SQL text: `IndexShape(expression, requires_conformance_sweep)`,
+where `expression: ValueExpression` is a closed three-member enum (`RAW_JSONB`, `TEXT_SCALAR`,
+`NUMERIC_SCALAR`) that #54 maps to fixed SQL fragments under `psycopg.sql.SQL`. `IndexShape`
+carries no `kind: IndexKind` field of its own - `IndexKind` (`GIN` or `EXPRESSION_BTREE`,
+naming the physical index type) is derived from `expression` via a fixed two-entry mapping
+(`INDEX_KIND_BY_EXPRESSION` in SS10's Protocol block), so a handler cannot return one of the
+three meaningless `IndexKind`/`ValueExpression` pairings (e.g. `GIN` with a numeric scalar) -
+the same "unrepresentable rather than merely refused" principle SS9 applies to `positiveInt`.
+Two reasons the enum-plus-mapping beats a handler-supplied SQL string: handlers stay free of
+SQL text entirely (a better NFR-22 posture - the guard cannot prove a handler-supplied string
+is a literal), and #54's `match` is over a set that does *not* grow when a datatype is added.
+**ADR-0012's cast-safety precondition becomes the machine-readable `requires_conformance_sweep`
+flag** rather than a
 paragraph #54 must remember.
 
 FR-16 is the second half and the handler owns both: `supported_filter_ops()` tells
@@ -273,7 +294,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sqlalchemy import ColumnElement
@@ -337,6 +358,11 @@ class SerialisationTarget(enum.Enum):
 
 
 class IndexKind(enum.Enum):
+    """Not a handler-supplied field (see IndexShape below) - #54 derives it
+    from ValueExpression via INDEX_KIND_BY_EXPRESSION, a fixed two-entry
+    mapping, so a handler cannot return the six combinations of IndexKind x
+    ValueExpression when only three are meaningful."""
+
     GIN = "gin"
     EXPRESSION_BTREE = "expression_btree"
 
@@ -350,9 +376,19 @@ class ValueExpression(enum.Enum):
     NUMERIC_SCALAR = "numeric_scalar"
 
 
+INDEX_KIND_BY_EXPRESSION: Mapping[ValueExpression, IndexKind] = {
+    ValueExpression.RAW_JSONB: IndexKind.GIN,
+    ValueExpression.TEXT_SCALAR: IndexKind.EXPRESSION_BTREE,
+    ValueExpression.NUMERIC_SCALAR: IndexKind.EXPRESSION_BTREE,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class IndexShape:
-    kind: IndexKind
+    """No `kind` field - it is unrepresentable-by-construction that a
+    handler pairs GIN with a numeric scalar. #54 looks up IndexKind from
+    `expression` via INDEX_KIND_BY_EXPRESSION."""
+
     expression: ValueExpression
     requires_conformance_sweep: bool
 
@@ -433,13 +469,23 @@ class UnknownDatatypeError(LookupError):
 
 
 class DuplicateDatatypeError(ValueError):
-    """Raised by DatatypeRegistry.register() if a datatype is already
-    registered - construction-time, not a runtime surprise."""
+    """Raised by DatatypeRegistry.__init__() if the handler sequence
+    contains two handlers with the same `datatype` - construction-time,
+    not a runtime surprise. There is no register() method (SS4: handlers
+    are supplied to the constructor as a tuple, never added one at a
+    time)."""
 
 
 class UnsupportedFilterOpError(ValueError):
     """Raised by filter_clause() for an op absent from
     supported_filter_ops()."""
+
+
+class UnsupportedBindingError(ValueError):
+    """Raised by CodeHandler.validate() when binding_target =
+    'local_code_system' and the handler was constructed with
+    local_code_lookup=None - a loud refusal, never a silent pass, until
+    #56 supplies a real LocalCodeLookup (open question 1)."""
 
 
 # --- the registry and its construction ------------------------------------
@@ -456,9 +502,21 @@ class DatatypeRegistry:
         ...
 
     def known_datatypes(self) -> frozenset[str]:
-        """The one place the valid datatype set is enumerated - the AST
-        guard imports this, it does not hardcode a list (SS5)."""
+        """The runtime valid-datatype set, used by #51's write-time
+        registry.get() resolution and startup reconciliation. The AST guard
+        (SS5) cannot call this - it has no registry instance to call it on -
+        so it imports the static BUILTIN_DATATYPES tuple below instead;
+        the two are required to agree, and #53 registering a handler not
+        in BUILTIN_DATATYPES is the one legitimate reason the two sets
+        could diverge, which is exactly why BUILTIN_DATATYPES, not this
+        method, is what the guard reads."""
         ...
+
+
+class LocalCodeLookup(Protocol):
+    """Placeholder with no members - #56 (FR-90) owns its real shape.
+    Present here only so HandlerDeps below is a type-checkable, non-forward
+    reference and #53 has something concrete to pass None in place of."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,12 +526,23 @@ class HandlerDeps:
     needs no second injection mechanism (NFR-37)."""
 
     terminology_client: TerminologyClient
-    local_code_lookup: "LocalCodeLookup | None" = field(default=None)  # #56, FR-90
+    local_code_lookup: LocalCodeLookup | None = None  # #56, FR-90
+
+
+BUILTIN_DATATYPES: tuple[str, ...] = ("code", "string", "decimal", "positiveInt", "url")
+"""A deps-free enumeration of the built-in set, in `datatypes/__init__.py`
+alongside `build_builtin_handlers` - the AST guard (SS5) imports this, not
+`build_builtin_handlers` itself, so it needs no TerminologyClient/HandlerDeps
+to learn the known-datatype set. Still one enumeration, inside the handler
+package, not a second one the guard maintains itself."""
 
 
 def build_builtin_handlers(deps: HandlerDeps) -> tuple[DatatypeHandler, ...]:
-    """THE one-line edit point (SS4). Returns exactly the five PRD SS6.5
-    handlers today: code, string, decimal, positiveInt, url."""
+    """THE one-line edit point (SS4). Returns exactly the five handlers
+    named by BUILTIN_DATATYPES above. The CodeHandler this constructs is
+    given deps.local_code_lookup; when that is None it raises
+    UnsupportedBindingError for binding_target = 'local_code_system'
+    rather than silently accepting one (open question 1)."""
     ...
 ```
 
@@ -510,10 +579,11 @@ What each issue inherits from this ADR instead of choosing its own shape:
 
 - **[#53](https://github.com/MattCordell/nptc-platform/issues/53)** the full Protocol
   signature list, so the synthetic-datatype test is writable from this ADR alone, with the
-  `datatypes/__init__.py` manifest line pre-declared as inside the handler package. It may
-  also drop `sort_key` (open question 5) and must register `CodeHandler` with
-  `local_codes=None`, raising `UnsupportedBindingError` for `binding_target =
-  'local_code_system'` until #56 lands (open question 1).
+  `datatypes/__init__.py` manifest line (`BUILTIN_DATATYPES` plus `build_builtin_handlers`)
+  pre-declared as inside the handler package. It may also drop `sort_key` (open question 5)
+  and must construct `CodeHandler` with `local_code_lookup=None`, raising
+  `UnsupportedBindingError` for `binding_target = 'local_code_system'` until #56 lands (open
+  question 1).
 - **[#51](https://github.com/MattCordell/nptc-platform/issues/51)** the write-time
   `registry.get()` resolution and the startup reconciliation
   (`SELECT DISTINCT datatype` subset-of registered set) - ADR-0012's unnamed compensating
@@ -543,11 +613,12 @@ Plus:
 - CONTRIBUTING.md's line on datatype dispatch and CLAUDE.md's FR-77 line get narrowed from
   `registry/` to `registry/datatypes/` **when [#53](https://github.com/MattCordell/nptc-platform/issues/53)
   lands** - flagged here so the wording travels with the code rather than being forgotten.
-- [docs/architecture/data-model.md](../architecture/data-model.md) gains a pointer that
-  `constraints`'s interior is each handler's `constraints_schema()` and that `datatype`'s
-  valid set is the registered set checked at write time, not a schema-level constraint.
+- [docs/architecture/data-model.md](../architecture/data-model.md) gains that pointer **in
+  this PR** (its `constraints` and `datatype` rows): `constraints`'s interior is each
+  handler's `constraints_schema()`, and `datatype`'s valid set is `DatatypeRegistry.known_datatypes()`
+  checked at write time, not a schema-level constraint.
 - FR-77 stays `planned`.
-- The AST guard's five named limits are written down as review responsibilities rather than
+- The AST guard's six named limits are written down as review responsibilities rather than
   discovered later.
 
 ### Open questions deferred to named issues
@@ -556,8 +627,9 @@ Following ADR-0012's precedent of naming the deciding issue rather than guessing
 
 1. `LocalCodeLookup`'s shape -> [#56](https://github.com/MattCordell/nptc-platform/issues/56)
    (FR-90). Position taken here: [#53](https://github.com/MattCordell/nptc-platform/issues/53)
-   registers `CodeHandler` with `local_codes=None` and raises `UnsupportedBindingError` for
-   `binding_target = 'local_code_system'` - a loud refusal, never a silent pass.
+   constructs `CodeHandler` with `local_code_lookup=None` and raises
+   `UnsupportedBindingError` for `binding_target = 'local_code_system'` - a loud refusal,
+   never a silent pass.
 2. `code`'s facet grouping key (code alone vs `(system, code)`) ->
    [#139](https://github.com/MattCordell/nptc-platform/issues/139), undecidable until #56
    settles whether local codes share the property-value shape. Both options are recorded here
@@ -581,15 +653,16 @@ Documentation-only, so verification is the repo's own gates plus a read-through 
 [#137](https://github.com/MattCordell/nptc-platform/issues/137)'s acceptance criteria.
 
 ```powershell
-pre-commit run --all-files          # markdownlint over **/*.md, mixed-line-ending --fix=lf
+pre-commit run --all-files          # pre-commit-hooks, ruff, ruff-format, mypy, frontend lint/format
 uv run python scripts/traceability_check.py   # regenerates docs/requirements/traceability.md
 uv run pytest scripts/tests                   # requirements.yaml schema + status validity
 git diff --stat                               # confirm traceability.md regenerated cleanly
 ```
 
-The `docs.yml` workflow's lychee link check is what catches a broken relative link in the new
-ADR or the index row - worth eyeballing that every `../architecture/...` link resolves before
-pushing.
+`.pre-commit-config.yaml` has no markdownlint hook; the `docs.yml` workflow runs `markdownlint`
+and the lychee link check as separate CI jobs, not via pre-commit - worth eyeballing both
+locally before pushing anyway, since they are what actually catch a bad heading or a broken
+`../architecture/...` relative link in the new ADR or the index row.
 
 Checked against #137's four acceptance criteria explicitly:
 
