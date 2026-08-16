@@ -138,12 +138,12 @@ bootstrap seeding command only `INSERT`s (so `row_version` starts at its `DEFAUL
 never at risk on first creation), but a future admin-side raw-SQL fix, or a Core-style bulk
 update (`session.execute(update(PropertyDefinition)...)`, which goes through the ORM's
 `Session` but bypasses `version_id_col` enforcement all the same), would bump the row without
-bumping the counter - reintroducing FR-09's restart-shaped staleness through a different door.
-#52 states this as a hard rule (amendments MUST go through the mapped, identity-map-loaded
-`UPDATE`, never a `sqlalchemy.update(...)` Core construct, against this table) and its own
-tests assert `row_version` increments on every amendment path that exists at that point,
-since there is no static guard analogous to NFR-22's that can currently tell a Core-style
-bulk update of `property_definition` from any other table's.
+bumping the counter - reintroducing FR-09's restart-shaped staleness through a different
+door. Issue #52 states this as a hard rule (amendments MUST go through the mapped,
+identity-map-loaded `UPDATE`, never a `sqlalchemy.update(...)` Core construct, against this
+table) and its own tests assert `row_version` increments on every amendment path that exists
+at that point, since there is no static guard analogous to NFR-22's that can currently tell a
+Core-style bulk update of `property_definition` from any other table's.
 
 **FR-13 index strategy.** The PRD's single-vs-multi-valued split does not survive the
 row-per-value shape (multi-valuedness is rows, not a JSON array); the distinction that
