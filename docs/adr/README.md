@@ -55,3 +55,5 @@ If it's unclear which of the two a change is, it's a reversal: supersede.
 | [0007](0007-misspelling-detection-heuristics.md) | Misspelling detection heuristics — banded Levenshtein in `shared/`, no new dependency, thresholds as constants |
 | [0008](0008-specimen-inspection-strategy.md) | Specimen inspection strategy — ECL set-membership over the `Has specimen` attribute, a hand-typed + server-augmented specimen table, and a coverage audit for what the table doesn't cover |
 | [0009](0009-defect-report-structure-and-cell-references.md) | Grouped defect report structure and a structured `CellRef` location — Band → FindingCode grouping, no CSV, `report.json` schema 7 |
+| [0010](0010-import-dataset-format.md) | Import dataset format and the transform's role in minting `business_key` |
+| [0011](0011-database-migration-foundation.md) | Database migration foundation — Alembic config in `pyproject.toml`, the least-privilege `nptc_app` role proven by refusal tests, the testcontainers integration harness, and the reflection-fingerprint round-trip check |

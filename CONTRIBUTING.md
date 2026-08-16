@@ -11,7 +11,7 @@ is not here, use your judgement and raise it in the PR.
 | Node.js | see [`.nvmrc`](.nvmrc) — bump alongside `frontend/package.json`'s `engines.node` floor, they must stay compatible |
 | pnpm | `11.20.0` (the root `package.json`'s `packageManager` field) |
 | `uv` | any recent version |
-| Docker (with Compose) | any recent version supporting the Compose Specification |
+| Docker (with Compose) | any recent version supporting the Compose Specification - the daemon must be **running**, not just installed, since `backend/tests` runs against a real container (issue #33) |
 
 See [README.md](README.md)'s Quickstart for bringing up the local Docker Compose stack.
 
@@ -57,7 +57,11 @@ rather than edits scattered across storage, export and search.
 ```powershell
 pre-commit run --all-files
 uv run pytest            # from the repo root (testpaths and ruff config resolve
-                          # relative to the workspace root, not a package directory)
+                          # relative to the workspace root, not a package directory).
+                          # Needs a *running* Docker daemon (not just installed) since
+                          # issue #33: backend/tests runs against a real, containerized
+                          # Postgres via testcontainers (NFR-39), not an in-memory
+                          # substitute - see docs/operations/upgrade.md.
 pnpm test                # from frontend/
 ```
 

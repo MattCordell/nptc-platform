@@ -56,8 +56,9 @@ each one):
 - `releases/` — snapshots, export config versions
 - `exports/` — csv, xlsx, fhir supplement renderers
 - `jobs/` — Postgres `SELECT ... FOR UPDATE SKIP LOCKED` queue and scheduler
-- `db/` — models, session, Alembic environment (migrations land with issue P1-1;
-  `backend/migrations/` is empty until then)
+- `db/` — models and the Alembic environment (issue #33/P1-1: naming convention, the
+  least-privilege `nptc_app` role, the `audit_event` table). `session.py` is still owed -
+  nothing needs it until #43/#44.
 
 ## Technology stack (ADR-0001)
 

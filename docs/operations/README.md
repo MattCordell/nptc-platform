@@ -14,11 +14,14 @@ reads, kept in step with `deploy/.env.example`.
 exports and releases - starting with [`runbooks/transform.md`](runbooks/transform.md) for the
 P0 seeding transform CLI.
 
+[`upgrade.md`](upgrade.md) documents running Alembic migrations, the two database DSNs,
+out-of-band app-role login provisioning, and the deliberate downgrade/role asymmetry
+(issue #33).
+
 The rest will hold, as the corresponding work lands:
 
 | File | Populated by |
 |---|---|
-| `upgrade.md` | Database migration and version-upgrade notes |
 | `backup-restore.md` | The backup procedure and the record of it actually being exercised (NFR-34) |
 
 Populated incrementally — see the documentation-impact table in

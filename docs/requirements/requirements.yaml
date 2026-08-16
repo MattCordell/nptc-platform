@@ -682,13 +682,13 @@
   phase: p1
   title: "A single append-only audit log capturing every state-changing operation"
   status: planned
-  notes: ""
+  notes: "The audit_event table itself lands with issue #33 (nptc.db.models.audit, ADR-0011); stays planned until real write paths exist to emit into it (#35/#36 and beyond)."
 - id: "NFR-09"
   priority: MUST
   phase: p1
   title: "Append-only MUST be enforced at the database privilege level"
   status: planned
-  notes: ""
+  notes: "The audit_event table's INSERT/SELECT-only grant and its UPDATE/DELETE/TRUNCATE refusal tests land with issue #33 (backend/tests/test_db_audit_privileges.py, marked NFR-09; ADR-0011). Stays planned rather than moving to implemented: the hash chain (NFR-10, #36) and the post-round-trip grant re-assertion (#35) that make the log genuinely tamper-evident are still owed."
 - id: "NFR-10"
   priority: SHOULD
   phase: p1
@@ -765,8 +765,8 @@
   priority: MUST
   phase: p1
   title: "Parameterised queries throughout"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "backend/tests/test_sql_parameterisation.py (issue #33, ADR-0011) statically enforces that no SQL text reaching text()/.execute()/.exec_driver_sql()/op.execute() is built from an f-string, %/+ concatenation, or .format(), and that no migration ever grants ALL on the audit_event table - with its own positive control proving the walker actually matches something rather than silently rotting into a check that always passes. Stays in-progress: the guard is real and enforced from here on, but the half of NFR-22 carrying the actual risk (FR-13's JSONB filtering against registry-validated keys) has no code yet, no registry (#51) and no search (#138)."
 - id: "NFR-23"
   priority: MUST
   phase: p5
@@ -856,9 +856,9 @@
   priority: MUST
   phase: foundation
   title: "The test suite MUST run with no network access"
-  status: in-progress
-  evidence: ".github/workflows/ci.yml#transform-offline"
-  notes: "transform-offline job blocks outbound egress via iptables for transform/tests and shared/tests only (issue #5/F-2); ci.yml's python job runs backend/tests with unrestricted network, so the requirement is not yet met for the whole test suite - stays in-progress until backend integration tests get the same treatment (P1-1)"
+  status: implemented
+  evidence: ".github/workflows/ci.yml#backend-integration"
+  notes: "transform-offline (issue #5/F-2) blocks outbound egress via iptables for transform/tests and shared/tests; backend-integration (issue #33, ADR-0011) does the same for backend/tests and scripts/tests, pulling deploy/compose.yml's pinned Postgres tag before the block and disabling Ryuk (TESTCONTAINERS_RYUK_DISABLED) to avoid a second, post-block image pull. Together the two jobs run every one of testpaths' four directories under a network-egress block at least once. Container traffic transits FORWARD, not OUTPUT, so this proves the test process makes no other egress, not that the container itself makes none - the stated, deliberate scope (ADR-0011)."
 - id: "NFR-38"
   priority: MUST
   phase: foundation
@@ -869,8 +869,8 @@
   priority: SHOULD
   phase: p1
   title: "Integration tests run against a real PostgreSQL instance (testcontainers or equivalent), not an in-memory substitute"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "backend/tests/conftest.py's fixture graph (issue #33, ADR-0011) runs every backend/tests test against a real, containerized Postgres pinned to deploy/compose.yml's own tag, applied via real Alembic migrations (never metadata.create_all). test_db_migrations.py::test_real_postgres_container_not_a_substitute (marked NFR-39) asserts SELECT version() names that exact tag."
 - id: "NFR-40"
   priority: SHOULD
   phase: p5
