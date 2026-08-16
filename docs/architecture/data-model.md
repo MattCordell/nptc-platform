@@ -40,11 +40,12 @@ breaks a downgrade's ability to reliably find the constraint to drop.
 
 **Postgres identifier truncation caveat:** Postgres silently truncates any identifier
 (table, column, constraint, index name) longer than 63 bytes. The naming convention above
-can produce a name past that limit on a long table or column name combination - #54's
-automatic index generation (properties marked filterable, FR-13) is the most likely first
-place this bites, since it composes a table name with a dynamically-named property. There
-is no guard against this yet; treat a migration that silently drops characters from a
-generated name as a defect to raise against whichever issue introduced the long name.
+can still produce a name past that limit on a long table or column name combination. #54's
+automatic index generation (properties marked filterable, FR-13) is **no longer** the likely
+first victim: ADR-0012 fixes its index names as `ix_propval_p{index_seq}_{slot}`, never
+composed from the property key, provably at most 33 bytes for any 64-bit `index_seq` value.
+The warning stands for every other future long name; treat a migration that silently drops
+characters from a generated name as a defect to raise against whichever issue introduced it.
 
 ## Role and privilege model
 
@@ -100,6 +101,58 @@ the reflection fingerprint in `backend/tests/test_db_round_trip.py`, which folds
 | `before` | `JSONB` | Nullable |
 | `after` | `JSONB` | Nullable |
 | `reason` | `TEXT` | Nullable |
+
+## Property registry (design, lands with #51-#55)
+
+**Not implemented yet.** This section describes the shape ADR-0012 fixes for #51
+(`PropertyDefinition`/`PropertyValue`), #52 (JSON Schema validation), #54 (automatic index
+generation) and #55 (deprecation/key immutability) to build against, the same way the tables
+above describe what issue #33 actually shipped. See ADR-0012 for the full reasoning,
+including the rejected alternatives (runtime DDL, classic EAV) and the FR-13 index executor's
+still-open question.
+
+`property_definition` is a conventional relational table, not a document:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `index_seq` | `BIGINT` | `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
+| `key` | `TEXT` | `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
+| `label` | `TEXT` | Human-facing, changeable |
+| `datatype` | `TEXT` | No CHECK, no ENUM - FR-77's handler-module extension point |
+| `cardinality` | `TEXT` | CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
+| `scope` | `TEXT` | CHECK against `submission` / `maintenance` / `both` |
+| `required_for_submission` | `BOOLEAN` | |
+| `required_for_publication` | `BOOLEAN` | |
+| `binding_target` | `TEXT` | `value_set` or `local_code_system`; `NULL` unless `datatype = 'code'` (FR-10) |
+| `value_set_uri` | `TEXT` | Required when `binding_target = 'value_set'` |
+| `strength` | `TEXT` | `required` / `extensible` / `example` |
+| `edition` | `TEXT` | SNOMED edition the value set resolves against |
+| `constraints` | `JSONB` | Handler-owned datatype parameters (#137 owns its interior) |
+| `filterable` | `BOOLEAN` | Drives #54's index generation (FR-13) |
+| `origin` | `TEXT` | `system` or `admin_defined` |
+| `status` | `TEXT` | `active` or `deprecated` - no delete (FR-11) |
+| `display_order` | `INTEGER` | |
+| `deprecated_at` | `TIMESTAMPTZ` | Nullable |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | |
+| `row_version` | `INTEGER` | Cache key (with `key`) for #52's in-process JSON Schema memoisation |
+
+`property_value` is one row per value: `(entry_id, property_key, value JSONB, ordinal)` plus
+`justification` (FR-10's extensible-strength case), with `UNIQUE (entry_id, property_key,
+ordinal)` and an FK on `property_key` to `property_definition(key)` - not a surrogate id, so
+FR-11/FR-12 are referential integrity rather than application logic. `property_value.entry_id`'s
+FK to `catalogue_entry` cannot be added until `catalogue_entry` lands with #46-#48; #51 tracks
+this as an open follow-on migration, not a silently dropped constraint.
+
+`nptc_app` gets `UPDATE` at column level on `property_definition`, excluding `key`, `id`,
+`index_seq`, `origin` and `created_at`, and no `DELETE` grant at all (FR-11's unconditional
+form) - this is FR-12 as a database invariant, not an ORM convention. `property_value` gets
+ordinary `SELECT`/`INSERT`/`UPDATE`/`DELETE`.
+
+FR-13's generated indexes (`ix_propval_p{index_seq}_{slot}`, see the truncation caveat above)
+are excluded from Alembic autogenerate and this file's own round-trip fingerprint via an
+`include_object` hook in `env.py` - without it, the first index #54 creates would fail the
+downgrade/upgrade comparison in `test_db_round_trip.py`.
 
 ## Extensions
 

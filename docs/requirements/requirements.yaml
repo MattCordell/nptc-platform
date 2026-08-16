@@ -88,31 +88,31 @@
   phase: p1
   title: "Adding, deprecating or amending a property definition MUST NOT require a schema migration, application restart, or code deployment"
   status: planned
-  notes: ""
+  notes: "ADR-0012 fixes the design (issue #136): PropertyDefinition as a conventional relational table plus row-per-value PropertyValue plus in-process JSON Schema derivation, so a new definition is a plain row insert. Stays planned: this is a design record, not implementation - #51 owes the running application that proves it (ADR-0002's distinction)."
 - id: "FR-10"
   priority: MUST
   phase: p1
   title: "A property of datatype code MUST carry a terminology binding, not merely a datatype"
   status: planned
-  notes: ""
+  notes: "ADR-0012 fixes the binding as four real columns (binding_target, value_set_uri, strength, edition) with CHECK ((datatype = 'code') = (binding_target IS NOT NULL)), making a code-without-a-binding unrepresentable rather than merely refused by application code (issue #136). Stays planned pending #51/#52."
 - id: "FR-11"
   priority: MUST
   phase: p1
   title: "A property definition MUST NOT be deletable once any value has been recorded against it or once it has appeared in any published export"
   status: planned
-  notes: ""
+  notes: "ADR-0012 (issue #136) implements the stronger, unconditional form: no DELETE grant on property_definition at all, so the PRD's conditional test is never asked. Stays planned pending #55's privilege-refusal tests."
 - id: "FR-12"
   priority: MUST
   phase: p1
   title: "A property key MUST be immutable"
   status: planned
-  notes: ""
+  notes: "ADR-0012 (issue #136) fixes this as a column-level UPDATE grant excluding key/id/index_seq/origin/created_at, failing 42501 regardless of ORM or application code. Stays planned pending #55's refusal tests."
 - id: "FR-13"
   priority: SHOULD
   phase: p1
   title: "Properties marked filterable SHOULD have a supporting index created automatically"
   status: planned
-  notes: ""
+  notes: "ADR-0012 (issue #136) fixes the index shapes (GIN jsonb_path_ops for coded properties, expression indexes for string/url and decimal/positiveInt) as partial indexes named ix_propval_p{index_seq}_{slot}, and defers the DDL executor's topology to #54 as an explicit open question with two ruled-out candidates. Stays planned: no executor exists yet."
 - id: "FR-14"
   priority: MUST
   phase: p1
