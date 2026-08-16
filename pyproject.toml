@@ -99,7 +99,7 @@ markers = [
     "req(id): the FR-nn/NFR-nn requirement ID this test verifies",
     # Selection/readability only (issue #33) - every marked test also needs a
     # running Docker daemon (testcontainers), never a reason to skip it in CI.
-    "integration: exercises a real PostgreSQL instance via testcontainers",
+    "integration: exercises a real PostgreSQL or Keycloak instance via testcontainers",
 ]
 
 [tool.coverage.run]

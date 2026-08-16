@@ -189,6 +189,18 @@ jobs:
           ")
           docker pull "$IMAGE"
 
+      # Same rationale, for test_keycloak_realm.py's integration group
+      # (issue #40): a cache miss against the registry after the network
+      # block below would hang the container start.
+      - name: Pull the Keycloak image deploy/compose.yml pins
+        run: |
+          IMAGE=$(uv run python -c "
+          import yaml
+          with open('deploy/compose.yml') as f:
+              print(yaml.safe_load(f)['services']['keycloak']['image'])
+          ")
+          docker pull "$IMAGE"
+
       # Same rationale as transform-offline below: the Docker daemon is
       # reached over /var/run/docker.sock, invisible to iptables (AF_UNIX)
       # - so this proves the *test process* makes no other egress, not that

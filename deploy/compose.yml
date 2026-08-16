@@ -39,27 +39,38 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.1
     restart: unless-stopped
-    # start-dev: fine for the local/bootstrap stack this file targets. Realm
-    # configuration as code (ADR-0001) and a production start mode land with
-    # P1-3 (identity), not here - F-7 only proves Keycloak itself reaches
-    # healthy from a clean volume.
-    command: start-dev
+    # start-dev, no volume: the realm below (ADR-0014) is imported fresh on
+    # every container start, so reproducibility is by construction and any
+    # console tinkering is discarded on restart - a stronger guarantee than
+    # persisting Keycloak would give. Persisting Keycloak (KC_DB=postgres, a
+    # production start mode) is deployment hardening (P5), not here.
+    command: start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
+      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:5173}
+    volumes:
+      - ./keycloak/realm:/opt/keycloak/data/import:ro
     ports:
       - "${KEYCLOAK_PORT:-8080}:8080"
     healthcheck:
-      # No curl/wget in the Keycloak image - probe the management-port health
-      # endpoint (KC_HEALTH_ENABLED above) via bash's /dev/tcp instead.
+      # No curl/wget in the Keycloak image - probe via bash's /dev/tcp
+      # instead. Two probes, both required: the management-port health
+      # endpoint (KC_HEALTH_ENABLED above) proves the process started, and
+      # the realm's own discovery document proves the import in
+      # deploy/keycloak/realm/nptc-realm.json actually completed (NFR-03) -
+      # "healthy" means "the realm imported", not just "the process is up".
       test:
         - "CMD-SHELL"
         - >-
           exec 3<>/dev/tcp/localhost/9000 &&
           echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
-          grep -q '200 OK' <&3
+          grep -q '200 OK' <&3 &&
+          exec 4<>/dev/tcp/localhost/8080 &&
+          echo -e 'GET /realms/nptc/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&4 &&
+          grep -q '200 OK' <&4
       interval: 10s
       timeout: 5s
       retries: 15
