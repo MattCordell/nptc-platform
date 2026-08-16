@@ -16,6 +16,7 @@ dev = [
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
     "types-openpyxl>=3.1.5.20260807",
+    "testcontainers[postgres]>=4.9",
 ]
 
 # --- uv workspace -----------------------------------------------------------
@@ -63,10 +64,16 @@ known-first-party = ["nptc", "nptc_transform", "nptc_shared"]
 [tool.mypy]
 python_version = "3.12"
 mypy_path = ["backend/src", "transform/src", "shared/src"]
-files = ["backend/src", "transform/src", "shared/src", "scripts"]
+files = ["backend/src", "transform/src", "shared/src", "scripts", "backend/migrations"]
 strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
+# Required for nptc.settings.Settings (issue #33, first pydantic-settings
+# consumer): without this plugin, mypy sees a BaseSettings subclass as a
+# plain class and demands every required field as an explicit __init__
+# kwarg, even though pydantic-settings populates them from the environment
+# at runtime and Settings() with no arguments is the correct call.
+plugins = ["pydantic.mypy"]
 
 # No [[tool.mypy.overrides]] relaxing scripts/tests/ - a former "module = 'tests.*'"
 # override never matched anything (scripts/tests/ has no __init__.py, so mypy sees
@@ -89,9 +96,52 @@ markers = [
     # Traceability (docs/requirements/, scripts/traceability_check.py, F-5):
     # @pytest.mark.req("FR-07") links a test to the requirement it verifies.
     "req(id): the FR-nn/NFR-nn requirement ID this test verifies",
+    # Selection/readability only (issue #33) - every marked test also needs a
+    # running Docker daemon (testcontainers), never a reason to skip it in CI.
+    "integration: exercises a real PostgreSQL instance via testcontainers",
 ]
 
 [tool.coverage.run]
 branch = true
 source = ["backend/src", "transform/src", "shared/src", "scripts"]
 omit = ["scripts/tests/*"]
+
+# --- Alembic (issue #33) ----------------------------------------------------
+# Config lives here, not in a backend/alembic.ini: the root pyproject.toml
+# already owns every other tool's configuration (see the Ruff comment above),
+# and `%(here)s` is the only spelling of script_location that survives being
+# run from the repo root. Alembic 1.19's ScriptDirectory.from_config resolves
+# a *relative* script_location against the process cwd via
+# coerce_resource_to_filename - a `backend/alembic.ini` with
+# `script_location = migrations` would break every `uv run alembic ...`
+# invocation, since all uv commands run from the repo root. `%(here)s` is
+# substituted with this file's own absolute directory instead, so it is
+# invariant to cwd. No sqlalchemy.url here or anywhere else committed
+# (NFR-26) - see backend/migrations/env.py for how the URL is resolved.
+[tool.alembic]
+script_location = "%(here)s/backend/migrations"
+prepend_sys_path = []
+
+# Runs against every generated revision script. The stock alembic template
+# (superseded by backend/migrations/script.py.mako) emits
+# `from typing import Sequence, Union` and an unconditional
+# `import sqlalchemy as sa`, which fail ruff check (UP035, UP007, F401) the
+# first time a revision is generated - these hooks are what actually fixes
+# that up automatically rather than relying on a human to remember to run
+# ruff by hand before committing a new revision.
+#
+# type = "module" (`python -m ruff ...`), not "console_scripts": ruff ships
+# as a binary wheel and registers no `console_scripts` entry point for
+# importlib.metadata to find (verified empirically - "console_scripts"
+# fails with "Could not find entrypoint console_scripts.ruff").
+[[tool.alembic.post_write_hooks]]
+name = "ruff_check"
+type = "module"
+module = "ruff"
+options = "check --fix REVISION_SCRIPT_FILENAME"
+
+[[tool.alembic.post_write_hooks]]
+name = "ruff_format"
+type = "module"
+module = "ruff"
+options = "format REVISION_SCRIPT_FILENAME"

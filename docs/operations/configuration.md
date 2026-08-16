@@ -14,6 +14,8 @@ values (NFR-26).
 | `POSTGRES_PASSWORD` | `deploy/compose.yml`'s `postgres` service | `change-me` | Yes | Any local-only value |
 | `POSTGRES_DB` | `deploy/compose.yml`'s `postgres` service | `nptc` | No | `nptc` is fine |
 | `POSTGRES_PORT` | `deploy/compose.yml`'s `postgres` service (host port mapping) | `5432` | No | Change only if `5432` is already in use locally |
+| `NPTC_DATABASE_URL` | `nptc.settings.Settings` (backend) | *(no default - required)* | Yes | A DSN for the app runtime role (`nptc_app` membership) |
+| `NPTC_MIGRATION_DATABASE_URL` | `nptc.settings.Settings` (backend), Alembic (`backend/migrations/env.py`) | *(no default - required)* | Yes | A DSN for the owning role - typically `POSTGRES_USER` in this local stack |
 | `KEYCLOAK_ADMIN_USER` | `deploy/compose.yml`'s `keycloak` service | `admin` | No | `admin` is fine |
 | `KEYCLOAK_ADMIN_PASSWORD` | `deploy/compose.yml`'s `keycloak` service | `change-me` | Yes | Any local-only value |
 | `KEYCLOAK_PORT` | `deploy/compose.yml`'s `keycloak` service (host port mapping) | `8080` | No | Change only if `8080` is already in use locally |
@@ -25,6 +27,13 @@ values (NFR-26).
 | `NPTC_TX_MAX_CONCURRENCY` | `nptc_shared.terminology` batch sweep (FR-52) | `4` | No | `4` is fine; raise only with the server operator's knowledge |
 
 The `POSTGRES_*` and `KEYCLOAK_*` variables above are read only by `deploy/compose.yml`.
+`NPTC_DATABASE_URL` and `NPTC_MIGRATION_DATABASE_URL` are read by `nptc.settings.Settings`
+(issue #33's first `pydantic-settings` consumer, ADR-0003) — two separate DSNs for two
+separate roles, never one shared connection string. `NPTC_MIGRATION_DATABASE_URL` is also
+what `backend/migrations/env.py` resolves the migration connection from when nothing hands
+it a live connection directly (see [`upgrade.md`](upgrade.md)). Both are required with no
+default: a missing or empty value raises naming the variable, never silently falling back
+to a placeholder a misconfigured deployment could run against for a while (NFR-26).
 The `NPTC_TX_*` variables are the first read by Python code —
 `nptc_shared.terminology.TerminologyConfig.from_env()` (FR-53), used identically by the
 backend and the transform (see [ADR-0003](../adr/0003-terminology-client-in-shared.md)
