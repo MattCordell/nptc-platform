@@ -14,7 +14,7 @@ repository layout in the PRD's delivery plan):
 - releases/     snapshots, export config versions (P4)
 - exports/      csv, xlsx, fhir supplement renderers (P4)
 - jobs/         SKIP LOCKED job queue and scheduler (P3)
-- db/           models, session, Alembic environment (P1-1)
+- db/           models and Alembic environment (P1-1, issue #33); session.py still owed
 """
 
 __version__ = "0.0.0"

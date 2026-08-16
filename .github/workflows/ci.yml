@@ -144,6 +144,87 @@ jobs:
         if: always()
         run: sudo iptables -P OUTPUT ACCEPT
 
+  backend-integration:
+    name: Backend integration tests (real Postgres, no other network egress - NFR-37/NFR-39)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # An ephemeral runner is discarded either way once the job ends, so
+      # Ryuk's usual crash-cleanup role buys nothing here, and disabling it
+      # removes a *second* image pull that would otherwise need network
+      # access after egress is blocked below. Do not set this for local
+      # development - a long-lived dev machine still wants Ryuk's safety net.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Caching deliberately off, same reason as transform-offline below:
+      # setup-uv's cache-save runs as a separate *post*-job step, after the
+      # one that blocks network egress, and a cache save needs the network.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+
+      - name: Install workspace
+        run: uv sync --all-packages --locked
+
+      # Pulled *before* the network block below: testcontainers needs this
+      # image already cached locally by the time the tests run, since a
+      # cache miss would need the registry over the network this job is
+      # about to cut off. Parsed with the same pyyaml-based reader
+      # backend/tests/conftest.py's _image_from_compose uses (rather than a
+      # second, ad hoc grep/sed parser that would silently pick up a
+      # trailing comment or quoting change compose.yml never intended as
+      # its pinned tag) - so there remains exactly one parser for this file.
+      - name: Pull the Postgres image deploy/compose.yml pins
+        run: |
+          IMAGE=$(uv run python -c "
+          import yaml
+          with open('deploy/compose.yml') as f:
+              print(yaml.safe_load(f)['services']['postgres']['image'])
+          ")
+          docker pull "$IMAGE"
+
+      # Same rationale as transform-offline below: the Docker daemon is
+      # reached over /var/run/docker.sock, invisible to iptables (AF_UNIX)
+      # - so this proves the *test process* makes no other egress, not that
+      # the container itself makes none (container traffic transits
+      # FORWARD, not OUTPUT - the right scope for NFR-37 here; ADR-0011
+      # explains why -P FORWARD DROP is not added on top of this).
+      #
+      # The docker0 ACCEPT rule is required, not merely -o lo: connecting
+      # from the host to a published container port (127.0.0.1:<port>)
+      # gets its destination DNAT-rewritten to the container's bridge IP
+      # in the nat table before the filter table's OUTPUT chain ever sees
+      # the packet, so it egresses via docker0, not lo - a bare -o lo
+      # ACCEPT (verified empirically: every backend/tests DB fixture timed
+      # out connecting to the mapped port with only that rule in place)
+      # silently black-holes every connection to the test container.
+      - name: Block outbound network egress
+        run: |
+          sudo iptables -P OUTPUT DROP
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -o docker0 -j ACCEPT
+          sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+      # backend/tests also runs, with network, inside the `python` job's
+      # coverage gate above - this job's job is proving NFR-37, not
+      # covering backend/tests a second time for coverage. Adding
+      # scripts/tests here too means every one of testpaths' four
+      # directories has now run under a network-egress block at least once
+      # between this job and transform-offline, which is what actually
+      # lets NFR-37 move to `implemented` (docs/requirements/requirements.yaml).
+      - name: Run backend + scripts tests against a real Postgres container
+        run: uv run pytest backend/tests scripts/tests
+
+      - name: Restore network egress
+        if: always()
+        run: sudo iptables -P OUTPUT ACCEPT
+
   frontend:
     name: Frontend (lint, typecheck, test, build)
     needs: changes
@@ -202,7 +283,7 @@ jobs:
   required:
     name: Required (CI)
     if: always()
-    needs: [changes, python, transform-offline, frontend]
+    needs: [changes, python, transform-offline, backend-integration, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -212,6 +293,7 @@ jobs:
             "${{ needs.changes.result }}" \
             "${{ needs.python.result }}" \
             "${{ needs.transform-offline.result }}" \
+            "${{ needs.backend-integration.result }}" \
             "${{ needs.frontend.result }}"; do
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "::error::A required job did not succeed (result: $result)"
