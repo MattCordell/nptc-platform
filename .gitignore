@@ -59,3 +59,4 @@ Thumbs.db
 # --- Local override files ---
 docker-compose.override.yml
 *.local.yml
+P1-SEQUENCING.md
