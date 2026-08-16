@@ -57,3 +57,4 @@ If it's unclear which of the two a change is, it's a reversal: supersede.
 | [0009](0009-defect-report-structure-and-cell-references.md) | Grouped defect report structure and a structured `CellRef` location — Band → FindingCode grouping, no CSV, `report.json` schema 7 |
 | [0010](0010-import-dataset-format.md) | Import dataset format and the transform's role in minting `business_key` |
 | [0011](0011-database-migration-foundation.md) | Database migration foundation — Alembic config in `pyproject.toml`, the least-privilege `nptc_app` role proven by refusal tests, the testcontainers integration harness, and the reflection-fingerprint round-trip check |
+| [0012](0012-property-registry-storage-and-validation.md) | Property registry storage and validation — `PropertyDefinition` as a conventional relational table, row-per-value `PropertyValue`, in-process JSON Schema derivation keyed on `(key, row_version)`, and the FR-13 partial-index naming scheme |
