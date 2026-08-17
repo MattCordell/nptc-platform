@@ -170,3 +170,14 @@ def app_db(app_engine: Engine) -> Iterator[Connection]:
             yield connection
         finally:
             transaction.rollback()
+
+
+@pytest.fixture(scope="session")
+def app_login_credentials(migrated: None) -> tuple[str, str]:
+    """`(APP_LOGIN_ROLE, APP_LOGIN_PASSWORD)`, for a test module that needs
+    to authenticate as the login role against a database other than
+    `postgres_container`'s own (test_db_round_trip.py's `nptc_roundtrip`) -
+    the module constants themselves are already exported, but a fixture
+    lets such a module depend on `migrated` (the role actually existing)
+    through the fixture graph rather than a bare module-level import."""
+    return APP_LOGIN_ROLE, APP_LOGIN_PASSWORD

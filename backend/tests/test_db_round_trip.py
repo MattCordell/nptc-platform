@@ -41,15 +41,6 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine, make_url
 from testcontainers.community.postgres import PostgresContainer
 
-_conftest_spec = importlib.util.spec_from_file_location(
-    "_test_db_round_trip_conftest", Path(__file__).parent / "conftest.py"
-)
-assert _conftest_spec is not None and _conftest_spec.loader is not None
-_conftest = importlib.util.module_from_spec(_conftest_spec)
-_conftest_spec.loader.exec_module(_conftest)
-APP_LOGIN_ROLE = _conftest.APP_LOGIN_ROLE
-APP_LOGIN_PASSWORD = _conftest.APP_LOGIN_PASSWORD
-
 _support_spec = importlib.util.spec_from_file_location(
     "_test_db_round_trip_audit_privilege_support",
     Path(__file__).parent / "audit_privilege_support.py",
@@ -221,6 +212,7 @@ def test_downgrade_base_then_upgrade_head_reproduces_the_same_schema(
 def roundtrip_app_engine(
     roundtrip_engine: Engine,
     round_tripped: tuple[dict[str, Any], dict[str, Any]],
+    app_login_credentials: tuple[str, str],
 ) -> Iterator[Engine]:
     """Authenticates as `nptc_app_login` against `nptc_roundtrip`, exactly
     as `app_engine` does against `nptc_test` (conftest.py) - a genuinely
@@ -235,7 +227,8 @@ def roundtrip_app_engine(
     `downgrade base` -> `upgrade head` round trip, not the schema from the
     first `upgrade head` alone.
     """
-    roundtrip_url = roundtrip_engine.url.set(username=APP_LOGIN_ROLE, password=APP_LOGIN_PASSWORD)
+    login_role, login_password = app_login_credentials
+    roundtrip_url = roundtrip_engine.url.set(username=login_role, password=login_password)
     engine = create_engine(roundtrip_url.render_as_string(hide_password=False))
     try:
         yield engine
@@ -253,7 +246,6 @@ def roundtrip_app_db(roundtrip_app_engine: Engine) -> Iterator[Connection]:
             transaction.rollback()
 
 
-@pytest.mark.req("NFR-09")
 @pytest.mark.integration
 def test_app_role_can_still_insert_and_select_after_round_trip(
     roundtrip_app_db: Connection,

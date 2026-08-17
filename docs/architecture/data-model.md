@@ -84,8 +84,7 @@ The refusals above are asserted twice: once against a freshly migrated database
 (`backend/tests/test_db_audit_privileges.py`) and once against a database that has been
 through a full `downgrade base` -> `upgrade head` round-trip
 (`backend/tests/test_db_round_trip.py`'s `test_app_role_is_still_refused_*_after_round_trip`
-tests) - see the `audit_event` section below for why the round-trip's own reflection
-fingerprint isn't sufficient to make that second assertion on its own.
+tests) - see the `audit_event` section below for what each of the two catches.
 
 For `app_user` (issue #42): `GRANT SELECT, INSERT` plus a **column-level**
 `GRANT UPDATE (username, display_name, organisation, status, closed_at, updated_at)` -
@@ -103,16 +102,20 @@ column-level `app_user` grant is not silently invisible to the round-trip check.
 
 The minimal table NFR-08 will eventually be built on. `prev_hash`/`entry_hash` (NFR-10, the
 hash chain) and `verify_audit_chain.py` land with #36. The append-only re-assertion after a
-downgrade/upgrade round-trip (part of #35's acceptance criteria) is covered in two parts:
-`backend/tests/test_db_round_trip.py`'s reflection fingerprint folds
-`information_schema.role_table_grants` into its comparison, which catches a grant
-*changing* across the round-trip - but `before`/`after` are both taken from the same
-database, so a grant missing in both compares equal and passes, meaning the fingerprint
-alone cannot catch a grant that silently *disappeared* on re-migration. That absence case is
-what the same file's `test_app_role_is_still_refused_update_after_round_trip`,
-`..._delete_after_round_trip` and `..._truncate_after_round_trip` tests assert instead: real
-UPDATE/DELETE/TRUNCATE statements, run as `nptc_app_login` (never a superuser connection),
-against the schema produced by an actual `downgrade base` -> `upgrade head` round-trip.
+downgrade/upgrade round-trip (part of #35's acceptance criteria) was already satisfied by
+`backend/tests/test_db_round_trip.py`'s reflection fingerprint, which folds
+`information_schema.role_table_grants` into its comparison: a grant present before the
+round-trip and gone after it makes `before` and `after` differ, so a grant that
+*disappears* across a re-migration is exactly the fingerprint's strongest case, not a blind
+spot. The same file's `test_app_role_is_still_refused_update_after_round_trip`,
+`..._delete_after_round_trip` and `..._truncate_after_round_trip` tests add a *behavioural*
+confirmation on top: real UPDATE/DELETE/TRUNCATE statements, run as the genuinely separate
+`nptc_app_login` login (never a superuser connection), against the schema produced by an
+actual `downgrade base` -> `upgrade head` round-trip. That stays meaningful independently of
+what columns `_fingerprint` happens to query - a grant present in both fingerprints but
+ineffective for some other reason would still fail these tests - whereas a grant that was
+never made in the first place is the fingerprint's own blind spot, and is instead what
+`backend/tests/test_db_audit_privileges.py`'s fresh-database refusal tests cover.
 
 | Column | Type | Notes |
 |---|---|---|
