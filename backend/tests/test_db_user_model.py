@@ -16,9 +16,19 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
+from nptc.audit.hashing import GENESIS_HASH
+
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
 _FOREIGN_KEY_VIOLATION = "23503"
+
+# A fixed, valid-shape (64 lowercase hex) placeholder pair for prev_hash/
+# entry_hash - these are FK-behaviour tests (NFR-13), not hash-chain
+# tests, so the literal need not satisfy the real digest, only the
+# NOT NULL + CHECK constraints. Distinct from the placeholders in
+# audit_privilege_support.py/test_auth_account_closure.py purely so a
+# reader never mistakes one module's literal for another's.
+_PLACEHOLDER_ENTRY_HASH = "a" * 64
 
 _INSERT_ACTIVE_USER = text(
     "INSERT INTO app_user (username, display_name) VALUES (:username, :display_name) RETURNING id"
@@ -30,8 +40,11 @@ _INSERT_IDENTITY = text(
     "INSERT INTO user_identity (user_id, issuer, subject) VALUES (:user_id, :issuer, :subject)"
 )
 _INSERT_AUDIT_EVENT = text(
-    "INSERT INTO audit_event (actor_user_id, correlation_id, action, entity_type, entity_id) "
-    "VALUES (:actor_user_id, :correlation_id, :action, :entity_type, :entity_id) RETURNING id"
+    "INSERT INTO audit_event "
+    "(actor_user_id, correlation_id, action, entity_type, entity_id, prev_hash, entry_hash) "
+    "VALUES "
+    "(:actor_user_id, :correlation_id, :action, :entity_type, :entity_id, :prev_hash, :entry_hash) "
+    "RETURNING id"
 )
 
 
@@ -51,6 +64,8 @@ def _insert_audit_event(db: Connection, actor_user_id: uuid.UUID | None) -> None
             "action": "test.action",
             "entity_type": "test_entity",
             "entity_id": "1",
+            "prev_hash": GENESIS_HASH,
+            "entry_hash": _PLACEHOLDER_ENTRY_HASH,
         },
     )
 

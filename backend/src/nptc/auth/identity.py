@@ -25,6 +25,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nptc.audit.writer import AuditContext, append_audit_event
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.linking import may_auto_link
 from nptc.db.models.user import User, UserStatus
@@ -228,24 +229,34 @@ def resolve_user_for_claims(
     return Resolution(outcome=LinkOutcome.AUTO_LINKED, user=user)
 
 
-def close_account(session: Session, user_id: uuid.UUID) -> None:
+def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> None:
     """Pseudonymises the user and removes every linked identity (NFR-17).
 
     Never deletes the ``app_user`` row - the privilege grants in migration
     0003 make that structurally impossible even if this function tried.
-    Idempotent: closing an already-closed account is a no-op.
+    Idempotent: closing an already-closed account is a no-op, and emits no
+    audit event in that case - nothing changed, so there is nothing to
+    record.
 
-    Deliberately does **not** emit an audit event, despite this being a
-    state-changing write NFR-08 would otherwise require one for: there is
-    no audit writer yet, and ``audit_event`` itself already accepts rows
-    (see ``backend/tests/test_auth_account_closure.py``'s direct insert),
-    so this is a real gap, not a merely theoretical one. **Tracked by
-    issue #36** (the ``audit_event`` hash-chain writer) - when #36 lands,
-    this call site is the pickup point for wiring in the actual event.
+    Emits a single ``user.closed`` event (NFR-08, NFR-10 - issue #36 is
+    this call site's pickup point). Neither ``before`` nor ``after`` ever
+    carries the identifying values themselves (NFR-26/NFR-35): ``before``
+    records only the pre-closure ``status`` and the *names* of the fields
+    about to be pseudonymised, never their values, since ``audit_event``
+    is INSERT/SELECT-only for the app role (NFR-09) - anything written
+    into ``before`` is permanent, so writing the real values there would
+    defeat NFR-17's pseudonymisation the moment this event is emitted
+    (NFR-16, PRD OI-15). ``after`` only records that the fields are now
+    null and the account is closed.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
         return
+
+    before_state: dict[str, object] = {
+        "status": user.status,
+        "pseudonymised_fields": sorted(["username", "display_name", "organisation"]),
+    }
 
     session.execute(delete(UserIdentity).where(UserIdentity.user_id == user_id))
     user.username = None
@@ -253,6 +264,22 @@ def close_account(session: Session, user_id: uuid.UUID) -> None:
     user.organisation = None
     user.status = UserStatus.CLOSED
     user.closed_at = datetime.now(UTC)
+
+    after_state: dict[str, object] = {
+        "username": None,
+        "display_name": None,
+        "organisation": None,
+        "status": user.status,
+    }
+    append_audit_event(
+        session,
+        audit,
+        action="user.closed",
+        entity_type="app_user",
+        entity_id=str(user_id),
+        before=before_state,
+        after=after_state,
+    )
 
 
 class UserRef(BaseModel):

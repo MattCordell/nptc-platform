@@ -686,20 +686,20 @@
   priority: MUST
   phase: p1
   title: "A single append-only audit log capturing every state-changing operation"
-  status: planned
-  notes: "The audit_event table itself lands with issue #33 (nptc.db.models.audit, ADR-0011); stays planned until real write paths exist to emit into it (#35/#36 and beyond)."
+  status: in-progress
+  notes: "The audit_event table itself lands with issue #33 (nptc.db.models.audit, ADR-0011); nptc.audit.writer.append_audit_event (issue #36, ADR-0017) is the sole write path, using the database clock (clock_timestamp()) for occurred_at, never the client. One real call site exists (auth.identity.close_account emits user.closed); stays in-progress until every state-changing write path emits."
 - id: "NFR-09"
   priority: MUST
   phase: p1
   title: "Append-only MUST be enforced at the database privilege level"
-  status: planned
-  notes: "The audit_event table's INSERT/SELECT-only grant and its UPDATE/DELETE/TRUNCATE refusal tests land with issue #33 (backend/tests/test_db_audit_privileges.py, marked NFR-09; ADR-0011). Issue #35's post-round-trip re-assertion criterion is now covered by backend/tests/test_db_round_trip.py's test_app_role_is_still_refused_*_after_round_trip tests. Stays planned rather than moving to implemented: the NFR-10 hash chain (#36) that makes the log genuinely tamper-evident is still owed."
+  status: implemented
+  notes: "The audit_event table's INSERT/SELECT-only grant and its UPDATE/DELETE/TRUNCATE refusal tests land with issue #33 (backend/tests/test_db_audit_privileges.py, marked NFR-09; ADR-0011). Issue #35's post-round-trip re-assertion criterion is covered by backend/tests/test_db_round_trip.py's test_app_role_is_still_refused_*_after_round_trip tests. Moves to implemented with issue #36 (ADR-0017): the NFR-10 hash chain now makes the log genuinely tamper-evident against a table owner, not merely refusal-enforced against the application role."
 - id: "NFR-10"
   priority: SHOULD
   phase: p1
   title: "Each entry includes a SHA-256 hash over its own content plus the previous entry's hash, forming a chain"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc.audit.hashing (issue #36, ADR-0017): prev_hash/entry_hash columns (migration 0004_audit_event_hash_chain.py), a canonical-JSON SHA-256 digest over every audit_event column except entry_hash and sequence, and nptc.audit.verification.verify_chain, which streams the chain in sequence order and reports the first prev_hash/entry_hash mismatch. backend/tests/test_audit_hashing.py is offline; backend/tests/test_audit_chain.py and backend/tests/test_audit_tamper_detection.py are integration, covering per-column tamper, deletion, re-order, awkward JSONB round-trips and concurrent-append serialisation via pg_advisory_xact_lock. The operator CLI wrapping verify_chain (scripts/verify_audit_chain.py) stays with #38."
 - id: "NFR-11"
   priority: MUST
   phase: p1
@@ -869,7 +869,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27."
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5's detection half (audit log tampering is detected) landed with issue #36's hash chain (backend/tests/test_audit_tamper_detection.py); the operator-command half (scripts/verify_audit_chain.py) is still owed to #38."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1
