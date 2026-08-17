@@ -44,6 +44,45 @@ result in a `finally:` block, so a failed fetch cached `None` and wiped a perfec
 discard valid cached keys"). The floor is stated with a comment in `backend/pyproject.toml`
 naming the CVE, so a future contributor relaxing it sees why not to.
 
+**The JWKS fallback catch is narrow, and time-bounded — an early review round caught the
+opposite of both.** The first `SigningKeys` catch was `PyJWKClientError`, the base of PyJWT's
+own JWKS exception hierarchy — which also covers "the fetch succeeded and this `kid` simply
+isn't in the set any more" (the operator revoked or rotated it away). Catching that broadly
+meant a revoked key kept verifying for the rest of the process's lifetime purely because it had
+once resolved successfully; the fallback is now narrowed to `PyJWKClientConnectionError` only
+(a genuine transport failure), with `PyJWKClientError`/`PyJWKSetError` (the latter PyJWT's
+separate exception for an entirely empty key set) refusing outright instead. The same review
+round noted the surviving fallback was unbounded in time — a key seen once was a fallback
+forever — so `max_fallback_age_seconds` (default `10 * cache_seconds`) now ages a fallback entry
+out once an outage has outlasted a rotation window, timestamped against when the key was *last
+confirmed present* in a fetch (not merely first seen), so a key still being served right up
+until an outage starts gets the full window, not whatever was left over from its first
+appearance. Deliberately not exposed as an `NPTC_*` variable alongside the other JWKS knobs: it
+derives from `cache_seconds` rather than adding a fifth knob for a rare-outage safety margin, not
+routine deployment tuning.
+
+**The refresh cooldown also covers a known `kid`, not only an unrecognised one — a gap the same
+review round identified.** Without this, once `PyJWKClient`'s own cache lifespan expires, every
+verification during an outage re-attempts the fetch and blocks for up to `timeout_seconds`
+before falling back — turning an IdP outage into a request-latency outage even though the key is
+already cached. A known `kid` seen within the cooldown of the *last failed* fetch now skips the
+network attempt entirely and returns the cached key directly (still subject to
+`max_fallback_age_seconds`). This is safe even after a real recovery: a successful fetch
+refreshes `PyJWKClient`'s own cache, so the only cost of skipping is noticing that recovery up to
+one cooldown window late.
+
+**Errors that previously escaped the `TokenError` hierarchy are now wrapped, not merely
+documented as caught.** `jwt.get_unverified_header` on a structurally invalid bearer value
+(anything an unauthenticated caller sends, not just a well-formed-but-wrong token) raised a raw
+`jwt.exceptions.DecodeError` in both `tokens.py` and `jwks.py`; `nptc.auth.discovery`'s
+transport failures, non-JSON bodies and a document missing `jwks_uri` propagated raw `httpx`/
+`ValueError`/`KeyError` instances. Both are now caught and re-raised as `TokenInvalidError`/
+`SigningKeyUnavailableError` respectively, so a future FastAPI dependency can genuinely catch one
+exception family and map it to a 401, as `nptc.auth.errors`'s own module docstring already
+claimed before this was true in every case. The NFR-21 plain-http/non-localhost check in
+`resolve_jwks_url` was also reordered to run *before* the discovery request rather than after, so
+a refused issuer is never actually contacted over cleartext.
+
 **OIDC discovery, not string-concatenating Keycloak's own `/protocol/openid-connect/certs`
 path.** Discovery is one HTTP round trip on `TokenVerifier` construction (not per-request — the
 resolved `jwks_url` is cached in the constructed `SigningKeys`), and it is what lets

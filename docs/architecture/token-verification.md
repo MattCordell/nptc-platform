@@ -45,22 +45,41 @@ the header *before* any JWKS request, so a malicious `alg` never causes network 
 
 ## JWKS retrieval and the refresh cooldown
 
-`nptc.auth.jwks.SigningKeys` wraps `jwt.PyJWKClient`, adding two things it does not itself
-guarantee:
+`nptc.auth.jwks.SigningKeys` wraps `jwt.PyJWKClient`, adding what it does not itself guarantee:
 
-- **A fallback that survives cache expiry.** `PyJWKClient`'s own cache holds only the most
-  recent fetch; once its `lifespan` elapses, the next lookup re-fetches and *raises* on
-  failure — even for a `kid` this process has already seen and validated. `SigningKeys` keeps
-  its own `dict[str, PyJWK]` of every key that has ever resolved successfully and falls back to
-  it when the live fetch fails. `pyjwt>=2.13` (see `backend/pyproject.toml`'s dependency
-  comment) is what stops a *failed* fetch from wiping `PyJWKClient`'s own cache
-  (GHSA-fhv5-28vv-h8m8 — an earlier PyJWT wrote its fetch result in a `finally:` block, so a
-  failed fetch cached `None`); this fallback map is what stops an *expired* cache plus a down
-  IdP from rejecting a token this process could still verify.
-- **A refresh cooldown.** `PyJWKClient` re-fetches the whole JWKS on any unrecognised `kid`, so
-  an unauthenticated caller spraying random `kid` values makes the backend hammer Keycloak. An
-  unknown `kid` seen within `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` of the last refresh attempt is
-  refused with zero HTTP requests; genuine key rotation still lands within one cooldown window.
+- **A fallback that survives a *transport* outage — not revocation, and not forever.**
+  `PyJWKClient`'s own cache holds only the most recent fetch; once its `lifespan` elapses, the
+  next lookup re-fetches and *raises* on failure — even for a `kid` this process has already
+  seen and validated. `SigningKeys` keeps its own `dict[str, tuple[PyJWK, float]]` of every key
+  that has ever resolved successfully, with the time it was *last confirmed present* in a fetch,
+  and falls back to it — **only** when the live fetch raises `PyJWKClientConnectionError` (the
+  endpoint could not be reached at all). `pyjwt>=2.13` (see `backend/pyproject.toml`'s
+  dependency comment) is the companion fix stopping a *failed* fetch from wiping `PyJWKClient`'s
+  own cache outright (GHSA-fhv5-28vv-h8m8 — an earlier PyJWT wrote its fetch result in a
+  `finally:` block, so a failed fetch cached `None`); this fallback map is what stops an
+  *expired* cache plus a down IdP from rejecting a token this process could still verify.
+
+  The catch is deliberately narrow: a **successful** fetch that simply no longer lists a given
+  `kid` (the operator revoked or rotated it away, or the whole set is now empty —
+  `PyJWKClientError`/`PyJWKSetError`, a separate exception family PyJWT raises for that case)
+  never falls back — that would keep accepting tokens signed by a key the IdP has explicitly
+  retired, for the rest of the process's lifetime. A fallback entry is also bounded in time:
+  `max_fallback_age_seconds` (default `10 * cache_seconds`, not independently configurable via
+  an `NPTC_*` variable — it derives from `NPTC_JWKS_CACHE_SECONDS` rather than adding a fifth
+  knob for what is a rare-outage safety margin, not routine deployment tuning) means "survive a
+  blip" cannot silently become "survive forever" once an outage outlasts a rotation window.
+- **A refresh cooldown, covering both an unrecognised `kid` and a known one.** `PyJWKClient`
+  re-fetches the whole JWKS on any unrecognised `kid`, so an unauthenticated caller spraying
+  random `kid` values makes the backend hammer Keycloak. An unknown `kid` seen within
+  `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` of the last refresh attempt is refused with zero HTTP
+  requests; genuine key rotation still lands within one cooldown window. The same cooldown also
+  covers a **known** `kid` once a live fetch has actually failed: without this, once
+  `PyJWKClient`'s own cache lifespan expires, every verification during an outage would
+  re-attempt the fetch and block for up to `timeout_seconds` before falling back — turning an
+  IdP outage into a request-latency outage even though the key is already cached. This is safe
+  even after the endpoint recovers: a successful fetch refreshes `PyJWKClient`'s own cache for
+  `cache_seconds`, so skipping a retry during the cooldown only delays noticing a real recovery
+  by at most one cooldown window.
 
 Never a bypass: there is no code path from "no key could be obtained" to "accept the token
 anyway".
@@ -69,12 +88,18 @@ anyway".
 
 `nptc.auth.discovery.resolve_jwks_url` fetches `{issuer}/.well-known/openid-configuration` and
 returns its `jwks_uri`, refusing three ways a discovery document could misdirect trust before
-anything is verified:
+anything is verified — checked in this order:
 
-- the document's own `issuer` does not match the issuer requested.
-- `jwks_uri` is not same-origin (scheme/host/port) with the issuer.
-- the issuer is plain `http` on a non-localhost host (NFR-21) — Keycloak's dev stack is
-  http-on-localhost, so that one case is allowed and documented, not a loophole.
+1. the issuer is plain `http` on a non-localhost host (NFR-21) — checked **before** any request
+   is made, so a refused configuration is never actually contacted over cleartext. Keycloak's
+   dev stack is http-on-localhost, so that one case is allowed and documented, not a loophole.
+2. the document's own `issuer` does not match the issuer requested.
+3. `jwks_uri` is not same-origin (scheme/host/port) with the issuer.
+
+A transport failure, a non-2xx response, a non-JSON body, or a document missing `jwks_uri` all
+raise `SigningKeyUnavailableError` rather than propagating a raw `httpx`/`ValueError`/`KeyError`
+— the same "one exception family a caller can catch" contract `nptc.auth.errors` states for
+every other module here.
 
 `NPTC_JWKS_URL` skips discovery entirely, for air-gapped deployments and so the offline test
 suite only ever needs one local HTTP endpoint per test.

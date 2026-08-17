@@ -153,13 +153,14 @@ def test_unknown_kid_within_cooldown_issues_zero_http_requests() -> None:
 
 
 @pytest.mark.req("NFR-07")
-def test_revoked_key_is_refused_even_though_the_fetch_succeeds() -> None:
-    """A `kid` that is simply no longer published - the operator revoked
-    or rotated it away - must never fall back to a previously-cached key:
-    that would keep accepting tokens signed by a key the IdP has
-    explicitly retired. This is distinct from an unreachable endpoint
-    (the other tests in this module), where falling back is exactly the
-    point."""
+def test_revoked_key_is_refused_even_though_a_different_key_is_still_published() -> None:
+    """The realistic rotation-away shape: `key-1` is revoked but `key-2`
+    is still published, so the lookup takes the `PyJWKClientError` "no
+    matching kid" branch, not the empty-set (`PyJWKSetError`) one covered
+    separately below. Falling back here would keep accepting tokens
+    signed by a key the IdP has explicitly retired - distinct from an
+    unreachable endpoint (the other tests in this module), where falling
+    back is exactly the point."""
     with running_stub_idp() as stub:
         key = generate_rsa_key()
         stub.add_key("key-1", key)
@@ -172,10 +173,60 @@ def test_revoked_key_is_refused_even_though_the_fetch_succeeds() -> None:
         keys.signing_key_for(token)
 
         del stub.keys["key-1"]
+        stub.add_key("key-2", generate_rsa_key())
         time.sleep(0.05)
 
         with pytest.raises(SigningKeyUnavailableError):
             keys.signing_key_for(token)
+
+
+@pytest.mark.req("NFR-07")
+def test_revoked_key_is_refused_when_the_whole_set_is_now_empty() -> None:
+    """The other, separate PyJWT exception family (`PyJWKSetError`) for
+    an empty JWKS - must refuse the same way as the non-empty-but-missing
+    case above, not silently fall back."""
+    with running_stub_idp() as stub:
+        key = generate_rsa_key()
+        stub.add_key("key-1", key)
+        keys = SigningKeys(stub.jwks_url, cache_seconds=0.01)
+        token = mint_token(key, kid="key-1", issuer=stub.issuer_url)
+
+        keys.signing_key_for(token)
+
+        del stub.keys["key-1"]
+        time.sleep(0.05)
+
+        with pytest.raises(SigningKeyUnavailableError):
+            keys.signing_key_for(token)
+
+
+@pytest.mark.req("NFR-07")
+def test_known_kid_outage_skips_repeated_retries_within_cooldown() -> None:
+    """Once a live fetch has failed for a known kid, a subsequent lookup
+    within the cooldown window must not re-attempt the network call at
+    all - otherwise every verification during an outage would block on
+    `timeout_seconds` even though the key is already cached, turning an
+    IdP outage into a request-latency outage."""
+    with running_stub_idp() as stub:
+        key = generate_rsa_key()
+        stub.add_key("key-1", key)
+        keys = SigningKeys(stub.jwks_url, cache_seconds=0.01, refresh_cooldown_seconds=60.0)
+        token = mint_token(key, kid="key-1", issuer=stub.issuer_url)
+
+        keys.signing_key_for(token)
+        time.sleep(0.05)
+
+        stub.fail = True
+        # First failure: falls back, and starts the outage cooldown.
+        resolved = keys.signing_key_for(token)
+        assert resolved.key_id == "key-1"
+        request_count_after_first_failure = stub.request_count
+
+        # Still within the cooldown: no further request, same cached key.
+        resolved_again = keys.signing_key_for(token)
+
+        assert resolved_again.key_id == "key-1"
+        assert stub.request_count == request_count_after_first_failure
 
 
 @pytest.mark.req("NFR-07")

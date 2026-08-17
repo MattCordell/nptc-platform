@@ -75,8 +75,13 @@ alongside a realm change. `NPTC_JWKS_URL` is normally left empty so the JWKS end
 resolved via OIDC discovery against `NPTC_OIDC_ISSUER`; set it explicitly only for an
 air-gapped deployment that cannot reach a discovery endpoint. `NPTC_JWKS_CACHE_SECONDS` and
 `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` tune `nptc.auth.jwks.SigningKeys`'s own key cache and its
-refresh cooldown against `kid`-spraying; the defaults are untuned constants, not a measurement
-against a specific deployment.
+refresh cooldown against `kid`-spraying (the same cooldown also covers retrying a known `kid`
+during an IdP outage, so it does not turn into a request-latency outage); the defaults are
+untuned constants, not a measurement against a specific deployment. `SigningKeys`'s
+`max_fallback_age_seconds` (how long an unreachable-endpoint fallback key is trusted for, default
+`10 * NPTC_JWKS_CACHE_SECONDS`) is deliberately **not** an environment variable alongside these
+two - it derives from `NPTC_JWKS_CACHE_SECONDS` rather than adding a fifth knob for what is a
+rare-outage safety margin, not routine deployment tuning.
 
 ## Keycloak realm import
 
