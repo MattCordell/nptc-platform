@@ -693,7 +693,7 @@
   phase: p1
   title: "Append-only MUST be enforced at the database privilege level"
   status: planned
-  notes: "The audit_event table's INSERT/SELECT-only grant and its UPDATE/DELETE/TRUNCATE refusal tests land with issue #33 (backend/tests/test_db_audit_privileges.py, marked NFR-09; ADR-0011). Stays planned rather than moving to implemented: the hash chain (NFR-10, #36) and the post-round-trip grant re-assertion (#35) that make the log genuinely tamper-evident are still owed."
+  notes: "The audit_event table's INSERT/SELECT-only grant and its UPDATE/DELETE/TRUNCATE refusal tests land with issue #33 (backend/tests/test_db_audit_privileges.py, marked NFR-09; ADR-0011). Issue #35's post-round-trip re-assertion criterion is now covered by backend/tests/test_db_round_trip.py's test_app_role_is_still_refused_*_after_round_trip tests. Stays planned rather than moving to implemented: the NFR-10 hash chain (#36) that makes the log genuinely tamper-evident is still owed."
 - id: "NFR-10"
   priority: SHOULD
   phase: p1

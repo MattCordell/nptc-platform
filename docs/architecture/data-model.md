@@ -80,6 +80,13 @@ Grants live in the **same migration that creates the table**
 separate migration would leave a re-created table grant-less after a
 `downgrade base` → `upgrade head` round-trip.
 
+The refusals above are asserted twice: once against a freshly migrated database
+(`backend/tests/test_db_audit_privileges.py`) and once against a database that has been
+through a full `downgrade base` -> `upgrade head` round-trip
+(`backend/tests/test_db_round_trip.py`'s `test_app_role_is_still_refused_*_after_round_trip`
+tests) - see the `audit_event` section below for why the round-trip's own reflection
+fingerprint isn't sufficient to make that second assertion on its own.
+
 For `app_user` (issue #42): `GRANT SELECT, INSERT` plus a **column-level**
 `GRANT UPDATE (username, display_name, organisation, status, closed_at, updated_at)` -
 excluding `id` and `created_at`, so the retained UUID is immutable even to the app role
@@ -95,10 +102,17 @@ column-level `app_user` grant is not silently invisible to the round-trip check.
 ## `audit_event`
 
 The minimal table NFR-08 will eventually be built on. `prev_hash`/`entry_hash` (NFR-10, the
-hash chain) and `verify_audit_chain.py` land with #36; the append-only re-assertion after a
-downgrade/upgrade round-trip (part of #35's acceptance criteria) is already covered here by
-the reflection fingerprint in `backend/tests/test_db_round_trip.py`, which folds
-`information_schema.role_table_grants` into the comparison for exactly that reason.
+hash chain) and `verify_audit_chain.py` land with #36. The append-only re-assertion after a
+downgrade/upgrade round-trip (part of #35's acceptance criteria) is covered in two parts:
+`backend/tests/test_db_round_trip.py`'s reflection fingerprint folds
+`information_schema.role_table_grants` into its comparison, which catches a grant
+*changing* across the round-trip - but `before`/`after` are both taken from the same
+database, so a grant missing in both compares equal and passes, meaning the fingerprint
+alone cannot catch a grant that silently *disappeared* on re-migration. That absence case is
+what the same file's `test_app_role_is_still_refused_update_after_round_trip`,
+`..._delete_after_round_trip` and `..._truncate_after_round_trip` tests assert instead: real
+UPDATE/DELETE/TRUNCATE statements, run as `nptc_app_login` (never a superuser connection),
+against the schema produced by an actual `downgrade base` -> `upgrade head` round-trip.
 
 | Column | Type | Notes |
 |---|---|---|

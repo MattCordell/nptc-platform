@@ -5,36 +5,31 @@ login (nptc_app_login), never a superuser connection with SET ROLE.
 Each refusal gets its own test function: a privilege error aborts the
 surrounding transaction, so a second statement in the same transaction
 would fail with 25P02 and mask the assertion actually under test.
+
+The refusal helpers themselves live in audit_privilege_support.py (issue
+#35), shared with test_db_round_trip.py's post-round-trip refusal tests -
+loaded by file path, exactly as auth_jwt_support.py is loaded by the four
+auth test modules, since backend/tests has no __init__.py and pytest runs
+with --import-mode=importlib.
 """
 
 from __future__ import annotations
 
-import uuid
+import importlib.util
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from sqlalchemy.exc import ProgrammingError
 
-_INSUFFICIENT_PRIVILEGE = "42501"
-
-_INSERT_ONE_ROW = text(
-    "INSERT INTO audit_event (correlation_id, action, entity_type, entity_id) "
-    "VALUES (:correlation_id, :action, :entity_type, :entity_id) "
-    "RETURNING id, sequence"
+_support_spec = importlib.util.spec_from_file_location(
+    "_test_db_audit_privileges_support", Path(__file__).parent / "audit_privilege_support.py"
 )
-
-
-def _insert_row(connection: Connection) -> None:
-    connection.execute(
-        _INSERT_ONE_ROW,
-        {
-            "correlation_id": str(uuid.uuid4()),
-            "action": "test.action",
-            "entity_type": "test_entity",
-            "entity_id": "1",
-        },
-    )
+assert _support_spec is not None and _support_spec.loader is not None
+_support = importlib.util.module_from_spec(_support_spec)
+_support_spec.loader.exec_module(_support)
+insert_one_row = _support.insert_one_row
+assert_refused = _support.assert_refused
 
 
 @pytest.mark.integration
@@ -43,7 +38,7 @@ def test_app_role_can_insert_and_select(app_db: Connection) -> None:
     sufficient on their own: nothing beyond INSERT on the table itself was
     granted, and this succeeds regardless (see nptc.db.models.audit's note
     on why identity, not `serial`, is what makes that true)."""
-    _insert_row(app_db)
+    insert_one_row(app_db)
 
     rows = app_db.execute(text("SELECT action, entity_type, entity_id FROM audit_event")).all()
 
@@ -53,31 +48,22 @@ def test_app_role_can_insert_and_select(app_db: Connection) -> None:
 @pytest.mark.req("NFR-09")
 @pytest.mark.integration
 def test_app_role_is_refused_update(app_db: Connection) -> None:
-    _insert_row(app_db)
+    insert_one_row(app_db)
 
-    with pytest.raises(ProgrammingError) as exc_info:
-        app_db.execute(text("UPDATE audit_event SET reason = 'edited'"))
-
-    assert exc_info.value.orig.sqlstate == _INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
+    assert_refused(app_db, "UPDATE audit_event SET reason = 'edited'")
 
 
 @pytest.mark.req("NFR-09")
 @pytest.mark.integration
 def test_app_role_is_refused_delete(app_db: Connection) -> None:
-    _insert_row(app_db)
+    insert_one_row(app_db)
 
-    with pytest.raises(ProgrammingError) as exc_info:
-        app_db.execute(text("DELETE FROM audit_event"))
-
-    assert exc_info.value.orig.sqlstate == _INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
+    assert_refused(app_db, "DELETE FROM audit_event")
 
 
 @pytest.mark.req("NFR-09")
 @pytest.mark.integration
 def test_app_role_is_refused_truncate(app_db: Connection) -> None:
-    _insert_row(app_db)
+    insert_one_row(app_db)
 
-    with pytest.raises(ProgrammingError) as exc_info:
-        app_db.execute(text("TRUNCATE audit_event"))
-
-    assert exc_info.value.orig.sqlstate == _INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
+    assert_refused(app_db, "TRUNCATE audit_event")
