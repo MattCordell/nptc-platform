@@ -645,14 +645,15 @@
   priority: MUST
   phase: p1
   title: "Keycloak launches with its local user database enabled and external federation switched off"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) declares identityProviders: [] and no userFederationProviders, with registrationAllowed/resetPasswordAllowed/loginWithEmailAllowed all true - asserted by backend/tests/test_keycloak_realm.py's test_no_external_identity_federation and test_local_registration_is_enabled. Stays in-progress: this is realm-as-code only, no login flow exercises it until #41."
 - id: "NFR-03"
   priority: MUST
   phase: p1
   title: "Keycloak realm configuration MUST be managed as code and MUST NOT be configured by hand through the admin console"
-  status: planned
-  notes: ""
+  status: implemented
+  evidence: "deploy/keycloak/realm/nptc-realm.json"
+  notes: "Issue #40 (ADR-0014): deploy/compose.yml's keycloak service runs start-dev --import-realm against the committed realm file, bind-mounted read-only - no console step in any runbook. backend/tests/test_keycloak_realm.py's offline group (marked NFR-03) asserts the compose bind mount resolves to the file under test and the realm imports --import-realm on startup; its integration group starts the pinned image for real and asserts the discovery document and admin API reflect the imported realm. The artefact (the realm file itself) is as much the evidence as the tests (ADR-0002)."
 - id: "NFR-04"
   priority: MUST
   phase: p1
@@ -699,8 +700,8 @@
   priority: MUST
   phase: p1
   title: "Authentication events (login, failure, lockout, MFA enrolment) are logged by Keycloak in its own event store"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) sets eventsEnabled/adminEventsEnabled/adminEventsDetailsEnabled: true with a 7-day eventsExpiration, plus bruteForceProtected (failureFactor 10) so lockouts are events to log in the first place. Stays in-progress: this is the Keycloak-side configuration only - the application half (NFR-12's search/filter/export over these events) lands with #34-#38."
 - id: "NFR-12"
   priority: MUST
   phase: p1

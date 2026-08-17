@@ -8,7 +8,9 @@ OI-7) possible rather than theoretical (PRD NFR-36).
 labels, milestones and the branch protection ruleset.
 
 [`configuration.md`](configuration.md) documents every environment variable the stack
-reads, kept in step with `deploy/.env.example`.
+reads, kept in step with `deploy/.env.example`, including its
+[Keycloak realm import](configuration.md#keycloak-realm-import) section (issue #40,
+[ADR-0014](../adr/0014-keycloak-realm-as-code.md)).
 
 [`runbooks/`](runbooks/README.md) holds operational procedures for jobs, validation sweeps,
 exports and releases - starting with [`runbooks/transform.md`](runbooks/transform.md) for the

@@ -19,6 +19,7 @@ values (NFR-26).
 | `KEYCLOAK_ADMIN_USER` | `deploy/compose.yml`'s `keycloak` service | `admin` | No | `admin` is fine |
 | `KEYCLOAK_ADMIN_PASSWORD` | `deploy/compose.yml`'s `keycloak` service | `change-me` | Yes | Any local-only value |
 | `KEYCLOAK_PORT` | `deploy/compose.yml`'s `keycloak` service (host port mapping) | `8080` | No | Change only if `8080` is already in use locally |
+| `NPTC_FRONTEND_BASE_URL` | `deploy/compose.yml`'s `keycloak` service → realm import (`deploy/keycloak/realm/nptc-realm.json`'s `${NPTC_FRONTEND_BASE_URL}` placeholder) | `http://localhost:5173` | No | The default is fine for the Vite dev server; set it to the frontend's real origin in any other deployment |
 | `NPTC_TX_BASE_URL` | `nptc_shared.terminology` (backend and transform) | `https://tx.ontoserver.csiro.au/fhir` | No | The default is fine; point it at a local Ontoserver to work offline |
 | `NPTC_TX_TOKEN` | `nptc_shared.terminology` (backend and transform) | *(empty — anonymous)* | Yes | Leave empty — `tx.ontoserver.csiro.au` accepts anonymous requests |
 | `NPTC_TX_TIMEOUT_SECONDS` | `nptc_shared.terminology` (backend and transform) | `30` | No | `30` is fine |
@@ -47,6 +48,57 @@ OAuth2 client-credentials is deferred. Retry backoff timings are `TerminologyCon
 constructor defaults, deliberately not environment variables: they are tuning constants,
 not deployment configuration. This table grows as later issues add services that read
 their own configuration.
+
+## Keycloak realm import
+
+`deploy/keycloak/realm/nptc-realm.json` is the only place the `nptc` realm is defined
+(issue #40, [ADR-0014](../adr/0014-keycloak-realm-as-code.md), NFR-03) — there are no
+console steps in any runbook, and none should be added. The `keycloak` service in
+`deploy/compose.yml` runs `start-dev --import-realm` with `deploy/keycloak/realm/` bind-mounted
+read-only at `/opt/keycloak/data/import`; Keycloak imports every realm file found there once,
+on startup.
+
+**Import is skipped once the realm already exists.** Keycloak's `--import-realm` only
+creates a realm it doesn't already have — editing `nptc-realm.json` and running
+`docker compose -f deploy/compose.yml restart keycloak` does **nothing**, since the running
+instance already has an `nptc` realm from the previous start. This is the single most likely
+point of operator confusion: to pick up an edited realm file, recreate the container instead:
+
+```powershell
+docker compose -f deploy/compose.yml up -d --force-recreate keycloak
+```
+
+(`docker compose down keycloak` followed by `up -d keycloak` is equivalent, but `down`'s
+per-service form needs Compose v2.24+ — on an older v2 it tears down the whole stack. The
+single `--force-recreate` command above works on any Compose v2 and says what it means.)
+
+**`${NPTC_FRONTEND_BASE_URL}` is the file's only placeholder.** Keycloak resolves `${VAR}` in
+an imported realm file from the container's environment; `deploy/compose.yml` passes the
+`NPTC_FRONTEND_BASE_URL` environment variable through for exactly this. It drives the
+`nptc-frontend` client's `rootUrl`, `redirectUris`, `webOrigins` and post-logout redirect URI
+— the one part of this realm that is genuinely per-deployment. Everything else in the file is
+static, which is what makes "identical realm on every clean clone" testable at all
+(`backend/tests/test_keycloak_realm.py`).
+
+**What is deliberately absent:** no users (registration is open —
+`registrationAllowed: true`, NFR-02 — so there is nothing to seed), no client secrets (both
+`nptc-frontend` and `nptc-api` are `publicClient: true`), and no application roles (Keycloak
+authenticates; the platform authorises from the internal user record per NFR-07 — see
+ADR-0014's first decision). A maintainer who re-exports the realm from a running instance
+instead of hand-editing the file risks reintroducing all three — `test_keycloak_realm.py`'s
+offline group exists specifically to catch that.
+
+Open registration is paired with `verifyEmail: false`, which means anyone reachable on the
+network can self-register with an address nobody confirmed — there is no SMTP anywhere in
+this stack to send a verification email in the first place. This is a deliberate, temporary
+posture (ADR-0014), not an oversight: harmless only because no authorisation decision in the
+platform yet reads from the internal user record this realm feeds. Wiring SMTP and flipping
+`verifyEmail: true` is the one change any real (non-local) deployment of this realm must make.
+
+**To change the realm:** edit `deploy/keycloak/realm/nptc-realm.json` directly and recreate
+the `keycloak` container as above — never the admin console (NFR-03). Run
+`uv run pytest backend/tests/test_keycloak_realm.py` afterwards; its offline group catches a
+malformed file immediately, without needing Docker.
 
 ## Tuning the batch sweep (`NPTC_TX_CHUNK_SIZE`, `NPTC_TX_MAX_CONCURRENCY`)
 

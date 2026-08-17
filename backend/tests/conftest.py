@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -59,12 +60,20 @@ APP_LOGIN_ROLE = "nptc_app_login"
 APP_LOGIN_PASSWORD = "nptc-app-login-test-only-not-a-real-secret"
 
 
-def _image_from_compose() -> str:
-    """Parses deploy/compose.yml for the exact Postgres tag it pins, so
-    bumping compose moves the integration test target automatically -
-    there is exactly one pin (issue #33's decision with the maintainer)."""
-    data = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
-    image: str = data["services"]["postgres"]["image"]
+def compose_config() -> dict[str, Any]:
+    """The one parser for deploy/compose.yml (issue #33's decision with the
+    maintainer, exported for test_keycloak_realm.py by issue #40) - every
+    other reader of this file, in this repo or in CI, goes through this
+    function or image_from_compose below rather than a second, ad hoc
+    yaml.safe_load call that could silently diverge from it."""
+    data: dict[str, Any] = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+    return data
+
+
+def image_from_compose(service: str = "postgres") -> str:
+    """The exact tag a given service pins, so bumping compose moves the
+    integration test target automatically."""
+    image: str = compose_config()["services"][service]["image"]
     return image
 
 
@@ -77,7 +86,7 @@ def postgres_container() -> Iterator[PostgresContainer]:
     # driver="psycopg" (v3), not testcontainers' own default of psycopg2 -
     # psycopg2 is not a dependency anywhere in this workspace.
     with PostgresContainer(
-        _image_from_compose(),
+        image_from_compose(),
         username="nptc_owner",
         password="nptc-owner-test-only-not-a-real-secret",
         dbname="nptc_test",
