@@ -22,11 +22,22 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import ProgrammingError
 
+from nptc.audit.hashing import GENESIS_HASH
+
 INSUFFICIENT_PRIVILEGE = "42501"
 
+#: A fixed, valid-shape (64 lowercase hex) placeholder pair for prev_hash/
+#: entry_hash - these are privilege-refusal tests (NFR-09), not hash-chain
+#: tests, so the literal need not satisfy the real digest, only the
+#: NOT NULL + CHECK constraints. GENESIS_HASH is reused for prev_hash;
+#: entry_hash is distinct from it and from test_auth_account_closure.py's
+#: own placeholder so a shared cluster/table never sees a UNIQUE collision.
+_PLACEHOLDER_ENTRY_HASH = "f" * 64
+
 _INSERT_ONE_ROW = text(
-    "INSERT INTO audit_event (correlation_id, action, entity_type, entity_id) "
-    "VALUES (:correlation_id, :action, :entity_type, :entity_id) "
+    "INSERT INTO audit_event "
+    "(correlation_id, action, entity_type, entity_id, prev_hash, entry_hash) "
+    "VALUES (:correlation_id, :action, :entity_type, :entity_id, :prev_hash, :entry_hash) "
     "RETURNING id, sequence"
 )
 
@@ -39,6 +50,8 @@ def insert_one_row(connection: Connection) -> None:
             "action": "test.action",
             "entity_type": "test_entity",
             "entity_id": "1",
+            "prev_hash": GENESIS_HASH,
+            "entry_hash": _PLACEHOLDER_ENTRY_HASH,
         },
     )
 

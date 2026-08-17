@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nptc.audit.writer import AuditContext
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.identity import LinkOutcome, close_account, resolve_user_for_claims
 from nptc.db.models.user import User
@@ -527,7 +528,7 @@ def test_closed_account_subject_does_not_resolve_to_the_tombstoned_user(app_db: 
     assert original.user is not None
     original_id = original.user.id
 
-    close_account(session, original_id)
+    close_account(session, original_id, AuditContext.system())
     session.flush()
 
     again = resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED)

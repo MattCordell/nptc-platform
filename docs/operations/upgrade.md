@@ -78,6 +78,19 @@ grants and revokes (see [`data-model.md`](../architecture/data-model.md#user-and
 live in this same migration, following the same reasoning as `0002_audit_event.py`
 above.
 
+## `0004_audit_event_hash_chain.py`
+
+Adds `prev_hash`/`entry_hash` (NFR-10, issue #36 - see
+[`data-model.md`](../architecture/data-model.md#the-hash-chain-nfr-10-issue-36-adr-0017))
+to `audit_event`, both `TEXT NOT NULL` with no server default and no backfill. There is no
+way to invent a hash for a pre-existing row, so **this migration only ever succeeds against
+an empty `audit_event` table** - Postgres raises `23502` (not-null violation) otherwise.
+Pre-alpha, no write path has ever run against this table, so this has never been a
+practical constraint; a deployment that reaches this migration with real audit history
+already in place would need a one-off backfill (computing each row's digest in `sequence`
+order) before `upgrade head` can succeed, which is not something this migration attempts to
+automate.
+
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely
