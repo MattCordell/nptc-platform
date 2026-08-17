@@ -116,9 +116,9 @@ def test_tampering_one_column_of_a_historical_row_is_detected(db: Connection, co
     assert result.ok is False
     assert result.first_broken_sequence == original["sequence"]
     if column == "prev_hash":
-        assert result.reason == "prev_hash mismatch"
+        assert result.break_reason == "prev_hash mismatch"
     else:
-        assert result.reason == "entry_hash mismatch"
+        assert result.break_reason == "entry_hash mismatch"
 
 
 @pytest.mark.req("NFR-10")
@@ -143,7 +143,7 @@ def test_deleting_a_middle_row_is_detected_as_a_prev_hash_mismatch_at_the_succes
     result = verify_chain(db)
 
     assert result.ok is False
-    assert result.reason == "prev_hash mismatch"
+    assert result.break_reason == "prev_hash mismatch"
     assert result.first_broken_sequence == successor_sequence
 
 
@@ -177,5 +177,5 @@ def test_swapping_two_adjacent_rows_content_is_detected(db: Connection) -> None:
     result = verify_chain(db)
 
     assert result.ok is False
-    assert result.reason == "entry_hash mismatch"
+    assert result.break_reason == "entry_hash mismatch"
     assert result.first_broken_sequence == first_sequence

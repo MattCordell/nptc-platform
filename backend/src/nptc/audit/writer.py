@@ -17,7 +17,20 @@ state change it records commit together, atomically):
    guards against. Needs no grant (advisory locks are role-agnostic) and
    is transaction-scoped, so it releases automatically on commit or
    rollback - not a trigger or stored function, so PRD Section 14.1 is
-   untouched.
+   untouched. **This only serialises correctly under `READ COMMITTED`.**
+   Under `REPEATABLE READ`/`SERIALIZABLE`, a transaction's snapshot is
+   fixed at (or before) its first statement, so a blocked appender that
+   acquires the lock after the previous holder commits can still read a
+   tail predating that commit - the lock stops the two appends from
+   running concurrently, but not from forking, because "concurrently" and
+   "same snapshot" are different things above `READ COMMITTED`. Step 1a
+   below guards against this by refusing to proceed under any other
+   isolation level, rather than silently risking a fork.
+1a. Immediately after acquiring the lock, `SELECT
+    current_setting('transaction_isolation')` and raise
+    `AuditIsolationLevelError` unless it is `'read committed'` - see
+    above for why a higher isolation level is unsafe here, not merely
+    unnecessary.
 2. `session.flush()`, then read the tail (`ORDER BY sequence DESC LIMIT
    1`). The flush matters: without it, an earlier append in the same
    transaction would be invisible to this `SELECT` and the chain would
@@ -28,8 +41,17 @@ state change it records commit together, atomically):
    two events appended in the same transaction would otherwise share a
    timestamp. `id` is a Python `uuid4()`. Both must be known before the
    digest is computed, since both are digest fields.
-4. The digest is computed and the row inserted.
-5. **Write-time self-check**: the row is re-read from the database and its
+4. `ctx.actor_ip`, if not `None`, is canonicalised via
+   `nptc.audit.hashing.canonicalise_actor_ip` into the same textual form
+   Postgres's `inet` type stores/displays it in *before* the digest is
+   computed - not after. Without this, an input carrying an explicit host
+   mask (e.g. `"203.0.113.7/32"`) would be hashed as submitted but
+   stored/re-read as `"203.0.113.7"`, and step 6's self-check would raise
+   `AuditChainWriteError` on every such input. The canonicalised string is
+   used for both the digest and the `AuditEvent.actor_ip=` value actually
+   persisted, so what is hashed and what is stored can never diverge.
+5. The digest is computed and the row inserted.
+6. **Write-time self-check**: the row is re-read from the database and its
    digest recomputed from what Postgres actually stored. A JSONB
    round-trip divergence (a number literal Postgres normalises, e.g.
    `1e2` -> `100.0`) would otherwise surface as an unexplained chain break
@@ -51,7 +73,12 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nptc.audit.hashing import GENESIS_HASH, compute_entry_hash, digest_field_names
+from nptc.audit.hashing import (
+    GENESIS_HASH,
+    canonicalise_actor_ip,
+    compute_entry_hash,
+    digest_field_names,
+)
 from nptc.db.models.audit import AuditEvent
 
 
@@ -63,19 +90,30 @@ class AuditChainWriteError(RuntimeError):
     write, not a silent chain break discovered later."""
 
 
+class AuditIsolationLevelError(RuntimeError):
+    """Raised when the caller's transaction is not `READ COMMITTED` (step
+    1a above). Under `REPEATABLE READ`/`SERIALIZABLE`, the advisory lock
+    still serialises *execution* of concurrent appenders, but a snapshot
+    fixed before the lock-holder's commit can still read a stale tail once
+    it does get its turn - the lock alone is not sufficient above `READ
+    COMMITTED`, so this fails loudly instead of risking a silent fork."""
+
+
 #: Fixed, arbitrary key for `pg_advisory_xact_lock` (step 1 above) - any
 #: fixed integer works, since advisory locks are an application-chosen
-#: namespace, not tied to any table or row. Kept as a bare literal in the
-#: SQL text below (not interpolated), so
-#: `backend/tests/test_sql_parameterisation.py`'s AST guard - which
-#: forbids building SQL from runtime data - has nothing to flag; there is
-#: no runtime data here in the first place. Exported as a constant purely
-#: for tests that want to name it; keep the two literals in sync if this
-#: is ever changed.
+#: namespace, not tied to any table or row. Passed as a bound parameter
+#: (`:key`) below rather than interpolated into the SQL text, so there is
+#: only ever one literal to keep in sync - and a bound parameter executed
+#: against a fixed `:key` placeholder is exactly what
+#: `backend/tests/test_sql_parameterisation.py`'s AST guard allows (it
+#: forbids building the SQL *string* from runtime data, not binding
+#: runtime data as a parameter).
 AUDIT_APPEND_LOCK_KEY: Final[int] = 64602913
 
-_ACQUIRE_APPEND_LOCK_SQL = text("SELECT pg_advisory_xact_lock(64602913)")
+_ACQUIRE_APPEND_LOCK_SQL = text("SELECT pg_advisory_xact_lock(:key)")
+_CHECK_ISOLATION_LEVEL_SQL = text("SELECT current_setting('transaction_isolation')")
 _CLOCK_TIMESTAMP_SQL = text("SELECT clock_timestamp()")
+_REQUIRED_ISOLATION_LEVEL: Final[str] = "read committed"
 
 
 class AuditContext(BaseModel):
@@ -132,19 +170,27 @@ def append_audit_event(
     """Appends one row to `audit_event`, computing and linking its hash
     chain fields. See the module docstring for the exact sequence and why
     each step exists."""
-    session.execute(_ACQUIRE_APPEND_LOCK_SQL)
+    session.execute(_ACQUIRE_APPEND_LOCK_SQL, {"key": AUDIT_APPEND_LOCK_KEY})
+
+    isolation_level = session.execute(_CHECK_ISOLATION_LEVEL_SQL).scalar_one()
+    if isolation_level != _REQUIRED_ISOLATION_LEVEL:
+        raise AuditIsolationLevelError(
+            "append_audit_event requires READ COMMITTED isolation to keep the "
+            f"chain from forking, got {isolation_level!r}"
+        )
 
     session.flush()
     prev_hash = _read_prev_hash(session)
 
     occurred_at = session.execute(_CLOCK_TIMESTAMP_SQL).scalar_one()
     event_id = uuid.uuid4()
+    actor_ip = canonicalise_actor_ip(ctx.actor_ip) if ctx.actor_ip is not None else None
 
     fields: dict[str, Any] = {
         "id": event_id,
         "occurred_at": occurred_at,
         "actor_user_id": ctx.actor_user_id,
-        "actor_ip": ctx.actor_ip,
+        "actor_ip": actor_ip,
         "user_agent": ctx.user_agent,
         "correlation_id": ctx.correlation_id,
         "action": action,

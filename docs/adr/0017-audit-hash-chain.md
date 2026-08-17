@@ -86,10 +86,15 @@ adjustment) - both are documented in its own docstring so a future reader does n
 either for an oversight.
 
 **`close_account` is the one real caller landed with this issue.** It emits `user.closed`
-with the field-level `before`/`after` diff of the three pseudonymised columns and the
-status transition - `after` never carries the identifying values themselves, only that
-they are now null (NFR-26/NFR-35). The idempotent early-return path emits nothing, which
-is correct: nothing changed.
+with the status transition, but deliberately *not* a field-level `before`/`after` diff of
+the three pseudonymised columns: `audit_event` is INSERT/SELECT-only for the app role
+(NFR-09) and rows are never updated or deleted, so anything written into `before` is
+permanent. Writing the real pre-closure `username`/`display_name`/`organisation` values
+into `before` would defeat NFR-17's pseudonymisation the moment the event recording that
+pseudonymisation is itself emitted (NFR-16, PRD OI-15). `before` instead records only the
+pre-closure `status` and the *names* of the fields being pseudonymised; `after` never
+carries the identifying values either, only that they are now null. The idempotent
+early-return path emits nothing, which is correct: nothing changed.
 
 ## Rejected alternatives
 
@@ -115,5 +120,27 @@ is correct: nothing changed.
   an unanchored chain detects casual tampering, not a determined rewrite. External
   anchoring (periodic off-box publication of the head hash) is the mitigation for that, and
   is out of scope for both this issue and #38.
+- **A distinct, currently-undetectable gap: tail truncation.** Deleting the most recent N
+  rows off the end of the chain (rather than editing a row in the middle) leaves a table
+  that still verifies `ok=True` - `verify_chain` walks forward from genesis and, once the
+  truncation point is reached, there is simply nothing left to detect a break against. This
+  is cheaper for an attacker than the "recompute forward from an edit" limit above and a
+  different failure mode from it, not a restatement of it. It is directly relevant to #38:
+  an operator command built purely on `verify_chain()` walking the table forward cannot
+  catch this either, so that design needs an externally-anchored expectation of the current
+  head - an expected head hash plus record count, stored somewhere `verify_chain` itself
+  cannot reach - to have any chance of catching a truncation.
+- Once NFR-08 is satisfied for every state-changing write (not just `close_account`), every
+  such write transaction will serialise platform-wide on the one `pg_advisory_xact_lock`
+  (`AUDIT_APPEND_LOCK_KEY`), held until commit. That is inherent to per-row hash chaining
+  with a database-side tail read - there is exactly one tail, so there can only be one
+  appender at a time - and is acceptable at this platform's expected write volume, but is
+  worth having on record here for whoever hits it under load later (issue #46+).
+- Forward-looking caveat, out of scope for this issue: `before`/`after` payloads are
+  free-form JSONB, and neither `nptc.audit.hashing` nor `nptc.audit.writer` sanitise their
+  content for embedded NUL bytes (`nptc_shared.text`'s own concern, not replicated here).
+  `close_account` - the one caller landed with this issue - only ever puts `status` and
+  fixed field-name strings into `before`/`after`, so this cannot occur today; it becomes
+  relevant only once a future caller puts real catalogue content through this path.
 - #38 builds directly on this ADR's `verify_chain()` and `ChainVerification` shape; a
   future issue adding external anchoring builds on the "known limit" paragraph above.

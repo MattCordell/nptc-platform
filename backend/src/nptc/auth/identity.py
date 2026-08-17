@@ -239,21 +239,23 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
     record.
 
     Emits a single ``user.closed`` event (NFR-08, NFR-10 - issue #36 is
-    this call site's pickup point) with the field-level ``before``/
-    ``after`` diff of the three pseudonymised columns and the status
-    transition. ``after`` never carries the identifying values themselves
-    (NFR-26/NFR-35) - only that they are now null and the account is
-    closed.
+    this call site's pickup point). Neither ``before`` nor ``after`` ever
+    carries the identifying values themselves (NFR-26/NFR-35): ``before``
+    records only the pre-closure ``status`` and the *names* of the fields
+    about to be pseudonymised, never their values, since ``audit_event``
+    is INSERT/SELECT-only for the app role (NFR-09) - anything written
+    into ``before`` is permanent, so writing the real values there would
+    defeat NFR-17's pseudonymisation the moment this event is emitted
+    (NFR-16, PRD OI-15). ``after`` only records that the fields are now
+    null and the account is closed.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
         return
 
     before_state: dict[str, object] = {
-        "username": user.username,
-        "display_name": user.display_name,
-        "organisation": user.organisation,
         "status": user.status,
+        "pseudonymised_fields": sorted(["username", "display_name", "organisation"]),
     }
 
     session.execute(delete(UserIdentity).where(UserIdentity.user_id == user_id))

@@ -199,6 +199,25 @@ rewrite; periodic off-box publication of the head hash would be the mitigation, 
 of scope for both #36 and #38. `scripts/verify_audit_chain.py` (#38) wraps `verify_chain`
 with an operator-facing CLI and stable exit codes; it is not built here.
 
+**A distinct, currently-undetectable gap: tail truncation.** Deleting the most recent N
+rows off the end of the chain, rather than editing a row in the middle, leaves a table that
+still verifies `ok=True` - `verify_chain` walks forward from genesis and has nothing left
+after the truncation point to detect a break against. This is cheaper for an attacker than
+the "recompute forward from an edit" limit above, and a different failure mode, not a
+restatement of it. #38's operator command, built purely on `verify_chain()` walking the
+table forward, cannot catch this either; it needs an externally-anchored expectation of the
+current head (an expected head hash plus record count, stored somewhere `verify_chain`
+itself cannot reach) as part of its design.
+
+**`append_audit_event` requires `READ COMMITTED` isolation.** The advisory lock (above)
+serialises *execution* of concurrent appenders, but under `REPEATABLE READ`/`SERIALIZABLE`
+a transaction's snapshot is fixed before it acquires the lock, so a blocked appender that
+gets its turn after the previous holder commits can still read a stale tail and fork the
+chain - the lock alone is insufficient above `READ COMMITTED`. `append_audit_event` checks
+`current_setting('transaction_isolation')` immediately after acquiring the lock and raises
+`nptc.audit.writer.AuditIsolationLevelError` unless it is `'read committed'`, rather than
+risking a silent fork under a caller's stricter isolation level.
+
 ## `user` and `user_identity`
 
 Landed with issue #42 (ADR-0015). An internal `app_user` record with a stable UUID is

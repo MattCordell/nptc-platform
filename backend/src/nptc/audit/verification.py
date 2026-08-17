@@ -51,13 +51,21 @@ _DEFAULT_BATCH_SIZE = 500
 @dataclass(frozen=True)
 class ChainVerification:
     ok: bool
+    #: On failure, this is rows *walked up to the break*, not the total
+    #: row count in the table - verification stops at the first break, so
+    #: rows after it are never counted. Only equal to the table's total
+    #: row count when `ok` is True. Relevant to #38: don't read this as a
+    #: total without checking `ok` first.
     record_count: int
     first_sequence: int | None
+    #: On failure, the `sequence` of the last row walked before the break
+    #: (i.e. `first_broken_sequence`), not the last `sequence` value in the
+    #: table - same caveat as `record_count` above.
     last_sequence: int | None
     #: The `sequence` of the first row found broken, or None if `ok`.
     first_broken_sequence: int | None
     #: "prev_hash mismatch" | "entry_hash mismatch" | None if `ok`.
-    reason: str | None
+    break_reason: str | None
 
 
 def verify_chain(
@@ -90,7 +98,7 @@ def verify_chain(
                 first_sequence=first_sequence,
                 last_sequence=last_sequence,
                 first_broken_sequence=sequence,
-                reason="prev_hash mismatch",
+                break_reason="prev_hash mismatch",
             )
 
         fields = {name: mapping[name] for name in field_names}
@@ -102,7 +110,7 @@ def verify_chain(
                 first_sequence=first_sequence,
                 last_sequence=last_sequence,
                 first_broken_sequence=sequence,
-                reason="entry_hash mismatch",
+                break_reason="entry_hash mismatch",
             )
 
         expected_prev_hash = mapping["entry_hash"]
@@ -113,5 +121,5 @@ def verify_chain(
         first_sequence=first_sequence,
         last_sequence=last_sequence,
         first_broken_sequence=None,
-        reason=None,
+        break_reason=None,
     )

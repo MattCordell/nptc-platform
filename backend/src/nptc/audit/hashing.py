@@ -80,7 +80,7 @@ def _normalise(value: object) -> object:
     `isoformat()` alone drops trailing zero microseconds inconsistently.
     `before`/`after` (already-parsed JSON objects/arrays) recurse so their
     own nested values get the same treatment."""
-    if value is None or isinstance(value, str | int | float | bool):
+    if value is None or isinstance(value, str | int | float):
         return value
     if isinstance(value, uuid.UUID):
         return str(value)
@@ -89,7 +89,9 @@ def _normalise(value: object) -> object:
         ipaddress.IPv4Address
         | ipaddress.IPv6Address
         | ipaddress.IPv4Network
-        | ipaddress.IPv6Network,
+        | ipaddress.IPv6Network
+        | ipaddress.IPv4Interface
+        | ipaddress.IPv6Interface,
     ):
         return str(value)
     if isinstance(value, datetime):
@@ -99,6 +101,27 @@ def _normalise(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_normalise(item) for item in value]
     return str(value)
+
+
+def canonicalise_actor_ip(value: str) -> str:
+    """Renders `value` in the same textual form Postgres's `inet` type
+    stores/displays it in, so the digest computed before `INSERT` and the
+    value actually stored (and later re-read for the write-time
+    self-check, or by `verify_chain`) are always the same string -
+    independent of exactly how the caller spelled the address.
+
+    `inet` prints a bare address (no `/`) when the mask is the full
+    address width - a "host" mask, `/32` for IPv4 or `/128` for IPv6 - and
+    `address/prefixlen` otherwise. Without this, an input like
+    `"203.0.113.7/32"` would be hashed as submitted but stored/re-read as
+    `"203.0.113.7"`, so the write-time self-check in
+    `nptc.audit.writer.append_audit_event` would raise
+    `AuditChainWriteError` on every such input."""
+    interface = ipaddress.ip_interface(value)
+    host_mask = 32 if isinstance(interface, ipaddress.IPv4Interface) else 128
+    if interface.network.prefixlen == host_mask:
+        return str(interface.ip)
+    return f"{interface.ip}/{interface.network.prefixlen}"
 
 
 def canonical_payload(fields: Mapping[str, object]) -> bytes:
@@ -114,8 +137,17 @@ def compute_entry_hash(fields: Mapping[str, object], prev_hash: str) -> str:
     """The SHA-256 digest, as a lowercase hex string, over `fields` plus
     `prev_hash` and `HASH_SCHEME`. `fields` must already exclude
     `prev_hash` itself (it is folded in here) and every name in
-    `EXCLUDED_DIGEST_COLUMNS`."""
-    payload: dict[str, object] = dict(fields)
-    payload["prev_hash"] = prev_hash
-    payload["hash_scheme"] = HASH_SCHEME
+    `EXCLUDED_DIGEST_COLUMNS`.
+
+    `fields` is nested under its own `"fields"` key rather than flattened
+    alongside `prev_hash`/`hash_scheme` in the payload: a flat namespace
+    would let a future `audit_event` column literally named `prev_hash` or
+    `hash_scheme` silently collide with this function's own bookkeeping
+    keys. `canonical_payload` already recurses into nested `Mapping`s via
+    `_normalise`, so nesting here needs no change there."""
+    payload: dict[str, object] = {
+        "fields": dict(fields),
+        "prev_hash": prev_hash,
+        "hash_scheme": HASH_SCHEME,
+    }
     return hashlib.sha256(canonical_payload(payload)).hexdigest()

@@ -187,10 +187,8 @@ def test_close_account_emits_a_user_closed_audit_event(app_db: Connection) -> No
 
     assert row["entity_type"] == "app_user"
     assert row["before"] == {
-        "username": "frank",
-        "display_name": "Frank",
-        "organisation": "RCPA-QAP",
         "status": "active",
+        "pseudonymised_fields": ["display_name", "organisation", "username"],
     }
     assert row["after"] == {
         "username": None,
@@ -198,8 +196,14 @@ def test_close_account_emits_a_user_closed_audit_event(app_db: Connection) -> No
         "organisation": None,
         "status": "closed",
     }
-    # NFR-26/NFR-35: the identifying values themselves never appear in
-    # `after`, only that they are now null.
+    # NFR-26/NFR-35/NFR-16/NFR-17: the identifying values themselves never
+    # appear in `before` or `after` - `audit_event` is INSERT/SELECT-only
+    # for the app role, so anything written into `before` would be
+    # permanent and would defeat the pseudonymisation this event is
+    # itself recording.
+    assert "frank" not in str(row["before"])
+    assert "Frank" not in str(row["before"])
+    assert "RCPA-QAP" not in str(row["before"])
     assert "frank" not in str(row["after"])
 
 
