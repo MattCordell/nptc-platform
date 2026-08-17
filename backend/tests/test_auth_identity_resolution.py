@@ -15,8 +15,12 @@ from sqlalchemy.orm import Session
 
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.identity import LinkOutcome, close_account, resolve_user_for_claims
+from nptc.db.models.user import User
+from nptc.db.models.user_identity import UserIdentity
 
-_TRUSTED = frozenset({"https://good.example"})
+_TRUSTED_A = "https://good.example"
+_TRUSTED_B = "https://good2.example"
+_TRUSTED = frozenset({_TRUSTED_A, _TRUSTED_B})
 _UNTRUSTED = "https://untrusted.example"
 
 
@@ -168,11 +172,13 @@ def test_no_user_column_ever_holds_the_oidc_subject(app_db: Connection) -> None:
 @pytest.mark.req("NFR-05")
 @pytest.mark.integration
 def test_verified_email_from_a_trusted_issuer_auto_links(app_db: Connection) -> None:
+    """Both ends of the link must be trusted: the *seeding* identity
+    (created via `_TRUSTED_A`) and the incoming claim (via `_TRUSTED_B`)."""
     session = Session(bind=app_db)
     created = resolve_user_for_claims(
         session,
         _claims(
-            issuer=_UNTRUSTED,
+            issuer=_TRUSTED_A,
             subject="sub-first",
             preferred_username="gina",
             display_name="Gina",
@@ -185,7 +191,7 @@ def test_verified_email_from_a_trusted_issuer_auto_links(app_db: Connection) -> 
     linked = resolve_user_for_claims(
         session,
         _claims(
-            issuer="https://good.example",
+            issuer=_TRUSTED_B,
             subject="sub-second",
             email="shared@example.com",
             email_verified=True,
@@ -205,7 +211,7 @@ def test_unverified_email_requires_a_manual_link_and_writes_nothing(app_db: Conn
     resolve_user_for_claims(
         session,
         _claims(
-            issuer=_UNTRUSTED,
+            issuer=_TRUSTED_A,
             subject="sub-third",
             preferred_username="henry",
             display_name="Henry",
@@ -220,7 +226,7 @@ def test_unverified_email_requires_a_manual_link_and_writes_nothing(app_db: Conn
     result = resolve_user_for_claims(
         session,
         _claims(
-            issuer="https://good.example",
+            issuer=_TRUSTED_B,
             subject="sub-fourth",
             email="shared2@example.com",
             email_verified=False,
@@ -236,19 +242,86 @@ def test_unverified_email_requires_a_manual_link_and_writes_nothing(app_db: Conn
 
 @pytest.mark.req("NFR-05")
 @pytest.mark.integration
-def test_untrusted_issuer_does_not_auto_link_even_with_a_verified_email(app_db: Connection) -> None:
+def test_an_untrusted_issuers_own_verified_email_never_becomes_an_auto_link_target(
+    app_db: Connection,
+) -> None:
+    """Regression for the exact bypass this table exists to close: a first
+    registration through *any* issuer at all (including one nobody
+    trusts) must not be able to plant a verified email that a later,
+    genuinely trusted login then auto-links into. Because the seeding
+    identity's own issuer is untrusted, it is never a candidate at all -
+    the second login creates its own, entirely independent account rather
+    than being linked (or even flagged for manual link) against the
+    first."""
     session = Session(bind=app_db)
-    resolve_user_for_claims(
+    planted = resolve_user_for_claims(
         session,
         _claims(
             issuer=_UNTRUSTED,
-            subject="sub-fifth",
+            subject="attacker-sub",
             preferred_username="iris",
             display_name="Iris",
-            email="shared3@example.com",
+            email="admin@example.com",
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+    )
+    session.flush()
+    assert planted.outcome == LinkOutcome.CREATED
+    assert planted.user is not None
+
+    result = resolve_user_for_claims(
+        session,
+        _claims(
+            issuer=_TRUSTED_A,
+            subject="real-admin-sub",
+            email="admin@example.com",
+            email_verified=True,
+        ),
+        trusted_issuers=_TRUSTED,
+    )
+    session.flush()
+
+    assert result.outcome == LinkOutcome.CREATED
+    assert result.user is not None
+    assert result.user.id != planted.user.id
+
+
+@pytest.mark.req("NFR-05")
+@pytest.mark.integration
+def test_multiple_candidate_users_with_the_same_verified_email_requires_manual_link(
+    app_db: Connection,
+) -> None:
+    """Ambiguous, not guessed: if more than one existing user has a
+    trusted, verified identity for the same email, an incoming claim that
+    would otherwise auto-link must not pick one via undefined query-plan
+    order - it needs a human. Both candidates are seeded directly (not via
+    `resolve_user_for_claims`, which would itself auto-link the second
+    seed into the first the moment two matching, trusted, verified
+    identities exist) - the ambiguity has to already exist before this
+    function is ever asked to resolve anything against it."""
+    session = Session(bind=app_db)
+    first_user = User(username="ambiguous1", display_name="Ambiguous One")
+    second_user = User(username="ambiguous2", display_name="Ambiguous Two")
+    session.add_all([first_user, second_user])
+    session.flush()
+    session.add_all(
+        [
+            UserIdentity(
+                user_id=first_user.id,
+                issuer=_TRUSTED_A,
+                subject="sub-cand-1",
+                email="dupe@example.com",
+                email_verified=True,
+            ),
+            UserIdentity(
+                user_id=second_user.id,
+                issuer=_TRUSTED_B,
+                subject="sub-cand-2",
+                email="dupe@example.com",
+                email_verified=True,
+            ),
+        ]
     )
     session.flush()
     before = _identity_count(app_db)
@@ -256,9 +329,9 @@ def test_untrusted_issuer_does_not_auto_link_even_with_a_verified_email(app_db: 
     result = resolve_user_for_claims(
         session,
         _claims(
-            issuer="https://another-untrusted.example",
-            subject="sub-sixth",
-            email="shared3@example.com",
+            issuer=_TRUSTED_A,
+            subject="sub-cand-3",
+            email="dupe@example.com",
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
@@ -268,6 +341,65 @@ def test_untrusted_issuer_does_not_auto_link_even_with_a_verified_email(app_db: 
     assert result.outcome == LinkOutcome.MANUAL_LINK_REQUIRED
     assert result.user is None
     assert _identity_count(app_db) == before
+
+
+@pytest.mark.integration
+def test_first_registration_with_no_username_or_display_name_claim_still_succeeds(
+    app_db: Connection,
+) -> None:
+    """Real IdPs routinely omit `preferred_username`/`display_name` -
+    `app_user`'s tombstone CHECK requires both to be non-null for a
+    non-closed row, so first registration must fall back rather than
+    surface a raw IntegrityError on ordinary input."""
+    session = Session(bind=app_db)
+
+    result = resolve_user_for_claims(
+        session,
+        _claims(issuer=_UNTRUSTED, subject="sub-no-profile"),
+        trusted_issuers=_TRUSTED,
+    )
+
+    assert result.outcome == LinkOutcome.CREATED
+    assert result.user is not None
+    assert result.user.username
+    assert result.user.display_name
+
+
+@pytest.mark.integration
+def test_first_registration_falls_back_to_a_new_username_on_a_collision(
+    app_db: Connection,
+) -> None:
+    """A `preferred_username` claim already held by another user must not
+    abort first login with a raw 23505 - it must fall back to a distinct
+    username instead."""
+    session = Session(bind=app_db)
+    first = resolve_user_for_claims(
+        session,
+        _claims(
+            issuer=_UNTRUSTED,
+            subject="sub-taken-1",
+            preferred_username="taken",
+            display_name="First",
+        ),
+        trusted_issuers=_TRUSTED,
+    )
+    session.flush()
+
+    second = resolve_user_for_claims(
+        session,
+        _claims(
+            issuer="https://idp-c.example",
+            subject="sub-taken-2",
+            preferred_username="taken",
+            display_name="Second",
+        ),
+        trusted_issuers=_TRUSTED,
+    )
+
+    assert first.user is not None and second.user is not None
+    assert first.user.id != second.user.id
+    assert second.user.username != first.user.username
+    assert second.user.username is not None and second.user.username.startswith("taken")
 
 
 @pytest.mark.req("NFR-17")

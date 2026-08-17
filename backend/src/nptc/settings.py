@@ -19,8 +19,10 @@ notices.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -55,7 +57,12 @@ class AuthSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
-    trusted_issuers: frozenset[str] = frozenset()
+    # NoDecode: frozenset[str] is a "complex" type to pydantic-settings, so
+    # without this it tries to JSON-decode the raw environment string
+    # before any validator below ever runs - the comma-separated format
+    # configuration.md documents would raise a SettingsError on every
+    # non-JSON value, never reaching `_split_comma_separated`.
+    trusted_issuers: Annotated[frozenset[str], NoDecode] = frozenset()
 
     @field_validator("trusted_issuers", mode="before")
     @classmethod

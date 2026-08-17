@@ -80,6 +80,23 @@ def test_app_role_is_refused_update_of_app_user_id(app_db: Connection) -> None:
     assert exc_info.value.orig.sqlstate == _INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
 
 
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_app_role_is_refused_update_of_app_user_created_at(app_db: Connection) -> None:
+    """The other half of `GRANT_APP_USER_UPDATE_SQL`'s excluded-columns
+    list - `id`'s exclusion is tested above, but `created_at` is excluded
+    for the same reason (it must not be back-dateable after the fact) and
+    was otherwise untested."""
+    user_id = _insert_user(app_db, "iris")
+
+    with pytest.raises(ProgrammingError) as exc_info:
+        app_db.execute(
+            text("UPDATE app_user SET created_at = now() WHERE id = :id"), {"id": user_id}
+        )
+
+    assert exc_info.value.orig.sqlstate == _INSUFFICIENT_PRIVILEGE  # type: ignore[union-attr]
+
+
 @pytest.mark.req("NFR-17")
 @pytest.mark.integration
 def test_app_role_can_delete_user_identity(app_db: Connection) -> None:

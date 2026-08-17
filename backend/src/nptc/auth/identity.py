@@ -22,12 +22,19 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.linking import may_auto_link
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
+
+#: Bounded retries for the username-collision fallback in `_create_user`
+#: below - large enough that a real collision streak is astronomically
+#: unlikely, small enough that a genuine bug (e.g. a broken random source)
+#: fails fast instead of spinning.
+_MAX_USERNAME_ATTEMPTS = 5
 
 
 class LinkOutcome(StrEnum):
@@ -52,19 +59,89 @@ def _find_identity(session: Session, issuer: str, subject: str) -> UserIdentity 
     return session.execute(stmt).scalar_one_or_none()
 
 
-def _find_auto_link_candidate(session: Session, email: str | None) -> UserIdentity | None:
-    if not email:
-        return None
+def _find_candidate_user_ids(
+    session: Session, email: str | None, trusted_issuers: frozenset[str]
+) -> list[uuid.UUID]:
+    """Users with a verified email matching `email`, asserted by an
+    identity whose *own* issuer is trusted - not merely an issuer trusted
+    by the *incoming* claim. Without that second check here, a first
+    registration through any untrusted issuer could plant a verified email
+    that a later, genuinely trusted login would then auto-link into (the
+    PRD's stated failure mode: "anyone who can mint a token asserting an
+    administrator's email inherits that administrator's privileges" -
+    minting it once, on day one, through an untrusted issuer, is exactly
+    such a token).
+
+    Returns every distinct matching user, not just one: more than one
+    match means the auto-link target is ambiguous, and the caller must
+    treat that as `MANUAL_LINK_REQUIRED` rather than guess via query plan
+    order.
+    """
+    if not email or not trusted_issuers:
+        return []
     stmt = (
-        select(UserIdentity)
+        select(UserIdentity.user_id)
         .join(User, User.id == UserIdentity.user_id)
         .where(
             UserIdentity.email == email,
             UserIdentity.email_verified.is_(True),
+            UserIdentity.issuer.in_(trusted_issuers),
             User.status != UserStatus.CLOSED,
         )
+        .distinct()
     )
-    return session.execute(stmt).scalars().first()
+    return list(session.execute(stmt).scalars().all())
+
+
+def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) -> str:
+    base = claims.preferred_username or (claims.email.split("@", 1)[0] if claims.email else None)
+    base = base or f"user-{uuid.uuid4().hex[:12]}"
+    return base if suffix is None else f"{base}-{suffix}"
+
+
+def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
+    """Creates the `app_user` (plus its first `user_identity` row) for a
+    subject seen for the first time.
+
+    Retried, with a randomised username suffix, on a unique-constraint
+    collision (`uq_app_user_username`) rather than letting an ordinary,
+    unremarkable IdP input (a `preferred_username` someone else already
+    holds, or no `preferred_username`/`display_name` claim at all - both
+    of which real IdPs routinely omit or duplicate) surface as a raw
+    `IntegrityError` on first login. Each attempt runs inside its own
+    `SAVEPOINT` so a failed attempt aborts only that attempt, not the
+    caller's whole transaction.
+    """
+    display_name = claims.display_name or claims.preferred_username
+    suffix: str | None = None
+    for _attempt in range(_MAX_USERNAME_ATTEMPTS):
+        username = _fallback_username(claims, suffix)
+        try:
+            with session.begin_nested():
+                user = User(
+                    username=username,
+                    display_name=display_name or username,
+                    organisation=None,
+                )
+                session.add(user)
+                session.flush()
+                session.add(
+                    UserIdentity(
+                        user_id=user.id,
+                        issuer=claims.issuer,
+                        subject=claims.subject,
+                        email=claims.email,
+                        email_verified=claims.email_verified,
+                    )
+                )
+                session.flush()
+        except IntegrityError:
+            suffix = uuid.uuid4().hex[:8]
+            continue
+        return user
+    raise RuntimeError(
+        f"could not allocate a unique username after {_MAX_USERNAME_ATTEMPTS} attempts"
+    )
 
 
 def resolve_user_for_claims(
@@ -80,45 +157,43 @@ def resolve_user_for_claims(
             # Defence in depth: closure normally deletes the identity row
             # outright, so this should not be reachable in practice.
             return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
+        # Safe to refresh unconditionally, regardless of whether
+        # claims.issuer is itself trusted: this identity's own issuer is
+        # exactly what `_find_candidate_user_ids` checks before any other
+        # user can ever auto-link against it, so an untrusted issuer
+        # asserting `email_verified=True` here does not create a usable
+        # auto-link target.
         existing.email = claims.email
         existing.email_verified = claims.email_verified
         if claims.display_name is not None:
             user.display_name = claims.display_name
         return Resolution(outcome=LinkOutcome.EXISTING, user=user)
 
-    candidate = _find_auto_link_candidate(session, claims.email)
-    if candidate is None:
-        user = User(
-            username=claims.preferred_username,
-            display_name=claims.display_name,
-            organisation=None,
-        )
-        session.add(user)
-        session.flush()
-        session.add(
-            UserIdentity(
-                user_id=user.id,
-                issuer=claims.issuer,
-                subject=claims.subject,
-                email=claims.email,
-                email_verified=claims.email_verified,
-            )
-        )
+    candidate_user_ids = _find_candidate_user_ids(session, claims.email, trusted_issuers)
+    if not candidate_user_ids:
+        user = _create_user(session, claims)
         return Resolution(outcome=LinkOutcome.CREATED, user=user)
 
-    if not may_auto_link(claims, trusted_issuers):
+    if len(candidate_user_ids) > 1 or not may_auto_link(claims, trusted_issuers):
         return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
 
+    candidate_user_id = candidate_user_ids[0]
     session.add(
         UserIdentity(
-            user_id=candidate.user_id,
+            user_id=candidate_user_id,
             issuer=claims.issuer,
             subject=claims.subject,
             email=claims.email,
             email_verified=claims.email_verified,
         )
     )
-    user = session.get(User, candidate.user_id)
+    user = session.get(User, candidate_user_id)
+    if user is None:
+        # FK-guaranteed not to happen: candidate_user_id came from a join
+        # against app_user in the same transaction. Raising makes that
+        # guarantee load-bearing rather than silently handing #43 a
+        # `Resolution(AUTO_LINKED, user=None)` its own type says can't occur.
+        raise AssertionError(f"candidate user {candidate_user_id} vanished mid-resolution")
     return Resolution(outcome=LinkOutcome.AUTO_LINKED, user=user)
 
 
@@ -127,10 +202,15 @@ def close_account(session: Session, user_id: uuid.UUID) -> None:
 
     Never deletes the ``app_user`` row - the privilege grants in migration
     0003 make that structurally impossible even if this function tried.
-    Idempotent: closing an already-closed account is a no-op. Deliberately
-    does **not** emit an audit event - there is no audit writer until #36;
-    the caller's own docstring/PR body should say so rather than this
-    function stubbing one out.
+    Idempotent: closing an already-closed account is a no-op.
+
+    Deliberately does **not** emit an audit event, despite this being a
+    state-changing write NFR-08 would otherwise require one for: there is
+    no audit writer yet, and ``audit_event`` itself already accepts rows
+    (see ``backend/tests/test_auth_account_closure.py``'s direct insert),
+    so this is a real gap, not a merely theoretical one. **Tracked by
+    issue #36** (the ``audit_event`` hash-chain writer) - when #36 lands,
+    this call site is the pickup point for wiring in the actual event.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:

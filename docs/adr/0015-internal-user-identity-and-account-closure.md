@@ -8,9 +8,9 @@
 Keycloak authenticates through the realm ADR-0014 landed, but nothing yet stores who
 those authenticated people *are* to the platform. Issue #42 creates that layer: an
 internal `app_user` record with a stable UUID, and a `user_identity` table linking it to
-the OIDC `(iss, sub)` pair. `P1-SEQUENCING.md` makes this a hard gate - #42 before #44,
-#44 before any write path - because every submission, interest record and audit event to
-come references the internal `user.id`, never the identity provider's `sub` claim.
+the OIDC `(iss, sub)` pair. `P1-SEQUENCING.md` makes this a hard gate: #42 before #44,
+and #44 before any write path, because every submission, interest record and audit event
+to come references the internal `user.id`, never the identity provider's `sub` claim.
 
 Three non-functional requirements drive every decision below:
 
@@ -90,8 +90,11 @@ always-pass.
 **`close_account` deletes every `user_identity` row for the user but does not emit an
 audit event.** There is no audit writer until #36 lands; stubbing one here would either
 be dead code or would need its own migration path once #36 defines the real event shape.
-The docstring and this ADR say so explicitly rather than leaving a silent gap for a
-reviewer to notice unassisted.
+This is a real, tracked gap against NFR-08 (a state-changing write with no audit event),
+not a merely theoretical one - `audit_event` already accepts rows today. **Issue #36 is
+the pickup point**: both `close_account`'s docstring and this ADR name it explicitly so
+the gap has a concrete home rather than relying on a future reviewer noticing it
+unassisted.
 
 ## Rejected alternatives
 

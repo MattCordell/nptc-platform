@@ -41,6 +41,7 @@ def test_user_ref_serialisation_contains_no_internal_uuid() -> None:
     assert not _leaks_uuid(ref.model_dump(), user.id)
 
 
+@pytest.mark.req("NFR-04")
 def test_the_guard_detects_a_deliberately_leaking_payload() -> None:
     """A `_leaks_uuid` that always returned `False` would let the test above
     pass regardless of what `UserRef` actually serialises - this proves the

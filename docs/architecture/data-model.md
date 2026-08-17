@@ -171,16 +171,21 @@ column only (`column_0_name`), so this constraint is `uq_user_identity_issuer`, 
 not a bug to "fix" without changing every other multi-column unique/index name in the
 schema.
 
-**Auto-linking (NFR-05).** `nptc.auth.linking.may_auto_link` is the single predicate
-gating whether an unrecognised `(iss, sub)` may be linked automatically to an existing
-account matched by verified email: the issuer must be in an explicit, exact-match
-trusted-issuer allowlist (`NPTC_TRUSTED_ISSUERS`, empty by default - fail closed) *and*
-the incoming claim's `email_verified` must be `True` (`is True`, never merely truthy).
-There is deliberately no `app_user.email` column - matching is against *verified
-identities* in `user_identity`, never a mutable, unverified field on the user itself.
-`nptc.auth.identity.resolve_user_for_claims` is the write path this predicate feeds; see
-its docstring for the full five-branch resolution (existing identity, no candidate,
-auto-link, manual-link-required).
+**Auto-linking (NFR-05).** `nptc.auth.linking.may_auto_link` gates whether the
+*incoming* `(iss, sub)` may be linked automatically: its issuer must be in an explicit,
+exact-match trusted-issuer allowlist (`NPTC_TRUSTED_ISSUERS`, empty by default - fail
+closed) *and* its `email_verified` must be `True` (`is True`, never merely truthy). That
+alone is not sufficient - `nptc.auth.identity.resolve_user_for_claims`'s own candidate
+query additionally requires the *matched* `user_identity` row's own issuer to be trusted
+too. Without that second check, a first registration through any issuer at all (including
+an untrusted one) could plant a verified email that a later, genuinely trusted login would
+then auto-link into - trusting only the incoming side lets the untrusted side plant the
+bait. If more than one existing user has a trusted, verified identity for the same email,
+the match is ambiguous and resolves to manual-link-required rather than picking one via
+undefined query order. There is deliberately no `app_user.email` column - matching is
+against *verified identities* in `user_identity`, never a mutable, unverified field on the
+user itself. See `resolve_user_for_claims`'s docstring for the full resolution (existing
+identity, no candidate, auto-link, ambiguous/untrusted candidate, manual-link-required).
 
 **Account closure** (`nptc.auth.identity.close_account`) nulls the three identifying
 columns, sets `status = 'closed'`/`closed_at = now()`, and deletes every `user_identity`
@@ -189,8 +194,8 @@ grants below make structurally impossible regardless. Idempotent. Does **not** e
 audit event (there is no audit writer until #36). Documented consequence: because the
 identity row is gone, the same OIDC subject logging in again after closure creates a
 *new* user with a *new* UUID - the AC is "can no longer authenticate into the tombstoned
-user", which this satisfies; disabling the account on the Keycloak side is a separate,
-#41-era operator concern.
+user", which this satisfies; disabling the account on the Keycloak side is a separate
+operator concern from the #41-era realm.
 
 **`nptc.auth.identity.UserRef`** is the NFR-04 serialisation boundary: a frozen Pydantic
 model carrying `username`/`display_name`/`organisation`/`status` and **no `id` field at
