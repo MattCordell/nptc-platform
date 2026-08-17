@@ -117,6 +117,18 @@ def test_canonical_payload_is_deterministic_json_bytes() -> None:
     assert canonical_payload(fields) == b'{"a":2,"b":1}'
 
 
+def test_golden_vector_digest_is_unchanged_by_the_serialisation_refactor() -> None:
+    """Issue #37 refactored `_normalise` into a total wrapper around
+    `nptc.audit.serialisation.normalise_json_value` - this hard-coded
+    expected digest proves that refactor moved no existing hash. There was
+    no golden vector before this issue; this is where one earns its place,
+    since determinism tests alone (above) would not have caught a
+    same-shape-but-different-bytes regression."""
+    digest = compute_entry_hash(_sample_fields(), _SAMPLE_PREV_HASH)
+
+    assert digest == "37a3b12836fd875da6997719f0ef105798101962cacb191a017c405e11a814f9"
+
+
 def test_digest_covers_every_meaningful_column() -> None:
     """The exclusion set is explicit and tested, not implied: the digest's
     field set is derived from AuditEvent.__table__.columns minus exactly

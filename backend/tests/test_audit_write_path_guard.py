@@ -11,12 +11,21 @@ a fast walk over `backend/src` with its own positive control
 walker match nothing still fails loudly, rather than this genre of test
 rotting into one that always passes.
 
-Two rules, both scoped to every file *except*
+Three rules, all scoped to every file *except*
 `backend/src/nptc/audit/writer.py` itself (which legitimately constructs
 `AuditEvent` and is the writer this guard exists to keep unique):
 
 1. Calling `AuditEvent(...)` as a constructor.
 2. A string literal SQL `INSERT` targeting `audit_event`.
+3. **`audit-diff-bypass`** (issue #37) - outside `backend/src/nptc/audit/`,
+   a call to `append_audit_event` carrying a `before=` or `after=` keyword
+   whose value is not the literal `None`. Deliberately narrower than "no
+   `append_audit_event` outside `nptc/audit/`": a diff-free event (e.g. a
+   future `release.published`) is legitimate and must still be callable
+   directly. What is not legitimate is a caller hand-building a
+   `before`/`after` payload instead of going through
+   `nptc.audit.recording.record_change`/`record_snapshot_change` - that is
+   exactly the per-endpoint reimplementation issue #37 exists to close off.
 """
 
 from __future__ import annotations
@@ -63,7 +72,37 @@ def _is_audit_event_constructor_call(node: ast.expr) -> bool:
     return False
 
 
-def _check_source(source: str, display_path: str) -> list[Violation]:
+def _is_append_audit_event_call(node: ast.Call) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "append_audit_event"
+    if isinstance(func, ast.Attribute):
+        return func.attr == "append_audit_event"
+    return False
+
+
+def _is_literal_none(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _hand_built_diff_keywords(node: ast.Call) -> list[ast.keyword]:
+    return [
+        kw
+        for kw in node.keywords
+        if kw.arg in ("before", "after") and not _is_literal_none(kw.value)
+    ]
+
+
+#: Rule 3 (`audit-diff-bypass`) is scoped to every file *outside* this
+#: package - `nptc.audit` itself is where a hand-built `before`/`after`
+#: payload is legitimately assembled (`nptc.audit.recording` is the thing
+#: doing the assembling), not a bypass of it.
+_AUDIT_PACKAGE_DIR = REPO_ROOT / "backend" / "src" / "nptc" / "audit"
+
+
+def _check_source(
+    source: str, display_path: str, *, in_audit_package: bool = False
+) -> list[Violation]:
     violations: list[Violation] = []
     tree = ast.parse(source)
 
@@ -92,11 +131,32 @@ def _check_source(source: str, display_path: str) -> list[Violation]:
                 )
             )
 
+        if (
+            not in_audit_package
+            and isinstance(node, ast.Call)
+            and _is_append_audit_event_call(node)
+        ):
+            for kw in _hand_built_diff_keywords(node):
+                violations.append(
+                    Violation(
+                        display_path,
+                        node.lineno,
+                        "audit-diff-bypass",
+                        f"append_audit_event(...) called with a hand-built {kw.arg}= "
+                        "payload outside nptc.audit - use "
+                        "nptc.audit.recording.record_change/record_snapshot_change instead",
+                    )
+                )
+
     return violations
 
 
 def _check_file(path: Path) -> list[Violation]:
-    return _check_source(path.read_text(encoding="utf-8"), _display(path))
+    resolved = path.resolve()
+    in_audit_package = _AUDIT_PACKAGE_DIR in resolved.parents
+    return _check_source(
+        resolved.read_text(encoding="utf-8"), _display(path), in_audit_package=in_audit_package
+    )
 
 
 def _iter_source_files() -> list[Path]:
@@ -117,10 +177,12 @@ def test_no_second_unaudited_write_path_to_audit_event() -> None:
 
 
 def test_guard_flags_known_violations() -> None:
-    """Positive control: a constructor call and a raw INSERT literal, each
-    in their own function, so the guard can't silently rot into a no-op
-    that never fires."""
+    """Positive control: a constructor call, a raw INSERT literal, and a
+    hand-built before=/after= call to append_audit_event, each in their
+    own function, so the guard can't silently rot into a no-op that never
+    fires."""
     bad_source = """
+from nptc.audit.writer import append_audit_event
 from nptc.db.models.audit import AuditEvent
 
 
@@ -131,8 +193,65 @@ def direct_constructor(session):
 
 def raw_insert(connection):
     connection.execute("INSERT INTO audit_event (action) VALUES ('x')")
+
+
+def hand_built_diff(session, ctx):
+    append_audit_event(
+        session,
+        ctx,
+        action="x.y",
+        entity_type="x",
+        entity_id="1",
+        before={"a": 1},
+        after={"a": 2},
+    )
 """
     violations = _check_source(bad_source, "<positive-control>")
     rule_counts = Counter(v.rule for v in violations)
 
-    assert rule_counts == Counter({"audit-event-constructor": 1, "raw-insert-audit-event": 1})
+    assert rule_counts == Counter(
+        {"audit-event-constructor": 1, "raw-insert-audit-event": 1, "audit-diff-bypass": 2}
+    )
+
+
+def test_guard_does_not_flag_a_diff_free_append_audit_event_call() -> None:
+    """Negative control for `audit-diff-bypass`: `before=None`/`after=None`
+    (or omitting them) is exactly the diff-free event shape
+    `append_audit_event` must stay callable directly for - e.g. a future
+    `release.published` with nothing to diff."""
+    good_source = """
+from nptc.audit.writer import append_audit_event
+
+
+def diff_free_event(session, ctx):
+    append_audit_event(
+        session,
+        ctx,
+        action="release.published",
+        entity_type="release",
+        entity_id="1",
+        before=None,
+        after=None,
+    )
+"""
+    violations = _check_source(good_source, "<negative-control>")
+
+    assert violations == []
+
+
+def test_guard_exempts_the_audit_package_itself_from_the_bypass_rule() -> None:
+    """`nptc.audit.recording` is the module that legitimately builds
+    `before=`/`after=` and calls `append_audit_event` with them - the
+    bypass rule must not flag its own implementation."""
+    source_inside_audit_package = """
+from nptc.audit.writer import append_audit_event
+
+
+def record_change(session, ctx):
+    append_audit_event(session, ctx, action="x", entity_type="x", entity_id="1", before={"a": 1})
+"""
+    violations = _check_source(
+        source_inside_audit_package, "<audit-package>", in_audit_package=True
+    )
+
+    assert violations == []

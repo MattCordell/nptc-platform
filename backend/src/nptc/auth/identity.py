@@ -25,7 +25,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nptc.audit.writer import AuditContext, append_audit_event
+from nptc.audit.diffing import ChangeKind
+from nptc.audit.recording import record_change
+from nptc.audit.writer import AuditContext
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.linking import may_auto_link
 from nptc.db.models.user import User, UserStatus
@@ -236,27 +238,26 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
     0003 make that structurally impossible even if this function tried.
     Idempotent: closing an already-closed account is a no-op, and emits no
     audit event in that case - nothing changed, so there is nothing to
-    record.
+    record. That early return is exactly the pattern
+    ``nptc.audit.recording.record_change``'s loud refusal on an empty diff
+    assumes: a caller with a genuinely idempotent path short-circuits
+    *before* reaching the audit layer, rather than relying on the diff
+    coming back empty.
 
-    Emits a single ``user.closed`` event (NFR-08, NFR-10 - issue #36 is
-    this call site's pickup point). Neither ``before`` nor ``after`` ever
-    carries the identifying values themselves (NFR-26/NFR-35): ``before``
-    records only the pre-closure ``status`` and the *names* of the fields
-    about to be pseudonymised, never their values, since ``audit_event``
-    is INSERT/SELECT-only for the app role (NFR-09) - anything written
-    into ``before`` is permanent, so writing the real values there would
-    defeat NFR-17's pseudonymisation the moment this event is emitted
-    (NFR-16, PRD OI-15). ``after`` only records that the fields are now
-    null and the account is closed.
+    Emits a single ``user.closed`` event (NFR-08, NFR-10, issue #37's
+    field-level diff - see ``docs/adr/0018-field-level-audit-diffing.md``).
+    Neither ``before`` nor ``after`` ever carries the identifying values
+    themselves (NFR-26/NFR-35): that withholding is now ``User``'s own
+    ``nptc.audit.policy`` guarantee (``__audit_withheld_fields__``), not
+    this function's own care - ``record_change`` records the pre-closure
+    ``status`` change in full and the three identifying fields by name only
+    (under ``_redacted``), since ``audit_event`` is INSERT/SELECT-only for
+    the app role (NFR-09) and anything written into ``before`` is
+    permanent.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
         return
-
-    before_state: dict[str, object] = {
-        "status": user.status,
-        "pseudonymised_fields": sorted(["username", "display_name", "organisation"]),
-    }
 
     session.execute(delete(UserIdentity).where(UserIdentity.user_id == user_id))
     user.username = None
@@ -265,20 +266,12 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
     user.status = UserStatus.CLOSED
     user.closed_at = datetime.now(UTC)
 
-    after_state: dict[str, object] = {
-        "username": None,
-        "display_name": None,
-        "organisation": None,
-        "status": user.status,
-    }
-    append_audit_event(
+    record_change(
         session,
         audit,
         action="user.closed",
-        entity_type="app_user",
-        entity_id=str(user_id),
-        before=before_state,
-        after=after_state,
+        instance=user,
+        kind=ChangeKind.UPDATED,
     )
 
 
