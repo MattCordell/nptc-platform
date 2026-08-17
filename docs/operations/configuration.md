@@ -65,12 +65,12 @@ instance already has an `nptc` realm from the previous start. This is the single
 point of operator confusion: to pick up an edited realm file, recreate the container instead:
 
 ```powershell
-docker compose -f deploy/compose.yml down keycloak
-docker compose -f deploy/compose.yml up -d keycloak
+docker compose -f deploy/compose.yml up -d --force-recreate keycloak
 ```
 
-(`down -v` also works and is equivalent here — Keycloak keeps no volume, so there is no state
-a plain `down` would leave behind either way.)
+(`docker compose down keycloak` followed by `up -d keycloak` is equivalent, but `down`'s
+per-service form needs Compose v2.24+ — on an older v2 it tears down the whole stack. The
+single `--force-recreate` command above works on any Compose v2 and says what it means.)
 
 **`${NPTC_FRONTEND_BASE_URL}` is the file's only placeholder.** Keycloak resolves `${VAR}` in
 an imported realm file from the container's environment; `deploy/compose.yml` passes the
@@ -87,6 +87,13 @@ authenticates; the platform authorises from the internal user record per NFR-07 
 ADR-0014's first decision). A maintainer who re-exports the realm from a running instance
 instead of hand-editing the file risks reintroducing all three — `test_keycloak_realm.py`'s
 offline group exists specifically to catch that.
+
+Open registration is paired with `verifyEmail: false`, which means anyone reachable on the
+network can self-register with an address nobody confirmed — there is no SMTP anywhere in
+this stack to send a verification email in the first place. This is a deliberate, temporary
+posture (ADR-0014), not an oversight: harmless only because no authorisation decision in the
+platform yet reads from the internal user record this realm feeds. Wiring SMTP and flipping
+`verifyEmail: true` is the one change any real (non-local) deployment of this realm must make.
 
 **To change the realm:** edit `deploy/keycloak/realm/nptc-realm.json` directly and recreate
 the `keycloak` container as above — never the admin console (NFR-03). Run

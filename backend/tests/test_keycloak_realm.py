@@ -21,6 +21,7 @@ which does not register it under an importable `conftest` name.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import time
 from pathlib import Path
@@ -28,12 +29,10 @@ from typing import Any
 
 import httpx
 import pytest
-import yaml
 from testcontainers.core.container import DockerContainer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_DIR = REPO_ROOT / "deploy"
-COMPOSE_FILE = DEPLOY_DIR / "compose.yml"
 REALM_DIR = DEPLOY_DIR / "keycloak" / "realm"
 REALM_FILE = REALM_DIR / "nptc-realm.json"
 
@@ -44,6 +43,7 @@ assert _conftest_spec is not None and _conftest_spec.loader is not None
 _conftest = importlib.util.module_from_spec(_conftest_spec)
 _conftest_spec.loader.exec_module(_conftest)
 image_from_compose = _conftest.image_from_compose
+compose_config = _conftest.compose_config
 
 #: Keys that must never appear anywhere in a committed realm file (NFR-26,
 #: NFR-35). Not merely "must be empty" - a maintainer re-exporting the realm
@@ -56,34 +56,36 @@ BANNED_KEYS = {"secret", "credentials", "password", "adminpassword", "clientsecr
 #: identifiers (protocol names, mapper types) this file actually contains.
 _JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 _LONG_OPAQUE_RE = re.compile(r"^[A-Za-z0-9+/_-]{32,}={0,2}$")
-#: Values that look opaque/long by the regex above but are legitimate.
-_ALLOWED_OPAQUE_VALUES = {
-    "${NPTC_FRONTEND_BASE_URL}",
-    "${NPTC_FRONTEND_BASE_URL}/*",
-}
 
 
 @pytest.fixture(scope="module")
 def realm() -> dict[str, Any]:
-    return dict(yaml_or_json_load(REALM_FILE))
+    # json.loads, not yaml.safe_load: the realm file is authored as JSON, and
+    # YAML 1.1 is a superset in the wrong direction here - it accepts
+    # trailing commas in flow collections and silently last-wins on
+    # duplicate keys, both of which Keycloak's own JSON parser rejects or
+    # handles differently. A malformed realm file must fail this test the
+    # same way it would fail import, not merely the way YAML tolerates it.
+    return dict(json.loads(REALM_FILE.read_text(encoding="utf-8")))
 
 
-def yaml_or_json_load(path: Path) -> Any:
-    # JSON is a subset of YAML 1.1 - yaml.safe_load parses it identically
-    # and this repo already depends on pyyaml, so no separate json import
-    # is needed for a one-line load.
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
-def _iter_key_value_pairs(node: Any) -> list[tuple[str, Any]]:
+def _iter_key_value_pairs(node: Any, parent_key: str | None = None) -> list[tuple[str, Any]]:
+    """Walks the full tree, including list elements - a secret-shaped string
+    living inside an array (redirectUris, webOrigins, defaultClientScopes, or
+    any protocolMapper config's value list) must be reachable too, not just
+    dict values. List scalars are yielded under their parent key, since a
+    list has no key of its own to report."""
     pairs: list[tuple[str, Any]] = []
     if isinstance(node, dict):
         for key, value in node.items():
             pairs.append((key, value))
-            pairs.extend(_iter_key_value_pairs(value))
+            pairs.extend(_iter_key_value_pairs(value, parent_key=key))
     elif isinstance(node, list):
         for item in node:
-            pairs.extend(_iter_key_value_pairs(item))
+            if isinstance(item, dict | list):
+                pairs.extend(_iter_key_value_pairs(item, parent_key=parent_key))
+            elif parent_key is not None:
+                pairs.append((parent_key, item))
     return pairs
 
 
@@ -92,8 +94,7 @@ def test_compose_bind_mount_points_at_the_file_under_test() -> None:
     """Parses compose.yml rather than hardcoding the path twice, so a moved
     realm directory breaks this test instead of silently diverging from
     what compose actually imports."""
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
-    volumes = compose["services"]["keycloak"]["volumes"]
+    volumes = compose_config()["services"]["keycloak"]["volumes"]
     import_mounts = [v for v in volumes if v.split(":")[1] == "/opt/keycloak/data/import"]
 
     assert len(import_mounts) == 1
@@ -103,8 +104,7 @@ def test_compose_bind_mount_points_at_the_file_under_test() -> None:
 
 @pytest.mark.req("NFR-03")
 def test_compose_imports_the_realm_on_startup() -> None:
-    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
-    command = compose["services"]["keycloak"]["command"]
+    command = compose_config()["services"]["keycloak"]["command"]
 
     assert "--import-realm" in command
 
@@ -120,7 +120,7 @@ def test_no_secret_material_anywhere_in_the_realm(realm: dict[str, Any]) -> None
     assert offending_keys == set()
 
     for key, value in pairs:
-        if not isinstance(value, str) or value in _ALLOWED_OPAQUE_VALUES:
+        if not isinstance(value, str):
             continue
         assert not _JWT_RE.match(value), f"{key!r} looks like a bearer token: {value!r}"
         assert not _LONG_OPAQUE_RE.match(value), f"{key!r} looks like a generated secret: {value!r}"
@@ -287,5 +287,16 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
         clients = clients_response.json()
 
         assert len(clients) == 1
-        assert clients[0]["publicClient"] is True
-        assert clients[0]["attributes"]["pkce.code.challenge.method"] == "S256"
+        client = clients[0]
+        assert client["publicClient"] is True
+        assert client["attributes"]["pkce.code.challenge.method"] == "S256"
+
+        # ${NPTC_FRONTEND_BASE_URL} is the realm's only placeholder and the
+        # one thing the offline group cannot check - if Keycloak's ${VAR}
+        # substitution doesn't fire (wrong syntax, unset var, a version
+        # change), the imported client keeps the literal placeholder text
+        # and #41's login breaks with an "Invalid redirect_uri" this test
+        # would otherwise still call green.
+        assert client["rootUrl"] == frontend_base_url
+        assert client["redirectUris"] == [f"{frontend_base_url}/*"]
+        assert client["webOrigins"] == [frontend_base_url]

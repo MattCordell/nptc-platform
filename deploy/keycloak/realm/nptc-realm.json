@@ -45,7 +45,7 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "${NPTC_FRONTEND_BASE_URL}"
       },
-      "defaultClientScopes": ["profile", "email", "web-origins"],
+      "defaultClientScopes": ["basic", "profile", "email", "web-origins"],
       "optionalClientScopes": ["offline_access"],
       "protocolMappers": [
         {

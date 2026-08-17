@@ -425,9 +425,7 @@ class DatatypeHandler(Protocol):
         ADR-0012 reserved but did not define (#52)."""
         ...
 
-    def validate(
-        self, value: Any, spec: PropertyDefinitionSpec
-    ) -> Sequence[ValidationIssue]:
+    def validate(self, value: Any, spec: PropertyDefinitionSpec) -> Sequence[ValidationIssue]:
         """Local and structural. FR-10's binding check is a live terminology
         call and reaches the server through self, not this method - the
         code handler is constructed with a TerminologyClient (below)."""

@@ -62,15 +62,18 @@ services:
       # the realm's own discovery document proves the import in
       # deploy/keycloak/realm/nptc-realm.json actually completed (NFR-03) -
       # "healthy" means "the realm imported", not just "the process is up".
+      # grep -E '^HTTP/1\.1 200' anchors to the response's own status line, not
+      # merely "200 OK" anywhere in the response - the discovery document's
+      # body is JSON and could otherwise contain that substring coincidentally.
       test:
         - "CMD-SHELL"
         - >-
           exec 3<>/dev/tcp/localhost/9000 &&
           echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
-          grep -q '200 OK' <&3 &&
+          grep -qE '^HTTP/1\.1 200' <&3 &&
           exec 4<>/dev/tcp/localhost/8080 &&
           echo -e 'GET /realms/nptc/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&4 &&
-          grep -q '200 OK' <&4
+          grep -qE '^HTTP/1\.1 200' <&4
       interval: 10s
       timeout: 5s
       retries: 15

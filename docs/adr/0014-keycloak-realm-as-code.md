@@ -79,10 +79,25 @@ to discover by trial rather than read in Keycloak's own documentation.
 redirect all derive from one `${NPTC_FRONTEND_BASE_URL}` placeholder - the one part of this
 realm that is genuinely per-deployment (hardcoding `http://localhost:5173` in a file destined
 for production would be the mistake worth avoiding). Its `defaultClientScopes` are
-`profile`/`email`/`web-origins` only - `roles` is deliberately left out even though Keycloak
-creates it as a realm default, so no `realm_access`/`resource_access` claim appears in a
-token at all, keeping the "authorisation never comes from the token" line as literal as
+`basic`/`profile`/`email`/`web-origins` - `basic` carries the `oidc-sub-mapper` that puts a
+`sub` claim on the *access* token (unlike an ID token, Keycloak does not add `sub` to an
+access token unless a client is scoped to `basic` or `roles`); without it #43's JWT
+verification would have no subject to check at all. Confirmed by decoding a real access
+token with and without `basic` in scope. `roles` is deliberately left out even though
+Keycloak creates it as a realm default, so no `realm_access`/`resource_access` claim appears
+in a token at all, keeping the "authorisation never comes from the token" line as literal as
 possible pending #44's role model.
+
+**Open registration (`registrationAllowed: true`) with `verifyEmail: false` is a deliberate,
+temporary posture, not an oversight.** NFR-02 requires local registration to be available;
+there is no SMTP in this stack to actually deliver a verification email, so `verifyEmail`
+cannot be `true` yet without also locking every self-registered user out. This means, until
+#42 lands, anyone reachable on the network can create an account with an address nobody
+confirmed - harmless today only because no authorisation decision anywhere in the platform
+yet reads from the internal user record this realm feeds (NFR-07), and P1's threat model
+does not yet include a live, network-reachable deployment. `docs/operations/configuration.md`
+states this explicitly as the one thing a real deployment must revisit (wiring SMTP and
+flipping `verifyEmail`), rather than leaving it to be inferred from NFR-02 alone.
 
 **`nptc-api`** is an audience target only, so #43 has a real `aud` to verify against: every
 flow disabled, `publicClient: true` (never confidential, so there is no secret field at all),
@@ -92,23 +107,36 @@ never logged into; it exists to be named in `nptc-frontend`'s tokens.
 **Both kinds of test.** `backend/tests/test_keycloak_realm.py` has an offline group (no
 Docker) walking the committed JSON for secret-shaped keys/values (NFR-26/NFR-35 - the
 principal failure mode is a re-exported realm bringing back a client secret and whatever
-test users a maintainer was poking at), asserting the client and scope shapes above, and
-checking `compose.yml`'s bind mount resolves to the realm directory under test - parsed, not
-hardcoded a second time. The integration group (`@pytest.mark.integration`,
+test users a maintainer was poking at, and the walk covers array elements as well as dict
+values - `redirectUris`, `webOrigins`, and any protocol mapper's `config` are all lists or
+carry list-shaped values a dict-only walk would miss entirely), asserting the client and
+scope shapes above, and checking `compose.yml`'s bind mount resolves to the realm directory
+under test - parsed, not hardcoded a second time. `nptc-realm.json` itself is parsed with
+`json.loads`, not `yaml.safe_load` (used for `compose.yml`): YAML 1.1 is a superset of JSON in
+the wrong direction here, accepting trailing commas in flow collections and silently
+letting the last of two duplicate keys win, neither of which Keycloak's own JSON parser
+tolerates the same way - the offline group's "catches a malformed file immediately" claim only holds under the
+parser Keycloak itself uses. The integration group (`@pytest.mark.integration`,
 `@pytest.mark.req("NFR-03")`) starts the pinned Keycloak image via testcontainers'
 `DockerContainer` with the realm directory mounted read-only, then asserts against the real
-discovery document (`issuer`, `S256` in `code_challenge_methods_supported`) and the admin API
-(`nptc-frontend` public with PKCE). `conftest.py`'s `_image_from_compose()` is generalised to
-`image_from_compose(service: str = "postgres")` and exported, so this reuses the repo's "one
-parser for compose.yml" rule instead of adding a second one; `test_keycloak_realm.py` loads
-it via `importlib.util.spec_from_file_location` rather than `import conftest`, since
-`backend/tests` has no `__init__.py` and pytest's `--import-mode=importlib` does not register
-`conftest.py` under an importable `conftest` name for a sibling module to find.
+discovery document (`issuer`, `S256` in `code_challenge_methods_supported`), the admin API
+(`nptc-frontend` public with PKCE), and that the imported client's `rootUrl`/`redirectUris`/
+`webOrigins` actually carry the substituted `${NPTC_FRONTEND_BASE_URL}` value rather than the
+literal placeholder text - the one thing the offline group cannot check, since it never
+resolves the variable itself. `conftest.py`'s `_image_from_compose()` is generalised into
+`compose_config()` (returns the whole parsed file) plus `image_from_compose(service: str =
+"postgres")` built on it, both exported, so every reader of `compose.yml` in this test tree -
+the bind-mount check, the `--import-realm` check, and the integration group's image lookup -
+goes through the same parse instead of three separate `yaml.safe_load` calls that could drift
+apart. `test_keycloak_realm.py` loads them via `importlib.util.spec_from_file_location` rather
+than `import conftest`, since `backend/tests` has no `__init__.py` and pytest's
+`--import-mode=importlib` does not register `conftest.py` under an importable `conftest` name
+for a sibling module to find.
 
 **`.github/workflows/ci.yml`'s `backend-integration` job pulls the Keycloak image before the
-egress block**, alongside the existing Postgres pull, using the same pyyaml-based reader -
-otherwise the container start is a registry miss against a blocked network, the same
-reasoning ADR-0011 already applied to Postgres.
+egress block**, looping the same pyyaml-based reader over both `postgres` and `keycloak`
+rather than duplicating the step - otherwise the container start is a registry miss against a
+blocked network, the same reasoning ADR-0011 already applied to Postgres.
 
 ## Rejected alternatives
 
@@ -129,8 +157,9 @@ reasoning ADR-0011 already applied to Postgres.
   declared here.
 - `docs/operations/configuration.md`'s new "Keycloak realm import" section is the one place
   documenting that import is skipped once the realm already exists in a running instance -
-  editing `nptc-realm.json` requires `docker compose down` on the `keycloak` service (or
-  `down -v`, since there is no volume to preserve), not merely a restart.
+  editing `nptc-realm.json` requires recreating the `keycloak` container (`docker compose up
+  -d --force-recreate keycloak` - `down`'s per-service form needs Compose v2.24+, so the
+  version-agnostic `--force-recreate` is what the runbook says), not merely a restart.
 - Any later client added to this realm should default to a client-level `protocolMappers`
   entry for a single-client need (as `nptc-frontend` does here) and reach for a shared
   `clientScopes` entry only once a second client genuinely needs the same mapper - the sharp
