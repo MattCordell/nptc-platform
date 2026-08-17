@@ -113,7 +113,14 @@ def test_compose_imports_the_realm_on_startup() -> None:
 def test_no_secret_material_anywhere_in_the_realm(realm: dict[str, Any]) -> None:
     """The principal failure mode: a maintainer re-exports the realm from a
     running Keycloak, and the export brings back a client secret and
-    whatever test users they were poking at."""
+    whatever test users they were poking at.
+
+    There is no allowlist for values that merely look opaque - the walk
+    covers every string in the file, array elements included. If a future,
+    genuinely legitimate long value (a base64 logo, a long scope or mapper
+    name) ever trips `_LONG_OPAQUE_RE`, add a narrow, named allowlist entry
+    for that specific value at that point - don't widen the regex or drop
+    the assertion."""
     pairs = _iter_key_value_pairs(realm)
 
     offending_keys = {key for key, _ in pairs if key.lower() in BANNED_KEYS}
