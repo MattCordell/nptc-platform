@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.auth.claims import OidcIdentityClaims
@@ -484,6 +485,30 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
     assert first.user.id != second.user.id
     assert second.user.username != first.user.username
     assert second.user.username is not None and second.user.username.startswith("taken")
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_first_registration_reraises_a_non_username_constraint_violation(
+    app_db: Connection,
+) -> None:
+    """The behaviour `_is_username_collision` exists to fix: only a
+    `uq_app_user_username` collision (23505) is retried. A blank `subject`
+    violates `ck_user_identity_subject_not_blank` (23514) instead - a
+    different sqlstate and constraint the retry loop must not mistake for
+    a username problem - and this must surface as-is rather than burn
+    every retry attempt and then report a misleading "could not allocate
+    a unique username" error. This is also the one test that actually
+    exercises the `orig.diag.constraint_name` access against a real driver
+    exception, rather than trusting the getattr fallback never fires."""
+    session = Session(bind=app_db)
+
+    with pytest.raises(IntegrityError):
+        resolve_user_for_claims(
+            session,
+            _claims(issuer=_UNTRUSTED, subject="   "),
+            trusted_issuers=_TRUSTED,
+        )
 
 
 @pytest.mark.req("NFR-17")
