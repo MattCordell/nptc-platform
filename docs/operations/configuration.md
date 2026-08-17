@@ -16,6 +16,7 @@ values (NFR-26).
 | `POSTGRES_PORT` | `deploy/compose.yml`'s `postgres` service (host port mapping) | `5432` | No | Change only if `5432` is already in use locally |
 | `NPTC_DATABASE_URL` | `nptc.settings.DatabaseSettings` (backend) | *(no default - required)* | Yes | A DSN for the app runtime role (`nptc_app` membership) |
 | `NPTC_MIGRATION_DATABASE_URL` | `nptc.settings.MigrationSettings` (backend), Alembic (`backend/migrations/env.py`) | *(no default - required)* | Yes | A DSN for the owning role - typically `POSTGRES_USER` in this local stack |
+| `NPTC_TRUSTED_ISSUERS` | `nptc.settings.AuthSettings` (backend) | *(empty - no issuer trusted)* | No | Comma-separated list of OIDC issuer URLs allowed to auto-link (NFR-05). Leave empty while federation is off (NFR-02) |
 | `KEYCLOAK_ADMIN_USER` | `deploy/compose.yml`'s `keycloak` service | `admin` | No | `admin` is fine |
 | `KEYCLOAK_ADMIN_PASSWORD` | `deploy/compose.yml`'s `keycloak` service | `change-me` | Yes | Any local-only value |
 | `KEYCLOAK_PORT` | `deploy/compose.yml`'s `keycloak` service (host port mapping) | `8080` | No | Change only if `8080` is already in use locally |
@@ -48,6 +49,14 @@ OAuth2 client-credentials is deferred. Retry backoff timings are `TerminologyCon
 constructor defaults, deliberately not environment variables: they are tuning constants,
 not deployment configuration. This table grows as later issues add services that read
 their own configuration.
+
+`NPTC_TRUSTED_ISSUERS` gates `nptc.auth.linking.may_auto_link` (issue #42, NFR-05): an
+OIDC identity may only be auto-linked to an existing account (matched by verified email)
+if its issuer appears, exact-match, in this comma-separated set. The empty default is a
+deliberate fail-closed posture, matching this settings module's existing convention of
+raising loudly rather than silently defaulting - here that means "no auto-linking at
+all" rather than "trust everything" until an operator explicitly names a trusted issuer.
+It stays empty while federation is off (NFR-02, no second IdP configured yet).
 
 ## Keycloak realm import
 

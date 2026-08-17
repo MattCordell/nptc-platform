@@ -68,6 +68,16 @@ and the alternative (`REVOKE USAGE ... ; downgrade base` re-`GRANT`-ing it on ev
 `information_schema.role_table_grants` (table-level), not schema-level grants - noted here
 rather than left for a future reader to notice the gap unassisted.
 
+## `0003_user_and_user_identity.py`
+
+Adds `app_user` and `user_identity` (issue #42, ADR-0015) and a new FK,
+`audit_event.actor_user_id -> app_user.id`. `downgrade()` drops that FK **first**,
+then `user_identity`, then `app_user` - the reverse of creation order, since a
+foreign key must be dropped before the table it references can be. Its privilege
+grants and revokes (see [`data-model.md`](../architecture/data-model.md#user-and-user_identity))
+live in this same migration, following the same reasoning as `0002_audit_event.py`
+above.
+
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely

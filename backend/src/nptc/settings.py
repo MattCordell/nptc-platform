@@ -19,8 +19,10 @@ notices.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -41,6 +43,33 @@ class DatabaseSettings(BaseSettings):
     @classmethod
     def _not_blank(cls, value: str) -> str:
         return _require_non_blank(value, "database_url")
+
+
+class AuthSettings(BaseSettings):
+    """The NFR-05 trusted-issuer allowlist controlling auto-linking (issue
+    #42) - see ``nptc.auth.linking.may_auto_link``.
+
+    Empty default, not a required field: unlike the DSNs above, "no issuer
+    is trusted yet" is itself a valid, safe configuration (fail closed,
+    matching NFR-02's federation-off posture), not a misconfiguration to
+    reject.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    # NoDecode: frozenset[str] is a "complex" type to pydantic-settings, so
+    # without this it tries to JSON-decode the raw environment string
+    # before any validator below ever runs - the comma-separated format
+    # configuration.md documents would raise a SettingsError on every
+    # non-JSON value, never reaching `_split_comma_separated`.
+    trusted_issuers: Annotated[frozenset[str], NoDecode] = frozenset()
+
+    @field_validator("trusted_issuers", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: object) -> object:
+        if isinstance(value, str):
+            return frozenset(item.strip() for item in value.split(",") if item.strip())
+        return value
 
 
 class MigrationSettings(BaseSettings):

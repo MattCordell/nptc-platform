@@ -103,8 +103,30 @@ def _fingerprint(engine: Engine) -> dict[str, Any]:
                 )
             ]
         )
+        # role_table_grants alone is blind to a column-level GRANT UPDATE
+        # (e.g. app_user's) - that shows up only in column_privileges. Without
+        # this, a column-level grant living in the wrong migration would pass
+        # this fingerprint despite not surviving a downgrade/upgrade
+        # round-trip.
+        column_grants = _sorted_by_json(
+            [
+                list(row)
+                for row in connection.execute(
+                    text(
+                        "SELECT table_name, column_name, grantee, privilege_type "
+                        "FROM information_schema.column_privileges "
+                        "WHERE table_schema = 'public'"
+                    )
+                )
+            ]
+        )
 
-    return {"tables": tables, "extensions": extensions, "grants": grants}
+    return {
+        "tables": tables,
+        "extensions": extensions,
+        "grants": grants,
+        "column_grants": column_grants,
+    }
 
 
 @pytest.fixture(scope="module")

@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Identity, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Text
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -42,9 +42,14 @@ class AuditEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # No FK to a user table: user/user_identity lands with #42. actor_user_id
-    # is NULL until then (e.g. a system-initiated event has no human actor).
-    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Nullable FK to app_user (issue #42): a system-initiated event has no
+    # human actor. Never deleted, only pseudonymised (NFR-17) - the FK is
+    # what makes "pseudonymise, never delete" structural rather than an
+    # application convention: app_user.id survives closure unchanged, so
+    # this reference is never dangling.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id"), nullable=True
+    )
     actor_ip: Mapped[str | None] = mapped_column(INET, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     correlation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)

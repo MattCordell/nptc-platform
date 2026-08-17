@@ -18,6 +18,8 @@ from sqlalchemy.engine import Connection
 from nptc.db.base import Base
 from nptc.db.models import (  # noqa: F401 -- import for side effect: populates Base.metadata
     AuditEvent,
+    User,
+    UserIdentity,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
