@@ -87,7 +87,10 @@ class TokenVerifier:
         return cls(issuer=settings.oidc_issuer, audience=settings.oidc_audience, keys=keys)
 
     def verify(self, token: str) -> OidcIdentityClaims:
-        header = jwt.get_unverified_header(token)
+        try:
+            header = jwt.get_unverified_header(token)
+        except jwt.exceptions.DecodeError as exc:
+            raise TokenInvalidError(f"malformed token: {exc}") from exc
 
         alg = header.get("alg")
         if alg not in _ALGORITHMS:
@@ -124,14 +127,28 @@ class TokenVerifier:
         if not isinstance(subject, str) or not subject.strip():
             raise TokenClaimsError("sub claim is blank")
 
+        issuer = payload["iss"]
+        if not isinstance(issuer, str):
+            raise TokenClaimsError("iss claim is not a string")
+
+        # jwt.decode returns dict[str, Any] - every other claim below is
+        # narrowed to the type OidcIdentityClaims declares rather than
+        # passed through unchecked, the same discipline `sub` gets above.
+        email = payload.get("email")
+        email = email if isinstance(email, str) else None
+        preferred_username = payload.get("preferred_username")
+        preferred_username = preferred_username if isinstance(preferred_username, str) else None
+        display_name = payload.get("name")
+        display_name = display_name if isinstance(display_name, str) else None
+
         return OidcIdentityClaims(
-            issuer=payload["iss"],
+            issuer=issuer,
             subject=subject,
-            email=payload.get("email"),
+            email=email,
             # `is True`, never truthiness - a claim decoded as the string
             # "false" is truthy in Python. The same discipline
             # nptc.auth.linking documents for may_auto_link.
             email_verified=payload.get("email_verified") is True,
-            preferred_username=payload.get("preferred_username"),
-            display_name=payload.get("name"),
+            preferred_username=preferred_username,
+            display_name=display_name,
         )

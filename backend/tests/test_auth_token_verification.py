@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,16 @@ def verifier(stub, signing_key):
         audience="nptc-api",
         keys=SigningKeys(stub.jwks_url),
     )
+
+
+@pytest.mark.req("NFR-07")
+def test_malformed_token_is_rejected(verifier) -> None:
+    """An unauthenticated caller sends exactly this kind of garbage as a
+    bearer value - it must map to `TokenInvalidError` (and, eventually, a
+    401), not a raw, uncaught `jwt.exceptions.DecodeError` a dependency
+    would let become a 500."""
+    with pytest.raises(TokenInvalidError):
+        verifier.verify("not.a.jwt")
 
 
 @pytest.mark.req("NFR-07")
@@ -178,16 +189,19 @@ def test_audience_list_without_the_expected_value_is_rejected(stub, signing_key,
 
 @pytest.mark.req("NFR-07")
 def test_missing_sub_is_rejected(stub, signing_key, verifier) -> None:
-    now = 0
+    # A future `exp` (not epoch 0+300, which is already long expired) so
+    # this isolates the missing `sub` claim specifically, rather than
+    # passing only because PyJWT happens to check required claims before
+    # expiry.
+    now = int(time.time())
     claims = {
         "iss": stub.issuer_url,
         "aud": "nptc-api",
         "iat": now,
         "exp": now + 300,
+        "typ": "Bearer",
     }
-    token = jwt.encode(
-        claims, signing_key, algorithm="RS256", headers={"kid": "key-1", "typ": "Bearer"}
-    )
+    token = jwt.encode(claims, signing_key, algorithm="RS256", headers={"kid": "key-1"})
 
     with pytest.raises(TokenClaimsError):
         verifier.verify(token)

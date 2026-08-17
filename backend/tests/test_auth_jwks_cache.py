@@ -9,11 +9,13 @@ server's own request counter can be asserted directly rather than assumed.
 from __future__ import annotations
 
 import importlib.util
+import time
 from pathlib import Path
 
+import jwt
 import pytest
 
-from nptc.auth.errors import SigningKeyUnavailableError
+from nptc.auth.errors import SigningKeyUnavailableError, TokenInvalidError
 from nptc.auth.jwks import SigningKeys
 
 _support_spec = importlib.util.spec_from_file_location(
@@ -25,6 +27,33 @@ _support_spec.loader.exec_module(_support)
 running_stub_idp = _support.running_stub_idp
 generate_rsa_key = _support.generate_rsa_key
 mint_token = _support.mint_token
+
+
+@pytest.mark.req("NFR-07")
+def test_malformed_token_is_rejected_directly() -> None:
+    with running_stub_idp() as stub:
+        keys = SigningKeys(stub.jwks_url)
+
+        with pytest.raises(TokenInvalidError):
+            keys.signing_key_for("not.a.jwt")
+
+
+@pytest.mark.req("NFR-07")
+def test_token_with_no_kid_is_refused() -> None:
+    with running_stub_idp() as stub:
+        key = generate_rsa_key()
+        keys = SigningKeys(stub.jwks_url)
+        # jwt.encode refuses a non-string `kid`, so a header with none at
+        # all (rather than mint_token's usual `kid=...`) is the only way
+        # to produce this case.
+        token = jwt.encode(
+            {"iss": stub.issuer_url, "sub": "s", "aud": "nptc-api", "iat": 0, "exp": 9_999_999_999},
+            key,
+            algorithm="RS256",
+        )
+
+        with pytest.raises(SigningKeyUnavailableError):
+            keys.signing_key_for(token)
 
 
 @pytest.mark.req("NFR-07")
@@ -121,6 +150,65 @@ def test_unknown_kid_within_cooldown_issues_zero_http_requests() -> None:
             keys.signing_key_for(unknown_token)
 
         assert stub.request_count == request_count_after_first_unknown
+
+
+@pytest.mark.req("NFR-07")
+def test_revoked_key_is_refused_even_though_the_fetch_succeeds() -> None:
+    """A `kid` that is simply no longer published - the operator revoked
+    or rotated it away - must never fall back to a previously-cached key:
+    that would keep accepting tokens signed by a key the IdP has
+    explicitly retired. This is distinct from an unreachable endpoint
+    (the other tests in this module), where falling back is exactly the
+    point."""
+    with running_stub_idp() as stub:
+        key = generate_rsa_key()
+        stub.add_key("key-1", key)
+        # A short cache lifespan, plus an actual sleep past it, forces the
+        # next lookup to re-fetch rather than ever serve PyJWKClient's own
+        # cache, so the revocation is genuinely observed.
+        keys = SigningKeys(stub.jwks_url, cache_seconds=0.01)
+        token = mint_token(key, kid="key-1", issuer=stub.issuer_url)
+
+        keys.signing_key_for(token)
+
+        del stub.keys["key-1"]
+        time.sleep(0.05)
+
+        with pytest.raises(SigningKeyUnavailableError):
+            keys.signing_key_for(token)
+
+
+@pytest.mark.req("NFR-07")
+def test_fallback_key_expires_after_max_fallback_age() -> None:
+    """`_known_keys` is not a permanent fallback: once an outage outlasts
+    `max_fallback_age_seconds`, a previously-valid key is treated as
+    unavailable rather than trusted forever."""
+    clock = {"now": 0.0}
+
+    with running_stub_idp() as stub:
+        key = generate_rsa_key()
+        stub.add_key("key-1", key)
+        keys = SigningKeys(
+            stub.jwks_url,
+            cache_seconds=0.01,
+            max_fallback_age_seconds=60.0,
+            monotonic=lambda: clock["now"],
+        )
+        token = mint_token(key, kid="key-1", issuer=stub.issuer_url)
+
+        keys.signing_key_for(token)
+        time.sleep(0.05)
+
+        stub.fail = True
+        clock["now"] += 30.0
+        # Still within the fallback window - the known key still verifies.
+        resolved = keys.signing_key_for(token)
+        assert resolved.key_id == "key-1"
+
+        clock["now"] += 31.0
+        # Past the fallback window now - refused, not silently trusted.
+        with pytest.raises(SigningKeyUnavailableError):
+            keys.signing_key_for(token)
 
 
 @pytest.mark.req("NFR-07")

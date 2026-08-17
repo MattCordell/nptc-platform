@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from nptc.auth.discovery import resolve_jwks_url
-from nptc.auth.errors import TokenIssuerError
+from nptc.auth.errors import SigningKeyUnavailableError, TokenIssuerError
 from nptc.auth.tokens import TokenVerifier
 from nptc.settings import AuthSettings
 
@@ -84,8 +84,69 @@ def test_cross_origin_jwks_uri_is_refused(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.req("NFR-21")
-def test_plain_http_non_localhost_issuer_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plain_http_non_localhost_issuer_is_refused_without_contacting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal is checked *before* the request is made - a client
+    whose `get` raises if called at all proves the refused issuer is
+    never actually contacted over cleartext."""
     issuer = "http://keycloak.internal/realms/nptc"
+
+    def _never_called(_url: str) -> None:
+        raise AssertionError("client.get must not be called for a refused issuer")
+
+    with httpx.Client() as client:
+        monkeypatch.setattr(client, "get", _never_called)
+        with pytest.raises(TokenIssuerError):
+            resolve_jwks_url(issuer, client=client)
+
+
+@pytest.mark.req("NFR-07")
+def test_transport_failure_is_wrapped() -> None:
+    """A connection failure must map to `SigningKeyUnavailableError`, not
+    propagate a raw `httpx.ConnectError` - the whole point of
+    `nptc.auth.errors` is one exception family a caller can catch."""
+    with httpx.Client() as client, pytest.raises(SigningKeyUnavailableError):
+        resolve_jwks_url("http://127.0.0.1:1/realms/nptc", client=client)
+
+
+@pytest.mark.req("NFR-07")
+def test_non_json_response_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> None:
+            raise ValueError("not json")
+
+    with httpx.Client() as client:
+        monkeypatch.setattr(client, "get", lambda _url: _Response())
+        with pytest.raises(SigningKeyUnavailableError):
+            resolve_jwks_url("http://127.0.0.1/realms/nptc", client=client)
+
+
+@pytest.mark.req("NFR-07")
+def test_non_object_document_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> list[object]:
+            return []
+
+    with httpx.Client() as client:
+        monkeypatch.setattr(client, "get", lambda _url: _Response())
+        with pytest.raises(SigningKeyUnavailableError):
+            resolve_jwks_url("http://127.0.0.1/realms/nptc", client=client)
+
+
+@pytest.mark.req("NFR-07")
+def test_document_missing_jwks_uri_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    issuer = "http://127.0.0.1/realms/nptc"
 
     class _Response:
         status_code = 200
@@ -94,11 +155,11 @@ def test_plain_http_non_localhost_issuer_is_refused(monkeypatch: pytest.MonkeyPa
             pass
 
         def json(self) -> dict[str, str]:
-            return {"issuer": issuer, "jwks_uri": f"{issuer}/protocol/openid-connect/certs"}
+            return {"issuer": issuer}
 
     with httpx.Client() as client:
         monkeypatch.setattr(client, "get", lambda _url: _Response())
-        with pytest.raises(TokenIssuerError):
+        with pytest.raises(SigningKeyUnavailableError):
             resolve_jwks_url(issuer, client=client)
 
 
