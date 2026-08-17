@@ -92,7 +92,7 @@ possible pending #44's role model.
 temporary posture, not an oversight.** NFR-02 requires local registration to be available;
 there is no SMTP in this stack to actually deliver a verification email, so `verifyEmail`
 cannot be `true` yet without also locking every self-registered user out. This means, until
-#42 lands, anyone reachable on the network can create an account with an address nobody
+issue #42 lands, anyone reachable on the network can create an account with an address nobody
 confirmed - harmless today only because no authorisation decision anywhere in the platform
 yet reads from the internal user record this realm feeds (NFR-07), and P1's threat model
 does not yet include a live, network-reachable deployment. `docs/operations/configuration.md`
