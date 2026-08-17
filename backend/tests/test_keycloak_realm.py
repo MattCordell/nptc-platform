@@ -221,6 +221,28 @@ def test_no_application_roles_declared_in_the_realm(realm: dict[str, Any]) -> No
     assert "realmRoles" not in realm
 
 
+@pytest.mark.req("NFR-06")
+def test_otp_policy_is_totp_with_pinned_parameters(realm: dict[str, Any]) -> None:
+    """TOTP availability is otherwise an *inherited* Keycloak default -
+    pinning it here (ADR-0014's own point: realm behaviour lives in the
+    file) means a future Keycloak upgrade changing its own default cannot
+    silently change ours."""
+    assert realm["otpPolicyType"] == "totp"
+    assert realm["otpPolicyAlgorithm"] == "HmacSHA1"
+    assert realm["otpPolicyDigits"] == 6
+    assert realm["otpPolicyPeriod"] == 30
+
+
+@pytest.mark.req("NFR-06")
+def test_configure_totp_required_action_is_enabled(realm: dict[str, Any]) -> None:
+    matches = [
+        action for action in realm.get("requiredActions", []) if action["alias"] == "CONFIGURE_TOTP"
+    ]
+
+    assert len(matches) == 1
+    assert matches[0]["enabled"] is True
+
+
 def _wait_for_discovery_document(
     base_url: str, attempts: int = 60, delay: float = 2.0
 ) -> httpx.Response:
@@ -307,3 +329,15 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
         assert client["rootUrl"] == frontend_base_url
         assert client["redirectUris"] == [f"{frontend_base_url}/*"]
         assert client["webOrigins"] == [frontend_base_url]
+
+        required_actions_response = httpx.get(
+            f"{base_url}/admin/realms/nptc/authentication/required-actions",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=30,
+        )
+        required_actions_response.raise_for_status()
+        required_actions = required_actions_response.json()
+        configure_totp = [a for a in required_actions if a["alias"] == "CONFIGURE_TOTP"]
+
+        assert len(configure_totp) == 1
+        assert configure_totp[0]["enabled"] is True

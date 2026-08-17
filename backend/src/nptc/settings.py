@@ -47,12 +47,17 @@ class DatabaseSettings(BaseSettings):
 
 class AuthSettings(BaseSettings):
     """The NFR-05 trusted-issuer allowlist controlling auto-linking (issue
-    #42) - see ``nptc.auth.linking.may_auto_link``.
+    #42) - see ``nptc.auth.linking.may_auto_link`` - plus the NFR-07
+    server-side JWT verification configuration (issue #43) - see
+    ``nptc.auth.tokens.TokenVerifier.from_settings``.
 
     Empty default, not a required field: unlike the DSNs above, "no issuer
     is trusted yet" is itself a valid, safe configuration (fail closed,
     matching NFR-02's federation-off posture), not a misconfiguration to
-    reject.
+    reject. ``oidc_issuer`` follows the same posture for the same reason:
+    an empty issuer cannot construct a ``TokenVerifier`` at all (see
+    ``nptc.auth.errors``), so a missing configuration refuses every token
+    rather than accepting one unverified.
     """
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
@@ -70,6 +75,29 @@ class AuthSettings(BaseSettings):
         if isinstance(value, str):
             return frozenset(item.strip() for item in value.split(",") if item.strip())
         return value
+
+    #: Empty, not required: matches the fail-closed posture above. A
+    #: ``TokenVerifier`` cannot be constructed from a blank issuer, so an
+    #: unconfigured deployment refuses every token instead of accepting one
+    #: whose issuer was never actually checked.
+    oidc_issuer: str = ""
+
+    #: Fixed by the committed realm (deploy/keycloak/realm/nptc-realm.json's
+    #: `nptc-api-audience` mapper), not by a deployment - see ADR-0014.
+    oidc_audience: str = "nptc-api"
+
+    #: Empty means "resolve via OIDC discovery" (`nptc.auth.discovery`).
+    #: Setting this explicitly skips discovery entirely - for air-gapped
+    #: deployments, and so the offline test suite only ever needs to stand
+    #: up one local HTTP endpoint.
+    jwks_url: str = ""
+
+    jwks_cache_seconds: float = 300.0
+
+    #: An unknown `kid` within this many seconds of the last refresh
+    #: attempt is refused without an HTTP request - see
+    #: ``nptc.auth.jwks.SigningKeys``.
+    jwks_refresh_cooldown_seconds: float = 30.0
 
 
 class MigrationSettings(BaseSettings):

@@ -12,6 +12,15 @@ dependencies = [
     "pydantic-settings>=2.6",
     "psycopg[binary]>=3.3.4",
     "nptc-shared",
+    # The floor is not arbitrary: before 2.13, PyJWKClient.fetch_data wrote
+    # its result in a `finally:` block, so a failed fetch cached `None` and
+    # wiped a perfectly good JWKS (GHSA-fhv5-28vv-h8m8) - precisely the
+    # failure issue #43's acceptance criterion 4 exists to rule out. Do not
+    # relax this floor.
+    "pyjwt[crypto]>=2.13",
+    # The backend now imports httpx directly for OIDC discovery (issue
+    # #43); previously only transitive via nptc-shared.
+    "httpx>=0.28",
 ]
 
 [tool.uv.sources]
