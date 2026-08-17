@@ -17,6 +17,11 @@ values (NFR-26).
 | `NPTC_DATABASE_URL` | `nptc.settings.DatabaseSettings` (backend) | *(no default - required)* | Yes | A DSN for the app runtime role (`nptc_app` membership) |
 | `NPTC_MIGRATION_DATABASE_URL` | `nptc.settings.MigrationSettings` (backend), Alembic (`backend/migrations/env.py`) | *(no default - required)* | Yes | A DSN for the owning role - typically `POSTGRES_USER` in this local stack |
 | `NPTC_TRUSTED_ISSUERS` | `nptc.settings.AuthSettings` (backend) | *(empty - no issuer trusted)* | No | Comma-separated list of OIDC issuer URLs allowed to auto-link (NFR-05). Leave empty while federation is off (NFR-02) |
+| `NPTC_OIDC_ISSUER` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - no verifier can be constructed)* | No | The realm's issuer URL, e.g. `http://localhost:8080/realms/nptc`. Empty is fail-closed: `TokenVerifier.from_settings` refuses to construct rather than accept a token whose issuer was never checked |
+| `NPTC_OIDC_AUDIENCE` | `nptc.settings.AuthSettings` (backend, NFR-07) | `nptc-api` | No | Fixed by the committed realm's `nptc-api-audience` mapper (ADR-0014) - only change this alongside the realm |
+| `NPTC_JWKS_URL` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - resolved via OIDC discovery)* | No | Set only to skip discovery (air-gapped deployments) - normally left empty |
+| `NPTC_JWKS_CACHE_SECONDS` | `nptc.settings.AuthSettings` (backend, NFR-07) | `300` | No | How long `nptc.auth.jwks.SigningKeys` trusts a fetched JWKS before re-checking |
+| `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` | `nptc.settings.AuthSettings` (backend, NFR-07) | `30` | No | An unrecognised `kid` within this many seconds of the last refresh attempt is refused with no HTTP request, so a spray of unknown `kid`s cannot hammer the IdP |
 | `KEYCLOAK_ADMIN_USER` | `deploy/compose.yml`'s `keycloak` service | `admin` | No | `admin` is fine |
 | `KEYCLOAK_ADMIN_PASSWORD` | `deploy/compose.yml`'s `keycloak` service | `change-me` | Yes | Any local-only value |
 | `KEYCLOAK_PORT` | `deploy/compose.yml`'s `keycloak` service (host port mapping) | `8080` | No | Change only if `8080` is already in use locally |
@@ -57,6 +62,21 @@ deliberate fail-closed posture, matching this settings module's existing convent
 raising loudly rather than silently defaulting - here that means "no auto-linking at
 all" rather than "trust everything" until an operator explicitly names a trusted issuer.
 It stays empty while federation is off (NFR-02, no second IdP configured yet).
+
+`NPTC_OIDC_ISSUER` and the other `NPTC_JWKS_*`/`NPTC_OIDC_AUDIENCE` variables configure
+`nptc.auth.tokens.TokenVerifier` (issue #43, NFR-07 - see
+[the token-verification architecture doc](../architecture/token-verification.md)).
+`NPTC_OIDC_ISSUER` follows the same fail-closed posture as `NPTC_TRUSTED_ISSUERS`: empty by
+default, and a `TokenVerifier` cannot be constructed from a blank issuer at all, so an
+unconfigured deployment refuses every token rather than accepting one whose issuer was never
+actually checked. `NPTC_OIDC_AUDIENCE` defaults to `nptc-api` because that value is fixed by the
+committed realm's `nptc-api-audience` mapper (ADR-0014), not by a deployment - only change it
+alongside a realm change. `NPTC_JWKS_URL` is normally left empty so the JWKS endpoint is
+resolved via OIDC discovery against `NPTC_OIDC_ISSUER`; set it explicitly only for an
+air-gapped deployment that cannot reach a discovery endpoint. `NPTC_JWKS_CACHE_SECONDS` and
+`NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` tune `nptc.auth.jwks.SigningKeys`'s own key cache and its
+refresh cooldown against `kid`-spraying; the defaults are untuned constants, not a measurement
+against a specific deployment.
 
 ## Keycloak realm import
 

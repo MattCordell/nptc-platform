@@ -674,14 +674,14 @@
   priority: SHOULD
   phase: p1
   title: "Multi-factor authentication (TOTP) MUST be available and SHOULD be mandatory for the administrator role"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "The 'available' half only (issue #43, ADR-0016): deploy/keycloak/realm/nptc-realm.json's otpPolicyType: totp plus an explicit requiredActions CONFIGURE_TOTP entry, asserted offline (backend/tests/test_keycloak_realm.py::test_otp_policy_is_totp_with_pinned_parameters, test_configure_totp_required_action_is_enabled) and against a real container's admin API (test_keycloak_imports_the_realm_and_serves_discovery). Mandatory-for-administrators is deferred to #44, which is where an administrator role first exists to make it mandatory for."
 - id: "NFR-07"
   priority: MUST
   phase: p1
   title: "All tokens validated server-side on every request: signature against the realm's JWKS, issuer, audience, and expiry"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc.auth.tokens.TokenVerifier (issue #43, ADR-0016): signature (JWKS via nptc.auth.jwks.SigningKeys, an RS256 allowlist checked before any key lookup), issuer and audience (nptc.auth.discovery plus jwt.decode), and expiry (leeway=0.0) all checked before an OidcIdentityClaims is built; nptc.auth.authentication.authenticate joins a verified token to #42's resolve_user_for_claims. test_token_verification_guard.py is the AST guard proving no code path trusts a claim before the signature; test_auth_token_verification.py/test_auth_jwks_cache.py/test_auth_discovery.py are offline; test_auth_authenticate.py and test_keycloak_jwt.py are integration, the latter against a real Keycloak-minted token."
 - id: "NFR-08"
   priority: MUST
   phase: p1
