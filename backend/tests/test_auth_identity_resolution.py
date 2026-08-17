@@ -343,6 +343,49 @@ def test_multiple_candidate_users_with_the_same_verified_email_requires_manual_l
     assert _identity_count(app_db) == before
 
 
+@pytest.mark.req("NFR-05")
+@pytest.mark.integration
+def test_empty_trusted_issuer_set_prevents_auto_linking_end_to_end(app_db: Connection) -> None:
+    """`test_empty_trusted_issuer_set_never_auto_links` in
+    test_auth_linking_policy.py covers `may_auto_link` in isolation; this
+    exercises the same fail-closed default through the full resolution
+    path, including `_find_candidate_user_ids`'s own separate
+    `not trusted_issuers` short-circuit - with no trusted issuer at all,
+    even a same-issuer, verified-email rematch must not resolve to the
+    seeded account; it creates its own, independent one instead."""
+    session = Session(bind=app_db)
+    seeded = resolve_user_for_claims(
+        session,
+        _claims(
+            issuer=_TRUSTED_A,
+            subject="sub-e2e-seed",
+            preferred_username="e2e-seed",
+            display_name="Seed",
+            email="e2e@example.com",
+            email_verified=True,
+        ),
+        trusted_issuers=frozenset(),
+    )
+    session.flush()
+    assert seeded.user is not None
+
+    result = resolve_user_for_claims(
+        session,
+        _claims(
+            issuer=_TRUSTED_A,
+            subject="sub-e2e-second",
+            email="e2e@example.com",
+            email_verified=True,
+        ),
+        trusted_issuers=frozenset(),
+    )
+
+    assert result.outcome == LinkOutcome.CREATED
+    assert result.user is not None
+    assert result.user.id != seeded.user.id
+
+
+@pytest.mark.req("NFR-17")
 @pytest.mark.integration
 def test_first_registration_with_no_username_or_display_name_claim_still_succeeds(
     app_db: Connection,
@@ -365,6 +408,47 @@ def test_first_registration_with_no_username_or_display_name_claim_still_succeed
     assert result.user.display_name
 
 
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_first_registration_never_derives_the_username_from_the_email_address(
+    app_db: Connection,
+) -> None:
+    """`username` is one of the fields `UserRef` exposes externally - a
+    user who never chose a handle must not have one silently minted from
+    the local-part of an email address supplied only for verification."""
+    session = Session(bind=app_db)
+
+    result = resolve_user_for_claims(
+        session,
+        _claims(issuer=_UNTRUSTED, subject="sub-email-only", email="j.smith@example.com"),
+        trusted_issuers=_TRUSTED,
+    )
+
+    assert result.user is not None
+    assert result.user.username is not None
+    assert not result.user.username.startswith("j.smith")
+
+
+@pytest.mark.req("NFR-17")
+@pytest.mark.integration
+def test_first_registration_treats_a_whitespace_only_username_claim_as_missing(
+    app_db: Connection,
+) -> None:
+    session = Session(bind=app_db)
+
+    result = resolve_user_for_claims(
+        session,
+        _claims(issuer=_UNTRUSTED, subject="sub-blank-username", preferred_username="   "),
+        trusted_issuers=_TRUSTED,
+    )
+
+    assert result.user is not None
+    assert result.user.username is not None
+    assert result.user.username.strip() == result.user.username
+    assert result.user.username != "   "
+
+
+@pytest.mark.req("NFR-17")
 @pytest.mark.integration
 def test_first_registration_falls_back_to_a_new_username_on_a_collision(
     app_db: Connection,

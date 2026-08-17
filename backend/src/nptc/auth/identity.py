@@ -93,24 +93,53 @@ def _find_candidate_user_ids(
     return list(session.execute(stmt).scalars().all())
 
 
+_USERNAME_UNIQUE_CONSTRAINT = "uq_app_user_username"
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
+
+
 def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) -> str:
-    base = claims.preferred_username or (claims.email.split("@", 1)[0] if claims.email else None)
+    # Deliberately never derived from `claims.email`: `username` is one of
+    # the four fields `UserRef` exposes externally, and a user who never
+    # chose a handle should not have one silently minted from an address
+    # they supplied only for verification (NFR-26/NFR-35 posture). A blank
+    # `preferred_username` (whitespace-only, still truthy) is treated the
+    # same as a missing one - `app_user.username` carries no CHECK against
+    # blank content the way `user_identity.issuer`/`subject` do.
+    base = claims.preferred_username.strip() if claims.preferred_username else ""
     base = base or f"user-{uuid.uuid4().hex[:12]}"
     return base if suffix is None else f"{base}-{suffix}"
+
+
+def _is_username_collision(exc: IntegrityError) -> bool:
+    """True only for the specific, retryable collision `_create_user`
+    exists to recover from: a duplicate `app_user.username`. A blank
+    `subject` (`ck_user_identity_subject_not_blank`) or a duplicate
+    `(issuer, subject)` from a concurrent first login
+    (`uq_user_identity_issuer`) are different failures with different
+    causes - retrying with a new username suffix cannot fix either, and
+    reporting them as a username-allocation failure would misdirect
+    whoever reads the eventual error."""
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None)
+    diag = getattr(orig, "diag", None)
+    constraint_name = getattr(diag, "constraint_name", None)
+    return sqlstate == _UNIQUE_VIOLATION_SQLSTATE and constraint_name == _USERNAME_UNIQUE_CONSTRAINT
 
 
 def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
     """Creates the `app_user` (plus its first `user_identity` row) for a
     subject seen for the first time.
 
-    Retried, with a randomised username suffix, on a unique-constraint
-    collision (`uq_app_user_username`) rather than letting an ordinary,
-    unremarkable IdP input (a `preferred_username` someone else already
-    holds, or no `preferred_username`/`display_name` claim at all - both
-    of which real IdPs routinely omit or duplicate) surface as a raw
-    `IntegrityError` on first login. Each attempt runs inside its own
-    `SAVEPOINT` so a failed attempt aborts only that attempt, not the
-    caller's whole transaction.
+    Retried, with a randomised username suffix, on a `uq_app_user_username`
+    collision specifically - see `_is_username_collision` - rather than
+    letting an ordinary, unremarkable IdP input (a `preferred_username`
+    someone else already holds, or no `preferred_username`/`display_name`
+    claim at all - both of which real IdPs routinely omit or duplicate)
+    surface as a raw `IntegrityError` on first login. Any other constraint
+    violation is re-raised immediately: retrying under a different
+    username can't fix a blank subject or a racing duplicate `(iss, sub)`.
+    Each attempt runs inside its own `SAVEPOINT` so a failed attempt aborts
+    only that attempt, not the caller's whole transaction.
     """
     display_name = claims.display_name or claims.preferred_username
     suffix: str | None = None
@@ -135,7 +164,9 @@ def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
                     )
                 )
                 session.flush()
-        except IntegrityError:
+        except IntegrityError as exc:
+            if not _is_username_collision(exc):
+                raise
             suffix = uuid.uuid4().hex[:8]
             continue
         return user
