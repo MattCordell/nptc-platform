@@ -658,14 +658,18 @@
   priority: MUST
   phase: p1
   title: "Application data MUST NEVER be keyed on the identity provider's subject claim"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: >-
+    app_user/user_identity (issue #42, ADR-0015) key every reference on an internal UUID.
+    nptc.auth.identity.UserRef is the serialisation boundary that keeps the UUID from
+    escaping any response/export; a follow-on issue must extend that assertion across
+    every response model and export renderer once they exist.
 - id: "NFR-05"
   priority: MUST
   phase: p1
   title: "Automatic linking of an external identity to an existing account is permitted only where the issuer is explicitly trusted and asserts email_verified"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc.auth.linking.may_auto_link (issue #42, ADR-0015); NPTC_TRUSTED_ISSUERS is fail-closed (empty by default)."
 - id: "NFR-06"
   priority: SHOULD
   phase: p1
@@ -736,8 +740,8 @@
   priority: MUST
   phase: p1
   title: "Account closure MUST pseudonymise rather than delete"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "nptc.auth.identity.close_account (issue #42, ADR-0015); enforced structurally by app_user's tombstone CHECK and the missing DELETE grant."
 - id: "NFR-18"
   priority: SHOULD
   phase: governance

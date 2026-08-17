@@ -43,6 +43,28 @@ class DatabaseSettings(BaseSettings):
         return _require_non_blank(value, "database_url")
 
 
+class AuthSettings(BaseSettings):
+    """The NFR-05 trusted-issuer allowlist controlling auto-linking (issue
+    #42) - see ``nptc.auth.linking.may_auto_link``.
+
+    Empty default, not a required field: unlike the DSNs above, "no issuer
+    is trusted yet" is itself a valid, safe configuration (fail closed,
+    matching NFR-02's federation-off posture), not a misconfiguration to
+    reject.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    trusted_issuers: frozenset[str] = frozenset()
+
+    @field_validator("trusted_issuers", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: object) -> object:
+        if isinstance(value, str):
+            return frozenset(item.strip() for item in value.split(",") if item.strip())
+        return value
+
+
 class MigrationSettings(BaseSettings):
     """The owning role's DSN Alembic runs migrations as - see
     ``backend/migrations/env.py``. Deliberately separate from

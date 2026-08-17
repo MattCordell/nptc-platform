@@ -15,6 +15,8 @@ it rather than replace it.
 | `backend/src/nptc/db/base.py` | `NAMING_CONVENTION`, `MetaData`, `Base(DeclarativeBase)` |
 | `backend/src/nptc/db/models/__init__.py` | Import-aggregator so `Base.metadata` is complete for autogenerate |
 | `backend/src/nptc/db/models/audit.py` | The `audit_event` table |
+| `backend/src/nptc/db/models/user.py` | The `app_user` table (issue #42) |
+| `backend/src/nptc/db/models/user_identity.py` | The `user_identity` table (issue #42) |
 | `backend/src/nptc/db/roles.py` | `APP_ROLE` and every grant/revoke SQL statement, imported by both the migration that applies them and the tests that assert them |
 
 Alembic's configuration lives in the root `pyproject.toml` as `[tool.alembic]`, not a
@@ -78,6 +80,18 @@ Grants live in the **same migration that creates the table**
 separate migration would leave a re-created table grant-less after a
 `downgrade base` → `upgrade head` round-trip.
 
+For `app_user` (issue #42): `GRANT SELECT, INSERT` plus a **column-level**
+`GRANT UPDATE (username, display_name, organisation, status, closed_at, updated_at)` -
+excluding `id` and `created_at`, so the retained UUID is immutable even to the app role
+itself - and an explicit `REVOKE DELETE, TRUNCATE`. There is no path by which `nptc_app`
+can delete a row from this table; NFR-17's "pseudonymise, never delete" is a database
+invariant, not an application convention. For `user_identity`: ordinary
+`SELECT, INSERT, UPDATE, DELETE` (closing an account deletes its identity rows outright -
+there is no tombstone shape for a link row) with `TRUNCATE` revoked.
+`backend/tests/test_db_round_trip.py`'s fingerprint queries
+`information_schema.column_privileges` as well as `role_table_grants`, specifically so the
+column-level `app_user` grant is not silently invisible to the round-trip check.
+
 ## `audit_event`
 
 The minimal table NFR-08 will eventually be built on. `prev_hash`/`entry_hash` (NFR-10, the
@@ -91,7 +105,7 @@ the reflection fingerprint in `backend/tests/test_db_round_trip.py`, which folds
 | `id` | `UUID` | PK, `gen_random_uuid()` (core since PG13 - no `pgcrypto` extension needed) |
 | `sequence` | `BIGINT` | `GENERATED ALWAYS AS IDENTITY`, unique - see the identity-vs-serial note above |
 | `occurred_at` | `TIMESTAMPTZ` | `NOT NULL`, server-assigned `now()` |
-| `actor_user_id` | `UUID` | Nullable, no FK - the user table lands with #42 |
+| `actor_user_id` | `UUID` | Nullable FK to `app_user.id` (issue #42) - null for a system-initiated event |
 | `actor_ip` | `INET` | Nullable |
 | `user_agent` | `TEXT` | Nullable |
 | `correlation_id` | `UUID` | `NOT NULL` |
@@ -101,6 +115,89 @@ the reflection fingerprint in `backend/tests/test_db_round_trip.py`, which folds
 | `before` | `JSONB` | Nullable |
 | `after` | `JSONB` | Nullable |
 | `reason` | `TEXT` | Nullable |
+
+## `user` and `user_identity`
+
+Landed with issue #42 (ADR-0015). An internal `app_user` record with a stable UUID is
+what every future submission, interest record and audit event references - never the
+IdP's `sub` claim (NFR-04). `user_identity` links it to a verified OIDC `(iss, sub)` pair;
+one user can hold more than one linked identity.
+
+**Why `app_user`, not `"user"`.** `"user"` is a reserved word in Postgres (and an
+unquoted `FROM user` is a `current_user` trap) - every literal in `roles.py`, migrations
+and tests would need quoting for a name NFR-04 never actually required. NFR-04 fixes the
+*shape* of identity (an internal UUID, never the IdP's subject), not this identifier.
+
+`app_user`:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `username` | `TEXT` | Nullable, `UNIQUE` (`NULLS DISTINCT` - see the tombstone note below) |
+| `display_name` | `TEXT` | Nullable |
+| `organisation` | `TEXT` | Nullable |
+| `status` | `TEXT` | `NOT NULL`, `CHECK IN ('active','suspended','closed')`, default `'active'` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+| `closed_at` | `TIMESTAMPTZ` | Nullable, `CHECK (status = 'closed') = (closed_at IS NOT NULL)` |
+
+No `role` column: adding one here would create a second place a role is granted, and
+FR-44 requires permission checks, never role-name checks. Role grants land with #44.
+
+**The tombstone CHECK is what makes NFR-17 a database invariant.** A row cannot be
+`closed` while `username`/`display_name`/`organisation` still carry a value, and cannot
+be non-`closed` without a `username` and `display_name`. Closing an account nulls those
+three columns rather than deleting the row, which is only safe because Postgres's
+`UNIQUE` constraint on `username` is `NULLS DISTINCT` by default - every closed account's
+`NULL` username coexists with every other closed account's `NULL` username. **Never add
+`NULLS NOT DISTINCT` to this constraint** - it would cap the platform at exactly one
+closed account cluster-wide.
+
+`user_identity`:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `user_id` | `UUID` | `NOT NULL`, FK to `app_user.id` (no `ON DELETE` - users are never deleted), indexed |
+| `issuer` | `TEXT` | `NOT NULL`, `CHECK (length(btrim(issuer)) > 0)` |
+| `subject` | `TEXT` | `NOT NULL`, `CHECK (length(btrim(subject)) > 0)` |
+| `email` | `TEXT` | Nullable |
+| `email_verified` | `BOOLEAN` | `NOT NULL`, default `false` |
+| `linked_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+`UniqueConstraint("issuer", "subject")` - one `(iss, sub)` pair links to exactly one
+user. `NAMING_CONVENTION` names composite unique constraints from their **first** listed
+column only (`column_0_name`), so this constraint is `uq_user_identity_issuer`, not
+`uq_user_identity_issuer_subject` - this is the naming convention working as designed,
+not a bug to "fix" without changing every other multi-column unique/index name in the
+schema.
+
+**Auto-linking (NFR-05).** `nptc.auth.linking.may_auto_link` is the single predicate
+gating whether an unrecognised `(iss, sub)` may be linked automatically to an existing
+account matched by verified email: the issuer must be in an explicit, exact-match
+trusted-issuer allowlist (`NPTC_TRUSTED_ISSUERS`, empty by default - fail closed) *and*
+the incoming claim's `email_verified` must be `True` (`is True`, never merely truthy).
+There is deliberately no `app_user.email` column - matching is against *verified
+identities* in `user_identity`, never a mutable, unverified field on the user itself.
+`nptc.auth.identity.resolve_user_for_claims` is the write path this predicate feeds; see
+its docstring for the full five-branch resolution (existing identity, no candidate,
+auto-link, manual-link-required).
+
+**Account closure** (`nptc.auth.identity.close_account`) nulls the three identifying
+columns, sets `status = 'closed'`/`closed_at = now()`, and deletes every `user_identity`
+row for that user - but never deletes the `app_user` row itself, which the privilege
+grants below make structurally impossible regardless. Idempotent. Does **not** emit an
+audit event (there is no audit writer until #36). Documented consequence: because the
+identity row is gone, the same OIDC subject logging in again after closure creates a
+*new* user with a *new* UUID - the AC is "can no longer authenticate into the tombstoned
+user", which this satisfies; disabling the account on the Keycloak side is a separate,
+#41-era operator concern.
+
+**`nptc.auth.identity.UserRef`** is the NFR-04 serialisation boundary: a frozen Pydantic
+model carrying `username`/`display_name`/`organisation`/`status` and **no `id` field at
+all**, so a future response model or export renderer routes through a type that cannot
+leak the internal UUID, rather than relying on reviewer memory. Its own test
+(`test_user_ref_excludes_internal_id.py`) includes a positive control proving the leak
+check itself would fire on a payload that actually does leak the UUID.
 
 ## Property registry (design, lands with #51-#55)
 

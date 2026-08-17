@@ -44,3 +44,21 @@ GRANT_SCHEMA_USAGE_SQL = "GRANT USAGE ON SCHEMA public TO nptc_app;"
 #: on the audit table (rule 3 of test_sql_parameterisation.py).
 GRANT_AUDIT_EVENT_SQL = "GRANT SELECT, INSERT ON TABLE audit_event TO nptc_app;"
 REVOKE_AUDIT_EVENT_WRITE_SQL = "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_event FROM nptc_app;"
+
+#: NFR-17 needs UPDATE on app_user (to write the tombstone) but
+#: conspicuously **no DELETE** - refusing it at the privilege level makes
+#: "pseudonymise, never delete" a database invariant, not an application
+#: convention. Column-level UPDATE excludes `id` and `created_at`, so the
+#: retained UUID (what audit attribution and the NFR-10 hash chain depend
+#: on) is immutable even to the app role itself.
+GRANT_APP_USER_SQL = "GRANT SELECT, INSERT ON TABLE app_user TO nptc_app;"
+GRANT_APP_USER_UPDATE_SQL = (
+    "GRANT UPDATE (username, display_name, organisation, status, closed_at, updated_at) "
+    "ON TABLE app_user TO nptc_app;"
+)
+REVOKE_APP_USER_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE app_user FROM nptc_app;"
+
+#: NFR-17 needs DELETE on user_identity - closing an account removes its
+#: linked identities outright (there is no tombstone shape for a link row).
+GRANT_USER_IDENTITY_SQL = "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE user_identity TO nptc_app;"
+REVOKE_USER_IDENTITY_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_identity FROM nptc_app;"
