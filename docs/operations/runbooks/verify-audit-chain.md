@@ -32,13 +32,26 @@ uv run python scripts/verify_audit_chain.py --expected-head-hash <64-hex> --expe
 
 | Code | Meaning |
 |---|---|
-| `0` | The chain is intact. Prints the record count, the `sequence` range verified, and the head `entry_hash`. An empty `audit_event` table exits `0` with a count of `0` - this is an explicit acceptance criterion, not an error. |
-| `1` | A break was found. Prints the **first** broken `sequence`, the break reason (`prev_hash mismatch` or `entry_hash mismatch`), and how many rows were walked before it. Rows after the break are never re-confirmed as "also broken" - the first break is the location an operator needs. |
-| `2` | Usage/configuration error: no DSN resolvable from `--database-url`, `NPTC_AUDIT_VERIFY_DATABASE_URL` or `NPTC_DATABASE_URL`; a malformed `--expected-head-hash` (not 64 lowercase hex characters) or `--expected-record-count` (not a non-negative integer). |
-| `3` | Could not complete: the database was unreachable, or the connection succeeded but `audit_event` doesn't exist (an unmigrated database). An outage, not a finding about the chain itself. |
-| `4` | The chain itself verified (`0` would otherwise apply), but the head `entry_hash` and/or record count didn't match what `--expected-head-hash`/`--expected-record-count` supplied. This is the tail-truncation signal - see below. |
+| `0` | The chain is intact. Prints the record count, the `sequence` range verified, and the head `entry_hash` to **stdout**. An empty `audit_event` table exits `0` with a count of `0` - this is an explicit acceptance criterion, not an error. |
+| `1` | A break was found. Prints (to **stderr**) the **first** broken `sequence`, the break reason (`prev_hash mismatch` or `entry_hash mismatch`), and how many rows were walked before it. Rows after the break are never re-confirmed as "also broken" - the first break is the location an operator needs. This code means only this - see "Exit 1 means only a break" below. |
+| `2` | Usage/configuration error: no DSN resolvable from `--database-url`, `NPTC_AUDIT_VERIFY_DATABASE_URL` or `NPTC_DATABASE_URL`; an explicitly-empty `--database-url ""`; a malformed `--expected-head-hash` (not 64 lowercase hex characters), `--expected-record-count` (not a non-negative integer), or `--batch-size` (not a positive integer); or a set-but-malformed `NPTC_DATABASE_URL` (e.g. whitespace-only) - reported with a message distinct from "no DSN configured anywhere". |
+| `3` | Could not complete: the database was unreachable, the DBAPI driver named by the DSN scheme isn't installed, the DSN itself was malformed, the connection dropped mid-walk, or the connection succeeded but `audit_event` doesn't exist (an unmigrated database). An outage or environment problem, not a finding about the chain itself - see "Exit 1 means only a break" below. The message names only the exception's type, never its full text, since that can carry connection details (NFR-26/NFR-35). |
+| `4` | The chain itself verified (`0` would otherwise apply, and the same `OK:` line prints to stdout), but the head `entry_hash` and/or record count didn't match what `--expected-head-hash`/`--expected-record-count` supplied - reported to **stderr**. This is the tail-truncation signal - see below. |
 
-These codes are stable and safe to depend on from a scheduled check.
+These codes are stable and safe to depend on from a scheduled check. A scheduled check
+that only tails stderr sees every non-zero outcome's explanation (`1`/`2`/`3`/`4`); only
+the `0`/`4` success summary line goes to stdout.
+
+## Exit 1 means only a break
+
+Everything that can go wrong while connecting to or reading the database - a DSN typo, a
+missing DBAPI driver (e.g. `postgresql://...` with no `+psycopg`/`+psycopg2` suffix,
+resolving to a driver this workspace doesn't install), a malformed URL, a dropped
+connection mid-walk - is caught and mapped to exit `3`, never left to surface as an
+unhandled exception. This matters because an *uncaught* exception would otherwise make
+Python itself exit with code `1` - coincidentally identical to `EXIT_BROKEN`, and
+indistinguishable from it to a scheduled check parsing only the exit code. Exit `1` is
+reserved exclusively for `ChainVerification.ok is False` - a real, examined chain break.
 
 ## What a break means
 

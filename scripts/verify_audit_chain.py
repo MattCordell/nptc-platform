@@ -19,7 +19,7 @@ undetected, same as `verify_chain` alone.
 
 Usage:
   uv run python scripts/verify_audit_chain.py
-  uv run python scripts/verify_audit_chain.py --database-url postgresql://...
+  uv run python scripts/verify_audit_chain.py --database-url postgresql+psycopg://...
   uv run python scripts/verify_audit_chain.py \\
       --expected-head-hash <hex> --expected-record-count <n>
 
@@ -34,7 +34,6 @@ import re
 import sys
 
 from sqlalchemy import create_engine
-from sqlalchemy.exc import OperationalError, ProgrammingError
 
 #: Matches nptc.audit.hashing's own hex-digest shape (`ck_audit_event_*_hex`).
 _HEAD_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -86,9 +85,22 @@ def _resolve_database_url(cli_value: str | None) -> str | None:
     `NPTC_DATABASE_URL` - the precedence documented in the runbook. Imports
     of `nptc.settings` are deferred into this function (not at module level)
     so `--help` and argument-parsing failures never require the workspace's
-    `nptc` package to even be importable."""
-    if cli_value:
+    `nptc` package to even be importable.
+
+    Raises `ValueError` for an explicitly-empty `--database-url` (rather than
+    silently falling through to the environment - an operator who typed
+    `--database-url ""` almost certainly meant to pin a specific DSN) and
+    re-raises a genuinely malformed `NPTC_DATABASE_URL` (a `pydantic`
+    `ValidationError` whose cause isn't simply "the variable is unset") so
+    that case is never conflated with "no DSN configured anywhere" - see
+    `main`'s handling of both.
+    """
+    if cli_value is not None:
+        if not cli_value:
+            raise ValueError("--database-url must not be empty")
         return cli_value
+
+    from pydantic import ValidationError
 
     from nptc.settings import AuditVerifySettings, DatabaseSettings
 
@@ -98,8 +110,10 @@ def _resolve_database_url(cli_value: str | None) -> str | None:
 
     try:
         return DatabaseSettings().database_url
-    except Exception:
-        return None
+    except ValidationError as exc:
+        if all(error["type"] == "missing" for error in exc.errors()):
+            return None
+        raise
 
 
 def _validate_expected_head_hash(value: str | None) -> str | None:
@@ -122,17 +136,24 @@ def _validate_expected_record_count(value: str | None) -> int | None:
     return count
 
 
+def _validate_batch_size(value: int) -> int:
+    if value < 1:
+        raise ValueError(f"--batch-size must be a positive integer, got {value}")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
     try:
         expected_head_hash = _validate_expected_head_hash(args.expected_head_hash)
         expected_record_count = _validate_expected_record_count(args.expected_record_count)
+        batch_size = _validate_batch_size(args.batch_size)
+        database_url = _resolve_database_url(args.database_url)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE_ERROR
 
-    database_url = _resolve_database_url(args.database_url)
     if not database_url:
         print(
             "error: no database URL configured - pass --database-url, or set "
@@ -141,43 +162,56 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE_ERROR
 
-    # Deferred: keep --help/usage-error paths free of a hard nptc/SQLAlchemy
-    # import requirement (see _resolve_database_url).
-    from nptc.audit.verification import verify_chain
-
     try:
+        # Deferred: keep --help/usage-error paths free of a hard
+        # nptc/SQLAlchemy import requirement (see _resolve_database_url).
+        # Any failure past this point - an unimportable workspace, a missing
+        # DBAPI driver, a malformed DSN, a dropped connection mid-walk - is
+        # "could not complete", never "chain broken": only `result.ok` below
+        # is allowed to report a break. The exception itself is never
+        # printed (only its type name) - it can carry connection details
+        # (host/user/dbname) that don't belong in operator-facing output
+        # (NFR-26).
+        from nptc.audit.verification import verify_chain
+
         engine = create_engine(database_url)
         with engine.connect() as connection:
-            result = verify_chain(connection, batch_size=args.batch_size)
-    except (OperationalError, ProgrammingError) as exc:
-        print(f"error: could not verify the audit chain: {exc}", file=sys.stderr)
+            result = verify_chain(connection, batch_size=batch_size)
+    except Exception as exc:
+        print(
+            f"error: could not verify the audit chain ({type(exc).__name__})",
+            file=sys.stderr,
+        )
         return EXIT_COULD_NOT_COMPLETE
 
     if not result.ok:
         print(
             f"BROKEN at sequence {result.first_broken_sequence} "
             f"({result.break_reason}); {result.record_count} row(s) walked "
-            f"before the break (first sequence verified: {result.first_sequence})."
+            f"before the break (first sequence verified: {result.first_sequence}).",
+            file=sys.stderr,
         )
         return EXIT_BROKEN
 
     print(
         f"OK: {result.record_count} row(s) verified "
         f"(sequence {result.first_sequence}..{result.last_sequence}); "
-        f"head entry_hash={result.head_hash}"
+        f"head entry_hash={result.head_hash or '(none)'}"
     )
 
     anchor_mismatch = False
     if expected_head_hash is not None and result.head_hash != expected_head_hash:
         print(
             f"ANCHOR MISMATCH: expected head entry_hash {expected_head_hash}, "
-            f"got {result.head_hash} - possible tail truncation."
+            f"got {result.head_hash or '(none)'} - possible tail truncation.",
+            file=sys.stderr,
         )
         anchor_mismatch = True
     if expected_record_count is not None and result.record_count != expected_record_count:
         print(
             f"ANCHOR MISMATCH: expected {expected_record_count} row(s), "
-            f"got {result.record_count} - possible tail truncation."
+            f"got {result.record_count} - possible tail truncation.",
+            file=sys.stderr,
         )
         anchor_mismatch = True
 
