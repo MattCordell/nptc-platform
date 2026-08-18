@@ -144,3 +144,16 @@ early-return path emits nothing, which is correct: nothing changed.
   relevant only once a future caller puts real catalogue content through this path.
 - #38 builds directly on this ADR's `verify_chain()` and `ChainVerification` shape; a
   future issue adding external anchoring builds on the "known limit" paragraph above.
+
+### Update (issue #38)
+
+`scripts/verify_audit_chain.py` landed, wrapping `verify_chain()` with stable exit codes
+(`docs/operations/runbooks/verify-audit-chain.md`). `ChainVerification` gained a
+`head_hash` field (the last accepted `entry_hash` from the same walk) so the CLI can print
+the current head and compare it against operator-supplied
+`--expected-head-hash`/`--expected-record-count` flags - closing the tail-truncation gap
+above *only when an operator actually supplies an expectation*. There is still no
+automatically-maintained, off-box anchor store; an operator (or scheduled check) must
+record and re-supply the expected head themselves. The "known limit" (a table-owner
+attacker recomputing forward from an edit) remains entirely out of scope, unchanged by
+this issue.

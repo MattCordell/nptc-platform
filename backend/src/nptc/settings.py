@@ -45,6 +45,26 @@ class DatabaseSettings(BaseSettings):
         return _require_non_blank(value, "database_url")
 
 
+class AuditVerifySettings(BaseSettings):
+    """The DSN `scripts/verify_audit_chain.py` (issue #38) falls back to when
+    ``--database-url`` is not passed on the command line - see
+    ``nptc.audit.verification.verify_chain``, which only ever issues
+    `SELECT`s, so this can name a read-only replica or a restored backup
+    rather than the app runtime's own DSN.
+
+    Empty default, not required, unlike ``DatabaseSettings``: the CLI falls
+    further back to ``NPTC_DATABASE_URL`` when this is unset (see the
+    runbook), so an empty value here is a valid, common configuration -
+    "no separate verification DSN is configured" - not a misconfiguration to
+    reject at settings-construction time. The CLI itself is what raises,
+    naming all three sources, if no DSN can be resolved at all.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    audit_verify_database_url: str = ""
+
+
 class AuthSettings(BaseSettings):
     """The NFR-05 trusted-issuer allowlist controlling auto-linking (issue
     #42) - see ``nptc.auth.linking.may_auto_link`` - plus the NFR-07

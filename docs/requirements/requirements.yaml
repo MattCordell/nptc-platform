@@ -699,7 +699,7 @@
   phase: p1
   title: "Each entry includes a SHA-256 hash over its own content plus the previous entry's hash, forming a chain"
   status: implemented
-  notes: "nptc.audit.hashing (issue #36, ADR-0017): prev_hash/entry_hash columns (migration 0004_audit_event_hash_chain.py), a canonical-JSON SHA-256 digest over every audit_event column except entry_hash and sequence, and nptc.audit.verification.verify_chain, which streams the chain in sequence order and reports the first prev_hash/entry_hash mismatch. backend/tests/test_audit_hashing.py is offline; backend/tests/test_audit_chain.py and backend/tests/test_audit_tamper_detection.py are integration, covering per-column tamper, deletion, re-order, awkward JSONB round-trips and concurrent-append serialisation via pg_advisory_xact_lock. The operator CLI wrapping verify_chain (scripts/verify_audit_chain.py) stays with #38."
+  notes: "nptc.audit.hashing (issue #36, ADR-0017): prev_hash/entry_hash columns (migration 0004_audit_event_hash_chain.py), a canonical-JSON SHA-256 digest over every audit_event column except entry_hash and sequence, and nptc.audit.verification.verify_chain, which streams the chain in sequence order and reports the first prev_hash/entry_hash mismatch. backend/tests/test_audit_hashing.py is offline; backend/tests/test_audit_chain.py and backend/tests/test_audit_tamper_detection.py are integration, covering per-column tamper, deletion, re-order, awkward JSONB round-trips and concurrent-append serialisation via pg_advisory_xact_lock. The operator CLI wrapping verify_chain (scripts/verify_audit_chain.py, exit codes, --expected-head-hash/--expected-record-count anchoring against tail truncation) landed with #38 - see backend/tests/test_verify_audit_chain_cli.py and docs/operations/runbooks/verify-audit-chain.md."
 - id: "NFR-11"
   priority: MUST
   phase: p1
@@ -711,13 +711,13 @@
   phase: p1
   title: "Administrators can search and filter the audit log by actor, entity, action, and date range, and export a filtered view"
   status: planned
-  notes: ""
+  notes: "Issue #38 cited this ID but delivers chain-integrity verification (scripts/verify_audit_chain.py, NFR-10/NFR-38 test 5), not admin search/filter/export - that remains planned."
 - id: "NFR-13"
   priority: MUST
   phase: p1
   title: "Audit entries are retained indefinitely and are not deleted when a user account is removed"
   status: planned
-  notes: ""
+  notes: "Issue #38 cited this ID but delivers chain-integrity verification (scripts/verify_audit_chain.py), not a retention guarantee - that remains planned."
 - id: "NFR-14"
   priority: MUST
   phase: p1
@@ -869,7 +869,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5's detection half (audit log tampering is detected) landed with issue #36's hash chain (backend/tests/test_audit_tamper_detection.py); the operator-command half (scripts/verify_audit_chain.py) is still owed to #38."
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5 (audit log tampering is detected) is now fully landed: issue #36's hash chain detection (backend/tests/test_audit_tamper_detection.py) plus issue #38's operator-command half (scripts/verify_audit_chain.py, backend/tests/test_verify_audit_chain_cli.py)."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1

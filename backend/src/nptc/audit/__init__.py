@@ -21,5 +21,6 @@ than emitting nothing silently. See
 alternatives.
 
 The operator-facing CLI that wraps `verify_chain` with stable exit codes
-(`scripts/verify_audit_chain.py`) is issue #38's, not built here.
+(`scripts/verify_audit_chain.py`, issue #38) lives outside this package - see
+`docs/operations/runbooks/verify-audit-chain.md`.
 """

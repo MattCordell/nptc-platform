@@ -42,7 +42,7 @@ with. A stub module existing is not the same as a control being active.
 | No secrets in the repository or in image layers; configuration by environment variable with a values-free `.env.example` | `deploy/.env.example` | NFR-26 | Active |
 | Container image scanning before publication | — | NFR-25 | Planned (P4/P5, lands with the container images) |
 | Server-side authorisation on every request, tested for the negative case | `backend/src/nptc/auth/` | NFR-20, FR-80, FR-81 | Planned (P1/P2 — currently a docstring stub, enforces nothing) |
-| Append-only audit log enforced at database privilege level, with a hash chain | `backend/src/nptc/audit/` | NFR-09, NFR-10 | Implemented (issue #36, ADR-0017): `nptc.audit.writer.append_audit_event` is the sole write path, and `nptc.audit.verification.verify_chain` detects an out-of-band `UPDATE`/`DELETE`/re-order. One real emit site (`close_account`); the operator CLI wrapping `verify_chain` is issue #38's |
+| Append-only audit log enforced at database privilege level, with a hash chain | `backend/src/nptc/audit/` | NFR-09, NFR-10 | Implemented (issue #36, ADR-0017): `nptc.audit.writer.append_audit_event` is the sole write path, and `nptc.audit.verification.verify_chain` detects an out-of-band `UPDATE`/`DELETE`/re-order. One real emit site (`close_account`); the operator CLI wrapping `verify_chain` (`scripts/verify_audit_chain.py`) landed with issue #38 |
 
 An independent security review is required before any production deployment (NFR-27) and
 is scheduled in phase P5.
