@@ -102,7 +102,8 @@ column-level `app_user` grant is not silently invisible to the round-trip check.
 
 The table NFR-08 is built on. `prev_hash`/`entry_hash` (NFR-10, the hash chain) landed
 with issue #36 (ADR-0017); `scripts/verify_audit_chain.py`, the operator CLI wrapping
-`nptc.audit.verification.verify_chain`, stays with #38. The append-only re-assertion after a
+`nptc.audit.verification.verify_chain`, landed with #38 (see
+`docs/operations/runbooks/verify-audit-chain.md`). The append-only re-assertion after a
 downgrade/upgrade round-trip (part of #35's acceptance criteria) was already satisfied by
 `backend/tests/test_db_round_trip.py`'s reflection fingerprint, which folds
 `information_schema.role_table_grants` into its comparison: a grant present before the
@@ -195,19 +196,21 @@ deliberately does **not** assert:
 **Known limit** (see ADR-0017): an attacker holding table-owner credentials can recompute
 the entire chain from the point of edit forward, since nothing here is anchored outside
 the database itself. An unanchored chain detects casual tampering, not a determined
-rewrite; periodic off-box publication of the head hash would be the mitigation, and is out
-of scope for both #36 and #38. `scripts/verify_audit_chain.py` (#38) wraps `verify_chain`
-with an operator-facing CLI and stable exit codes; it is not built here.
+rewrite; periodic off-box publication of the head hash would be the mitigation, and remains
+out of scope. `scripts/verify_audit_chain.py` (#38) wraps `verify_chain` with an
+operator-facing CLI and stable exit codes; it does not close this limit either.
 
-**A distinct, currently-undetectable gap: tail truncation.** Deleting the most recent N
-rows off the end of the chain, rather than editing a row in the middle, leaves a table that
-still verifies `ok=True` - `verify_chain` walks forward from genesis and has nothing left
-after the truncation point to detect a break against. This is cheaper for an attacker than
-the "recompute forward from an edit" limit above, and a different failure mode, not a
-restatement of it. #38's operator command, built purely on `verify_chain()` walking the
-table forward, cannot catch this either; it needs an externally-anchored expectation of the
-current head (an expected head hash plus record count, stored somewhere `verify_chain`
-itself cannot reach) as part of its design.
+**A distinct gap: tail truncation.** Deleting the most recent N rows off the end of the
+chain, rather than editing a row in the middle, leaves a table that still verifies
+`ok=True` - `verify_chain` walks forward from genesis and has nothing left after the
+truncation point to detect a break against. This is cheaper for an attacker than the
+"recompute forward from an edit" limit above, and a different failure mode, not a
+restatement of it. `ChainVerification` now carries a `head_hash` (the last accepted
+`entry_hash` from the same walk), and `scripts/verify_audit_chain.py` compares it - and the
+verified record count - against operator-supplied `--expected-head-hash`/
+`--expected-record-count` flags, exiting `4` on a mismatch. This closes the gap only for a
+run given that expectation; there is still no automatically-maintained, off-box anchor
+store, so a run given neither flag remains as blind to truncation as `verify_chain` alone.
 
 **`append_audit_event` requires `READ COMMITTED` isolation.** The advisory lock (above)
 serialises *execution* of concurrent appenders, but under `REPEATABLE READ`/`SERIALIZABLE`

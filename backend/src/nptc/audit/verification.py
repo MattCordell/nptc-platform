@@ -3,8 +3,10 @@ NFR-10 hash chain is intact (issue #36).
 
 `SELECT` only - no write role required, so this can run against a
 read-only replica. Streams rows via `yield_per` rather than loading the
-whole table, so it scales to a large table (the operator CLI wrapping this
-- `scripts/verify_audit_chain.py` - is issue #38's, not built here).
+whole table, so it scales to a large table. The operator CLI wrapping this
+- `scripts/verify_audit_chain.py` (issue #38) - also uses `head_hash` below
+to detect tail truncation, a gap this walk cannot close on its own (see
+docs/adr/0017-audit-hash-chain.md and hazard H-06).
 
 It reports the **first** break and stops, since that is the location an
 operator needs; a chain broken at row 5 does not need every subsequent row
@@ -66,6 +68,16 @@ class ChainVerification:
     first_broken_sequence: int | None
     #: "prev_hash mismatch" | "entry_hash mismatch" | None if `ok`.
     break_reason: str | None
+    #: The last row's `entry_hash` accepted before the walk stopped - the
+    #: current chain head when `ok`, otherwise the last hash confirmed
+    #: before the break. `None` for an empty table. Taken from the same
+    #: walk rather than a second query, so it reflects exactly the rows
+    #: this call examined rather than a possibly-different later snapshot.
+    #: scripts/verify_audit_chain.py (#38) reports this and compares it
+    #: against an operator-supplied expectation to catch tail truncation -
+    #: see docs/adr/0017-audit-hash-chain.md's "Known limit" and hazard
+    #: H-06 - which a forward walk from genesis cannot detect on its own.
+    head_hash: str | None
 
 
 def verify_chain(
@@ -82,6 +94,7 @@ def verify_chain(
     record_count = 0
     first_sequence: int | None = None
     last_sequence: int | None = None
+    head_hash: str | None = None
 
     for row in result.yield_per(batch_size):
         mapping = row._mapping
@@ -99,6 +112,7 @@ def verify_chain(
                 last_sequence=last_sequence,
                 first_broken_sequence=sequence,
                 break_reason="prev_hash mismatch",
+                head_hash=head_hash,
             )
 
         fields = {name: mapping[name] for name in field_names}
@@ -111,9 +125,11 @@ def verify_chain(
                 last_sequence=last_sequence,
                 first_broken_sequence=sequence,
                 break_reason="entry_hash mismatch",
+                head_hash=head_hash,
             )
 
         expected_prev_hash = mapping["entry_hash"]
+        head_hash = mapping["entry_hash"]
 
     return ChainVerification(
         ok=True,
@@ -122,4 +138,5 @@ def verify_chain(
         last_sequence=last_sequence,
         first_broken_sequence=None,
         break_reason=None,
+        head_hash=head_hash,
     )
