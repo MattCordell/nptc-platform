@@ -44,14 +44,18 @@ the `0`/`4` success summary line goes to stdout.
 
 ## Exit 1 means only a break
 
-Everything that can go wrong while connecting to or reading the database - a DSN typo, a
-missing DBAPI driver (e.g. `postgresql://...` with no `+psycopg`/`+psycopg2` suffix,
-resolving to a driver this workspace doesn't install), a malformed URL, a dropped
-connection mid-walk - is caught and mapped to exit `3`, never left to surface as an
-unhandled exception. This matters because an *uncaught* exception would otherwise make
-Python itself exit with code `1` - coincidentally identical to `EXIT_BROKEN`, and
-indistinguishable from it to a scheduled check parsing only the exit code. Exit `1` is
-reserved exclusively for `ChainVerification.ok is False` - a real, examined chain break.
+Everything that can go wrong while resolving configuration, connecting, or reading the
+database - a DSN typo, an unimportable workspace (e.g. running this script outside
+`uv run`/the venv), a missing DBAPI driver (e.g. `postgresql://...` with no
+`+psycopg`/`+psycopg2` suffix, resolving to a driver this workspace doesn't install), a
+malformed URL, a dropped connection mid-walk - is caught and mapped to exit `3`, never
+left to surface as an unhandled exception. `main()` itself catches every such failure at
+the two points it can occur (resolving the DSN, and connecting/verifying), and the
+`if __name__ == "__main__":` entry point catches anything else as a last line of defence.
+This matters because an *uncaught* exception would otherwise make Python itself exit with
+code `1` - coincidentally identical to `EXIT_BROKEN`, and indistinguishable from it to a
+scheduled check parsing only the exit code. Exit `1` is reserved exclusively for
+`ChainVerification.ok is False` - a real, examined chain break.
 
 ## What a break means
 

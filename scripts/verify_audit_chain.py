@@ -33,8 +33,6 @@ import argparse
 import re
 import sys
 
-from sqlalchemy import create_engine
-
 #: Matches nptc.audit.hashing's own hex-digest shape (`ck_audit_event_*_hex`).
 _HEAD_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -153,6 +151,19 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE_ERROR
+    except Exception as exc:
+        # Anything else here (e.g. `_resolve_database_url`'s deferred
+        # `nptc.settings` import failing because the workspace isn't
+        # importable - a plausible slip running this script outside
+        # `uv run`/the venv) is an environment problem, not a usage mistake
+        # or a chain break - see the block below and "Exit 1 means only a
+        # break" in the runbook. Same NFR-26/NFR-35 rule as below: print
+        # only the exception's type.
+        print(
+            f"error: could not verify the audit chain ({type(exc).__name__})",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_COMPLETE
 
     if not database_url:
         print(
@@ -163,15 +174,17 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE_ERROR
 
     try:
-        # Deferred: keep --help/usage-error paths free of a hard
-        # nptc/SQLAlchemy import requirement (see _resolve_database_url).
-        # Any failure past this point - an unimportable workspace, a missing
-        # DBAPI driver, a malformed DSN, a dropped connection mid-walk - is
-        # "could not complete", never "chain broken": only `result.ok` below
-        # is allowed to report a break. The exception itself is never
-        # printed (only its type name) - it can carry connection details
+        # Deferred (not module-level): keeps --help/usage-error paths free
+        # of a hard SQLAlchemy/nptc import requirement. Any failure past
+        # this point - an unimportable workspace, a missing DBAPI driver, a
+        # malformed DSN, a dropped connection mid-walk - is "could not
+        # complete", never "chain broken": only `result.ok` below is
+        # allowed to report a break. The exception itself is never printed
+        # (only its type name) - it can carry connection details
         # (host/user/dbname) that don't belong in operator-facing output
         # (NFR-26).
+        from sqlalchemy import create_engine
+
         from nptc.audit.verification import verify_chain
 
         engine = create_engine(database_url)
@@ -219,4 +232,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:  # last line of defence - see main()'s own
+        # try/except above for the primary handling: nothing between here
+        # and process exit is allowed to become an *unhandled* exception,
+        # since Python reports that via exit 1 - coincidentally identical
+        # to EXIT_BROKEN and misleading a scheduled check into reporting a
+        # false chain-tamper alert.
+        print(f"error: could not verify the audit chain ({type(exc).__name__})", file=sys.stderr)
+        sys.exit(EXIT_COULD_NOT_COMPLETE)

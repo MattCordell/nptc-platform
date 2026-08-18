@@ -59,7 +59,10 @@ def _patched_verify_chain(
     fake_connection = MagicMock()
     fake_engine = MagicMock()
     fake_engine.connect.return_value.__enter__.return_value = fake_connection
-    monkeypatch.setattr(verify, "create_engine", MagicMock(return_value=fake_engine))
+    # create_engine is imported locally inside main() (deferred, not
+    # module-level - see the comment there), so it must be patched on
+    # sqlalchemy itself rather than on the verify_audit_chain module.
+    monkeypatch.setattr("sqlalchemy.create_engine", MagicMock(return_value=fake_engine))
     yield mock
 
 
@@ -101,6 +104,25 @@ def test_empty_database_url_flag_is_a_usage_error_not_a_silent_fallthrough(
     monkeypatch.setenv("NPTC_DATABASE_URL", "postgresql://app-env")
     with pytest.raises(ValueError, match="--database-url"):
         verify._resolve_database_url("")
+
+
+def test_unimportable_workspace_during_dsn_resolution_exits_3_not_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plausible operator slip - running this script outside `uv run`/the
+    venv - makes `nptc.settings` unimportable. `_resolve_database_url`'s
+    deferred import then raises `ImportError`, which is not a `ValueError`
+    and so isn't caught by main()'s usage-error handling alone; it must
+    still map to exit 3 (main()'s own catch-all around DSN resolution),
+    never escape as an unhandled exception - which Python would otherwise
+    report via exit 1, coincidentally identical to `EXIT_BROKEN`."""
+    monkeypatch.setitem(sys.modules, "nptc.settings", None)
+    monkeypatch.delenv("NPTC_AUDIT_VERIFY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NPTC_DATABASE_URL", raising=False)
+
+    exit_code = verify.main([])
+
+    assert exit_code == verify.EXIT_COULD_NOT_COMPLETE
 
 
 def test_malformed_database_url_env_var_is_distinguishable_from_unset(
@@ -321,7 +343,7 @@ def test_could_not_connect_exits_3(
     def _raise(*args: Any, **kwargs: Any) -> None:
         raise OperationalError("connect failed", {}, Exception("boom"))
 
-    monkeypatch.setattr(verify, "create_engine", MagicMock(side_effect=_raise))
+    monkeypatch.setattr("sqlalchemy.create_engine", MagicMock(side_effect=_raise))
 
     exit_code = verify.main(["--database-url", "postgresql://unreachable"])
 
@@ -345,7 +367,7 @@ def test_any_unexpected_failure_exits_3_never_1(
     unhandled exception (which Python would otherwise report via exit 1
     itself, coincidentally matching EXIT_BROKEN and misleading a scheduled
     check into reporting a false chain-tamper alert)."""
-    monkeypatch.setattr(verify, "create_engine", MagicMock(side_effect=exc))
+    monkeypatch.setattr("sqlalchemy.create_engine", MagicMock(side_effect=exc))
 
     exit_code = verify.main(["--database-url", "postgresql+psycopg://x/y"])
 
@@ -367,7 +389,7 @@ def test_exit_3_message_does_not_leak_connection_details(
             Exception("boom"),
         )
 
-    monkeypatch.setattr(verify, "create_engine", MagicMock(side_effect=_raise))
+    monkeypatch.setattr("sqlalchemy.create_engine", MagicMock(side_effect=_raise))
 
     exit_code = verify.main(["--database-url", "postgresql://unreachable"])
 
