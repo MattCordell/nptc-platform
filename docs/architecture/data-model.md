@@ -218,6 +218,91 @@ chain - the lock alone is insufficient above `READ COMMITTED`. `append_audit_eve
 `nptc.audit.writer.AuditIsolationLevelError` unless it is `'read committed'`, rather than
 risking a silent fork under a caller's stricter isolation level.
 
+### Field-level before/after (NFR-08, issue #37, ADR-0018)
+
+`before`/`after` are never hand-built by call-site code: `nptc.audit.recording.record_change`
+diffs a mapped instance via its own SQLAlchemy attribute history (`nptc.audit.diffing.
+diff_instance`), and `record_snapshot_change` diffs a pair of plain snapshots
+(`diff_snapshots`) for content with no ORM instance to read history from (e.g. a future JSONB
+property bag). Both raise `AuditNoOpError` on an empty diff rather than emit nothing silently -
+see ADR-0018 for the full flush-ordering caveat this exists to catch loudly.
+
+**Payload shape.** `before`/`after` are flat JSON objects: one key per changed field (never one
+per column - a field nobody touched is completely absent, not present as `null`), each value
+normalised by `nptc.audit.serialisation.normalise_json_value` (`SCTID` to its `str` value never
+a number - FR-06; `Decimal` to `str`, never `float`; `UUID`/`ipaddress` to `str`; `datetime` to
+UTC with a fixed 6-digit microsecond field; recursion into nested mappings/lists). Unlike
+`nptc.audit.hashing`'s own normalisation (which must stay total - see below), this normalisation
+**raises** on anything it does not recognise, on a NaN/±Inf float, on a non-`str` mapping key,
+and on a `str` containing a NUL byte (`U+0000`) - Postgres `jsonb` cannot store one at all, and
+ADR-0017 already flagged this as becoming live "once a future caller puts real catalogue content
+through this path". `CREATED` yields `before is None`; `DELETED` yields `after is None`.
+
+**The `_redacted` reserved key (NFR-16/NFR-17, PRD OI-15).** A field a model's policy declares
+*withheld* is never recorded by value, only by name, under `_redacted`, in both `before` and
+`after` - so a change to it is never invisible in the log merely because its value must not be
+recorded. `_redacted` has a leading underscore precisely so it can never collide with a real
+column name; `nptc.audit.policy.AuditFieldPolicy` refuses any declared field name starting with
+`_` for the same reason.
+
+**Allowlist + deny-list, layered (`nptc.audit.policy`).** A model declares
+`__audit_fields__` (recorded in full), `__audit_withheld_fields__` (changed-by-name only), and
+`__audit_ignored_fields__` (never appears in a diff at all) as `ClassVar`s; `policy_for` (cached)
+combines them with the model's real column set from `sqlalchemy.inspect`. A deny-list regex
+(`password`, `secret`, `token`, `api_key`, `session_id`, etc.) is checked at policy *construction*
+time against every `auditable`/`withheld` name regardless of which of those two lists it was
+declared under - an allowlist alone would let a credential-shaped column be pasted straight into
+it, and a deny-list alone fails open the moment a new credential-shaped name isn't
+pattern-matched. **Every real column must land in exactly one of the three groups, or
+construction fails**: without this, a model could declare a policy covering only some of its
+columns and leave the rest silently un-audited, and a column added later to an already-classified
+model would silently escape auditing by default instead of failing a test. A model with no
+`__audit_fields__` at all fails closed (`MissingAuditPolicyError`); a model deliberately never
+diffed (`AuditEvent` itself - diffing the log is circular) sets `__audit_fields__ = None` plus a
+mandatory `__audit_exempt_reason__`.
+`User.__audit_fields__ = {status, closed_at}`, `withheld = {username, display_name,
+organisation}`, `ignored = {id, created_at, updated_at}`; `UserIdentity.__audit_fields__ =
+{email_verified}`, `withheld = {issuer, subject, email}`, `ignored = {id, user_id, linked_at}`
+(`subject` is the OIDC `sub`, NFR-04's own no-escape column - `UserIdentity`'s emit sites are
+deferred to a follow-up issue against #43/#44, so this policy exists ahead of anything calling
+it, not because it is exercised yet).
+
+**`active_history=True` is required on every auditable/withheld column, and `policy_for`
+enforces it.** Without it, SQLAlchemy only knows an attribute's prior value if it was already
+loaded before being reassigned - an expired-but-unread attribute reassigned directly leaves
+`load_history()` with nothing to report, silently turning a real change into `before: None`
+instead of the true prior value. `policy_for` raises if a declared column lacks
+`active_history=True`, at policy-construction time - see ADR-0018 for how this was found (an
+in-memory `test_audit_diffing.py` reproduction, not a hypothetical).
+
+**Strict vs. total normalisation, and why both exist.** `nptc.audit.hashing._normalise` must
+stay total: `compute_entry_hash` also runs over rows read back *from* Postgres (this writer's
+own write-time self-check, and `verify_chain`), where raising on unfamiliar content would turn a
+verifiable chain into an unverifiable one. `normalise_json_value`'s callers, by contrast, are
+about to write a *new*, permanent payload (NFR-09: no UPDATE, no DELETE) - silently stringifying
+an unexpected value there is exactly the content loss NFR-08 exists to prevent. `hashing.
+_normalise` still recurses into `Mapping`/`list`/`tuple` itself (rather than delegating the whole
+structure to `normalise_json_value`) and only delegates leaf-level typing - falling back to
+`str(value)` per leaf, not per container, on the exceptions `normalise_json_value` raises. This
+preserves this function's pre-issue-#37 behaviour exactly, where one unrecognised nested value
+fell back individually without discarding its siblings; delegating the whole recursion would have
+silently stringified an entire container for a single unfamiliar leaf. One known, currently
+unreachable exception: a NaN/±Inf `float` was tolerated as-is before this issue and now falls back
+to `str()` at the leaf, since `normalise_json_value` rejects it - no field this codebase writes
+today is ever a `float`, so this cannot yet occur. `test_audit_hashing.py` carries a golden-vector
+digest test (computed independently from the literal pre-issue-#37 implementation, not derived
+from the refactored code) proving this refactor moved no existing hash.
+
+**No second, unaudited write path (`test_audit_write_path_guard.py`'s `audit-diff-bypass`
+rule).** Outside `nptc.audit` itself, a call to `append_audit_event` carrying a `before=`/
+`after=` keyword whose value is not the literal `None` is a violation - deliberately narrower
+than banning `append_audit_event` outside `nptc.audit` entirely, since a diff-free event (a
+future `release.published`, NFR-12's `audit.exported`) is legitimate and must stay directly
+callable. What is not legitimate is hand-building a diff instead of calling `record_change`/
+`record_snapshot_change`, which is exactly the per-endpoint reimplementation this rule exists to
+close off. A companion model-coverage test (`test_audit_redaction.py`) walks every mapped class
+and asserts it resolves a policy or carries an explicit exemption.
+
 ## `user` and `user_identity`
 
 Landed with issue #42 (ADR-0015). An internal `app_user` record with a stable UUID is

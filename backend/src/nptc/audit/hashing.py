@@ -32,12 +32,12 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Final
 
 from sqlalchemy.sql.selectable import FromClause
+
+from nptc.audit.serialisation import UnserialisableAuditValueError, normalise_json_value
 
 #: The first row's `prev_hash` - there is no predecessor to point to.
 GENESIS_HASH: Final[str] = "0" * 64
@@ -73,34 +73,49 @@ def digest_field_names(table: FromClause) -> frozenset[str]:
 
 def _normalise(value: object) -> object:
     """Per-type normalisation into something `json.dumps` can render
-    deterministically. `UUID` and `ipaddress` objects become their string
-    form; a `datetime` is converted to UTC first (so the same instant
-    always serialises identically regardless of the timezone attached to
-    it) and rendered with a fixed 6-digit microsecond field, since
-    `isoformat()` alone drops trailing zero microseconds inconsistently.
-    `before`/`after` (already-parsed JSON objects/arrays) recurse so their
-    own nested values get the same treatment."""
-    if value is None or isinstance(value, str | int | float):
-        return value
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(
-        value,
-        ipaddress.IPv4Address
-        | ipaddress.IPv6Address
-        | ipaddress.IPv4Network
-        | ipaddress.IPv6Network
-        | ipaddress.IPv4Interface
-        | ipaddress.IPv6Interface,
-    ):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    deterministically, delegating to `nptc.audit.serialisation.
+    normalise_json_value` for leaf-level, type-specific rules (`UUID`/
+    `ipaddress` to string form, `datetime` to UTC with a fixed 6-digit
+    microsecond field, and so on - see that module for the full list).
+
+    **Total by design, unlike `normalise_json_value`: this also runs over
+    rows read back from Postgres** (this writer's own write-time
+    self-check, and `nptc.audit.verification.verify_chain`), where raising
+    on unfamiliar content would turn a verifiable chain into an
+    unverifiable one rather than merely unhashable. `normalise_json_value`
+    itself must fail loud instead, because *its* callers are about to write
+    a new, permanent `before`/`after` payload (NFR-09: no UPDATE, no
+    DELETE) - silently stringifying an unexpected value there is exactly
+    the kind of quiet content loss NFR-08 exists to prevent.
+
+    **`Mapping`/`list`/`tuple` recurse locally, rather than delegating the
+    whole structure to `normalise_json_value`.** `normalise_json_value`
+    raises from wherever inside its own recursion a value it doesn't
+    recognise turns up; catching that only at this function's top level
+    would fall back to `str()`-ing the *entire* container for one
+    unrecognised leaf, silently discarding every sibling value instead of
+    only the one that needed a fallback. Recursing here and delegating
+    only leaf-level typing keeps the fallback scoped to the single value
+    that needed it - matching this function's own pre-issue-#37 behaviour,
+    where an unfamiliar nested value fell back individually and the rest of
+    the structure stayed intact. (`Mapping` keys are still unconditionally
+    coerced via `str(key)`, never validated: unlike
+    `normalise_json_value`'s strict rejection of a non-`str` key, a row
+    read back from Postgres must never raise here.) One caveat this
+    approach cannot avoid: a NaN/±Inf `float` - tolerated as-is by this
+    function before issue #37, since it never delegated to
+    `normalise_json_value`'s stricter rules - now falls back to `str()` at
+    the leaf, changing what such a value (never actually reachable through
+    any field this codebase writes today) would hash to.
+    """
     if isinstance(value, Mapping):
         return {str(key): _normalise(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_normalise(item) for item in value]
-    return str(value)
+    try:
+        return normalise_json_value(value)
+    except (UnserialisableAuditValueError, ValueError):
+        return str(value)
 
 
 def canonicalise_actor_ip(value: str) -> str:

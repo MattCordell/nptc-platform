@@ -188,23 +188,24 @@ def test_close_account_emits_a_user_closed_audit_event(app_db: Connection) -> No
     assert row["entity_type"] == "app_user"
     assert row["before"] == {
         "status": "active",
-        "pseudonymised_fields": ["display_name", "organisation", "username"],
+        "closed_at": None,
+        "_redacted": ["display_name", "organisation", "username"],
     }
-    assert row["after"] == {
-        "username": None,
-        "display_name": None,
-        "organisation": None,
-        "status": "closed",
-    }
+    after = row["after"]
+    assert after["status"] == "closed"
+    assert after["_redacted"] == ["display_name", "organisation", "username"]
+    assert set(after) == {"status", "closed_at", "_redacted"}
     # NFR-26/NFR-35/NFR-16/NFR-17: the identifying values themselves never
     # appear in `before` or `after` - `audit_event` is INSERT/SELECT-only
     # for the app role, so anything written into `before` would be
     # permanent and would defeat the pseudonymisation this event is
-    # itself recording.
-    assert "frank" not in str(row["before"])
-    assert "Frank" not in str(row["before"])
-    assert "RCPA-QAP" not in str(row["before"])
-    assert "frank" not in str(row["after"])
+    # itself recording. Strengthened to the row's full JSON text, not just
+    # before/after: this is the redaction regression test on a real write
+    # path (issue #37).
+    full_row_text = str(dict(row))
+    assert "frank" not in full_row_text
+    assert "Frank" not in full_row_text
+    assert "RCPA-QAP" not in full_row_text
 
 
 @pytest.mark.req("NFR-08")

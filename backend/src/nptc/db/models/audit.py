@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Text
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
@@ -31,6 +32,18 @@ from nptc.db.base import Base
 
 class AuditEvent(Base):
     __tablename__ = "audit_event"
+
+    # nptc.audit.policy (issue #37): exempt, not merely undeclared - this
+    # table *is* the log, so diffing it would be circular. `None` plus a
+    # mandatory __audit_exempt_reason__ is how a deliberate exemption is
+    # told apart from a model someone forgot to classify -
+    # test_audit_redaction.py's model-coverage walk requires exactly this
+    # shape for every mapped class.
+    __audit_fields__: ClassVar[frozenset[str] | None] = None
+    __audit_exempt_reason__: ClassVar[str] = (
+        "audit_event is the audit log itself; diffing it is circular"
+    )
+
     __table_args__ = (
         # Constraint text is a plain string literal, matched verbatim in
         # migration 0004_audit_event_hash_chain.py - see User's own

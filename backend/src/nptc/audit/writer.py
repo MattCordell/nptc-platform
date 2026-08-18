@@ -1,5 +1,11 @@
 """The append-only write path for audit_event (NFR-08, NFR-10, issue #36).
 
+Domain code wanting a field-level diff should call
+`nptc.audit.recording.record_change`/`record_snapshot_change` (issue #37)
+rather than hand-building `before`/`after` and calling this module
+directly - see that module for why hand-building a diff is exactly the gap
+issue #37 closes.
+
 `append_audit_event` is the only sanctioned way to insert a row: every
 step below exists to keep the hash chain from forking, and skipping any of
 them (whether by writing raw SQL or constructing an `AuditEvent` directly)

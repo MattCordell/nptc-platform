@@ -26,6 +26,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlalchemy import CheckConstraint, DateTime, Text, text
 from sqlalchemy.dialects.postgresql import UUID
@@ -43,6 +44,26 @@ class UserStatus(StrEnum):
 
 class User(Base):
     __tablename__ = "app_user"
+
+    # nptc.audit.policy (issue #37, NFR-08/NFR-26): status/closed_at are
+    # recorded in full on a diff; the three identifying columns are
+    # withheld (changed-by-name only, under REDACTED_KEY) - this turns
+    # ADR-0017's close_account posture (see docs/adr/0018-*.md) into a
+    # general policy rather than one function's own care. id/created_at/
+    # updated_at are explicitly ignored, not merely omitted: the primary
+    # key is never itself a "changed field", and the two bookkeeping
+    # timestamps are server-maintained rather than meaningful edits -
+    # policy_for requires every column be classified into exactly one of
+    # auditable/withheld/ignored, so a future column added here without a
+    # classification fails loudly rather than silently escaping audit.
+    __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status", "closed_at"})
+    __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset(
+        {"username", "display_name", "organisation"}
+    )
+    __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
+        {"id", "created_at", "updated_at"}
+    )
+
     __table_args__ = (
         # Constraint text is a plain string literal, never f-string joined
         # from UserStatus - backend/tests/test_sql_parameterisation.py's AST
@@ -74,17 +95,30 @@ class User(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    username: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
-    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    organisation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # `active_history=True` on every column named in __audit_fields__/
+    # __audit_withheld_fields__ above (issue #37): without it, SQLAlchemy
+    # only knows an attribute's *prior* value if it was already loaded
+    # before being reassigned - reassigning an expired-but-unread attribute
+    # leaves nptc.audit.diffing.diff_instance's load_history() call with no
+    # committed value to report, silently turning a real change into
+    # before=None instead of the true prior value.
+    username: Mapped[str | None] = mapped_column(
+        Text, unique=True, nullable=True, active_history=True
+    )
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
+    organisation: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     # A quoted literal, not the bare `UserStatus.ACTIVE` value: an
     # unquoted server_default string is rendered verbatim as SQL, and
     # `DEFAULT active` (no quotes) is not valid DDL for a text column.
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'"), active_history=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, active_history=True
+    )
