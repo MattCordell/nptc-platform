@@ -246,20 +246,26 @@ column name; `nptc.audit.policy.AuditFieldPolicy` refuses any declared field nam
 `_` for the same reason.
 
 **Allowlist + deny-list, layered (`nptc.audit.policy`).** A model declares
-`__audit_fields__` (recorded in full) and `__audit_withheld_fields__` (changed-by-name only) as
-`ClassVar`s; `policy_for` (cached) combines them with the model's real column set from
-`sqlalchemy.inspect`. A deny-list regex (`password`, `secret`, `token`, `api_key`, `session_id`,
-etc.) is checked at policy *construction* time regardless of which list a name was declared
-under - an allowlist alone would let a credential-shaped column be pasted straight into it,
-and a deny-list alone fails open the moment a new credential-shaped name isn't pattern-matched.
-A model with no `__audit_fields__` at all fails closed (`MissingAuditPolicyError`); a model
-deliberately never diffed (`AuditEvent` itself - diffing the log is circular) sets
-`__audit_fields__ = None` plus a mandatory `__audit_exempt_reason__`.
+`__audit_fields__` (recorded in full), `__audit_withheld_fields__` (changed-by-name only), and
+`__audit_ignored_fields__` (never appears in a diff at all) as `ClassVar`s; `policy_for` (cached)
+combines them with the model's real column set from `sqlalchemy.inspect`. A deny-list regex
+(`password`, `secret`, `token`, `api_key`, `session_id`, etc.) is checked at policy *construction*
+time against every `auditable`/`withheld` name regardless of which of those two lists it was
+declared under - an allowlist alone would let a credential-shaped column be pasted straight into
+it, and a deny-list alone fails open the moment a new credential-shaped name isn't
+pattern-matched. **Every real column must land in exactly one of the three groups, or
+construction fails**: without this, a model could declare a policy covering only some of its
+columns and leave the rest silently un-audited, and a column added later to an already-classified
+model would silently escape auditing by default instead of failing a test. A model with no
+`__audit_fields__` at all fails closed (`MissingAuditPolicyError`); a model deliberately never
+diffed (`AuditEvent` itself - diffing the log is circular) sets `__audit_fields__ = None` plus a
+mandatory `__audit_exempt_reason__`.
 `User.__audit_fields__ = {status, closed_at}`, `withheld = {username, display_name,
-organisation}`; `UserIdentity.__audit_fields__ = {email_verified}`,
-`withheld = {issuer, subject, email}` (`subject` is the OIDC `sub`, NFR-04's own no-escape
-column - `UserIdentity`'s emit sites are deferred to a follow-up issue against #43/#44, so this
-policy exists ahead of anything calling it, not because it is exercised yet).
+organisation}`, `ignored = {id, created_at, updated_at}`; `UserIdentity.__audit_fields__ =
+{email_verified}`, `withheld = {issuer, subject, email}`, `ignored = {id, user_id, linked_at}`
+(`subject` is the OIDC `sub`, NFR-04's own no-escape column - `UserIdentity`'s emit sites are
+deferred to a follow-up issue against #43/#44, so this policy exists ahead of anything calling
+it, not because it is exercised yet).
 
 **`active_history=True` is required on every auditable/withheld column, and `policy_for`
 enforces it.** Without it, SQLAlchemy only knows an attribute's prior value if it was already
@@ -274,10 +280,18 @@ stay total: `compute_entry_hash` also runs over rows read back *from* Postgres (
 own write-time self-check, and `verify_chain`), where raising on unfamiliar content would turn a
 verifiable chain into an unverifiable one. `normalise_json_value`'s callers, by contrast, are
 about to write a *new*, permanent payload (NFR-09: no UPDATE, no DELETE) - silently stringifying
-an unexpected value there is exactly the content loss NFR-08 exists to prevent. So `hashing.
-_normalise` is now a thin total wrapper delegating to `normalise_json_value`, falling back to
-`str(value)` only on the exceptions that module raises. `test_audit_hashing.py` carries a
-golden-vector digest test proving this refactor moved no existing hash.
+an unexpected value there is exactly the content loss NFR-08 exists to prevent. `hashing.
+_normalise` still recurses into `Mapping`/`list`/`tuple` itself (rather than delegating the whole
+structure to `normalise_json_value`) and only delegates leaf-level typing - falling back to
+`str(value)` per leaf, not per container, on the exceptions `normalise_json_value` raises. This
+preserves this function's pre-issue-#37 behaviour exactly, where one unrecognised nested value
+fell back individually without discarding its siblings; delegating the whole recursion would have
+silently stringified an entire container for a single unfamiliar leaf. One known, currently
+unreachable exception: a NaN/±Inf `float` was tolerated as-is before this issue and now falls back
+to `str()` at the leaf, since `normalise_json_value` rejects it - no field this codebase writes
+today is ever a `float`, so this cannot yet occur. `test_audit_hashing.py` carries a golden-vector
+digest test (computed independently from the literal pre-issue-#37 implementation, not derived
+from the refactored code) proving this refactor moved no existing hash.
 
 **No second, unaudited write path (`test_audit_write_path_guard.py`'s `audit-diff-bypass`
 rule).** Outside `nptc.audit` itself, a call to `append_audit_event` carrying a `before=`/

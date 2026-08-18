@@ -49,11 +49,19 @@ class User(Base):
     # recorded in full on a diff; the three identifying columns are
     # withheld (changed-by-name only, under REDACTED_KEY) - this turns
     # ADR-0017's close_account posture (see docs/adr/0018-*.md) into a
-    # general policy rather than one function's own care. No `id` here:
-    # the primary key is never itself a "changed field".
+    # general policy rather than one function's own care. id/created_at/
+    # updated_at are explicitly ignored, not merely omitted: the primary
+    # key is never itself a "changed field", and the two bookkeeping
+    # timestamps are server-maintained rather than meaningful edits -
+    # policy_for requires every column be classified into exactly one of
+    # auditable/withheld/ignored, so a future column added here without a
+    # classification fails loudly rather than silently escaping audit.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status", "closed_at"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset(
         {"username", "display_name", "organisation"}
+    )
+    __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
+        {"id", "created_at", "updated_at"}
     )
 
     __table_args__ = (

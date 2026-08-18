@@ -15,6 +15,11 @@ import pytest
 from sqlalchemy import Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# The import-aggregator's side effect is the point: registers every model on
+# Base.metadata/Base.registry (see that module's own docstring) so the
+# model-coverage walk below is structural, not dependent on which model
+# submodules this test file happens to import individually.
+import nptc.db.models  # noqa: F401
 from nptc.audit.diffing import ChangeKind, diff_snapshots
 from nptc.audit.policy import (
     AuditFieldPolicy,
@@ -118,6 +123,7 @@ def test_a_policy_listing_a_denied_name_fails_at_construction(denied_name: str) 
             entity_type="widget",
             auditable=frozenset({denied_name}),
             withheld=frozenset(),
+            ignored=frozenset(),
             known=frozenset({denied_name}),
         )
 
@@ -129,6 +135,7 @@ def test_a_policy_cannot_claim_a_reserved_underscore_name() -> None:
             entity_type="widget",
             auditable=frozenset({"_redacted"}),
             withheld=frozenset(),
+            ignored=frozenset(),
             known=frozenset({"_redacted"}),
         )
 
@@ -140,6 +147,7 @@ def test_a_policy_cannot_declare_a_field_both_auditable_and_withheld() -> None:
             entity_type="widget",
             auditable=frozenset({"status"}),
             withheld=frozenset({"status"}),
+            ignored=frozenset(),
             known=frozenset({"status"}),
         )
 
@@ -151,6 +159,7 @@ def test_a_policy_cannot_declare_an_unknown_field() -> None:
             entity_type="widget",
             auditable=frozenset({"typo_field"}),
             withheld=frozenset(),
+            ignored=frozenset(),
             known=frozenset({"status"}),
         )
 
@@ -184,9 +193,37 @@ def test_policy_for_refuses_a_declared_field_missing_active_history() -> None:
         __tablename__ = "gadget"
         __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status"})
         __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
+        __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id"})
 
         id: Mapped[int] = mapped_column(primary_key=True)
         status: Mapped[str] = mapped_column(Text, nullable=False)
 
     with pytest.raises(AuditPolicyError):
         policy_for(_Gadget)
+
+
+@pytest.mark.req("NFR-26")
+def test_policy_for_refuses_a_model_with_an_unclassified_column() -> None:
+    """The guarantee `test_every_mapped_model_resolves_a_policy_or_is_
+    explicitly_exempt`'s docstring claims - a model cannot declare
+    `__audit_fields__` covering only some of its columns and leave the
+    rest silently unaudited. A future column added to an already-
+    classified model must fail this the same way, not escape by
+    default."""
+
+    class _PartiallyClassifiedBase(DeclarativeBase):
+        pass
+
+    class _Sprocket(_PartiallyClassifiedBase):
+        __tablename__ = "sprocket"
+        __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status"})
+        __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
+        # Deliberately no __audit_ignored_fields__: `id` is left
+        # unclassified, which is exactly the gap this test proves is
+        # refused rather than silently tolerated.
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        status: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
+
+    with pytest.raises(AuditPolicyError):
+        policy_for(_Sprocket)

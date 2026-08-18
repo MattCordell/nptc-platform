@@ -25,9 +25,12 @@ and "already flushed, nothing to diff" becomes indistinguishable from
 "nothing changed" - both report no changes. `record_change` raises on an
 empty diff (see that module) so this surfaces as a loud `AuditNoOpError`
 rather than a silently missing audit event; for `kind=CREATED` it
-additionally asserts the instance is still in `session.new`, since a
-flushed insert has already left that set. Both are documented here again,
-not only there, because this is where the constraint actually bites.
+additionally asserts the instance is still in `session.new` (since a
+flushed insert has already left that set) and then flushes it itself
+before diffing, so `after_payload()` reflects the instance's fully
+populated, server-default-included state rather than its pre-flush Python
+values. Both are documented here again, not only there, because this is
+where the constraint actually bites.
 
 **`diff_snapshots` is a first-class second path, not an escape hatch.**
 Not every future auditable write has an ORM instance to read history from
@@ -41,6 +44,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Final, cast
 
 from sqlalchemy import inspect as sa_inspect
@@ -82,6 +86,13 @@ class FieldDiff:
     kind: ChangeKind
     changes: Mapping[str, FieldChange] = field(default_factory=dict)
     redacted: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        # `frozen=True` only stops reassigning the `changes` attribute
+        # itself - the dict it points to is otherwise freely mutable.
+        # Wrapping it here makes the dataclass's own frozen-ness apply to
+        # its contents too, not just its field bindings.
+        object.__setattr__(self, "changes", MappingProxyType(dict(self.changes)))
 
     def is_empty(self) -> bool:
         return not self.changes and not self.redacted
@@ -213,6 +224,19 @@ def diff_snapshots(
         has_after = name in after
         if not has_before and not has_after:
             continue
+        if kind is ChangeKind.UPDATED and has_before != has_after:
+            # A field present in only one of before/after is ambiguous for
+            # an UPDATED diff - unlike diff_instance, which always knows
+            # both the old and new value for a touched attribute, a
+            # hand-built snapshot pair has no such guarantee. Silently
+            # treating the missing side as null would record a spurious
+            # null-to-value (or value-to-null) change for a field the
+            # caller never actually reported on that side.
+            raise ValueError(
+                f"{policy.entity_type}: snapshot key {name!r} is present in only "
+                "one of before/after for an UPDATED diff - include it in both "
+                "(even if unchanged) or omit it from both"
+            )
 
         before_value = before.get(name)
         after_value = after.get(name)

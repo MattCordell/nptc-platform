@@ -74,10 +74,9 @@ def digest_field_names(table: FromClause) -> frozenset[str]:
 def _normalise(value: object) -> object:
     """Per-type normalisation into something `json.dumps` can render
     deterministically, delegating to `nptc.audit.serialisation.
-    normalise_json_value` for the type-specific rules (`UUID`/`ipaddress`
-    to string form, `datetime` to UTC with a fixed 6-digit microsecond
-    field, recursion into `Mapping`/`list`/`tuple`, and so on - see that
-    module for the full list).
+    normalise_json_value` for leaf-level, type-specific rules (`UUID`/
+    `ipaddress` to string form, `datetime` to UTC with a fixed 6-digit
+    microsecond field, and so on - see that module for the full list).
 
     **Total by design, unlike `normalise_json_value`: this also runs over
     rows read back from Postgres** (this writer's own write-time
@@ -87,10 +86,32 @@ def _normalise(value: object) -> object:
     itself must fail loud instead, because *its* callers are about to write
     a new, permanent `before`/`after` payload (NFR-09: no UPDATE, no
     DELETE) - silently stringifying an unexpected value there is exactly
-    the kind of quiet content loss NFR-08 exists to prevent. So: one
-    shared, type-specific core, and this function is only the total
-    wrapper around it.
+    the kind of quiet content loss NFR-08 exists to prevent.
+
+    **`Mapping`/`list`/`tuple` recurse locally, rather than delegating the
+    whole structure to `normalise_json_value`.** `normalise_json_value`
+    raises from wherever inside its own recursion a value it doesn't
+    recognise turns up; catching that only at this function's top level
+    would fall back to `str()`-ing the *entire* container for one
+    unrecognised leaf, silently discarding every sibling value instead of
+    only the one that needed a fallback. Recursing here and delegating
+    only leaf-level typing keeps the fallback scoped to the single value
+    that needed it - matching this function's own pre-issue-#37 behaviour,
+    where an unfamiliar nested value fell back individually and the rest of
+    the structure stayed intact. (`Mapping` keys are still unconditionally
+    coerced via `str(key)`, never validated: unlike
+    `normalise_json_value`'s strict rejection of a non-`str` key, a row
+    read back from Postgres must never raise here.) One caveat this
+    approach cannot avoid: a NaN/±Inf `float` - tolerated as-is by this
+    function before issue #37, since it never delegated to
+    `normalise_json_value`'s stricter rules - now falls back to `str()` at
+    the leaf, changing what such a value (never actually reachable through
+    any field this codebase writes today) would hash to.
     """
+    if isinstance(value, Mapping):
+        return {str(key): _normalise(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_normalise(item) for item in value]
     try:
         return normalise_json_value(value)
     except (UnserialisableAuditValueError, ValueError):

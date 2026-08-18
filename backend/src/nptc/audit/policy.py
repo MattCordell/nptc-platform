@@ -13,11 +13,12 @@ a credential-shaped field, let alone use one.
 **Declared on the model, not a central registry.** `nptc.audit` importing
 `nptc.db.models` would be fine, but the reverse - a model importing this
 module to build its own policy eagerly - would create a cycle, since
-`policy.py` never needs to import a concrete model. So a model declares two
-`ClassVar`s and `policy_for` reads them by name:
+`policy.py` never needs to import a concrete model. So a model declares
+three `ClassVar`s and `policy_for` reads them by name:
 
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset({"username"})
+    __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id", "created_at"})
 
 A model deliberately never diffed (`AuditEvent` - diffing the log itself is
 circular) sets `__audit_fields__ = None` **and** a mandatory
@@ -28,6 +29,19 @@ way - both raise `MissingAuditPolicyError` - since both mean this module
 has nothing to resolve; distinguishing an exemption from an oversight is
 `test_audit_redaction.py`'s job (it separately requires
 `__audit_exempt_reason__` whenever `__audit_fields__` is exactly `None`).
+
+**Every real column must be classified - `auditable`, `withheld`, or
+`ignored` - or `policy_for` refuses to resolve a policy at all.** Without
+this, a model could declare `__audit_fields__ = {"status"}` and leave every
+other column silently un-audited, and adding a new column to an already-
+classified model would silently escape auditing by default rather than
+failing a test. `__audit_ignored_fields__` makes "we looked at this column
+and decided it does not belong in a diff" an explicit, reviewable
+statement (e.g. `User.id`/`created_at`/`updated_at` - the primary key and
+bookkeeping timestamps are never themselves "changed fields") rather than
+an accident of omission. `ignored` fields are never deny-list checked:
+deliberately excluding a credential-shaped column from ever appearing in a
+diff is exactly the right outcome for it, not something to flag.
 """
 
 from __future__ import annotations
@@ -82,26 +96,36 @@ class AuditFieldPolicy:
     under `nptc.audit.diffing.REDACTED_KEY`, in both `before` and `after`
     (NFR-16/NFR-17, PRD OI-15) - a change to a withheld field is never
     invisible in the log merely because its value must not be recorded.
-    `known` is every real column on the model, used only to catch a
-    declared name that no longer exists (a rename or typo that would
-    otherwise silently un-audit a field without anyone noticing).
+    `ignored` fields are deliberately excluded from ever appearing in a
+    diff (the primary key, bookkeeping timestamps, etc.) - declaring them
+    explicitly is what makes "every column is classified" a checkable
+    guarantee rather than an assumption. `known` is every real column on
+    the model: `auditable | withheld | ignored` must equal it exactly, or
+    construction fails - a column belonging to none of the three groups is
+    exactly the silent-omission gap this whole policy exists to close.
     """
 
     entity_type: str
     auditable: frozenset[str]
     withheld: frozenset[str]
+    ignored: frozenset[str]
     known: frozenset[str]
 
     def __post_init__(self) -> None:
-        overlap = self.auditable & self.withheld
+        overlap = (
+            (self.auditable & self.withheld)
+            | (self.auditable & self.ignored)
+            | (self.withheld & self.ignored)
+        )
         if overlap:
             raise AuditPolicyError(
-                f"{self.entity_type}: field(s) {sorted(overlap)} declared both "
-                "auditable and withheld - a field must be exactly one or the other"
+                f"{self.entity_type}: field(s) {sorted(overlap)} declared in more "
+                "than one of auditable/withheld/ignored - a field must be exactly "
+                "one of the three"
             )
 
-        declared = self.auditable | self.withheld
-        for name in declared:
+        classified = self.auditable | self.withheld | self.ignored
+        for name in classified:
             if name.startswith("_"):
                 raise AuditPolicyError(
                     f"{self.entity_type}: {name!r} is a reserved leading-underscore "
@@ -114,17 +138,32 @@ class AuditFieldPolicy:
                     "model - a rename or typo here would otherwise silently "
                     "un-audit a field rather than fail loudly"
                 )
+
+        for name in self.auditable | self.withheld:
             if DENIED_FIELD_NAME_RE.search(name):
                 raise DeniedAuditFieldError(
                     f"{self.entity_type}: {name!r} looks credential-shaped and must "
-                    "never be declared auditable or withheld, only omitted entirely"
+                    "never be declared auditable or withheld - omit it entirely, or "
+                    "declare it ignored"
                 )
+
+        unclassified = self.known - classified
+        if unclassified:
+            raise AuditPolicyError(
+                f"{self.entity_type}: column(s) {sorted(unclassified)} are not "
+                "classified as auditable, withheld, or ignored - every real column "
+                "must be one of the three so a future column cannot silently "
+                "escape classification"
+            )
 
     def is_auditable(self, name: str) -> bool:
         return name in self.auditable
 
     def is_withheld(self, name: str) -> bool:
         return name in self.withheld
+
+    def is_ignored(self, name: str) -> bool:
+        return name in self.ignored
 
     def is_declared(self, name: str) -> bool:
         return name in self.auditable or name in self.withheld
@@ -159,12 +198,20 @@ def policy_for(model: type[DeclarativeBase]) -> AuditFieldPolicy:
             f"got {type(withheld).__name__}"
         )
 
+    ignored: object = getattr(model, "__audit_ignored_fields__", frozenset())
+    if not isinstance(ignored, frozenset):
+        raise AuditPolicyError(
+            f"{model.__name__}.__audit_ignored_fields__ must be a frozenset[str], "
+            f"got {type(ignored).__name__}"
+        )
+
     mapper = sa_inspect(model)
     known = frozenset(mapper.columns.keys())
     policy = AuditFieldPolicy(
         entity_type=model.__tablename__,
         auditable=declared,
         withheld=withheld,
+        ignored=ignored,
         known=known,
     )
 

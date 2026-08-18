@@ -63,12 +63,19 @@ verifiable chain into an unverifiable one - a wrong trade for a function whose o
 producing a comparable digest. `normalise_json_value`'s callers, by contrast, are about to
 write a *new*, permanent payload (NFR-09: no UPDATE, no DELETE) - silently stringifying an
 unexpected value there is exactly the silent content loss NFR-08 exists to prevent. So:
-one shared, type-specific core (`normalise_json_value`), and `hashing._normalise` becomes a
-thin total wrapper around it, catching `UnserialisableAuditValueError`/`ValueError` and falling
-back to `str(value)`. Every type reachable before this issue normalises identically (a `Decimal`
-already fell through to `str(value)` under the old code) - proven by a golden-vector digest
-test added to `test_audit_hashing.py`, since its existing tests checked determinism but never
-pinned an actual expected hash.
+one shared, type-specific core (`normalise_json_value`) handles leaf typing, and
+`hashing._normalise` keeps its own `Mapping`/`list`/`tuple` recursion (rather than delegating the
+whole structure), catching `UnserialisableAuditValueError`/`ValueError` and falling back to
+`str(value)` **per leaf**, not per container - delegating the whole recursion would silently
+stringify an entire container for one unrecognised nested value, discarding every sibling value
+along with it, which is not what "total" is supposed to mean. Every type reachable before this
+issue normalises identically (a `Decimal` already fell through to `str(value)` under the old
+code) - proven by a golden-vector digest test added to `test_audit_hashing.py`, computed
+independently from the literal pre-issue-#37 implementation rather than derived from the
+refactored code (a value derived from the new code would prove nothing about whether the
+refactor changed behaviour). The one exception, currently unreachable through any field this
+codebase writes: a NaN/±Inf `float`, tolerated as-is before this issue, now falls back to `str()`
+at the leaf instead.
 
 **Both an allowlist and a deny-list, layered, in `nptc.audit.policy`.** A deny-list alone fails
 open: the first credential-shaped column nobody pattern-matched leaks the moment a diff is
@@ -77,23 +84,38 @@ into a model's declared fields by someone who didn't think to check. Both, with 
 running at `AuditFieldPolicy` **construction** time, so a call site cannot even build a policy
 that declares a credential-shaped field.
 
-**Declared on the model, not a central registry.** A model declares two `ClassVar`s -
-`__audit_fields__` (recorded in full) and `__audit_withheld_fields__` (changed-by-name only,
-under a reserved `_redacted` key) - and `policy_for` (cached) combines them with
-`sqlalchemy.inspect(model).columns.keys()`. This keeps the dependency one-directional (`policy.py`
-never imports a concrete model) and makes the policy visible right next to the columns it
-governs. A model with no `__audit_fields__` at all raises `MissingAuditPolicyError` - fails
-closed. A model deliberately never diffed (`AuditEvent` itself - diffing the log is circular)
-sets `__audit_fields__ = None` **and** a mandatory `__audit_exempt_reason__`, so the exemption
-carries its justification in code rather than being inferred from silence.
+**Declared on the model, not a central registry.** A model declares three `ClassVar`s -
+`__audit_fields__` (recorded in full), `__audit_withheld_fields__` (changed-by-name only, under a
+reserved `_redacted` key), and `__audit_ignored_fields__` (never appears in a diff at all) - and
+`policy_for` (cached) combines them with `sqlalchemy.inspect(model).columns.keys()`. This keeps
+the dependency one-directional (`policy.py` never imports a concrete model) and makes the policy
+visible right next to the columns it governs. A model with no `__audit_fields__` at all raises
+`MissingAuditPolicyError` - fails closed. A model deliberately never diffed (`AuditEvent` itself -
+diffing the log is circular) sets `__audit_fields__ = None` **and** a mandatory
+`__audit_exempt_reason__`, so the exemption carries its justification in code rather than being
+inferred from silence.
+
+**Every real column must land in exactly one of `auditable`/`withheld`/`ignored`, or
+`AuditFieldPolicy` refuses to construct at all.** An allowlist alone only proves the columns it
+names are handled correctly - it says nothing about the columns it doesn't name. Without a
+completeness check, a model could declare `__audit_fields__ = {"status"}` and leave every other
+column silently un-audited, and a column added to an already-classified model later would
+silently escape auditing by default rather than failing a test - exactly the gap the issue's
+"cannot land without classifying every column" claim is supposed to close. `__audit_ignored_
+fields__` makes "we looked at this column and decided it doesn't belong in a diff" (a primary
+key, a server-maintained timestamp) an explicit, reviewable statement instead of an accident of
+omission; `ignored` fields are not deny-list checked, since excluding a credential-shaped column
+from ever appearing in a diff is exactly the right outcome for it.
 
 Applied: `User` gets `auditable = {status, closed_at}`, `withheld = {username, display_name,
-organisation}` - this turns `close_account`'s own care into a policy anything touching `User`
-must now honour, checked by a test, not merely remembered. `UserIdentity` gets
-`auditable = {email_verified}`, `withheld = {issuer, subject, email}` (`subject` is the OIDC
-`sub`, which NFR-04 says must never escape; `email` is PII) - its emit sites (identity created
-on login, deleted on closure) are deferred to a follow-up issue against #43/#44, since #37's
-scope is the mechanism, not retrofitting every future call site at once.
+organisation}`, `ignored = {id, created_at, updated_at}` - this turns `close_account`'s own care
+into a policy anything touching `User` must now honour, checked by a test, not merely
+remembered. `UserIdentity` gets
+`auditable = {email_verified}`, `withheld = {issuer, subject, email}`, `ignored = {id, user_id,
+linked_at}` (`subject` is the OIDC `sub`, which NFR-04 says must never escape; `email` is PII) -
+its emit sites (identity created on login, deleted on closure) are deferred to a follow-up issue
+against #43/#44, since #37's scope is the mechanism, not retrofitting every future call site at
+once.
 
 **`diff_instance` reads SQLAlchemy's own attribute history, never a caller-supplied snapshot.**
 A caller cannot forget or misremember the "before" - there is no `before=` parameter to omit,
@@ -112,6 +134,15 @@ Designing this in now, alongside `diff_instance`, avoids a second, divergent dif
 appearing later; it re-checks every incoming key against the deny-list at runtime too, so a
 hand-assembled dict cannot smuggle a denied key past a mapper-derived policy that never declared
 it.
+
+**A snapshot key present in only one of `before`/`after` on an `UPDATED` diff is refused, not
+treated as null.** `diff_instance` never faces this ambiguity - SQLAlchemy's attribute history
+always supplies both the old and new value for a touched attribute - but a hand-built snapshot
+pair has no such guarantee. Silently substituting `None` for the missing side would record a
+spurious null-to-value (or value-to-null) change for a field the caller never actually reported
+on that side, which is exactly the kind of fabricated diff content this issue exists to prevent.
+`diff_snapshots` raises `ValueError` instead, requiring the caller to include a field in both
+mappings (even unchanged) or omit it from both.
 
 **Every auditable/withheld column must declare `active_history=True`, and `policy_for` enforces
 it.** SQLAlchemy only knows an attribute's *prior* value if it was already loaded before being

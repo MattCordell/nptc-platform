@@ -8,10 +8,11 @@ integration counterpart that drives this against a real database.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import Text
+from sqlalchemy import Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -33,6 +34,7 @@ class _Widget(_Base):
 
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status", "count"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset({"owner_name"})
+    __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id"})
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # active_history=True on every auditable/withheld column: policy_for
@@ -45,12 +47,15 @@ class _Widget(_Base):
 
 
 @pytest.fixture
-def session() -> Session:
-    from sqlalchemy import create_engine
-
+def session() -> Iterator[Session]:
     engine = create_engine("sqlite://", poolclass=StaticPool)
     _Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=True)()
+    bound_session = sessionmaker(bind=engine, expire_on_commit=True)()
+    try:
+        yield bound_session
+    finally:
+        bound_session.close()
+        engine.dispose()
 
 
 def _persisted_widget(
@@ -163,6 +168,7 @@ _POLICY = AuditFieldPolicy(
     entity_type="widget",
     auditable=frozenset({"status"}),
     withheld=frozenset({"owner_name"}),
+    ignored=frozenset({"count"}),
     known=frozenset({"status", "owner_name", "count"}),
 )
 
@@ -187,6 +193,22 @@ def test_diff_snapshots_created_has_no_before() -> None:
     assert diff.after_payload() == {"status": "active"}
 
 
+def test_diff_snapshots_refuses_a_key_present_in_only_one_side_on_update() -> None:
+    """A field present in `before` but not `after` (or vice versa) on an
+    UPDATED diff is ambiguous - diff_instance never has this ambiguity
+    (it always knows both the old and new value for a touched attribute),
+    but a hand-built snapshot pair has no such guarantee. Silently treating
+    the missing side as null would record a spurious null-to-value change
+    for a field the caller never actually reported on that side."""
+    with pytest.raises(ValueError, match="present in only one of before/after"):
+        diff_snapshots(
+            policy=_POLICY,
+            before={"status": "active"},
+            after={},
+            kind=ChangeKind.UPDATED,
+        )
+
+
 def test_diff_snapshots_refuses_an_undeclared_key() -> None:
     with pytest.raises(AuditPolicyError):
         diff_snapshots(
@@ -202,6 +224,7 @@ def test_diff_snapshots_refuses_a_denied_key_even_if_hand_supplied() -> None:
         entity_type="widget",
         auditable=frozenset({"status"}),
         withheld=frozenset(),
+        ignored=frozenset(),
         known=frozenset({"status"}),
     )
     with pytest.raises(DeniedAuditFieldError):

@@ -68,6 +68,91 @@ def test_single_field_update_emits_one_event_with_a_field_level_diff(app_db: Con
 
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
+def test_created_user_emits_a_full_snapshot_via_record_change(app_db: Connection) -> None:
+    """The CREATED success path: `record_change` must flush a pending
+    instance itself before diffing/resolving `entity_id` - otherwise the
+    not-yet-assigned primary key can't be derived, and server-default
+    columns (`User.status`) would still read as `None` on the Python
+    side."""
+    session = Session(bind=app_db)
+    user = User(username="kelly", display_name="Kelly", organisation="RCPA-QAP")
+    session.add(user)
+
+    event = record_change(
+        session,
+        AuditContext.system(),
+        action="user.created",
+        instance=user,
+        kind=ChangeKind.CREATED,
+    )
+    session.flush()
+
+    assert event.entity_id == str(user.id)
+    row = (
+        session.execute(
+            text(
+                "SELECT before, after FROM audit_event "
+                "WHERE entity_id = :id AND action = 'user.created'"
+            ),
+            {"id": str(user.id)},
+        )
+        .mappings()
+        .one()
+    )
+    assert row["before"] is None
+    assert row["after"]["status"] == "active"
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_record_change_created_refuses_an_already_flushed_instance(app_db: Connection) -> None:
+    """The `session.new` refusal: calling `record_change(kind=CREATED)`
+    after the instance has already left `session.new` (a prior flush, most
+    likely from an entirely separate operation) must not silently diff a
+    settled row as though it were only just created."""
+    session = Session(bind=app_db)
+    user = User(username="len", display_name="Len", organisation="RCPA-QAP")
+    session.add(user)
+    session.flush()
+
+    with pytest.raises(AuditNoOpError):
+        record_change(
+            session,
+            AuditContext.system(),
+            action="user.created",
+            instance=user,
+            kind=ChangeKind.CREATED,
+        )
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_record_snapshot_change_refuses_an_empty_diff(app_db: Connection) -> None:
+    session = Session(bind=app_db)
+    policy = AuditFieldPolicy(
+        entity_type="test_widget",
+        auditable=frozenset({"score"}),
+        withheld=frozenset(),
+        ignored=frozenset(),
+        known=frozenset({"score"}),
+    )
+
+    with pytest.raises(AuditNoOpError):
+        record_snapshot_change(
+            session,
+            AuditContext.system(),
+            action="widget.rescored",
+            entity_type="test_widget",
+            entity_id="1",
+            policy=policy,
+            before={"score": 1.0},
+            after={"score": 1.0},
+            kind=ChangeKind.UPDATED,
+        )
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
 def test_a_write_that_changes_nothing_emits_no_event(app_db: Connection) -> None:
     session = Session(bind=app_db)
     user = _create_active_user(session, "ian")
@@ -97,6 +182,7 @@ def test_diff_payload_survives_the_jsonb_round_trip(app_db: Connection) -> None:
         entity_type="test_widget",
         auditable=frozenset({"score"}),
         withheld=frozenset(),
+        ignored=frozenset(),
         known=frozenset({"score"}),
     )
 
@@ -129,6 +215,7 @@ def test_sctid_in_a_diff_is_stored_as_a_jsonb_string(app_db: Connection) -> None
         entity_type="test_code_binding",
         auditable=frozenset({"code"}),
         withheld=frozenset(),
+        ignored=frozenset(),
         known=frozenset({"code"}),
     )
 

@@ -72,18 +72,29 @@ def record_change(
     a legitimate no-op.
 
     For `kind=ChangeKind.CREATED` specifically, `instance` must still be in
-    `session.new`: a flushed insert has already lost the attribute history
-    this reads, and unlike `UPDATED`/`DELETED` that ordering bug would not
-    otherwise show up as an empty diff (the `CREATED` branch of
-    `diff_instance` reads current attribute values directly, not history).
+    `session.new` *when this function is called* - a flushed insert has
+    already lost the attribute history this would otherwise read, and
+    unlike `UPDATED`/`DELETED` that ordering bug would not show up as an
+    empty diff (the `CREATED` branch of `diff_instance` reads current
+    attribute values directly, not history). Once that is checked, this
+    function flushes `instance` itself before diffing or resolving
+    `entity_id`: a not-yet-flushed instance has no assigned primary key
+    (every model today gets one from a server-side default) and its own
+    server-default columns (e.g. `User.status`) still read as `None` on the
+    Python side, so diffing or deriving `entity_id` before the flush would
+    silently produce an incomplete `after` payload and/or fail outright.
+    Postgres's RETURNING-based eager defaults mean the flushed instance's
+    attributes are fully populated afterwards with no extra SELECT.
     """
-    if kind is ChangeKind.CREATED and instance not in session.new:
-        raise AuditNoOpError(
-            "record_change(kind=CREATED) called with an instance no longer in "
-            "session.new - it has already been flushed, so computing its diff "
-            "here would not reflect the insert this call is meant to record. "
-            "Call record_change before the session flushes this instance."
-        )
+    if kind is ChangeKind.CREATED:
+        if instance not in session.new:
+            raise AuditNoOpError(
+                "record_change(kind=CREATED) called with an instance no longer in "
+                "session.new - it has already been flushed, so computing its diff "
+                "here would not reflect the insert this call is meant to record. "
+                "Call record_change before the session flushes this instance."
+            )
+        session.flush()
 
     diff = diff_instance(instance, kind=kind)
     if diff.is_empty():

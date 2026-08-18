@@ -37,9 +37,13 @@ class UserIdentity(Base):
     # (changed-by-name only). Emit sites for this model (identity created
     # on login, deleted on closure) are a follow-up issue against #43/#44 -
     # this policy exists so #46+ cannot bypass it once those sites land,
-    # not because anything emits a diff against this model yet.
+    # not because anything emits a diff against this model yet. id/user_id/
+    # linked_at are explicitly ignored: the primary key and the FK to
+    # app_user are never themselves "changed fields" once set, and
+    # linked_at is a server-maintained creation timestamp, not an edit.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"email_verified"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset({"issuer", "subject", "email"})
+    __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id", "user_id", "linked_at"})
 
     __table_args__ = (
         UniqueConstraint("issuer", "subject"),
