@@ -47,7 +47,9 @@ def _claims(
     )
 
 
-def _events_for_action(session: Session, entity_id: uuid.UUID | str, action: str) -> list[dict]:
+def _events_for_action(
+    session: Session, entity_id: uuid.UUID | str, action: str
+) -> list[dict[str, object]]:
     rows = (
         session.execute(
             text(
@@ -259,6 +261,64 @@ def test_a_repeat_login_with_a_changed_email_verified_claim_emits_one_refresh_ev
     event = events[0]
     assert event["before"] == {"email_verified": False}
     assert event["after"] == {"email_verified": True}
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("NFR-26")
+@pytest.mark.integration
+def test_a_repeat_login_with_only_a_changed_email_emits_a_withheld_only_refresh_event(
+    app_db: Connection,
+) -> None:
+    """The commoner real case, and a distinct payload shape from the
+    `email_verified`-flip test above: `email` is withheld, so a change to
+    it alone produces a diff that is non-empty *solely* through
+    `_redacted` - `before`/`after` are each `{"_redacted": ["email"]}`,
+    with no `changes` entries at all. This is the shape closest to
+    `AuditNoOpError` if `email` were ever reclassified as ignored rather
+    than withheld, so it deserves its own assertion rather than riding
+    along with the `email_verified` case."""
+    session = Session(bind=app_db)
+    first_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-email-only",
+        preferred_username="holly",
+        display_name="Holly",
+        email="holly-old@example.com",
+        email_verified=True,
+    )
+    second_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-email-only",
+        preferred_username="holly",
+        display_name="Holly",
+        email="holly-new@example.com",
+        email_verified=True,
+    )
+
+    first = resolve_user_for_claims(
+        session, first_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert first.user is not None
+
+    identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": first.user.id}
+    ).scalar_one()
+
+    second = resolve_user_for_claims(
+        session, second_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert second.user is not None
+
+    events = _events_for_action(session, identity_id, "user_identity.refreshed")
+    assert len(events) == 1
+    event = events[0]
+    assert event["before"] == {"_redacted": ["email"]}
+    assert event["after"] == {"_redacted": ["email"]}
+    full_row_text = str(event)
+    assert "holly-old" not in full_row_text
+    assert "holly-new" not in full_row_text
 
 
 def _create_active_user_with_identities(

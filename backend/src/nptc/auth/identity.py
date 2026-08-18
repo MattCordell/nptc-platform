@@ -215,6 +215,11 @@ def resolve_user_for_claims(
         existing.email = claims.email
         existing.email_verified = claims.email_verified
         if claims.display_name is not None:
+            # Deliberately unaudited for now: this mutates `User`, not
+            # `UserIdentity`, so it falls outside #163's scope. A login
+            # that changes only `display_name` still emits no `user.*`
+            # event, which is an NFR-08 gap, not merely an unaudited
+            # field - see issue #167.
             user.display_name = claims.display_name
         if identity_changed:
             # Guarded rather than unconditional: an ordinary repeat login

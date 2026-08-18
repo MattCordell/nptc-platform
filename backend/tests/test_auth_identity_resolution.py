@@ -482,7 +482,12 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
 ) -> None:
     """A `preferred_username` claim already held by another user must not
     abort first login with a raw 23505 - it must fall back to a distinct
-    username instead."""
+    username instead. Also pins `_create_user`'s claim that a rolled-back
+    collision retry never leaves an audit record of an insert that did not
+    happen: `second`'s first attempt collides and its whole SAVEPOINT
+    (including the `user_identity.created` event emitted inside it) rolls
+    back, so exactly one such event survives for `second`'s identity, not
+    two."""
     session = Session(bind=app_db)
     first = resolve_user_for_claims(
         session,
@@ -513,6 +518,18 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
     assert first.user.id != second.user.id
     assert second.user.username != first.user.username
     assert second.user.username is not None and second.user.username.startswith("taken")
+
+    second_identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": second.user.id}
+    ).scalar_one()
+    created_events = session.execute(
+        text(
+            "SELECT count(*) FROM audit_event "
+            "WHERE entity_id = :entity_id AND action = 'user_identity.created'"
+        ),
+        {"entity_id": str(second_identity_id)},
+    ).scalar_one()
+    assert created_events == 1
 
 
 @pytest.mark.req("NFR-04")
