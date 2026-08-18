@@ -69,7 +69,10 @@ DENIED_FIELD_NAME_RE: Final[re.Pattern[str]] = re.compile(
 
 class AuditPolicyError(RuntimeError):
     """Base class for every way an `AuditFieldPolicy` can fail to resolve
-    or construct."""
+    or construct, or a diff can fail to be built against one. A caller
+    that wants to catch every policy-related refusal in one place (e.g.
+    around a hand-built `nptc.audit.diffing.diff_snapshots` call) can catch
+    this base class rather than enumerate every subclass."""
 
 
 class MissingAuditPolicyError(AuditPolicyError):
@@ -85,6 +88,15 @@ class DeniedAuditFieldError(AuditPolicyError):
     """Raised when a declared (or hand-supplied) field name matches
     `DENIED_FIELD_NAME_RE` - a credential-shaped name must never be
     declared auditable or withheld, only omitted from a policy entirely."""
+
+
+class AmbiguousSnapshotFieldError(AuditPolicyError):
+    """Raised by `nptc.audit.diffing.diff_snapshots` when a field is
+    present in only one of `before`/`after` for an `UPDATED` diff - unlike
+    `diff_instance`, which always knows both the old and new value for a
+    touched attribute, a hand-built snapshot pair has no such guarantee,
+    and silently treating the missing side as null would fabricate a
+    change nobody reported."""
 
 
 @dataclass(frozen=True)

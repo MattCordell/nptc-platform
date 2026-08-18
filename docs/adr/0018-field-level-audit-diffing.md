@@ -141,8 +141,10 @@ always supplies both the old and new value for a touched attribute - but a hand-
 pair has no such guarantee. Silently substituting `None` for the missing side would record a
 spurious null-to-value (or value-to-null) change for a field the caller never actually reported
 on that side, which is exactly the kind of fabricated diff content this issue exists to prevent.
-`diff_snapshots` raises `ValueError` instead, requiring the caller to include a field in both
-mappings (even unchanged) or omit it from both.
+`diff_snapshots` raises `nptc.audit.policy.AmbiguousSnapshotFieldError` (an `AuditPolicyError`
+subclass, so a caller catching that base class around a snapshot diff still catches this)
+instead, requiring the caller to include a field in both mappings (even unchanged) or omit it
+from both.
 
 **Every auditable/withheld column must declare `active_history=True`, and `policy_for` enforces
 it.** SQLAlchemy only knows an attribute's *prior* value if it was already loaded before being

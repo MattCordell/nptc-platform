@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from nptc.audit.diffing import ChangeKind, FieldChange, FieldDiff, diff_instance, diff_snapshots
 from nptc.audit.policy import (
+    AmbiguousSnapshotFieldError,
     AuditFieldPolicy,
     AuditPolicyError,
     DeniedAuditFieldError,
@@ -200,7 +201,7 @@ def test_diff_snapshots_refuses_a_key_present_in_only_one_side_on_update() -> No
     but a hand-built snapshot pair has no such guarantee. Silently treating
     the missing side as null would record a spurious null-to-value change
     for a field the caller never actually reported on that side."""
-    with pytest.raises(ValueError, match="present in only one of before/after"):
+    with pytest.raises(AmbiguousSnapshotFieldError, match="present in only one of before/after"):
         diff_snapshots(
             policy=_POLICY,
             before={"status": "active"},

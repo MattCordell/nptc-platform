@@ -77,14 +77,15 @@ def record_change(
     unlike `UPDATED`/`DELETED` that ordering bug would not show up as an
     empty diff (the `CREATED` branch of `diff_instance` reads current
     attribute values directly, not history). Once that is checked, this
-    function flushes `instance` itself before diffing or resolving
-    `entity_id`: a not-yet-flushed instance has no assigned primary key
-    (every model today gets one from a server-side default) and its own
-    server-default columns (e.g. `User.status`) still read as `None` on the
-    Python side, so diffing or deriving `entity_id` before the flush would
-    silently produce an incomplete `after` payload and/or fail outright.
-    Postgres's RETURNING-based eager defaults mean the flushed instance's
-    attributes are fully populated afterwards with no extra SELECT.
+    function flushes the *session* (there is no narrower "flush just this
+    instance" operation) before diffing or resolving `entity_id`: a
+    not-yet-flushed instance has no assigned primary key (every model
+    today gets one from a server-side default) and its own server-default
+    columns (e.g. `User.status`) still read as `None` on the Python side,
+    so diffing or deriving `entity_id` before the flush would silently
+    produce an incomplete `after` payload and/or fail outright. Postgres's
+    RETURNING-based eager defaults mean `instance`'s attributes are fully
+    populated afterwards with no extra SELECT.
     """
     if kind is ChangeKind.CREATED:
         if instance not in session.new:

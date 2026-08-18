@@ -26,7 +26,7 @@ and "already flushed, nothing to diff" becomes indistinguishable from
 empty diff (see that module) so this surfaces as a loud `AuditNoOpError`
 rather than a silently missing audit event; for `kind=CREATED` it
 additionally asserts the instance is still in `session.new` (since a
-flushed insert has already left that set) and then flushes it itself
+flushed insert has already left that set) and then flushes the session
 before diffing, so `after_payload()` reflects the instance's fully
 populated, server-default-included state rather than its pre-flush Python
 values. Both are documented here again, not only there, because this is
@@ -53,6 +53,7 @@ from sqlalchemy.orm.attributes import History
 
 from nptc.audit.policy import (
     DENIED_FIELD_NAME_RE,
+    AmbiguousSnapshotFieldError,
     AuditFieldPolicy,
     AuditPolicyError,
     DeniedAuditFieldError,
@@ -232,7 +233,7 @@ def diff_snapshots(
             # treating the missing side as null would record a spurious
             # null-to-value (or value-to-null) change for a field the
             # caller never actually reported on that side.
-            raise ValueError(
+            raise AmbiguousSnapshotFieldError(
                 f"{policy.entity_type}: snapshot key {name!r} is present in only "
                 "one of before/after for an UPDATED diff - include it in both "
                 "(even if unchanged) or omit it from both"
