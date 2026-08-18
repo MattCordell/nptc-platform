@@ -34,13 +34,13 @@ class UserIdentity(Base):
     # nptc.audit.policy (issue #37, NFR-08/NFR-26): only email_verified is
     # ever recorded in full. `subject` is the OIDC `sub`, which NFR-04
     # says must never escape this table; `email` is PII; both are withheld
-    # (changed-by-name only). Emit sites for this model (identity created
-    # on login, deleted on closure) are a follow-up issue against #43/#44 -
-    # this policy exists so #46+ cannot bypass it once those sites land,
-    # not because anything emits a diff against this model yet. id/user_id/
-    # linked_at are explicitly ignored: the primary key and the FK to
-    # app_user are never themselves "changed fields" once set, and
-    # linked_at is a server-maintained creation timestamp, not an edit.
+    # (changed-by-name only). Emit sites for this model - identity created
+    # on login (first login and the auto-link path), refreshed on repeat
+    # login, and deleted on closure - all live in `nptc.auth.identity`
+    # (issue #163). id/user_id/linked_at are explicitly ignored: the
+    # primary key and the FK to app_user are never themselves "changed
+    # fields" once set, and linked_at is a server-maintained creation
+    # timestamp, not an edit.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"email_verified"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset({"issuer", "subject", "email"})
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id", "user_id", "linked_at"})
