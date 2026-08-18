@@ -17,6 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
+from nptc.audit.writer import AuditContext
 from nptc.auth.authentication import authenticate
 from nptc.auth.errors import TokenError
 from nptc.auth.identity import LinkOutcome
@@ -52,7 +53,13 @@ def test_a_verified_token_for_an_unseen_subject_creates_a_user(app_db: Connectio
         token = mint_token(key, kid="key-1", issuer=stub.issuer_url, subject="issue-43-subject-1")
         session = Session(bind=app_db)
 
-        resolution = authenticate(session, token, verifier=verifier, trusted_issuers=frozenset())
+        resolution = authenticate(
+            session,
+            token,
+            verifier=verifier,
+            trusted_issuers=frozenset(),
+            audit=AuditContext.system(),
+        )
 
     assert resolution.outcome == LinkOutcome.CREATED
     assert resolution.user is not None
@@ -78,7 +85,13 @@ def test_an_invalid_token_raises_and_leaves_no_rows_behind(app_db: Connection) -
         before = _user_and_identity_counts(app_db)
 
         with pytest.raises(TokenError):
-            authenticate(session, token, verifier=verifier, trusted_issuers=frozenset())
+            authenticate(
+                session,
+                token,
+                verifier=verifier,
+                trusted_issuers=frozenset(),
+                audit=AuditContext.system(),
+            )
 
         after = _user_and_identity_counts(app_db)
 

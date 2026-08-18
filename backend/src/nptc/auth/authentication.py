@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from nptc.audit.writer import AuditContext
 from nptc.auth.identity import Resolution, resolve_user_for_claims
 from nptc.auth.tokens import TokenVerifier
 
@@ -21,6 +22,7 @@ def authenticate(
     *,
     verifier: TokenVerifier,
     trusted_issuers: frozenset[str],
+    audit: AuditContext,
 ) -> Resolution:
     """Verifies ``token``, then resolves it to an internal ``app_user``.
 
@@ -29,4 +31,4 @@ def authenticate(
     unverified claim.
     """
     claims = verifier.verify(token)
-    return resolve_user_for_claims(session, claims, trusted_issuers=trusted_issuers)
+    return resolve_user_for_claims(session, claims, trusted_issuers=trusted_issuers, audit=audit)

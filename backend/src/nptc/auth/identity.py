@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -129,7 +129,7 @@ def _is_username_collision(exc: IntegrityError) -> bool:
     return sqlstate == _UNIQUE_VIOLATION_SQLSTATE and constraint_name == _USERNAME_UNIQUE_CONSTRAINT
 
 
-def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
+def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditContext) -> User:
     """Creates the `app_user` (plus its first `user_identity` row) for a
     subject seen for the first time.
 
@@ -142,7 +142,10 @@ def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
     violation is re-raised immediately: retrying under a different
     username can't fix a blank subject or a racing duplicate `(iss, sub)`.
     Each attempt runs inside its own `SAVEPOINT` so a failed attempt aborts
-    only that attempt, not the caller's whole transaction.
+    only that attempt, not the caller's whole transaction - including the
+    `user_identity.created` audit event emitted below, so a rolled-back
+    collision retry never leaves a record of an insert that did not
+    happen.
     """
     display_name = claims.display_name or claims.preferred_username
     suffix: str | None = None
@@ -157,16 +160,24 @@ def _create_user(session: Session, claims: OidcIdentityClaims) -> User:
                 )
                 session.add(user)
                 session.flush()
-                session.add(
-                    UserIdentity(
-                        user_id=user.id,
-                        issuer=claims.issuer,
-                        subject=claims.subject,
-                        email=claims.email,
-                        email_verified=claims.email_verified,
-                    )
+                identity = UserIdentity(
+                    user_id=user.id,
+                    issuer=claims.issuer,
+                    subject=claims.subject,
+                    email=claims.email,
+                    email_verified=claims.email_verified,
                 )
-                session.flush()
+                session.add(identity)
+                # record_change(kind=CREATED) flushes the session itself -
+                # see its docstring - so this must run before anything else
+                # flushes `identity` out of `session.new`.
+                record_change(
+                    session,
+                    audit,
+                    action="user_identity.created",
+                    instance=identity,
+                    kind=ChangeKind.CREATED,
+                )
         except IntegrityError as exc:
             if not _is_username_collision(exc):
                 raise
@@ -183,6 +194,7 @@ def resolve_user_for_claims(
     claims: OidcIdentityClaims,
     *,
     trusted_issuers: frozenset[str],
+    audit: AuditContext,
 ) -> Resolution:
     existing = _find_identity(session, claims.issuer, claims.subject)
     if existing is not None:
@@ -197,29 +209,55 @@ def resolve_user_for_claims(
         # user can ever auto-link against it, so an untrusted issuer
         # asserting `email_verified=True` here does not create a usable
         # auto-link target.
+        identity_changed = (
+            existing.email != claims.email or existing.email_verified != claims.email_verified
+        )
         existing.email = claims.email
         existing.email_verified = claims.email_verified
         if claims.display_name is not None:
+            # Deliberately unaudited for now: this mutates `User`, not
+            # `UserIdentity`, so it falls outside #163's scope. A login
+            # that changes only `display_name` still emits no `user.*`
+            # event, which is an NFR-08 gap, not merely an unaudited
+            # field - see issue #167.
             user.display_name = claims.display_name
+        if identity_changed:
+            # Guarded rather than unconditional: an ordinary repeat login
+            # changes nothing, and record_change refuses an empty diff by
+            # design (AuditNoOpError) - this is the caller-side
+            # short-circuit that refusal assumes.
+            record_change(
+                session,
+                audit,
+                action="user_identity.refreshed",
+                instance=existing,
+                kind=ChangeKind.UPDATED,
+            )
         return Resolution(outcome=LinkOutcome.EXISTING, user=user)
 
     candidate_user_ids = _find_candidate_user_ids(session, claims.email, trusted_issuers)
     if not candidate_user_ids:
-        user = _create_user(session, claims)
+        user = _create_user(session, claims, audit=audit)
         return Resolution(outcome=LinkOutcome.CREATED, user=user)
 
     if len(candidate_user_ids) > 1 or not may_auto_link(claims, trusted_issuers):
         return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
 
     candidate_user_id = candidate_user_ids[0]
-    session.add(
-        UserIdentity(
-            user_id=candidate_user_id,
-            issuer=claims.issuer,
-            subject=claims.subject,
-            email=claims.email,
-            email_verified=claims.email_verified,
-        )
+    identity = UserIdentity(
+        user_id=candidate_user_id,
+        issuer=claims.issuer,
+        subject=claims.subject,
+        email=claims.email,
+        email_verified=claims.email_verified,
+    )
+    session.add(identity)
+    record_change(
+        session,
+        audit,
+        action="user_identity.created",
+        instance=identity,
+        kind=ChangeKind.CREATED,
     )
     user = session.get(User, candidate_user_id)
     if user is None:
@@ -244,22 +282,41 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
     *before* reaching the audit layer, rather than relying on the diff
     coming back empty.
 
-    Emits a single ``user.closed`` event (NFR-08, NFR-10, issue #37's
-    field-level diff - see ``docs/adr/0018-field-level-audit-diffing.md``).
-    Neither ``before`` nor ``after`` ever carries the identifying values
-    themselves (NFR-26/NFR-35): that withholding is now ``User``'s own
+    Emits one ``user_identity.deleted`` event per linked identity, then a
+    single ``user.closed`` event (NFR-08, NFR-10, issue #37's field-level
+    diff - see ``docs/adr/0018-field-level-audit-diffing.md``). Neither
+    ``before`` nor ``after`` ever carries the identifying values themselves
+    (NFR-26/NFR-35): that withholding is each model's own
     ``nptc.audit.policy`` guarantee (``__audit_withheld_fields__``), not
-    this function's own care - ``record_change`` records the pre-closure
-    ``status`` change in full and the three identifying fields by name only
-    (under ``_redacted``), since ``audit_event`` is INSERT/SELECT-only for
-    the app role (NFR-09) and anything written into ``before`` is
-    permanent.
+    this function's own care - ``record_change`` records ``User``'s
+    pre-closure ``status`` change and each ``UserIdentity``'s
+    ``email_verified`` in full, and the remaining identifying fields by
+    name only (under ``_redacted``), since ``audit_event`` is
+    INSERT/SELECT-only for the app role (NFR-09) and anything written into
+    ``before`` is permanent.
+
+    The identities are deleted one row at a time via the ORM (not a single
+    bulk ``DELETE``) specifically so ``record_change`` can read each row's
+    attribute history before it disappears - a bulk statement never
+    materialises the per-row instances that diff needs.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
         return
 
-    session.execute(delete(UserIdentity).where(UserIdentity.user_id == user_id))
+    identities = (
+        session.execute(select(UserIdentity).where(UserIdentity.user_id == user_id)).scalars().all()
+    )
+    for identity in identities:
+        record_change(
+            session,
+            audit,
+            action="user_identity.deleted",
+            instance=identity,
+            kind=ChangeKind.DELETED,
+        )
+        session.delete(identity)
+
     user.username = None
     user.display_name = None
     user.organisation = None

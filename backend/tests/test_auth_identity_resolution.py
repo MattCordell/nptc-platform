@@ -57,8 +57,12 @@ def test_same_subject_twice_resolves_to_one_user(app_db: Connection) -> None:
         issuer=_UNTRUSTED, subject="sub-1", preferred_username="alice", display_name="Alice"
     )
 
-    first = resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED)
-    second = resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED)
+    first = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    second = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
 
     assert first.outcome == LinkOutcome.CREATED
     assert second.outcome == LinkOutcome.EXISTING
@@ -89,8 +93,12 @@ def test_same_subject_with_changed_email_and_display_name_still_resolves_to_the_
         email_verified=True,
     )
 
-    created = resolve_user_for_claims(session, first_claims, trusted_issuers=_TRUSTED)
-    updated = resolve_user_for_claims(session, changed_claims, trusted_issuers=_TRUSTED)
+    created = resolve_user_for_claims(
+        session, first_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    updated = resolve_user_for_claims(
+        session, changed_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
 
     assert created.user is not None and updated.user is not None
     assert created.user.id == updated.user.id
@@ -108,6 +116,7 @@ def test_different_subject_same_issuer_creates_a_distinct_user(app_db: Connectio
             issuer=_UNTRUSTED, subject="sub-3a", preferred_username="carol", display_name="Carol"
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     second = resolve_user_for_claims(
         session,
@@ -115,6 +124,7 @@ def test_different_subject_same_issuer_creates_a_distinct_user(app_db: Connectio
             issuer=_UNTRUSTED, subject="sub-3b", preferred_username="dave", display_name="Dave"
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert first.user is not None and second.user is not None
@@ -137,6 +147,7 @@ def test_same_subject_from_a_different_issuer_creates_a_distinct_user(app_db: Co
             display_name="Erin",
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     second = resolve_user_for_claims(
         session,
@@ -147,6 +158,7 @@ def test_same_subject_from_a_different_issuer_creates_a_distinct_user(app_db: Co
             display_name="Frank",
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert first.user is not None and second.user is not None
@@ -162,6 +174,7 @@ def test_no_user_column_ever_holds_the_oidc_subject(app_db: Connection) -> None:
         session,
         _claims(issuer=_UNTRUSTED, subject=subject, preferred_username="kim", display_name="Kim"),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
 
@@ -188,6 +201,7 @@ def test_verified_email_from_a_trusted_issuer_auto_links(app_db: Connection) -> 
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     linked = resolve_user_for_claims(
@@ -199,6 +213,7 @@ def test_verified_email_from_a_trusted_issuer_auto_links(app_db: Connection) -> 
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert created.user is not None and linked.user is not None
@@ -221,6 +236,7 @@ def test_unverified_email_requires_a_manual_link_and_writes_nothing(app_db: Conn
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
     before = _identity_count(app_db)
@@ -234,6 +250,7 @@ def test_unverified_email_requires_a_manual_link_and_writes_nothing(app_db: Conn
             email_verified=False,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
 
@@ -267,6 +284,7 @@ def test_an_untrusted_issuers_own_verified_email_never_becomes_an_auto_link_targ
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
     assert planted.outcome == LinkOutcome.CREATED
@@ -281,6 +299,7 @@ def test_an_untrusted_issuers_own_verified_email_never_becomes_an_auto_link_targ
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
 
@@ -337,6 +356,7 @@ def test_multiple_candidate_users_with_the_same_verified_email_requires_manual_l
             email_verified=True,
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
 
@@ -367,6 +387,7 @@ def test_empty_trusted_issuer_set_prevents_auto_linking_end_to_end(app_db: Conne
             email_verified=True,
         ),
         trusted_issuers=frozenset(),
+        audit=AuditContext.system(),
     )
     session.flush()
     assert seeded.user is not None
@@ -380,6 +401,7 @@ def test_empty_trusted_issuer_set_prevents_auto_linking_end_to_end(app_db: Conne
             email_verified=True,
         ),
         trusted_issuers=frozenset(),
+        audit=AuditContext.system(),
     )
 
     assert result.outcome == LinkOutcome.CREATED
@@ -402,6 +424,7 @@ def test_first_registration_with_no_username_or_display_name_claim_still_succeed
         session,
         _claims(issuer=_UNTRUSTED, subject="sub-no-profile"),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert result.outcome == LinkOutcome.CREATED
@@ -424,6 +447,7 @@ def test_first_registration_never_derives_the_username_from_the_email_address(
         session,
         _claims(issuer=_UNTRUSTED, subject="sub-email-only", email="j.smith@example.com"),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert result.user is not None
@@ -442,6 +466,7 @@ def test_first_registration_treats_a_whitespace_only_username_claim_as_missing(
         session,
         _claims(issuer=_UNTRUSTED, subject="sub-blank-username", preferred_username="   "),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert result.user is not None
@@ -457,7 +482,12 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
 ) -> None:
     """A `preferred_username` claim already held by another user must not
     abort first login with a raw 23505 - it must fall back to a distinct
-    username instead."""
+    username instead. Also pins `_create_user`'s claim that a rolled-back
+    collision retry never leaves an audit record of an insert that did not
+    happen: `second`'s first attempt collides and its whole SAVEPOINT
+    (including the `user_identity.created` event emitted inside it) rolls
+    back, so exactly one such event survives for `second`'s identity, not
+    two."""
     session = Session(bind=app_db)
     first = resolve_user_for_claims(
         session,
@@ -468,6 +498,7 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
             display_name="First",
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
     session.flush()
 
@@ -480,12 +511,25 @@ def test_first_registration_falls_back_to_a_new_username_on_a_collision(
             display_name="Second",
         ),
         trusted_issuers=_TRUSTED,
+        audit=AuditContext.system(),
     )
 
     assert first.user is not None and second.user is not None
     assert first.user.id != second.user.id
     assert second.user.username != first.user.username
     assert second.user.username is not None and second.user.username.startswith("taken")
+
+    second_identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": second.user.id}
+    ).scalar_one()
+    created_events = session.execute(
+        text(
+            "SELECT count(*) FROM audit_event "
+            "WHERE entity_id = :entity_id AND action = 'user_identity.created'"
+        ),
+        {"entity_id": str(second_identity_id)},
+    ).scalar_one()
+    assert created_events == 1
 
 
 @pytest.mark.req("NFR-04")
@@ -509,6 +553,7 @@ def test_first_registration_reraises_a_non_username_constraint_violation(
             session,
             _claims(issuer=_UNTRUSTED, subject="   "),
             trusted_issuers=_TRUSTED,
+            audit=AuditContext.system(),
         )
 
 
@@ -523,7 +568,9 @@ def test_closed_account_subject_does_not_resolve_to_the_tombstoned_user(app_db: 
     claims = _claims(
         issuer=_UNTRUSTED, subject="sub-seventh", preferred_username="jack", display_name="Jack"
     )
-    original = resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED)
+    original = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
     session.flush()
     assert original.user is not None
     original_id = original.user.id
@@ -531,7 +578,9 @@ def test_closed_account_subject_does_not_resolve_to_the_tombstoned_user(app_db: 
     close_account(session, original_id, AuditContext.system())
     session.flush()
 
-    again = resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED)
+    again = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
 
     assert again.outcome == LinkOutcome.CREATED
     assert again.user is not None
