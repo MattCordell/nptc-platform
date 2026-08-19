@@ -639,14 +639,14 @@
   priority: MUST
   phase: p1
   title: "Authentication is delegated to a Keycloak instance deployed as part of the stack"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #41, ADR-0021: the SPA performs the OIDC authorisation code flow with PKCE (S256) in the browser against the committed realm's public nptc-frontend client, and the API verifies the resulting Bearer token server-side (#43). backend/tests/test_keycloak_pkce_login.py drives the round trip against the pinned Keycloak image, including the two checks that belong to the authorisation server: a mismatched code_verifier and a replayed authorisation code are both refused. The application never handles credentials - registration and login are Keycloak's own pages. No client secret exists to leak (public client), asserted against the built assets by frontend/scripts/assert-no-secret-in-bundle.mjs, which runs as part of `pnpm build`. Residual risk recorded in ADR-0021: an access token issued before a logout stays valid until its own exp (<=300s)."
 - id: "NFR-02"
   priority: MUST
   phase: p1
   title: "Keycloak launches with its local user database enabled and external federation switched off"
-  status: in-progress
-  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) declares identityProviders: [] and no userFederationProviders, with registrationAllowed/resetPasswordAllowed/loginWithEmailAllowed all true - asserted by backend/tests/test_keycloak_realm.py's test_no_external_identity_federation and test_local_registration_is_enabled. Stays in-progress: this is realm-as-code only, no login flow exercises it until #41."
+  status: implemented
+  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) declares identityProviders: [] and no userFederationProviders, with registrationAllowed/resetPasswordAllowed/loginWithEmailAllowed all true - asserted by backend/tests/test_keycloak_realm.py's test_no_external_identity_federation and test_local_registration_is_enabled. Issue #41 makes it non-vacuous: test_keycloak_pkce_login.py logs a real user in against the realm's own local database with no identity provider registered. ADR-0021 also corrected the browser flow, which as committed forced TOTP enrolment on every user and so contradicted this requirement's ordinary username-and-password registration; the password form now sits in its own LoA-1 conditional subflow."
 - id: "NFR-03"
   priority: MUST
   phase: p1

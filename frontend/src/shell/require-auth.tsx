@@ -1,4 +1,5 @@
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { useAuthStatus } from "../auth/auth-status.ts";
 
@@ -9,24 +10,59 @@ import { useAuthStatus } from "../auth/auth-status.ts";
  * rendering a screen here does not protect the data behind it - the API
  * endpoints these screens will call are the actual boundary.
  *
- * Issue #41 replaces the body of `useAuthStatus()` with the real OIDC PKCE
- * session (and adds a `beforeLoad` redirect to `/sign-in?redirect=...`). The
- * route table underneath this layout route does not change - see
- * `require-auth.test.tsx`, which asserts today's placeholder renders at the
- * same pathname a signed-in user's screen will render at later.
+ * A signed-out visitor is sent to `/sign-in?redirect=...` so they land back
+ * where they were aiming once they have signed in. The redirect runs from an
+ * effect rather than a route `beforeLoad`: on a cold load the session is not
+ * known until `AuthProvider`'s silent renewal has resolved, and a
+ * `beforeLoad` guard would bounce every already-signed-in user to the
+ * sign-in page before their session had a chance to restore.
  */
 export function RequireAuth() {
   const status = useAuthStatus();
+  const navigate = useNavigate();
+  const { href } = useLocation();
+  // Fired at most once per mount, and deliberately *not* re-run when `href`
+  // changes. Without this the effect re-runs as the navigation it just
+  // started lands, reads the new `/sign-in?redirect=...` as the place to
+  // come back to, and redirects to itself - nesting one encoded copy of the
+  // URL inside the next until the browser gives up.
+  const redirected = useRef(false);
+  const target = useRef(href);
+
+  useEffect(() => {
+    if (status !== "signed-out" || redirected.current) {
+      return;
+    }
+    redirected.current = true;
+    // `replace`, so the protected URL does not sit in history between the
+    // two entries and send the user straight back here on "back".
+    void navigate({
+      to: "/sign-in",
+      search: { redirect: target.current },
+      replace: true,
+    });
+  }, [status, navigate]);
+
   if (status === "signed-in") {
     return <Outlet />;
   }
 
+  if (status === "signed-out") {
+    return (
+      <section aria-labelledby="sign-in-required-heading">
+        <h1 id="sign-in-required-heading">Taking you to sign in</h1>
+        <p>This part of the platform needs an account.</p>
+      </section>
+    );
+  }
+
   return (
     <section aria-labelledby="sign-in-unavailable-heading">
-      <h1 id="sign-in-unavailable-heading">Sign-in is not yet available</h1>
+      <h1 id="sign-in-unavailable-heading">Sign-in is unavailable</h1>
       <p>
-        This part of the platform needs an account. Sign-in arrives with the Keycloak
-        login flow (issue #41); until then, browse the public catalogue.
+        The platform cannot reach the sign-in service at the moment, so this screen cannot
+        be shown. Try again in a few minutes; the public catalogue is still available
+        meanwhile.
       </p>
       <Link to="/catalogue">Search the catalogue</Link>
     </section>

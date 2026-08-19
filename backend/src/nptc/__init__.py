@@ -3,7 +3,8 @@
 Package layout (populated as the corresponding GitHub issues land - see the
 repository layout in the PRD's delivery plan):
 
-- api/          routers, dependencies, OpenAPI wiring (P1-9)
+- api/          routers, dependencies, OpenAPI wiring (app factory and the
+                auth dependencies landed with issue #41)
 - auth/         OIDC verification, permission framework (P1-3, P1-4, FR-44)
 - audit/        append-only log and hash chain (P1-2, NFR-08-10)
 - catalogue/    entries, designations, code bindings (P1-5)
@@ -14,7 +15,8 @@ repository layout in the PRD's delivery plan):
 - releases/     snapshots, export config versions (P4)
 - exports/      csv, xlsx, fhir supplement renderers (P4)
 - jobs/         SKIP LOCKED job queue and scheduler (P3)
-- db/           models and Alembic environment (P1-1, issue #33); session.py still owed
+- db/           models, Alembic environment and the request session factory
+                (P1-1, issue #33; session.py with issue #41)
 """
 
 __version__ = "0.0.0"
