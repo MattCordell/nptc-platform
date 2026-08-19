@@ -445,6 +445,108 @@ survivor rather than zero (proven directly, with two real concurrent connections
 identity insert (PRD §4.3: a new user *is* Provisional) - a real row, not an implicit
 default, so a dashboard can answer "what roles does this user hold" with one query.
 
+## `catalogue_entry` (issue #46, FR-03, FR-38)
+
+The platform's central entity - see PRD §6.2. This table holds only the **core
+columns** (structural, constrained, indexed); registry properties (#51-#55) and
+designations/code bindings (#47/#48) are separate tables layered on top.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()`. Internal, never exposed in exports. |
+| `business_key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (business_key ~ '^NPTC-[0-9]{6,}$')`. Immutable (FR-03). |
+| `preferred_term` | `TEXT` | `NOT NULL` |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'draft'`, `CHECK IN ('draft','active','deprecated','withdrawn')` - `TEXT` + `CHECK`, not a native `ENUM`, matching `app_user.status`'s own precedent (`ALTER TYPE ... ADD VALUE` cannot run in a transaction, and autogenerate mishandles the create/drop pair on downgrade) |
+| `specimen_unconstrained` | `BOOLEAN` | `NOT NULL DEFAULT false` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. See "Optimistic locking" below. |
+
+### `business_key` minting and immutability (FR-03)
+
+`business_key` is minted in Python (`nptc.catalogue.entries.allocate_business_key`),
+not as a column `server_default`: the format (`NPTC-` plus a zero-padded sequence
+value) has exactly one source of truth this way, shared by the mint path, the
+seed-reconciliation path, and the `CHECK` constraint's own regular expression. A
+dedicated `catalogue_entry_business_key_seq` sequence backs it - not
+`GENERATED ALWAYS AS IDENTITY` (unlike `audit_event.sequence`), because the
+application must read the next value and format it into `NPTC-######` *before* the
+row exists. Unlike an identity column's backing sequence, a plain sequence's
+`nextval()`/`setval()` run with the *inserting* role's own privileges, so `nptc_app`
+needs an explicit `GRANT USAGE, SELECT, UPDATE ON SEQUENCE ...` (`UPDATE`, not
+`USAGE` alone, is what Postgres actually requires to run `setval` - confirmed
+against a real container).
+
+**Reconciliation with the P0 seed (ADR-0010).** The transform mints its own
+`business_key`s deterministically and positionally for the seeded baseline; the
+backend does not re-mint them. `nptc.catalogue.entries.advance_sequence_past` moves
+the sequence past the highest seeded key after import, and is written to never move
+it *backwards* (a stale, lower reconciliation call is a no-op) - moving it backwards
+unconditionally would silently reissue keys already minted since the last
+reconciliation, which is precisely the defect FR-03 exists to prevent.
+
+**Immutability and never-reused are database invariants, not application
+convention**, at two independent layers:
+
+- The app role's column-level `UPDATE` grant on `catalogue_entry`
+  (`nptc.db.roles.GRANT_CATALOGUE_ENTRY_UPDATE_SQL`) excludes `id`, `business_key`
+  and `created_at` - the same trick `app_user`'s own grant plays for `id`/
+  `created_at`. `row_version` is deliberately *inside* the grant (see below).
+- There is **no `DELETE`/`TRUNCATE` grant on `catalogue_entry` at all**
+  (`REVOKE_CATALOGUE_ENTRY_DELETE_SQL`) - deprecation/withdrawal is a `status`
+  transition, never a row removal. Combined with `UNIQUE (business_key)` and a
+  minting sequence that is monotonic and never rolled back by the application, no
+  key is ever freed to be reissued.
+
+A `@validates("business_key")` guard on the ORM model is a second, Python-level
+layer that fails loudly on a reassignment attempt rather than surfacing only as an
+opaque `InsufficientPrivilege` at flush time; the database grant above is the real
+guarantee.
+
+### Optimistic locking (FR-38, NFR-38 test 8)
+
+`row_version` is owned by exactly one write path: SQLAlchemy's mapper-level
+`version_id_col` on `CatalogueEntry`'s mapped `UPDATE` - never a trigger (PRD §14.1
+bans business logic in triggers/functions), never a manual bump, never
+database-generated (Postgres has no built-in per-row version counter). This is the
+same doctrine ADR-0012 already fixed for `property_definition.row_version`; a Core
+`sqlalchemy.update(...)`/`delete(...)` statement against `catalogue_entry` bypasses
+`version_id_col` enforcement even though it still goes through the ORM `Session` -
+`backend/tests/test_sql_parameterisation.py`'s AST guard (`VERSIONED_TABLE_MODELS`)
+fails the build on exactly that shape, under `backend/src` only (a migration's own
+one-off backfill is a legitimate bulk statement; a domain write path reaching for
+one is not).
+
+`nptc.catalogue.entries.save_entry` enforces FR-38 at two layers, deliberately:
+
+1. An explicit precondition check against the caller's `expected_row_version`,
+   *before* any attribute is mutated. This is the path that can build a useful
+   conflict report, because both the caller's stale view and the current row are in
+   hand uncorrupted - the report names which submitted fields actually differ from
+   the current stored value, plus the row's current version and the most recent
+   change's attribution.
+2. `version_id_col` itself, as the backstop for a genuine race between two callers
+   who both pass check 1 and then interleave between load and flush - surfaced as
+   SQLAlchemy's own `StaleDataError`, caught inside a per-entry `session.begin_nested()`
+   savepoint so only that entry's attempted write rolls back, not the caller's whole
+   transaction.
+
+**A rejected save never leaves an audit event behind.** Layer 1 raises before
+`nptc.audit.recording.record_change` is ever called. Layer 2's `StaleDataError` is
+raised by the `session.flush()` inside `nptc.audit.writer.append_audit_event`'s own
+append sequence, which runs *before* that function ever constructs or adds an
+`AuditEvent` row - so the savepoint rollback discards only the attempted (and
+never-persisted) `UPDATE`. The savepoint must be opened before any attribute is
+mutated, not after: opening one autoflushes already-pending state, and doing that
+after mutating an entry's attributes would flush the change straight to the
+database and clear SQLAlchemy's attribute history before the diff is ever taken -
+turning every save into a spurious empty-diff failure regardless of whether it
+actually conflicts.
+
+`nptc.catalogue.entries.save_entries` applies a batch of updates through this same
+per-entry path (one `save_entry` call, one savepoint, per entry) rather than a
+single Core bulk statement - the seam #63's bulk reclassify is meant to call instead
+of inventing one under deadline.
+
 ## Property registry (design, lands with #51-#55)
 
 **Not implemented yet.** This section describes the shape ADR-0012 fixes for #51
@@ -490,9 +592,10 @@ exists); the unconditional guarantee for both comes from the column-level privil
 not from this FK - see ADR-0012 for why the two must not be conflated. The PK's own
 uniqueness on `ordinal` closes only the duplicate-ordinal race, not cardinality's upper
 bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); #52 enforces the
-upper bound at validation time. `property_value.entry_id`'s FK to `catalogue_entry` cannot be
-added until `catalogue_entry` lands with #46-#48; #51 tracks this as an open follow-on
-migration, not a silently dropped constraint.
+upper bound at validation time. `property_value.entry_id`'s FK to `catalogue_entry` (now
+that the table exists - see #46, above) still cannot be added until `property_value` itself
+lands with #51; that issue tracks the FK as an open follow-on migration, not a silently
+dropped constraint.
 
 `nptc_app` gets `UPDATE` at column level on `property_definition`, excluding `key`, `id`,
 `index_seq`, `origin` and `created_at`, and no `DELETE` grant at all (FR-11's unconditional

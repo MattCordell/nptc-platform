@@ -111,6 +111,21 @@ rather than synthetic fixture data standing in for it.
 | Populate `edition_hint`/`fsn`/`au_preferred_term` from the sweep now, by widening `RunResult` | Doable, but widens this issue's scope into a `pipeline.py`/`terminology_check.py` change with no consumer yet (the backend's initial data load, the only planned consumer, does not exist until P1-1) - deferred to a follow-up issue instead of speculatively building an interface nothing calls. |
 | A second output directory for the dataset, separate from `--report-dir` | Breaks the CLI's own "no file outside `--report-dir` is ever touched" invariant for no benefit; the report and the dataset describe the same run and belong together. |
 
+## Amendment (2026-08-19, issue #46)
+
+`catalogue_entry` now exists (`backend/src/nptc/db/models/catalogue_entry.py`), with
+its own Postgres-sequence-backed minting path
+(`nptc.catalogue.entries.allocate_business_key`) for entries created after the
+seeded baseline. **The transform stays the minting authority for the baseline
+described above - the backend does not re-mint or renumber seeded keys.**
+Reconciliation is one explicit step,
+`nptc.catalogue.entries.advance_sequence_past`, called once after a seeded import
+with the highest seeded key: it advances the backend's sequence past every seeded
+value (and is written to never move it backwards) so the first backend-minted key
+after seeding is guaranteed higher than any positional key the transform assigned.
+See `docs/architecture/data-model.md`'s `catalogue_entry` section for the full
+design.
+
 ## Consequences
 
 - **`report.json`'s `schema_version` moves from 7 to 8.** The four new `FindingCode` values can

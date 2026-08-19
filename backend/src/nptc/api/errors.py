@@ -35,6 +35,7 @@ from nptc.auth.errors_authorisation import (
     ManualLinkRequiredError,
     MfaRequiredError,
 )
+from nptc.catalogue.errors import EntryVersionConflictError
 
 _logger = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ _DETAIL_MANUAL_LINK = (
     "to resolve this."
 )
 _DETAIL_CONFLICT = "This action conflicts with the current state of the system."
+_DETAIL_VERSION_CONFLICT = (
+    "This entry was changed by someone else since you loaded it. Review the "
+    "conflicting changes and try again."
+)
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -110,3 +115,31 @@ def register_exception_handlers(app: FastAPI) -> None:
             )
         detail = _DETAIL_FORBIDDEN if exc.http_status == 403 else _DETAIL_CONFLICT
         return JSONResponse(status_code=exc.http_status, content={"detail": detail})
+
+    @app.exception_handler(EntryVersionConflictError)
+    async def _handle_entry_version_conflict(
+        _request: Request, exc: EntryVersionConflictError
+    ) -> JSONResponse:
+        # Logged, not just returned: an FR-38 conflict is a normal editing
+        # event, not an anomaly, but still worth a trace for support.
+        _logger.info("stale row_version save refused: %s", exc)
+        report = exc.report
+        return JSONResponse(
+            status_code=EntryVersionConflictError.http_status,
+            content={
+                "detail": _DETAIL_VERSION_CONFLICT,
+                "business_key": report.business_key,
+                "expected_row_version": report.expected_row_version,
+                "current_row_version": report.current_row_version,
+                "conflicts": [
+                    {
+                        "field": conflict.field,
+                        "submitted": conflict.submitted,
+                        "current": conflict.current,
+                    }
+                    for conflict in report.conflicts
+                ],
+                "changed_by": report.changed_by,
+                "changed_at": report.changed_at.isoformat() if report.changed_at else None,
+            },
+        )
