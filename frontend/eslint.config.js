@@ -23,6 +23,36 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  {
+    // Backstops issue #146's acceptance criterion "no component builds a
+    // catalogue URL by string concatenation": internal URLs come from the
+    // route table (`src/router/route-tree.ts`) via `<Link to>`, `navigate`,
+    // or `router.buildLocation` - never a template literal or `+` on a path
+    // segment. See docs/architecture/frontend-routing.md.
+    files: ["src/**/*.{ts,tsx}"],
+    // The route table itself is where paths live. Test files legitimately
+    // build a raw URL to deep-link the router directly (e.g. asserting a
+    // code round-trips through the path) - that is testing the contract,
+    // not a component sidestepping it.
+    ignores: ["src/router/route-tree.ts", "src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "TemplateLiteral > TemplateElement[value.raw=/\\/(catalogue|releases|submissions|admin)\\//]",
+          message:
+            "Build an internal URL from the route table - <Link to>/navigate/router.buildLocation - never by string concatenation (issue #146, FR-17).",
+        },
+        {
+          selector:
+            "BinaryExpression[operator='+'] > Literal[value=/^\\/(catalogue|releases|submissions|admin)/]",
+          message:
+            "Build an internal URL from the route table - <Link to>/navigate/router.buildLocation - never by string concatenation (issue #146, FR-17).",
+        },
+      ],
+    },
+  },
   // Prettier last: turns off any ESLint rule that would conflict with the
   // formatter, so the two never disagree about the same line.
   eslintConfigPrettier,
