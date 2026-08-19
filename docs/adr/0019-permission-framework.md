@@ -102,7 +102,7 @@ own words and the code now matches it exactly).
 
 ### `user_role` — the one new table
 
-```
+```text
 id                 UUID PK
 user_id            UUID NOT NULL FK -> app_user.id
 role               TEXT NOT NULL CHECK role IN ('observer','provisional','member','reviewer','administrator')
