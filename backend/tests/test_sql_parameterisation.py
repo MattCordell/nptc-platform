@@ -29,6 +29,17 @@ Three rules:
    name fails outright (NFR-09 riding along on NFR-22's own machinery) -
    TRUNCATE is a distinct, owner-only privilege included in ``ALL`` and
    must never be granted to the app role on an audit table.
+4. A Core ``sqlalchemy.update(...)``/``delete(...)`` call (or a raw
+   ``UPDATE``/``DELETE`` string literal) whose target names a table in
+   ``VERSIONED_TABLES`` fails, under ``backend/src`` only (a migration's own
+   backfill is a legitimate, one-off bulk statement; a domain write path
+   using one against a version-locked table is not). ADR-0012 names the
+   exact hazard this closes: a Core-style bulk statement goes through the
+   ORM ``Session`` but bypasses ``version_id_col`` enforcement entirely, so
+   the FR-38 guarantee on ``catalogue_entry`` (issue #46) would otherwise be
+   silently defeated by a future bulk-write path (e.g. #63's reclassify)
+   reaching for ``session.execute(update(CatalogueEntry)...)`` instead of
+   ``nptc.catalogue.entries.save_entries``.
 
 Ships with its own positive control
 (``test_guard_flags_known_violations``) run over an inline source string,
@@ -47,6 +58,9 @@ from pathlib import Path
 
 import pytest
 
+from nptc.db import models as _models  # noqa: F401 - import-for-side-effect, see below
+from nptc.db.base import Base
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = [REPO_ROOT / "backend" / "src", REPO_ROOT / "backend" / "migrations"]
 
@@ -56,6 +70,34 @@ _SQL_KEYWORD_RE = re.compile(
 )
 _GRANT_ALL_RE = re.compile(r"grant\s+all", re.IGNORECASE)
 _SQL_CALL_ATTRS = frozenset({"execute", "exec_driver_sql"})
+
+#: Rule 4. Mapped model class names whose table carries a `version_id_col`
+#: (ADR-0012) - a Core `update(...)`/`delete(...)` call naming one of these
+#: bypasses that column's enforcement even though it still runs through the
+#: ORM `Session`. Extend this set as more tables adopt `version_id_col`
+#: (e.g. #52's `PropertyDefinition`, which ADR-0012 already documents the
+#: same doctrine for) - the raw-SQL regex below is derived from this same
+#: set, via `_camel_to_snake`, so the two can never silently drift apart
+#: the way two independently-maintained literals could.
+VERSIONED_TABLE_MODELS = frozenset({"CatalogueEntry"})
+_BULK_STATEMENT_FUNCS = frozenset({"update", "delete"})
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
+
+
+def _camel_to_snake(name: str) -> str:
+    """`CatalogueEntry` -> `catalogue_entry` - every model in this
+    codebase names its table as the snake_case form of its class name
+    (`nptc.db.models`'s own convention), so this is the one place that
+    mapping is spelled out for a test that must never let a model name and
+    its table name drift apart."""
+    return _CAMEL_BOUNDARY_RE.sub("_", name).lower()
+
+
+_VERSIONED_TABLE_NAMES = frozenset(_camel_to_snake(name) for name in VERSIONED_TABLE_MODELS)
+_VERSIONED_RAW_SQL_RE = re.compile(
+    r"^\s*(update|delete\s+from)\s+(" + "|".join(sorted(_VERSIONED_TABLE_NAMES)) + r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -103,6 +145,46 @@ def _is_sql_call(node: ast.Call) -> bool:
     return isinstance(func, ast.Attribute) and func.attr in _SQL_CALL_ATTRS
 
 
+def _bulk_statement_target_name(node: ast.Call) -> str | None:
+    """If `node` is a call to a bare or attribute-qualified `update`/
+    `delete` (i.e. `sqlalchemy.update(...)`/`update(...)`) whose first
+    argument is a `Name` or an attribute chain ending in one (e.g.
+    `CatalogueEntry.__table__`), returns that leading name - the model or
+    table the statement targets. `None` if this isn't that shape at all."""
+    func = node.func
+    is_bulk_func = (isinstance(func, ast.Name) and func.id in _BULK_STATEMENT_FUNCS) or (
+        isinstance(func, ast.Attribute) and func.attr in _BULK_STATEMENT_FUNCS
+    )
+    if not is_bulk_func or not node.args:
+        return None
+
+    target = node.args[0]
+    while isinstance(target, ast.Attribute):
+        target = target.value
+    if isinstance(target, ast.Name):
+        return target.id
+    return None
+
+
+def _query_bulk_statement_target(node: ast.Call) -> str | None:
+    """The other Core-bypass shape ADR-0012 warns about:
+    `session.query(Model).filter(...).update(...)` /
+    `...delete(...)` - `Query.update()`/`Query.delete()` also bypass
+    `version_id_col` despite reading as ORM code. Walks back through any
+    chained `.filter()`/`.filter_by()`/etc. calls looking for a `.query(Model)`
+    call anywhere in the chain; returns `Model`'s name if found."""
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr in _BULK_STATEMENT_FUNCS):
+        return None
+
+    cursor = func.value
+    while isinstance(cursor, ast.Call) and isinstance(cursor.func, ast.Attribute):
+        if cursor.func.attr == "query" and cursor.args and isinstance(cursor.args[0], ast.Name):
+            return cursor.args[0].id
+        cursor = cursor.func.value
+    return None
+
+
 def _display(path: Path) -> str:
     try:
         return path.relative_to(REPO_ROOT).as_posix()
@@ -110,7 +192,9 @@ def _display(path: Path) -> str:
         return path.as_posix()
 
 
-def _check_source(source: str, display_path: str) -> list[Violation]:
+def _check_source(
+    source: str, display_path: str, *, enforce_versioned_table_rule: bool = True
+) -> list[Violation]:
     violations: list[Violation] = []
     tree = ast.parse(source)
 
@@ -154,26 +238,107 @@ def _check_source(source: str, display_path: str) -> list[Violation]:
                 )
             )
 
+        if enforce_versioned_table_rule:
+            if isinstance(node, ast.Call):
+                target_name = _bulk_statement_target_name(node) or _query_bulk_statement_target(
+                    node
+                )
+                if target_name in VERSIONED_TABLE_MODELS:
+                    violations.append(
+                        Violation(
+                            display_path,
+                            node.lineno,
+                            "versioned-table-bulk-statement",
+                            f"Core/Query update()/delete() against {target_name} bypasses "
+                            "version_id_col (ADR-0012) - use the model's own service "
+                            "layer instead",
+                        )
+                    )
+
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and _VERSIONED_RAW_SQL_RE.search(node.value)
+            ):
+                violations.append(
+                    Violation(
+                        display_path,
+                        node.lineno,
+                        "versioned-table-bulk-statement",
+                        "raw UPDATE/DELETE against catalogue_entry bypasses "
+                        "version_id_col (ADR-0012) - use the model's own service "
+                        "layer instead",
+                    )
+                )
+
     return violations
 
 
-def _check_file(path: Path) -> list[Violation]:
-    return _check_source(path.read_text(encoding="utf-8"), _display(path))
+def _check_file(path: Path, *, enforce_versioned_table_rule: bool = True) -> list[Violation]:
+    return _check_source(
+        path.read_text(encoding="utf-8"),
+        _display(path),
+        enforce_versioned_table_rule=enforce_versioned_table_rule,
+    )
 
 
-def _iter_source_files() -> list[Path]:
-    files: list[Path] = []
+def _iter_source_files() -> list[tuple[Path, bool]]:
+    """Each file paired with whether rule 4 (versioned-table bulk
+    statements) applies to it - `backend/migrations` is excluded, since a
+    migration's own one-off backfill is a legitimate bulk statement, unlike
+    a domain write path reaching for one."""
+    files: list[tuple[Path, bool]] = []
     for base in SCAN_DIRS:
         if base.is_dir():
-            files.extend(sorted(base.rglob("*.py")))
+            enforce = base.name == "src"
+            files.extend((path, enforce) for path in sorted(base.rglob("*.py")))
     return files
 
 
 @pytest.mark.req("NFR-22")
 def test_no_dynamic_sql_or_grant_all_in_backend_source() -> None:
-    violations = [v for path in _iter_source_files() for v in _check_file(path)]
+    violations = [
+        v
+        for path, enforce in _iter_source_files()
+        for v in _check_file(path, enforce_versioned_table_rule=enforce)
+    ]
 
     assert not violations, "NFR-22 violation(s) found:\n" + "\n".join(str(v) for v in violations)
+
+
+@pytest.mark.req("FR-38")
+def test_no_bulk_statement_against_versioned_table_in_backend_source() -> None:
+    """A dedicated assertion, separate from the NFR-22 sweep above, so this
+    guard's own req marker (FR-38) traces independently of NFR-22's."""
+    violations = [
+        v
+        for path in (REPO_ROOT / "backend" / "src").rglob("*.py")
+        for v in _check_file(path)
+        if v.rule == "versioned-table-bulk-statement"
+    ]
+    assert not violations, "FR-38 versioned-table violation(s) found:\n" + "\n".join(
+        str(v) for v in violations
+    )
+
+
+@pytest.mark.req("FR-38")
+def test_versioned_table_names_are_derived_from_real_tables() -> None:
+    """`_camel_to_snake` assumes every model's table name is exactly the
+    snake_case form of its class name - true for every model in this
+    codebase today, but an acronym-leading class name added later
+    (`SCTIDBinding` -> `s_c_t_i_d_binding`) would mis-derive silently,
+    quietly disabling the raw-SQL half of rule 4 for that table rather
+    than failing anywhere visible. Asserting the derived name is an actual
+    table in `Base.metadata` (populated by importing `nptc.db.models`,
+    which imports every model for exactly this kind of check) turns that
+    assumption into something that fails loudly instead."""
+    for model_name in sorted(VERSIONED_TABLE_MODELS):
+        table_name = _camel_to_snake(model_name)
+        assert table_name in Base.metadata.tables, (
+            f"_camel_to_snake({model_name!r}) produced {table_name!r}, which is not a "
+            "real table in Base.metadata - VERSIONED_TABLE_MODELS and "
+            "_VERSIONED_RAW_SQL_RE would silently drift apart"
+        )
 
 
 def test_guard_flags_known_violations() -> None:
@@ -207,6 +372,22 @@ def built_above():
 
 def grant_all_on_audit():
     op.execute("GRANT ALL ON TABLE audit_event TO nptc_app;")
+
+
+def bulk_update_versioned_table():
+    session.execute(update(CatalogueEntry).values(status="withdrawn"))
+
+
+def bulk_delete_versioned_table():
+    session.execute(delete(CatalogueEntry))
+
+
+def raw_sql_versioned_table():
+    session.execute(text("UPDATE catalogue_entry SET status = 'withdrawn'"))
+
+
+def query_update_versioned_table():
+    session.query(CatalogueEntry).filter_by(status="draft").update({"status": "withdrawn"})
 """
     violations = _check_source(bad_source, "<positive-control>")
     rule_counts = Counter(v.rule for v in violations)
@@ -215,4 +396,14 @@ def grant_all_on_audit():
     # built_above's call site sees only a bare Name and is rule 2's job.
     # sql-fstring: direct_fstring's and built_above's f-strings both start
     # with a SQL keyword (2). grant-all-audit: grant_all_on_audit (1).
-    assert rule_counts == Counter({"dynamic-sql-arg": 3, "sql-fstring": 2, "grant-all-audit": 1})
+    # versioned-table-bulk-statement: bulk_update_versioned_table,
+    # bulk_delete_versioned_table, raw_sql_versioned_table,
+    # query_update_versioned_table (4) - rule 4.
+    assert rule_counts == Counter(
+        {
+            "dynamic-sql-arg": 3,
+            "sql-fstring": 2,
+            "grant-all-audit": 1,
+            "versioned-table-bulk-statement": 4,
+        }
+    )

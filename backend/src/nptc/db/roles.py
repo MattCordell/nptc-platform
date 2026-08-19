@@ -81,3 +81,41 @@ REVOKE_USER_IDENTITY_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_identity FROM
 GRANT_USER_ROLE_SQL = "GRANT SELECT, INSERT, DELETE ON TABLE user_role TO nptc_app;"
 GRANT_USER_ROLE_UPDATE_SQL = "GRANT UPDATE (granted_at) ON TABLE user_role TO nptc_app;"
 REVOKE_USER_ROLE_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_role FROM nptc_app;"
+
+#: issue #46 (FR-03/FR-38): SELECT+INSERT only at table level - every
+#: further privilege below is deliberately narrower than "the whole row".
+GRANT_CATALOGUE_ENTRY_SQL = "GRANT SELECT, INSERT ON TABLE catalogue_entry TO nptc_app;"
+#: Column-level UPDATE, conspicuously excluding `id`, `business_key` and
+#: `created_at` - the same trick `GRANT_APP_USER_UPDATE_SQL` plays for
+#: `app_user.id`/`created_at`. This is what makes FR-03's business_key
+#: immutability a database invariant rather than an application
+#: convention. `row_version` MUST be included: SQLAlchemy's `version_id_col`
+#: machinery issues `UPDATE ... SET row_version = ... WHERE row_version =
+#: ...` as part of every mapped update, and omitting it here would turn
+#: every optimistic write into a permission error rather than a version
+#: check.
+GRANT_CATALOGUE_ENTRY_UPDATE_SQL = (
+    "GRANT UPDATE (preferred_term, status, specimen_unconstrained, updated_at, row_version) "
+    "ON TABLE catalogue_entry TO nptc_app;"
+)
+#: No DELETE, no TRUNCATE, ever - an entry is deprecated or withdrawn via
+#: `status`, never removed. Combined with the UNIQUE constraint on
+#: `business_key` and a monotonic, never-rolled-back minting sequence, this
+#: is what guarantees FR-03's "never reused" rather than merely intending it.
+REVOKE_CATALOGUE_ENTRY_DELETE_SQL = (
+    "REVOKE DELETE, TRUNCATE ON TABLE catalogue_entry FROM nptc_app;"
+)
+#: Unlike `audit_event.sequence` (`GENERATED ALWAYS AS IDENTITY`, not
+#: ACL-checked - see that model's own comment), `business_key` is minted by
+#: an explicit `nextval()` call in `nptc.catalogue.entries.
+#: allocate_business_key`, evaluated with the *inserting* role's own
+#: privileges - so this needs USAGE (covers `nextval`) and UPDATE
+#: (Postgres requires sequence-level `UPDATE`, not `USAGE`, to run
+#: `setval` - `advance_sequence_past` calls it as one atomic
+#: `setval(seq, GREATEST(nextval(seq) - 1, :value), true)` - proven
+#: against a real container, not assumed) granted explicitly, unlike an
+#: identity column's backing sequence. No `SELECT`: nothing here reads
+#: the sequence's `last_value`/`currval` directly.
+GRANT_CATALOGUE_BUSINESS_KEY_SEQ_SQL = (
+    "GRANT USAGE, UPDATE ON SEQUENCE catalogue_entry_business_key_seq TO nptc_app;"
+)

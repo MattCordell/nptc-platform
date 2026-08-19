@@ -145,6 +145,13 @@ table) and its own tests assert `row_version` increments on every amendment path
 at that point, since there is no static guard analogous to NFR-22's that can currently tell a
 Core-style bulk update of `property_definition` from any other table's.
 
+**Update (2026-08-19, issue #46).** That static guard now exists, generically, as
+`backend/tests/test_sql_parameterisation.py`'s `VERSIONED_TABLE_MODELS` rule -
+built for `catalogue_entry.row_version` (FR-38), which adopts this same
+`version_id_col` doctrine. Adding `PropertyDefinition` to `VERSIONED_TABLE_MODELS`
+when #52 lands closes the gap this section originally noted, at essentially no
+cost - the rule is a frozenset lookup, not a per-table guard.
+
 **FR-13 index strategy.** The PRD's single-vs-multi-valued split does not survive the
 row-per-value shape (multi-valuedness is rows, not a JSON array); the distinction that
 actually determines the DDL is the **datatype's operator class**. Three concrete shapes,

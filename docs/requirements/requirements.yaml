@@ -51,8 +51,8 @@
   priority: MUST
   phase: p1
   title: "Every catalogue entry MUST carry an immutable business_key assigned at creation and never reused"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #46: catalogue_entry (backend/src/nptc/db/models/catalogue_entry.py) mints business_key from a dedicated Postgres sequence (nptc.catalogue.entries.allocate_business_key), formatted NPTC-###### (backend/tests/test_catalogue_business_key.py). Immutability and never-reused are database invariants: business_key is UNIQUE, excluded from the app role's column-level UPDATE grant, and there is no DELETE/TRUNCATE grant at all on catalogue_entry (backend/tests/test_db_catalogue_entry.py). advance_sequence_past reconciles the sequence with ADR-0010's seeded baseline. Remains in-progress: no create/edit HTTP surface until #149/#150, and the transform's own minting side of FR-03 (ADR-0010) is separately covered by transform/tests/test_dataset_fixture.py."
 - id: "FR-04"
   priority: MUST
   phase: p1
@@ -261,8 +261,8 @@
   priority: MUST
   phase: p1
   title: "Concurrent editing MUST be handled with optimistic locking on row_version"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #46: catalogue_entry.row_version is owned by exactly one write path, SQLAlchemy's version_id_col on the mapped UPDATE (ADR-0012's doctrine, applied here), never a trigger or a Core update()/delete() statement - the latter is a static AST guard in backend/tests/test_sql_parameterisation.py (VERSIONED_TABLE_MODELS). nptc.catalogue.entries.save_entry rejects a stale expected_row_version before mutating anything and shows the caller the conflicting field values (EntryVersionConflictError.report); a genuine concurrent race is caught by version_id_col itself via a per-entry savepoint. A rejected save emits no audit event (backend/tests/test_catalogue_optimistic_locking.py). save_entries is the seam #63's bulk reclassify is meant to call instead of a Core bulk update. Remains in-progress: no HTTP surface until #149/#150."
 - id: "FR-39"
   priority: SHOULD
   phase: p1
@@ -869,7 +869,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5 (audit log tampering is detected) is now fully landed: issue #36's hash chain detection (backend/tests/test_audit_tamper_detection.py) plus issue #38's operator-command half (scripts/verify_audit_chain.py, backend/tests/test_verify_audit_chain_cli.py)."
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5 (audit log tampering is detected) is now fully landed: issue #36's hash chain detection (backend/tests/test_audit_tamper_detection.py) plus issue #38's operator-command half (scripts/verify_audit_chain.py, backend/tests/test_verify_audit_chain_cli.py). Test 8 (a concurrent edit with a stale row_version is rejected) landed with #46: backend/tests/test_catalogue_optimistic_locking.py::test_stale_row_version_is_rejected_and_names_the_conflict."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1

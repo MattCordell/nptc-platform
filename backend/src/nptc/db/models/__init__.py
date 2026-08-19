@@ -7,8 +7,17 @@ isn't imported through this package is invisible to autogenerate and to
 """
 
 from nptc.db.models.audit import AuditEvent
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.models.user_role import UserRole
 
-__all__ = ["AuditEvent", "User", "UserIdentity", "UserRole", "UserStatus"]
+__all__ = [
+    "AuditEvent",
+    "CatalogueEntry",
+    "CatalogueEntryStatus",
+    "User",
+    "UserIdentity",
+    "UserRole",
+    "UserStatus",
+]
