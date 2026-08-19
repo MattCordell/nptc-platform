@@ -39,8 +39,8 @@
   priority: MUST
   phase: p2
   title: "An administrator may grant and revoke any role"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #44 (ADR-0019): nptc.auth.grants.grant_role/revoke_role check role.grant.any (or role.grant.member for the Reviewer promote-to-Member carve-out); assert_not_last_administrator (backend/src/nptc/auth/grants.py) row-locks every active administrator grant so a revocation, suspension, or account closure cannot drop the count to zero - proven with two genuinely concurrent connections in backend/tests/test_grants.py::test_concurrent_revocation_of_the_last_two_administrators_leaves_exactly_one. No grant/revoke HTTP endpoint exists yet (P2's); scripts/grant_role.py is the one-time operator bootstrap path for the first administrator, since the guard otherwise makes that unreachable."
 - id: "FR-02"
   priority: SHOULD
   phase: p2
@@ -297,8 +297,8 @@
   priority: SHOULD
   phase: p1
   title: "Roles MUST be implemented as named sets of discrete permissions rather than as hard-coded checks against a role enum"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #44 (ADR-0019): nptc.auth.permissions.Permission/Role/ROLE_PERMISSIONS reproduce the PRD 4.7 matrix as code, verified cell-by-cell against the PRD's own markdown table by backend/tests/test_permission_matrix.py (parses docs/prd/NPTC-Catalogue-Platform-PRD.md directly). backend/tests/test_authorisation_guard.py is the greppable acceptance criterion: an AST guard over backend/src refusing any comparison against a role-name literal or a Role enum member outside the four modules whose job is roles (permissions.py, principal.py, grants.py, db/models/user_role.py), with its own positive-control test."
 - id: "FR-45"
   priority: MUST
   phase: p3
@@ -513,14 +513,14 @@
   priority: MUST
   phase: p2
   title: "The Observer role MUST have no write capability of any kind"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #44 (ADR-0019): proven at the permission-data level - backend/tests/test_permissions_data.py::test_observer_has_no_write_permission_at_all asserts ROLE_PERMISSIONS[OBSERVER] & WRITE_PERMISSIONS is empty, stronger than any per-endpoint test since it fails the day a single write permission is added to Observer. The FR text's own 'negative authorisation test for every write endpoint' is not yet fully satisfiable: backend/src/nptc/api/ has zero routes today. backend/tests/test_authz_inventory.py's route-table inventory (with a positive control) is what will hold every future write endpoint to this once #142/#143 land the app; backend/tests/authz_support.py's assert_permission_refused and authz_app_support.py's HTTP-level harness (401-vs-403, no-leakage) are ready for those endpoints to use immediately."
 - id: "FR-81"
   priority: MUST
   phase: p2
   title: "The boundary between Reviewer and Administrator MUST be enforced server-side per permission"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #44 (ADR-0019): backend/tests/test_permissions_data.py::test_administrator_only_permissions_are_refused_to_reviewer and test_administrator_only_covers_every_prd_section_4_5_withheld_capability assert every PRD 4.5 withheld capability (plus the non-obvious seventh, submission.withdraw.any) is Administrator-only and absent from Reviewer's set. Per-endpoint negative tests are owed once #142/#143 land routes (see FR-80's note - same inventory/harness)."
 - id: "FR-82"
   priority: MUST
   phase: p1
@@ -675,7 +675,7 @@
   phase: p1
   title: "Multi-factor authentication (TOTP) MUST be available and SHOULD be mandatory for the administrator role"
   status: in-progress
-  notes: "The 'available' half only (issue #43, ADR-0016): deploy/keycloak/realm/nptc-realm.json's otpPolicyType: totp plus an explicit requiredActions CONFIGURE_TOTP entry, asserted offline (backend/tests/test_keycloak_realm.py::test_otp_policy_is_totp_with_pinned_parameters, test_configure_totp_required_action_is_enabled) and against a real container's admin API (test_keycloak_imports_the_realm_and_serves_discovery). Mandatory-for-administrators is deferred to #44, which is where an administrator role first exists to make it mandatory for."
+  notes: "Both halves now have server-side substance (issue #44, ADR-0019), but the loop is not fully closed. Available (issue #43): as before. Mandatory-for-administrators: deploy/keycloak/realm/nptc-realm.json's browserFlow is bound to a 'nptc browser' flow whose forms subflow gates OTP on a conditional-level-of-authentication executor (loa-condition-level '2'), not merely on whether the user has TOTP configured - asserted offline (backend/tests/test_keycloak_realm.py's browser/conditional-otp/loa-condition tests) and against a real container (test_keycloak_imports_the_realm_and_serves_discovery's extended assertions, plus manual verification that acr_values=2 against a TOTP-less user redirects to CONFIGURE_TOTP). Server-side, nptc.auth.principal.principal_for suppresses the Administrator role whenever the verified acr claim does not satisfy AuthSettings.mfa_acr_values, and require_permission raises MfaRequiredError rather than a bare denial (backend/tests/test_mfa_required.py, test_principal_derivation.py). Not yet closed: the SPA must request acr_values on login and handle an insufficient_user_authentication step-up challenge - a frontend follow-up issue."
 - id: "NFR-07"
   priority: MUST
   phase: p1
@@ -758,8 +758,8 @@
   priority: MUST
   phase: p1
   title: "Every request authorised server-side against the internal user record"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #44 (ADR-0019): nptc.auth.principal.principal_for derives every Principal's permissions from user_role grants read via the session (never from a token claim - the realm declares no roles, ADR-0014), and nptc.auth.authorisation.require_permission/may_act_on are the only sanctioned checks (backend/tests/test_authorisation_guard.py's AST guard). 'Every request' is not yet fully true: backend/src/nptc/api/ has zero routes, so there is no request pipeline yet to wire this into - that lands with #142/#143. The check API, Principal derivation (including suspended/closed/manual-link), and the negative-authorisation harness are all proven now and ready for that wiring."
 - id: "NFR-21"
   priority: MUST
   phase: p5

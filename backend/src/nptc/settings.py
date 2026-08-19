@@ -119,6 +119,22 @@ class AuthSettings(BaseSettings):
     #: ``nptc.auth.jwks.SigningKeys``.
     jwks_refresh_cooldown_seconds: float = 30.0
 
+    #: NFR-06 (issue #44): the set of `acr` claim values that satisfy the
+    #: mandatory-MFA-for-administrators requirement - see
+    #: ``nptc.auth.principal.principal_for``. Matches the committed
+    #: realm's ``acr.loa.map`` (``deploy/keycloak/realm/nptc-realm.json``),
+    #: which maps the LoA-2 authentication flow to ``"2"``. Same
+    #: ``NoDecode`` treatment as ``trusted_issuers`` above, for the same
+    #: reason: a comma-separated string, not JSON.
+    mfa_acr_values: Annotated[frozenset[str], NoDecode] = frozenset({"2"})
+
+    @field_validator("mfa_acr_values", mode="before")
+    @classmethod
+    def _split_mfa_acr_values(cls, value: object) -> object:
+        if isinstance(value, str):
+            return frozenset(item.strip() for item in value.split(",") if item.strip())
+        return value
+
 
 class MigrationSettings(BaseSettings):
     """The owning role's DSN Alembic runs migrations as - see

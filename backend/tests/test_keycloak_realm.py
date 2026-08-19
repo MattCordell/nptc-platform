@@ -56,6 +56,14 @@ BANNED_KEYS = {"secret", "credentials", "password", "adminpassword", "clientsecr
 #: identifiers (protocol names, mapper types) this file actually contains.
 _JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 _LONG_OPAQUE_RE = re.compile(r"^[A-Za-z0-9+/_-]{32,}={0,2}$")
+#: Named allowlist for a specific value that trips `_LONG_OPAQUE_RE` purely
+#: on length/charset, not because it is secret-shaped - see this test's own
+#: docstring on why the regex itself must never be widened instead.
+#: `conditional-level-of-authentication` (issue #44, NFR-06) is a Keycloak
+#: built-in authenticator provider ID, the same kind of value
+#: `identity-provider-redirector` already is, just one character longer
+#: than the 32-char threshold.
+_KNOWN_LEGITIMATE_LONG_VALUES = {"conditional-level-of-authentication"}
 
 
 @pytest.fixture(scope="module")
@@ -127,7 +135,7 @@ def test_no_secret_material_anywhere_in_the_realm(realm: dict[str, Any]) -> None
     assert offending_keys == set()
 
     for key, value in pairs:
-        if not isinstance(value, str):
+        if not isinstance(value, str) or value in _KNOWN_LEGITIMATE_LONG_VALUES:
             continue
         assert not _JWT_RE.match(value), f"{key!r} looks like a bearer token: {value!r}"
         assert not _LONG_OPAQUE_RE.match(value), f"{key!r} looks like a generated secret: {value!r}"
@@ -243,6 +251,67 @@ def test_configure_totp_required_action_is_enabled(realm: dict[str, Any]) -> Non
     assert matches[0]["enabled"] is True
 
 
+def _flow(realm: dict[str, Any], alias: str) -> dict[str, Any]:
+    matches = [flow for flow in realm.get("authenticationFlows", []) if flow["alias"] == alias]
+    assert len(matches) == 1, f"expected exactly one authentication flow named {alias!r}"
+    return matches[0]
+
+
+@pytest.mark.req("NFR-06")
+def test_browser_flow_is_bound_to_the_nptc_step_up_flow(realm: dict[str, Any]) -> None:
+    """issue #44: mandatory-MFA-for-administrators is enforced server-side
+    (nptc.auth.principal.principal_for), but Keycloak's realm is what
+    makes the step-up *achievable* in the first place - a browser login
+    that never offers OTP at all cannot ever satisfy it."""
+    assert realm["browserFlow"] == "nptc browser"
+
+
+@pytest.mark.req("NFR-06")
+def test_nptc_browser_flow_delegates_to_the_forms_subflow(realm: dict[str, Any]) -> None:
+    top = _flow(realm, "nptc browser")
+    assert top["topLevel"] is True
+    forms_executions = [
+        e for e in top["authenticationExecutions"] if e.get("flowAlias") == "nptc browser forms"
+    ]
+    assert len(forms_executions) == 1
+    assert forms_executions[0]["requirement"] == "ALTERNATIVE"
+
+
+@pytest.mark.req("NFR-06")
+def test_conditional_otp_subflow_gates_on_level_of_authentication(realm: dict[str, Any]) -> None:
+    """The condition is `conditional-level-of-authentication`, not
+    `conditional-user-configured` - OTP is required whenever the client
+    requests a satisfying `acr_values`, not merely when the user happens
+    to already have TOTP configured. That distinction is the entire point
+    of this issue's NFR-06 half over the realm's pre-existing (but
+    unconditional) `CONFIGURE_TOTP` required action."""
+    subflow = _flow(realm, "nptc browser forms conditional otp")
+    executions = {
+        e["authenticator"]: e for e in subflow["authenticationExecutions"] if "authenticator" in e
+    }
+
+    assert executions["conditional-level-of-authentication"]["requirement"] == "REQUIRED"
+    assert (
+        executions["conditional-level-of-authentication"]["authenticatorConfig"]
+        == "nptc loa-2 condition"
+    )
+    assert executions["auth-otp-form"]["requirement"] == "REQUIRED"
+
+
+@pytest.mark.req("NFR-06")
+def test_loa_condition_pins_level_2_matching_the_backend_default(realm: dict[str, Any]) -> None:
+    """`"2"` here must match `AuthSettings.mfa_acr_values`'s default
+    (`{"2"}`) - a mismatch would mean Keycloak requires step-up at a level
+    the backend never recognises as satisfying MFA, or vice versa."""
+    matches = [
+        cfg
+        for cfg in realm.get("authenticatorConfig", [])
+        if cfg["alias"] == "nptc loa-2 condition"
+    ]
+    assert len(matches) == 1
+    assert matches[0]["config"]["loa-condition-level"] == "2"
+
+
 def _wait_for_discovery_document(
     base_url: str, attempts: int = 60, delay: float = 2.0
 ) -> httpx.Response:
@@ -341,3 +410,28 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
 
         assert len(configure_totp) == 1
         assert configure_totp[0]["enabled"] is True
+
+        # issue #44 (NFR-06): the offline tests above assert the committed
+        # JSON's shape; this proves Keycloak actually accepted it as a
+        # valid authentication flow and bound it as the realm's login
+        # flow - a malformed flow reference or an unknown authenticator ID
+        # would otherwise only surface as an opaque 500 the first time
+        # anyone tries to log in, not at import time.
+        realm_response = httpx.get(
+            f"{base_url}/admin/realms/nptc",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=30,
+        )
+        realm_response.raise_for_status()
+        assert realm_response.json()["browserFlow"] == "nptc browser"
+
+        executions_response = httpx.get(
+            f"{base_url}/admin/realms/nptc/authentication/flows/"
+            "nptc%20browser%20forms%20conditional%20otp/executions",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=30,
+        )
+        executions_response.raise_for_status()
+        executions = {e["providerId"]: e for e in executions_response.json()}
+        assert executions["conditional-level-of-authentication"]["requirement"] == "REQUIRED"
+        assert executions["auth-otp-form"]["requirement"] == "REQUIRED"
