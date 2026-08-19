@@ -40,6 +40,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final
 
 from sqlalchemy import select, text
@@ -52,12 +53,13 @@ from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.errors import (
     ConflictReport,
+    EntryNotFoundError,
     EntryVersionConflictError,
     FieldConflict,
-    ImmutableFieldEditError,
 )
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.user import User
 
 #: The single Python source of truth for the FR-03 format - shared by
 #: `format_business_key`, `advance_sequence_past`, and mirrored (never
@@ -101,31 +103,29 @@ def advance_sequence_past(session: Session, business_key: str) -> None:
     `allocate_business_key` call mints a key strictly greater than every
     seeded one.
 
-    Deliberately never moves the sequence *backwards*: applying `setval`
-    unconditionally to a key lower than the sequence's current value would
-    silently reissue keys already minted since the last reconciliation -
-    the exact FR-03 defect this module exists to prevent. The current
-    value is read and compared in Python first, so calling this with a
-    stale (lower) key is a safe no-op, not a corruption."""
+    Deliberately a single atomic statement, not a read-then-compare: a
+    freshly created sequence reports `last_value = 1` even though nothing
+    has ever been dispensed from it (`is_called` is what actually
+    distinguishes "never called" from "1 was issued", and comparing
+    against `last_value` alone treats the two identically) - reading
+    `last_value` directly would therefore silently no-op the very first
+    reconciliation against a seeded baseline as small as `NPTC-000001`,
+    and the next `allocate_business_key` call would reissue that exact
+    key. Calling `nextval()` first and subtracting 1 gives the correct
+    "highest value already dispensed" figure regardless of `is_called`,
+    and folding the read and the write into one `setval` call also closes
+    the read-then-write race a separate read statement would otherwise
+    leave open against a concurrent reconciliation. The cost is one
+    consumed (and permanently skipped) sequence value per call - harmless,
+    since FR-03 only requires `business_key` is never *reused*, not that
+    the sequence itself never has gaps."""
     match = BUSINESS_KEY_PATTERN.match(business_key)
     if match is None:
         raise ValueError(f"{business_key!r} does not match the NPTC business_key format")
     numeric_value = int(match.group(1))
 
-    # A plain literal, not an f-string built from BUSINESS_KEY_SEQUENCE_NAME
-    # - test_sql_parameterisation.py's AST guard flags any f-string whose
-    # literal text starts with a SQL keyword, and Postgres has no
-    # parameter-binding syntax for an object name in any case. The literal
-    # below and the constant above are asserted to agree by
-    # test_catalogue_business_key.py.
-    current_value = session.execute(
-        text("SELECT last_value FROM catalogue_entry_business_key_seq")
-    ).scalar_one()
-    if numeric_value <= int(current_value):
-        return
-
     session.execute(
-        text("SELECT setval(:seq, :value, true)"),
+        text("SELECT setval(:seq, GREATEST(nextval(:seq) - 1, :value), true)"),
         {"seq": BUSINESS_KEY_SEQUENCE_NAME, "value": numeric_value},
     )
 
@@ -190,29 +190,40 @@ def _load_for_update(session: Session, business_key: str) -> CatalogueEntry:
         select(CatalogueEntry).where(CatalogueEntry.business_key == business_key)
     ).scalar_one_or_none()
     if entry is None:
-        raise LookupError(f"no catalogue_entry with business_key={business_key!r}")
+        raise EntryNotFoundError(f"no catalogue_entry with business_key={business_key!r}")
     return entry
 
 
-def _latest_change_attribution(session: Session, entry_id: uuid.UUID) -> tuple[str | None, object]:
+def _latest_change_attribution(
+    session: Session, entry_id: uuid.UUID
+) -> tuple[str | None, datetime | None]:
+    """`(changed_by, changed_at)` for the most recent audit event against
+    this entry - ordered by `sequence`, the chain's own canonical ordering
+    (matching `nptc.audit.writer.append_audit_event`'s own tail read),
+    not `occurred_at`: two events in the same transaction share a
+    `clock_timestamp()`-derived value closely enough that ordering by it
+    alone leaves a tie-break undefined.
+
+    `changed_by` is resolved to `app_user.display_name` - never the
+    internal UUID (NFR-04/NFR-26) - and is `None` for a system-initiated
+    change or an actor account since pseudonymised on closure (NFR-17
+    clears `display_name`, not the row itself, so the join always
+    succeeds; only the name is ever missing)."""
     row = session.execute(
-        select(AuditEvent.actor_user_id, AuditEvent.occurred_at)
+        select(User.display_name, AuditEvent.occurred_at)
+        .select_from(AuditEvent)
+        .outerjoin(User, User.id == AuditEvent.actor_user_id)
         .where(
             AuditEvent.entity_type == CatalogueEntry.__tablename__,
             AuditEvent.entity_id == str(entry_id),
         )
-        .order_by(AuditEvent.occurred_at.desc())
+        .order_by(AuditEvent.sequence.desc())
         .limit(1)
     ).one_or_none()
     if row is None:
         return None, None
-    actor_user_id, occurred_at = row
-    # NFR-04/NFR-26: never the internal UUID itself. Attribution here is
-    # deliberately coarse (whether *a* prior change is recorded, and when)
-    # rather than a resolved display name, keeping this function free of a
-    # dependency on nptc.db.models.user for a conflict report that already
-    # carries plenty of detail without it.
-    return (str(actor_user_id) if actor_user_id is not None else None), occurred_at
+    display_name, occurred_at = row
+    return display_name, occurred_at
 
 
 def _build_conflict_report(
@@ -221,7 +232,7 @@ def _build_conflict_report(
     expected_row_version: int,
     changes: EntryChanges,
     changed_by: str | None,
-    changed_at: object,
+    changed_at: datetime | None,
 ) -> ConflictReport:
     auditable = policy_for(CatalogueEntry).auditable
     submitted = changes.as_dict()
@@ -236,7 +247,7 @@ def _build_conflict_report(
         current_row_version=entry.row_version,
         conflicts=conflicts,
         changed_by=changed_by,
-        changed_at=changed_at,  # type: ignore[arg-type]
+        changed_at=changed_at,
     )
 
 
@@ -256,9 +267,6 @@ def save_entry(
     `version_id_col` backstop for a genuine concurrent race - see the
     module docstring for why neither path ever leaves an audit event
     behind."""
-    if "business_key" in changes.as_dict():  # pragma: no cover - EntryChanges has no such field
-        raise ImmutableFieldEditError("business_key cannot be changed by save_entry")
-
     entry = _load_for_update(session, business_key)
 
     if entry.row_version != expected_row_version:
@@ -292,6 +300,13 @@ def save_entry(
             kind=ChangeKind.UPDATED,
             reason=reason,
         )
+        # Committing the savepoint here, inside the try, makes the
+        # guarantee local to this function: it relies only on
+        # record_change/append_audit_event raising if anything above
+        # failed, not on the separate assumption that append_audit_event
+        # always flushes before returning (true today, but a detail of
+        # that module rather than a contract this one should depend on).
+        savepoint.commit()
     except (StaleDataError, ObjectDeletedError):
         savepoint.rollback()
         session.expire(entry)
@@ -306,8 +321,6 @@ def save_entry(
                 changed_at=changed_at,
             )
         ) from None
-    else:
-        savepoint.commit()
 
     return entry
 

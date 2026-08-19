@@ -9,12 +9,18 @@ Uses an ORM `Session` bound to `app_db` - see
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
+from sqlalchemy import event, func, select, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
-from nptc.catalogue.entries import EntryChanges, create_entry, save_entries, save_entry
+from nptc.catalogue.entries import (
+    EntryChanges,
+    create_entry,
+    format_business_key,
+    save_entries,
+    save_entry,
+)
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
@@ -242,3 +248,112 @@ def test_save_entries_stale_middle_entry_does_not_bump_the_first(app_session: Se
     ).scalar_one()
     assert first.row_version == 2
     assert first.preferred_term == "Renamed 0"
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_version_id_col_backstop_catches_a_genuine_concurrent_race(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """Exercises the *second* conflict-detection layer directly - the one
+    `save_entry`'s explicit precondition check never reaches, because both
+    callers pass it.
+
+    `app_session`'s per-test rolled-back transaction (used by every other
+    test in this module) cannot produce a genuine two-transaction race: a
+    write only another connection can see must actually be committed, and
+    a real second connection would need `_load_for_update`'s own SELECT to
+    run *before* that commit but the flush to run *after* it - an
+    ordering plain sequential test code cannot express on its own. An
+    `after_cursor_execute` hook on `app_engine` supplies that ordering
+    deterministically: it fires the instant `_load_for_update`'s SELECT
+    has executed (and, under READ COMMITTED, already fixed its result set)
+    but before `save_entry` ever inspects the row it returned, then
+    performs and commits the concurrent write from a genuinely separate
+    connection. The precondition check therefore still sees the *pre-race*
+    `row_version=1` and passes; the later flush's own versioned `UPDATE`
+    is what collides with the now-committed `row_version=2`.
+
+    Setup and teardown use plain SQL, never `create_entry`/`save_entry`,
+    so this test produces zero `audit_event` rows of its own and cannot
+    disturb the hash chain or any other test's exact-content assertions
+    against the shared container. Only `catalogue_entry` needs cleanup
+    afterwards, via `owner_engine` - the only role with the DELETE
+    privilege `nptc_app` is deliberately refused (FR-03)."""
+    business_key = format_business_key(999_000_001)
+    with app_engine.connect() as setup_connection:
+        setup_connection.execute(
+            text(
+                "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                "VALUES (:key, 'Original term')"
+            ),
+            {"key": business_key},
+        )
+        setup_connection.commit()
+
+    fired = False
+
+    def _inject_concurrent_write(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if (
+            fired
+            or "catalogue_entry" not in statement
+            or not statement.strip().upper().startswith("SELECT")
+        ):
+            return
+        fired = True
+        with app_engine.connect() as other_connection:
+            other_connection.execute(
+                text(
+                    "UPDATE catalogue_entry SET row_version = row_version + 1, "
+                    "preferred_term = 'Raced ahead' WHERE business_key = :key"
+                ),
+                {"key": business_key},
+            )
+            other_connection.commit()
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_write)
+        race_session = Session(bind=app_engine)
+        try:
+            with pytest.raises(EntryVersionConflictError) as exc_info:
+                save_entry(
+                    race_session,
+                    AuditContext.system(),
+                    business_key=business_key,
+                    expected_row_version=1,
+                    changes=EntryChanges(preferred_term="Second editor's change"),
+                    reason="raced save",
+                )
+        finally:
+            race_session.close()
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
+
+        assert fired, "the injected concurrent write never ran - the test proves nothing"
+
+        report = exc_info.value.report
+        assert report.expected_row_version == 1
+        assert report.current_row_version == 2
+        assert any(
+            c.field == "preferred_term" and c.current == "Raced ahead" for c in report.conflicts
+        )
+
+        with owner_engine.connect() as check_connection:
+            audit_count = check_connection.execute(
+                text("SELECT count(*) FROM audit_event WHERE entity_type = 'catalogue_entry'")
+            ).scalar_one()
+            assert audit_count == 0
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            cleanup_connection.commit()

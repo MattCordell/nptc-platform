@@ -37,14 +37,27 @@ class FieldConflict:
 class ConflictReport:
     """Everything a caller needs to reconcile a rejected save - the
     acceptance criterion's "the caller is shown the conflicting changes",
-    not a bare 409."""
+    not a bare 409.
+
+    `conflicts` is populated only where the *submitted* value differs from
+    the *current* one for a field the caller actually tried to change - a
+    concurrent edit that touched a different field than the one being
+    saved still rejects (the version is the contract regardless), but
+    reports an empty `conflicts` tuple. `current_row_version` and
+    `changed_by`/`changed_at` are always populated even then, so the
+    caller is never left with literally nothing to show - but a UI relying
+    solely on `conflicts` to explain *what* changed will show nothing
+    actionable for a non-overlapping-field conflict. Filling that gap from
+    the audit log's own diff is left to #149/#150's edit screens."""
 
     business_key: str
     expected_row_version: int
     current_row_version: int
     conflicts: tuple[FieldConflict, ...] = field(default_factory=tuple)
-    #: Display name only, never the internal UUID (NFR-04/NFR-26) - sourced
-    #: from the audit log's own already-redacted actor rendering.
+    #: Display name only, never the internal UUID (NFR-04/NFR-26) - resolved
+    #: from `app_user.display_name` by `nptc.catalogue.entries.
+    #: _latest_change_attribution`, `None` for a system-initiated change or
+    #: one whose actor account has since been pseudonymised (NFR-17).
     changed_by: str | None = None
     changed_at: datetime | None = None
 
@@ -69,8 +82,11 @@ class EntryVersionConflictError(RuntimeError):
         self.report = report
 
 
-class ImmutableFieldEditError(RuntimeError):
-    """Raised when `EntryChanges` (or a caller bypassing it) attempts to
-    change `business_key` - see `nptc.db.models.catalogue_entry`'s own
-    `ImmutableFieldError` for the ORM-level guard this backs up at the
-    service-layer boundary."""
+class EntryNotFoundError(LookupError):
+    """Raised when no `catalogue_entry` matches the given `business_key` -
+    a distinct, HTTP-shaped type (rather than a bare stdlib `LookupError`)
+    so a future router maps it to 404 via the same "read the ClassVar"
+    convention `EntryVersionConflictError` uses, instead of falling
+    through `register_exception_handlers` to an unhandled 500."""
+
+    http_status: ClassVar[int] = 404

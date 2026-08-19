@@ -73,10 +73,28 @@ _SQL_CALL_ATTRS = frozenset({"execute", "exec_driver_sql"})
 #: bypasses that column's enforcement even though it still runs through the
 #: ORM `Session`. Extend this set as more tables adopt `version_id_col`
 #: (e.g. #52's `PropertyDefinition`, which ADR-0012 already documents the
-#: same doctrine for).
+#: same doctrine for) - the raw-SQL regex below is derived from this same
+#: set, via `_camel_to_snake`, so the two can never silently drift apart
+#: the way two independently-maintained literals could.
 VERSIONED_TABLE_MODELS = frozenset({"CatalogueEntry"})
 _BULK_STATEMENT_FUNCS = frozenset({"update", "delete"})
-_VERSIONED_RAW_SQL_RE = re.compile(r"^\s*(update|delete\s+from)\s+catalogue_entry\b", re.IGNORECASE)
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
+
+
+def _camel_to_snake(name: str) -> str:
+    """`CatalogueEntry` -> `catalogue_entry` - every model in this
+    codebase names its table as the snake_case form of its class name
+    (`nptc.db.models`'s own convention), so this is the one place that
+    mapping is spelled out for a test that must never let a model name and
+    its table name drift apart."""
+    return _CAMEL_BOUNDARY_RE.sub("_", name).lower()
+
+
+_VERSIONED_TABLE_NAMES = frozenset(_camel_to_snake(name) for name in VERSIONED_TABLE_MODELS)
+_VERSIONED_RAW_SQL_RE = re.compile(
+    r"^\s*(update|delete\s+from)\s+(" + "|".join(sorted(_VERSIONED_TABLE_NAMES)) + r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -145,6 +163,25 @@ def _bulk_statement_target_name(node: ast.Call) -> str | None:
     return None
 
 
+def _query_bulk_statement_target(node: ast.Call) -> str | None:
+    """The other Core-bypass shape ADR-0012 warns about:
+    `session.query(Model).filter(...).update(...)` /
+    `...delete(...)` - `Query.update()`/`Query.delete()` also bypass
+    `version_id_col` despite reading as ORM code. Walks back through any
+    chained `.filter()`/`.filter_by()`/etc. calls looking for a `.query(Model)`
+    call anywhere in the chain; returns `Model`'s name if found."""
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr in _BULK_STATEMENT_FUNCS):
+        return None
+
+    cursor = func.value
+    while isinstance(cursor, ast.Call) and isinstance(cursor.func, ast.Attribute):
+        if cursor.func.attr == "query" and cursor.args and isinstance(cursor.args[0], ast.Name):
+            return cursor.args[0].id
+        cursor = cursor.func.value
+    return None
+
+
 def _display(path: Path) -> str:
     try:
         return path.relative_to(REPO_ROOT).as_posix()
@@ -200,14 +237,16 @@ def _check_source(
 
         if enforce_versioned_table_rule:
             if isinstance(node, ast.Call):
-                target_name = _bulk_statement_target_name(node)
+                target_name = _bulk_statement_target_name(node) or _query_bulk_statement_target(
+                    node
+                )
                 if target_name in VERSIONED_TABLE_MODELS:
                     violations.append(
                         Violation(
                             display_path,
                             node.lineno,
                             "versioned-table-bulk-statement",
-                            f"Core update()/delete() against {target_name} bypasses "
+                            f"Core/Query update()/delete() against {target_name} bypasses "
                             "version_id_col (ADR-0012) - use the model's own service "
                             "layer instead",
                         )
@@ -322,6 +361,10 @@ def bulk_delete_versioned_table():
 
 def raw_sql_versioned_table():
     session.execute(text("UPDATE catalogue_entry SET status = 'withdrawn'"))
+
+
+def query_update_versioned_table():
+    session.query(CatalogueEntry).filter_by(status="draft").update({"status": "withdrawn"})
 """
     violations = _check_source(bad_source, "<positive-control>")
     rule_counts = Counter(v.rule for v in violations)
@@ -331,12 +374,13 @@ def raw_sql_versioned_table():
     # sql-fstring: direct_fstring's and built_above's f-strings both start
     # with a SQL keyword (2). grant-all-audit: grant_all_on_audit (1).
     # versioned-table-bulk-statement: bulk_update_versioned_table,
-    # bulk_delete_versioned_table, raw_sql_versioned_table (3) - rule 4.
+    # bulk_delete_versioned_table, raw_sql_versioned_table,
+    # query_update_versioned_table (4) - rule 4.
     assert rule_counts == Counter(
         {
             "dynamic-sql-arg": 3,
             "sql-fstring": 2,
             "grant-all-audit": 1,
-            "versioned-table-bulk-statement": 3,
+            "versioned-table-bulk-statement": 4,
         }
     )
