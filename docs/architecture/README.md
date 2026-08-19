@@ -11,6 +11,10 @@
 - [permissions.md](permissions.md) — the permission framework (issue #44): the PRD §4.7
   matrix as code, `Principal` derivation, the check API, the last-administrator guard, and
   the NFR-06 mandatory-admin-MFA step-up flow.
+- [frontend-routing.md](frontend-routing.md) — the frontend routing skeleton and layout
+  shell (issue #146): the route table as the single source of URL shapes, the FR-17 URL
+  contract, why search values stay raw strings, the not-found/error surfaces, and the
+  structural (not access-control) authentication seam for issue #41.
 
 Still owed: the component and deployment topology (PRD §14.3 is the starting point).
 
