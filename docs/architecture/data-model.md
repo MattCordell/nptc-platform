@@ -331,7 +331,8 @@ and tests would need quoting for a name NFR-04 never actually required. NFR-04 f
 | `closed_at` | `TIMESTAMPTZ` | Nullable, `CHECK (status = 'closed') = (closed_at IS NOT NULL)` |
 
 No `role` column: adding one here would create a second place a role is granted, and
-FR-44 requires permission checks, never role-name checks. Role grants land with #44.
+FR-44 requires permission checks, never role-name checks. Role grants are the `user_role`
+table below (issue #44, ADR-0019).
 
 **The tombstone CHECK is what makes NFR-17 a database invariant.** A row cannot be
 `closed` while `username`/`display_name`/`organisation` still carry a value, and cannot
@@ -393,6 +394,56 @@ all**, so a future response model or export renderer routes through a type that 
 leak the internal UUID, rather than relying on reviewer memory. Its own test
 (`test_user_ref_excludes_internal_id.py`) includes a positive control proving the leak
 check itself would fire on a payload that actually does leak the UUID.
+
+## `user_role` (issue #44, ADR-0019)
+
+A granted role, and who granted it. `nptc.auth.permissions.Permission`/`Role`/
+`ROLE_PERMISSIONS` (the PRD §4.7 matrix itself) are code, not database rows - see
+ADR-0019 for why; this table holds only the *grants*.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `user_id` | `UUID` | `NOT NULL`, FK to `app_user.id` |
+| `role` | `TEXT` | `NOT NULL`, `CHECK IN ('observer','provisional','member','reviewer','administrator')` - deliberately excludes `'anon'`, which is never a grantable row |
+| `granted_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+| `granted_by_user_id` | `UUID` | Nullable FK to `app_user.id` - `NULL` only for the one-time bootstrap grant (`scripts/grant_role.py`) |
+
+`UNIQUE (user_id, role)` - one grant per (user, role) pair; no separate index on `user_id`
+alone, since this unique constraint's leading column already serves that lookup (unlike
+`user_identity`, whose unique is on `(issuer, subject)` and needed its own
+`ix_user_identity_user_id`).
+
+**Revocation is a hard `DELETE`, never a `revoked_at` tombstone.** The append-only,
+hash-chained `audit_event` table is already the permanent history of every grant and
+revocation; a `revoked_at` column would be a second, mutable history able to disagree with
+the one that must win. NFR-17's tombstone posture protects *identifying personal data*,
+which a role grant is not.
+
+**Privileges: `SELECT, INSERT, DELETE`, plus column-level `UPDATE (granted_at)` only** -
+not the blanket no-`UPDATE`-at-all a role-is-never-edited posture would first suggest.
+Postgres requires *some* `UPDATE` privilege on a table before it honours `SELECT ... FOR
+UPDATE` at all (confirmed against a real container while building this), and
+`nptc.auth.grants.assert_not_last_administrator`'s row lock (FR-01, below) depends on
+exactly that. `granted_at` is the one column nothing ever writes to after insert, so this
+satisfies Postgres's requirement while `user_id`/`role`/`granted_by_user_id` - the columns
+that would actually rewrite "who granted this, and when" - stay immutable at the
+privilege level.
+
+**FR-01's last-administrator guard** (`nptc.auth.grants.assert_not_last_administrator`) is
+an application check, not a database constraint - Postgres cannot express "at least one row
+across the whole table satisfies X" as a `CHECK`/`UNIQUE`/`EXCLUDE`, and PRD §14.1 /
+ADR-0011 forbid business logic in triggers. It locks every `user_role` row naming
+`'administrator'` for an active user (`FOR UPDATE OF ur`) inside the caller's transaction
+before permitting a revocation, closure, or suspension to proceed - the row lock is what
+makes two concurrent revocations of the last two administrators resolve to exactly one
+survivor rather than zero (proven directly, with two real concurrent connections, in
+`backend/tests/test_grants.py`).
+
+**Default grant on registration.** `nptc.auth.identity._create_user` grants
+`Role.PROVISIONAL` to every newly-created `app_user`, inside the same `SAVEPOINT` as the
+identity insert (PRD §4.3: a new user *is* Provisional) - a real row, not an implicit
+default, so a dashboard can answer "what roles does this user hold" with one query.
 
 ## Property registry (design, lands with #51-#55)
 

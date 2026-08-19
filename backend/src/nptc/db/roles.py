@@ -62,3 +62,22 @@ REVOKE_APP_USER_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE app_user FROM npt
 #: linked identities outright (there is no tombstone shape for a link row).
 GRANT_USER_IDENTITY_SQL = "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE user_identity TO nptc_app;"
 REVOKE_USER_IDENTITY_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_identity FROM nptc_app;"
+
+#: issue #44 (FR-44/FR-01): a role grant is created or removed, never
+#: edited. **Column-level `UPDATE (granted_at)` only** - not the blanket
+#: no-UPDATE-at-all the module docstring first assumed, and not table-wide
+#: `UPDATE`, either. Postgres requires *some* `UPDATE` privilege on the
+#: table before it will honour `SELECT ... FOR UPDATE` at all - confirmed
+#: against a real container, since this is exactly the kind of privilege
+#: detail worth checking rather than assuming - and `nptc.auth.grants.
+#: assert_not_last_administrator`'s row lock (FR-01) needs precisely that.
+#: `granted_at` is the one column nothing in this codebase ever writes to
+#: after insert (a server-defaulted creation timestamp, the same role
+#: `app_user.created_at`/`id` play in being excluded from *their* table's
+#: UPDATE grant) - granting `UPDATE` on it, and nothing else, satisfies
+#: Postgres's row-locking requirement while `user_id`/`role`/
+#: `granted_by_user_id` - the columns that would actually rewrite "who
+#: granted this, and when" - remain immutable at the privilege level.
+GRANT_USER_ROLE_SQL = "GRANT SELECT, INSERT, DELETE ON TABLE user_role TO nptc_app;"
+GRANT_USER_ROLE_UPDATE_SQL = "GRANT UPDATE (granted_at) ON TABLE user_role TO nptc_app;"
+REVOKE_USER_ROLE_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_role FROM nptc_app;"

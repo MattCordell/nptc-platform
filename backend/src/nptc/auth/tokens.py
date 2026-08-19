@@ -140,6 +140,15 @@ class TokenVerifier:
         preferred_username = preferred_username if isinstance(preferred_username, str) else None
         display_name = payload.get("name")
         display_name = display_name if isinstance(display_name, str) else None
+        # NFR-06 (issue #44): `acr`/`auth_time` are authentication facts
+        # (how/when the user authenticated), read here with the same
+        # isinstance narrowing as every other optional claim above - see
+        # nptc.auth.claims's module docstring for why this is not the
+        # authorisation-claims door ADR-0014 closed.
+        acr = payload.get("acr")
+        acr = acr if isinstance(acr, str) else None
+        auth_time = payload.get("auth_time")
+        auth_time = auth_time if isinstance(auth_time, int) else None
 
         return OidcIdentityClaims(
             issuer=issuer,
@@ -151,4 +160,6 @@ class TokenVerifier:
             email_verified=payload.get("email_verified") is True,
             preferred_username=preferred_username,
             display_name=display_name,
+            acr=acr,
+            auth_time=auth_time,
         )

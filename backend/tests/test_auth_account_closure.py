@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.hashing import GENESIS_HASH
 from nptc.audit.writer import AuditContext
+from nptc.auth.errors_authorisation import LastAdministratorError
+from nptc.auth.grants import grant_role_unchecked, roles_for_user
 from nptc.auth.identity import close_account
+from nptc.auth.permissions import Role
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
@@ -206,6 +209,75 @@ def test_close_account_emits_a_user_closed_audit_event(app_db: Connection) -> No
     assert "frank" not in full_row_text
     assert "Frank" not in full_row_text
     assert "RCPA-QAP" not in full_row_text
+
+
+@pytest.mark.req("FR-01")
+@pytest.mark.integration
+def test_closing_the_last_active_administrators_account_is_refused(app_db: Connection) -> None:
+    """The exact bypass FR-01's guard exists to prevent: closure never
+    calls `revoke_role`, so without `assert_not_last_administrator` running
+    *inside* `close_account` before anything else, closing your own
+    account would be the trivial way around "the system MUST prevent
+    removal of the last remaining administrator" - simply deleting the
+    account instead of revoking the role. Both the `app_user` row and its
+    `user_role` grant must be left completely intact."""
+    session = Session(bind=app_db)
+    user = _create_active_user(session, "hank")
+    grant_role_unchecked(
+        session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    session.flush()
+
+    with pytest.raises(LastAdministratorError):
+        close_account(session, user.id, AuditContext.system())
+
+    session.expire_all()
+    still_active = session.get(User, user.id)
+    assert still_active is not None
+    assert still_active.status == UserStatus.ACTIVE
+    assert still_active.username == "hank"
+    assert roles_for_user(session, user.id) == frozenset({Role.ADMINISTRATOR})
+
+
+@pytest.mark.req("FR-01")
+@pytest.mark.integration
+def test_closing_a_non_last_administrators_account_revokes_their_grants(app_db: Connection) -> None:
+    """The companion positive case: closing an administrator's account is
+    allowed - and must actually revoke their `user_role` grants, recording
+    `user_role.revoked` - when a second active administrator remains, so
+    the guard's refusal is genuinely conditional rather than blanket."""
+    session = Session(bind=app_db)
+    departing = _create_active_user(session, "ivan")
+    remaining_admin = _create_active_user(session, "judy")
+    for user in (departing, remaining_admin):
+        grant_role_unchecked(
+            session,
+            target_user_id=user.id,
+            role=Role.ADMINISTRATOR,
+            granted_by_user_id=None,
+            audit=AuditContext.system(),
+        )
+    departing_id = departing.id
+    session.flush()
+
+    close_account(session, departing_id, AuditContext.system())
+    session.flush()
+
+    assert roles_for_user(session, departing_id) == frozenset()
+    assert roles_for_user(session, remaining_admin.id) == frozenset({Role.ADMINISTRATOR})
+
+    revoked_count = session.execute(
+        text(
+            "SELECT count(*) FROM audit_event WHERE action = 'user_role.revoked' "
+            "AND before->>'user_id' = :user_id"
+        ),
+        {"user_id": str(departing_id)},
+    ).scalar_one()
+    assert revoked_count == 1
 
 
 @pytest.mark.req("NFR-08")

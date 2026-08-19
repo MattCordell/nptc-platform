@@ -91,6 +91,40 @@ already in place would need a one-off backfill (computing each row's digest in `
 order) before `upgrade head` can succeed, which is not something this migration attempts to
 automate.
 
+## `0005_user_role.py`
+
+Adds `user_role` (issue #44, FR-44, FR-01 - see
+[`data-model.md`](../architecture/data-model.md#user_role-issue-44-adr-0019)). Its
+privilege grants and revokes live in this same migration, following the same reasoning as
+`0002_audit_event.py`/`0003_user_and_user_identity.py` above - with one wrinkle worth
+flagging: `UPDATE (granted_at)` **is** granted, narrowly, alongside `SELECT, INSERT,
+DELETE`. This is not an oversight against "a grant is created or removed, never edited" -
+Postgres requires *some* `UPDATE` privilege on a table before it honours `SELECT ... FOR
+UPDATE` at all (confirmed against a real container while building this migration), and
+`nptc.auth.grants.assert_not_last_administrator`'s row lock (FR-01) depends on exactly
+that. `granted_at` is the one column nothing ever writes to after insert, so the
+column-level grant costs nothing real while `user_id`/`role`/`granted_by_user_id` stay
+immutable at the privilege level.
+
+### Bootstrapping the first administrator
+
+FR-01's last-administrator guard means a fresh deployment can never acquire its first
+Administrator through the ordinary, `Principal`-checked path - there is no `Principal` yet
+that could hold `role.grant.any`. After `upgrade head` and at least one real login (which
+creates the `app_user` row via `nptc.auth.identity._create_user`'s default Provisional
+grant), an operator with direct database access runs:
+
+```powershell
+uv run python scripts/grant_role.py --username <the user's username> --role administrator
+```
+
+This calls the same `nptc.auth.grants.grant_role_unchecked` a first-login Provisional grant
+uses - still emits a `user_role.granted` audit event (`granted_by_user_id` null, the one
+case that column is nullable for), and is still idempotent. There is no `--force` and no
+revoke path through this script; once a second Administrator exists, every further
+grant/revoke should go through the ordinary checked functions (`nptc.auth.grants.
+grant_role`/`revoke_role`, landing with the P2 user-administration endpoints).
+
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely

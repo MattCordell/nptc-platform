@@ -21,6 +21,17 @@ Four rules:
    (``_ALGORITHMS``) or a literal list containing neither ``"none"`` nor
    any ``HS*`` entry - the check that stops an RS256 realm's public key
    being reused as an HMAC secret.
+5. (issue #44, NFR-06/NFR-07) The literal claim keys ``"acr"``,
+   ``"amr"``, ``"realm_access"``, ``"resource_access"``, ``"groups"``,
+   ``"roles"``, ``"scope"`` are never subscripted or ``.get()``-read
+   anywhere outside ``nptc/auth/tokens.py``. A direct, greppable
+   enforcement of NFR-07's second sentence ("authorisation decisions are
+   made server-side from the internal user record, never from claims in
+   the token"): every one of these is authorisation-shaped, and reading
+   one anywhere else would mean re-parsing the token for it rather than
+   going through the platform database, which is exactly the line
+   ``nptc.auth.claims``'s own docstring draws around ``acr``/`auth_time``
+   being *authentication* facts, never *authorisation* claims.
 """
 
 from __future__ import annotations
@@ -42,6 +53,18 @@ _ALLOWED_UNVERIFIED_HEADER_PATHS = {
 }
 _ALLOWED_ALGORITHMS_CONSTANT = "_ALGORITHMS"
 _DISALLOWED_ALGORITHMS = {"none"}
+
+#: issue #44, rule 5 - see the module docstring.
+_ALLOWED_RESTRICTED_CLAIM_PATH = "backend/src/nptc/auth/tokens.py"
+_RESTRICTED_CLAIM_KEYS = {
+    "acr",
+    "amr",
+    "realm_access",
+    "resource_access",
+    "groups",
+    "roles",
+    "scope",
+}
 
 
 @dataclass(frozen=True)
@@ -104,9 +127,49 @@ def _algorithms_violation(node: ast.expr) -> str | None:
     return "algorithms= is neither the module constant nor a literal list"
 
 
+def _restricted_claim_key(node: ast.expr) -> str | None:
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in _RESTRICTED_CLAIM_KEYS
+    ):
+        return node.value
+    return None
+
+
 def _check_source(source: str, display_path: str) -> list[Violation]:
     violations: list[Violation] = []
     tree = ast.parse(source)
+
+    if display_path != _ALLOWED_RESTRICTED_CLAIM_PATH:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript):
+                key = _restricted_claim_key(node.slice)
+                if key is not None:
+                    violations.append(
+                        Violation(
+                            display_path,
+                            node.lineno,
+                            "restricted-claim-key-outside-tokens",
+                            f"subscripts claim {key!r} outside nptc/auth/tokens.py",
+                        )
+                    )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+            ):
+                key = _restricted_claim_key(node.args[0])
+                if key is not None:
+                    violations.append(
+                        Violation(
+                            display_path,
+                            node.lineno,
+                            "restricted-claim-key-outside-tokens",
+                            f".get({key!r}) called outside nptc/auth/tokens.py",
+                        )
+                    )
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -221,6 +284,14 @@ def decode_outside_tokens(token, key):
 
 def unverified_header_outside_allowed(token):
     return jwt.get_unverified_header(token)
+
+
+def restricted_claim_subscript(payload):
+    return payload["realm_access"]
+
+
+def restricted_claim_get(payload):
+    return payload.get("roles")
 """
     violations = _check_source(bad_source, "nptc/auth/somewhere_else.py")
     rule_counts = Counter(v.rule for v in violations)
@@ -232,5 +303,6 @@ def unverified_header_outside_allowed(token):
             "unsafe-algorithms": 2,
             "decode-outside-tokens": 5,
             "unverified-header-outside-allowed": 1,
+            "restricted-claim-key-outside-tokens": 2,
         }
     )

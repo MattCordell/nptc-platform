@@ -5,6 +5,12 @@
 - [data-model.md](data-model.md) — the database baseline landed with issue #33: migration
   layout, naming convention, the least-privilege role model, the `audit_event` table, and
   the testcontainers test harness.
+- [token-verification.md](token-verification.md) — NFR-07 server-side JWT verification
+  (issue #43): the check order, the JWKS outage/refresh-cooldown design, and the
+  payload-vs-header `typ` correction.
+- [permissions.md](permissions.md) — the permission framework (issue #44): the PRD §4.7
+  matrix as code, `Principal` derivation, the check API, the last-administrator guard, and
+  the NFR-06 mandatory-admin-MFA step-up flow.
 
 Still owed: the component and deployment topology (PRD §14.3 is the starting point).
 

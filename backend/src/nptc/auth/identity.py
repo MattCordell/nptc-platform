@@ -29,7 +29,13 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.auth.claims import OidcIdentityClaims
+from nptc.auth.grants import (
+    assert_not_last_administrator,
+    grant_role_unchecked,
+    revoke_all_roles_unchecked,
+)
 from nptc.auth.linking import may_auto_link
+from nptc.auth.permissions import Role
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
@@ -178,6 +184,23 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
                     instance=identity,
                     kind=ChangeKind.CREATED,
                 )
+                # PRD Section 4.3: a newly registered user *is* Provisional
+                # - a real user_role row, not an implicit "no grants means
+                # Provisional" default, so FR-40's user dashboard can
+                # answer "what roles does this user hold" with one query,
+                # and so Observer (a demotion below the default) is
+                # representable at all rather than only as an absence.
+                # Inside the same SAVEPOINT as the identity insert above:
+                # a username-collision retry must not leave an orphan
+                # user_role.granted event for an app_user row that gets
+                # rolled back.
+                grant_role_unchecked(
+                    session,
+                    target_user_id=user.id,
+                    role=Role.PROVISIONAL,
+                    granted_by_user_id=None,
+                    audit=audit,
+                )
         except IntegrityError as exc:
             if not _is_username_collision(exc):
                 raise
@@ -299,10 +322,23 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
     bulk ``DELETE``) specifically so ``record_change`` can read each row's
     attribute history before it disappears - a bulk statement never
     materialises the per-row instances that diff needs.
+
+    **FR-01**: closure is a role-removal path even though it never calls
+    ``nptc.auth.grants.revoke_role`` - ``assert_not_last_administrator``
+    runs first, before anything else, so that closing your own account is
+    never the trivial bypass of "the system MUST prevent removal of the
+    last remaining administrator". Every ``user_role`` grant is then
+    revoked (``user_role.revoked``, one row at a time, same reasoning as
+    the identity deletions above) - a closed user has no identities left
+    to authenticate with, so a lingering grant would be unreachable but
+    not actually gone, which is exactly the state FR-01's guard must never
+    be fooled by.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
         return
+
+    assert_not_last_administrator(session, removing_user_id=user_id)
 
     identities = (
         session.execute(select(UserIdentity).where(UserIdentity.user_id == user_id)).scalars().all()
@@ -316,6 +352,8 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
             kind=ChangeKind.DELETED,
         )
         session.delete(identity)
+
+    revoke_all_roles_unchecked(session, target_user_id=user_id, audit=audit)
 
     user.username = None
     user.display_name = None
