@@ -104,7 +104,7 @@ export function AuthProvider({
     }
     // De-duplicated: several components asking for a token at once must
     // produce one renewal, not one each.
-    renewal.current = (async () => {
+    renewal.current ??= (async () => {
       const myGeneration = ++generation.current;
       // A stale renewal's outcome is discarded, not applied: a newer
       // operation (typically `completeCallback`, exchanging a real
