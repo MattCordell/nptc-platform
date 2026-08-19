@@ -1,5 +1,8 @@
+import { useAuth, type AuthStatus } from "./session.ts";
+
 /**
- * The one seam issue #41 (OIDC PKCE login) replaces.
+ * The one seam issue #41 replaced. It now reads the real OIDC session from
+ * `AuthProvider` instead of returning a constant.
  *
  * Nothing here is a security boundary: NFR-20 requires every request to be
  * authorised server-side against the internal user record, and no
@@ -7,12 +10,12 @@
  * decides what the shell *shows*; hiding a control is presentation, not
  * access control.
  *
- * Keeping this in its own module (rather than inline in `RequireAuth`) means
- * #41's diff touches `src/auth/`, not `src/router/` or `src/shell/` - the
- * route table and the layout shell do not change when real sign-in lands.
+ * Kept as its own module, with its return type unchanged, so the call sites
+ * written against the placeholder (`require-auth.tsx`, `site-header.tsx`)
+ * did not have to change when real sign-in landed.
  */
-export type AuthStatus = "signed-in" | "signed-out" | "unavailable";
+export type { AuthStatus };
 
 export function useAuthStatus(): AuthStatus {
-  return "unavailable";
+  return useAuth().status;
 }

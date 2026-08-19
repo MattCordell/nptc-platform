@@ -275,8 +275,17 @@ jobs:
           path: frontend/coverage/lcov.info
           retention-days: 14
 
-      - name: vite build
+      # `pnpm build` also runs scripts/assert-no-secret-in-bundle.mjs over
+      # dist/, which is issue #41's NFR-01 acceptance criterion: no client
+      # secret in any built asset, asserted against the build output rather
+      # than by inspection. The VITE_* values below are deliberately the
+      # public local-dev ones - a public client has no secret, and the
+      # assertion exists to prove that stays true.
+      - name: vite build (and assert no secret in the bundle)
         run: pnpm build
+        env:
+          VITE_OIDC_ISSUER: http://localhost:8080/realms/nptc
+          VITE_OIDC_CLIENT_ID: nptc-frontend
 
   # Branch ruleset (F-7, deferred - see repo-configuration.md) will require
   # this job, not the three above directly, once applied - a PR that

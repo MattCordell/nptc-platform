@@ -1,7 +1,11 @@
 import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react-router";
 
 import { HomePage } from "../pages/home.tsx";
+import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
+import { RegisterPage } from "../pages/register.tsx";
+import { SignInPage } from "../pages/sign-in.tsx";
+import { SignOutPage } from "../pages/sign-out.tsx";
 import { RequireAuth } from "../shell/require-auth.tsx";
 import { RootLayout } from "../shell/root-layout.tsx";
 import {
@@ -185,28 +189,28 @@ const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "sign-in",
   validateSearch: validateSignInSearch as (search: SignInSearchInput) => SignInSearch,
-  component: createPlaceholderPage({ title: "Sign in", issue: 41 }),
+  component: SignInPage,
   head: titled("Sign in"),
 });
 
 const signOutRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "sign-out",
-  component: createPlaceholderPage({ title: "Sign out", issue: 41 }),
+  component: SignOutPage,
   head: titled("Sign out"),
 });
 
 const registerRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "register",
-  component: createPlaceholderPage({ title: "Register", issue: 41 }),
+  component: RegisterPage,
   head: titled("Register"),
 });
 
 const authCallbackRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "auth/callback",
-  component: createPlaceholderPage({ title: "Signing in…", issue: 41 }),
+  component: AuthCallbackPage,
 });
 
 // --- authenticated (structural; RequireAuth; NFR-20) -----------------------

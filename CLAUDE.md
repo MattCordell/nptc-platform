@@ -43,7 +43,9 @@ Backend module responsibilities (each currently just an `__init__.py` stub — s
 `backend/src/nptc/__init__.py` for the authoritative list and which GitHub issue lands
 each one):
 
-- `api/` — routers, dependencies, OpenAPI wiring
+- `api/` — routers, dependencies, OpenAPI wiring (app factory, the
+  `current_principal`/`permission_dep` dependencies and `GET /api/v1/auth/me` landed with
+  issue #41)
 - `auth/` — OIDC verification, permission framework (FR-44: permissions, not role names)
 - `audit/` — append-only log and hash chain (NFR-08-10)
 - `catalogue/` — entries, designations, code bindings
@@ -56,9 +58,9 @@ each one):
 - `releases/` — snapshots, export config versions
 - `exports/` — csv, xlsx, fhir supplement renderers
 - `jobs/` — Postgres `SELECT ... FOR UPDATE SKIP LOCKED` queue and scheduler
-- `db/` — models and the Alembic environment (issue #33/P1-1: naming convention, the
-  least-privilege `nptc_app` role, the `audit_event` table). `session.py` is still owed -
-  nothing needs it until #43/#44.
+- `db/` — models, the Alembic environment (issue #33/P1-1: naming convention, the
+  least-privilege `nptc_app` role, the `audit_event` table) and `session.py`, the engine
+  and per-request session factory (issue #41).
 
 ## Technology stack (ADR-0001)
 

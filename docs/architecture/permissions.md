@@ -218,8 +218,10 @@ automated coverage proves the flow binds and its executor resolves correctly on 
 
 ## FR-80 and FR-81: provable without a single endpoint
 
-Both are worded per-endpoint, but `backend/src/nptc/api/` has zero routes today (still a
-docstring stub). Both are also, independently, statements about data:
+Both are worded per-endpoint. Since issue #41 `backend/src/nptc/api/` serves one real
+route (`GET /api/v1/auth/me`), and `test_api_error_mapping.py` exercises the
+`permission_dep` adapter over HTTP. Both are also, independently, statements about data,
+which is the stronger form:
 
 - **FR-80**: `not (ROLE_PERMISSIONS[OBSERVER] & WRITE_PERMISSIONS)` — stronger than any
   per-endpoint test, and it fails the day a write permission is ever added to Observer.

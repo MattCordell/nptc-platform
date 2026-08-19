@@ -20,6 +20,7 @@ notices.
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -133,6 +134,53 @@ class AuthSettings(BaseSettings):
     def _split_mfa_acr_values(cls, value: object) -> object:
         if isinstance(value, str):
             return frozenset(item.strip() for item in value.split(",") if item.strip())
+        return value
+
+
+class ApiSettings(BaseSettings):
+    """HTTP-layer configuration for the FastAPI app (issue #41).
+
+    ``frontend_base_url`` is the single browser origin allowed to call the
+    API cross-origin. It is load-bearing, not cosmetic: ADR-0021's SPA
+    performs the PKCE code exchange in the browser and then calls this API
+    with a Bearer token, so without an accurate allowed origin every
+    authenticated request fails CORS preflight.
+
+    It reuses the ``NPTC_FRONTEND_BASE_URL`` variable the Keycloak realm
+    import already substitutes into ``nptc-frontend``'s ``redirectUris``/
+    ``webOrigins`` - one value, so the origin Keycloak will redirect to and
+    the origin the API will accept cannot drift apart.
+
+    The default matches the Vite dev server, and is the one setting here
+    that may legitimately be a plain-http localhost value; any other
+    deployment must set it to the frontend's real origin.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    frontend_base_url: str = "http://localhost:5173"
+
+    @field_validator("frontend_base_url")
+    @classmethod
+    def _is_a_bare_origin(cls, value: str) -> str:
+        """Scheme, host and optional port - nothing else.
+
+        A browser sends `Origin: https://app.example` with no path, so a
+        configured value carrying one (`https://app.example/nptc`) can
+        never match, and CORS would fail every authenticated request with
+        nothing in the logs pointing here. Rejecting it at
+        settings-construction time turns a silent runtime failure into a
+        startup error naming the field.
+        """
+        value = _require_non_blank(value, "frontend_base_url").rstrip("/")
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError(f"frontend_base_url must be an http(s) origin, got {value!r}")
+        if parts.path or parts.query or parts.fragment:
+            raise ValueError(
+                f"frontend_base_url must be a bare origin (scheme, host, optional "
+                f"port) with no path, query or fragment, got {value!r}"
+            )
         return value
 
 

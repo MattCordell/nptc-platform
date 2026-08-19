@@ -1,63 +1,128 @@
-import { screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { renderRoute } from "../test/render-route.tsx";
 
 /**
- * `RequireAuth` gates every authenticated and admin route behind
- * `useAuthStatus`. Today that always returns "unavailable" (issue #41 lands
- * the real OIDC session), so these routes render a "sign-in is not yet
- * available" notice *at the URL that was requested* - not a redirect. That
- * is the contract that lets #41 swap in real sign-in with no route-table
- * change: only `require-auth.tsx`'s body changes, and exactly these
- * assertions would need to change with it.
+ * `RequireAuth` gates every authenticated and admin route on the real OIDC
+ * session (issue #41). This file replaced the placeholder-era contract it
+ * asserted before #41 landed: those tests asserted "renders a not-yet-
+ * available notice at the requested URL, with no redirect", and said in as
+ * many words that exactly these assertions would change when real sign-in
+ * arrived.
+ *
+ * What has *not* changed, and is re-asserted below, is the route table:
+ * every path still resolves to the same route it always did. Only what
+ * `RequireAuth` renders for a given session status is different.
+ *
+ * None of this is access control (NFR-20). The API is the boundary; these
+ * tests are about what the shell shows.
  */
-describe("RequireAuth - before sign-in exists (#41 not yet landed)", () => {
-  it.each(["/submissions", "/admin/users", "/interest", "/admin"])(
-    "renders the sign-in-unavailable notice at %s, inside the shell, with no redirect",
-    async (path) => {
-      const { renderRoute } = await import("../test/render-route.tsx");
-      const { router } = await renderRoute(path);
 
-      expect(
-        await screen.findByRole("heading", { name: /sign-in is not yet available/i }),
-      ).toBeInTheDocument();
-      expect(router.state.location.pathname).toBe(path);
-      expect(router.history.length).toBe(1);
-      // The shell is still present - this is a screen, not a dead end.
-      expect(screen.getByRole("navigation", { name: /primary/i })).toBeInTheDocument();
-      expect(
-        within(screen.getByRole("main")).getByRole("link", {
-          name: /search the catalogue/i,
-        }),
-      ).toBeInTheDocument();
-    },
-  );
+const GATED_PATHS = ["/submissions", "/admin/users", "/interest", "/admin"];
+
+describe("RequireAuth - signed out", () => {
+  it.each(GATED_PATHS)("sends a signed-out visitor from %s to sign-in", async (path) => {
+    const { router } = await renderRoute(path, { auth: { status: "signed-out" } });
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    // The whole point of the redirect: the user comes back to where they
+    // were aiming, not to the home page.
+    expect(router.state.location.search).toEqual({ redirect: path });
+  });
+
+  it("replaces rather than pushes, so 'back' does not bounce the user", async () => {
+    const { router } = await renderRoute("/submissions", {
+      auth: { status: "signed-out" },
+    });
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    // A push would leave /submissions in history, and going back would
+    // land on it and immediately redirect here again - a trap.
+    expect(router.history.length).toBe(1);
+  });
 });
 
-describe("RequireAuth - once signed in", () => {
-  beforeEach(() => {
-    // The previous describe block already imported the production module
-    // graph, so it is cached by now - reset before `vi.doMock` so the next
-    // dynamic import re-evaluates it against the mock.
-    vi.resetModules();
+describe("RequireAuth - signed in", () => {
+  it.each(GATED_PATHS)("renders %s itself, with no redirect", async (path) => {
+    const { router } = await renderRoute(path, { auth: { status: "signed-in" } });
+
+    expect(router.state.location.pathname).toBe(path);
+    expect(router.history.length).toBe(1);
+    expect(
+      screen.queryByRole("heading", { name: /taking you to sign in/i }),
+    ).not.toBeInTheDocument();
   });
 
-  afterEach(() => {
-    vi.doUnmock("../auth/auth-status.ts");
-    vi.resetModules();
-  });
-
-  it("renders the authenticated route's own screen instead of the notice", async () => {
-    vi.doMock("../auth/auth-status.ts", () => ({
-      useAuthStatus: () => "signed-in",
-    }));
-    const { renderRoute } = await import("../test/render-route.tsx");
-    await renderRoute("/submissions");
+  it("renders the authenticated route's own screen", async () => {
+    await renderRoute("/submissions", { auth: { status: "signed-in" } });
 
     expect(
       await screen.findByRole("heading", { name: /^submissions$/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RequireAuth - session still restoring", () => {
+  it.each(GATED_PATHS)("waits at %s rather than redirecting", async (path) => {
+    // The cold deep-link case. Tokens live in memory, so a fresh page has
+    // none for one silent round trip even with a live SSO session; treating
+    // that as signed-out would take the user out of the SPA entirely and
+    // then bring them back through a full interactive login they did not
+    // need.
+    const { router } = await renderRoute(path, { auth: { status: "restoring" } });
+
     expect(
-      screen.queryByRole("heading", { name: /sign-in is not yet available/i }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("heading", { name: /checking your session/i }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(path);
+    expect(router.history.length).toBe(1);
+  });
+});
+
+describe("RequireAuth - sign-in unavailable", () => {
+  it("says so at the requested URL instead of redirecting into a loop", async () => {
+    // The failure mode this guards against: with the identity provider
+    // unreachable, "signed out" and "redirect to sign-in" would bounce the
+    // user between two pages that can never make progress.
+    const { router } = await renderRoute("/submissions", {
+      auth: { status: "unavailable" },
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: /sign-in is unavailable/i }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/submissions");
+    expect(router.history.length).toBe(1);
+    // Still a screen inside the shell, not a dead end.
+    expect(screen.getByRole("navigation", { name: /primary/i })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", {
+        name: /search the catalogue/i,
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("useAuthStatus seam", () => {
+  it("is what RequireAuth reads, so the route table needs no change", async () => {
+    // Asserts the seam itself still exists and is honoured, which is what
+    // let #41 land without touching `route-tree.ts`'s authenticated subtree.
+    vi.resetModules();
+    vi.doMock("../auth/auth-status.ts", () => ({ useAuthStatus: () => "signed-in" }));
+    const { renderRoute: fresh } = await import("../test/render-route.tsx");
+
+    await fresh("/submissions", { auth: { status: "signed-out" } });
+
+    expect(
+      await screen.findByRole("heading", { name: /^submissions$/i }),
+    ).toBeInTheDocument();
+
+    vi.doUnmock("../auth/auth-status.ts");
+    vi.resetModules();
   });
 });

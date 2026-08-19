@@ -155,7 +155,7 @@ export type SignInSearchInput = Partial<SignInSearch> & SearchSchemaInput;
  * host-relative URL all fail the check and are dropped, same as an absent
  * `redirect`.
  */
-function asInternalRedirect(value: unknown): string | undefined {
+export function asInternalRedirect(value: unknown): string | undefined {
   const candidate = asString(value);
   if (
     !candidate.startsWith("/") ||

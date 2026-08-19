@@ -1,0 +1,175 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "NPTC Catalogue Maintenance Platform",
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The current session's user, roles and permissions",
+        "description": "Never 401s for an anonymous caller.\n\n\"Who am I?\" is a legitimate question with a legitimate answer for a\nsigned-out visitor - `authenticated: false` - and the SPA asks it on\nevery cold load, before it knows whether it has a session. Answering\n401 would make an ordinary first page load indistinguishable from a\ngenuine credential failure. A *bad* token still 401s, because\n`current_principal` raises rather than degrading to anonymous.",
+        "operationId": "read_current_session_api_v1_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential was presented where one is required, or the token could not be verified. Carries `WWW-Authenticate: Bearer`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not permitted. When the permission would have been granted by a role suppressed for want of MFA, this carries an RFC 9470 `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"` challenge instead of a bare denial (NFR-06).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token resolved to more than one candidate account, or to an untrusted auto-link candidate. A human must resolve it (NFR-05).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "Every refusal this API makes has this shape - one sentence saying\nwhat to do next, and deliberately nothing else. It never names a role,\na permission or an internal identifier (FR-44, NFR-04)."
+      },
+      "SessionResponse": {
+        "properties": {
+          "authenticated": {
+            "type": "boolean",
+            "title": "Authenticated"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "mfa_satisfied": {
+            "type": "boolean",
+            "title": "Mfa Satisfied"
+          }
+        },
+        "type": "object",
+        "required": [
+          "authenticated",
+          "user",
+          "roles",
+          "permissions",
+          "mfa_satisfied"
+        ],
+        "title": "SessionResponse",
+        "description": "What the browser is allowed to know about its own session.\n\n`user` is `nptc.auth.identity.UserRef`, reused rather than redefined:\nit is this codebase's existing NFR-04 serialisation boundary and\nstructurally excludes `app_user.id`. Defining a second response model\nwith the same fields is exactly how that internal id eventually leaks.\n\n`permissions` is present because the shell needs to decide what to\n*render*, and rendering is presentation, not access control (NFR-20) -\nevery one of these permissions is re-checked server-side at the\nendpoint that uses it. `roles` is included for the account screen\n(FR-40), which shows a user their own roles."
+      },
+      "UserRef": {
+        "properties": {
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "display_name",
+          "organisation",
+          "status"
+        ],
+        "title": "UserRef",
+        "description": "The NFR-04 serialisation boundary: what any API response or export\nis allowed to say about a user. No ``id`` field, ever - the internal\nUUID must never escape past this type. #43/#142/#143 route through\nthis structurally instead of relying on reviewer memory that the UUID\nmust not leak."
+      }
+    }
+  }
+}

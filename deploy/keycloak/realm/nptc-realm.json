@@ -39,7 +39,7 @@
   "authenticationFlows": [
     {
       "alias": "nptc browser",
-      "description": "issue #44 (NFR-06): browser flow, OTP conditional on requested LoA, not on TOTP being configured. See ADR-0019.",
+      "description": "issue #44 (NFR-06): browser flow, OTP conditional on requested LoA, not on TOTP being configured. See ADR-0019 and ADR-0021.",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
@@ -76,17 +76,17 @@
     },
     {
       "alias": "nptc browser forms",
-      "description": "Username/password, then OTP conditional on the requested level of authentication (issue #44, NFR-06).",
+      "description": "Two conditional subflows, one per level of authentication: password satisfies LoA 1, OTP satisfies LoA 2 (issues #44/#41, NFR-06/NFR-02).",
       "providerId": "basic-flow",
       "topLevel": false,
       "builtIn": false,
       "authenticationExecutions": [
         {
-          "authenticator": "auth-username-password-form",
-          "requirement": "REQUIRED",
+          "requirement": "CONDITIONAL",
           "priority": 10,
+          "flowAlias": "nptc browser forms conditional password",
           "userSetupAllowed": false,
-          "autheticatorFlow": false
+          "autheticatorFlow": true
         },
         {
           "requirement": "CONDITIONAL",
@@ -94,6 +94,30 @@
           "flowAlias": "nptc browser forms conditional otp",
           "userSetupAllowed": false,
           "autheticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "nptc browser forms conditional password",
+      "description": "issue #41 (NFR-02): username/password, satisfying LoA 1. Conditional, not a bare REQUIRED step - without a satisfiable LoA 1, Keycloak resolves every request to the flow's highest level and demands OTP of every user.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false,
+          "authenticatorConfig": "nptc loa-1 condition"
+        },
+        {
+          "authenticator": "auth-username-password-form",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "autheticatorFlow": false
         }
       ]
     },
@@ -123,6 +147,13 @@
     }
   ],
   "authenticatorConfig": [
+    {
+      "alias": "nptc loa-1 condition",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
     {
       "alias": "nptc loa-2 condition",
       "config": {
@@ -185,5 +216,8 @@
       "defaultClientScopes": [],
       "optionalClientScopes": []
     }
-  ]
+  ],
+  "attributes": {
+    "acr.loa.map": "{\"1\": 1, \"2\": 2}"
+  }
 }

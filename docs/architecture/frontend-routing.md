@@ -102,7 +102,7 @@ upper bound (`Number.parseInt` has no ceiling, so an absurd value like
 `"99999999999999999999"` would otherwise pass through as a real, if meaningless, page
 number). `validateSignInSearch`'s `redirect` is restricted to an internal, same-origin
 path (must start with a single `/`, not `//`, and reject a backslash) — accepting an
-arbitrary value would make it an open redirect once issue #41 uses it to send a
+arbitrary value would make it an open redirect, since issue #41 uses it to send a
 just-signed-in user back where they were.
 
 ## Building a URL
@@ -194,17 +194,40 @@ would leave the title at whatever the previous navigation set, or blank on a col
 ## Authentication is structural
 
 `shell/require-auth.tsx` gates the authenticated and admin routes via `auth/auth-status.ts`
-(`useAuthStatus()`, currently always `"unavailable"`). This is presentation only: **NFR-20**
-requires every request to be authorised server-side against the internal user record, and
-no authorisation decision is ever made in the browser — hiding a UI control is not access
-control. Not rendering a screen here does not protect the data behind it; the API endpoints
-those screens will call are the actual boundary.
+(`useAuthStatus()`). This is presentation only: **NFR-20** requires every request to be
+authorised server-side against the internal user record, and no authorisation decision is
+ever made in the browser — hiding a UI control is not access control. Not rendering a
+screen here does not protect the data behind it; the API endpoints those screens call are
+the actual boundary.
 
-Issue #41 (OIDC PKCE login) replaces `useAuthStatus`'s body with the real session and adds
-a `beforeLoad` redirect to `/sign-in?redirect=...`. The route table under
-`RequireAuth` does not change — `require-auth.test.tsx` asserts today's placeholder
-renders at the exact pathname a signed-in user's screen will render at later (no redirect,
-`history.length === 1`); that assertion is the contract #41 must preserve.
+**Since issue #41 (OIDC PKCE login)** `useAuthStatus()` reads the real session — see
+[authentication.md](authentication.md) and [ADR-0021](../adr/0021-browser-side-pkce-login.md).
+The seam held: `auth-status.ts` kept its name and return type, and the route table under
+`RequireAuth` did not change. What each status now produces:
+
+| `AuthStatus` | `RequireAuth` renders |
+|---|---|
+| `restoring` | a "checking your session" notice at the requested URL — the cold-load probe has not answered yet |
+| `signed-in` | the route's own screen, at the requested URL |
+| `signed-out` | a redirect to `/sign-in?redirect=…`, replacing rather than pushing |
+| `unavailable` | a notice at the requested URL — deliberately *not* a redirect, which would loop against a sign-in page that also cannot work |
+
+`restoring` is what makes a cold deep-link work. Tokens live in memory only, so a fresh
+page has none even when the Keycloak SSO session is perfectly good; without a status
+distinct from `signed-out`, opening `/submissions` in a new tab would redirect to
+`/sign-in` and start a full interactive login for a session the user already had.
+
+The redirect fires once per mount, from an effect rather than a route `beforeLoad`. Note
+that the effect alone would not have fixed the cold-load bounce — it fires immediately
+too; it is the `restoring` status that does, by making "not signed in *yet*" distinct from
+"not signed in". The effect is still the right place because the status can change after
+the route has matched, which a `beforeLoad` guard would not see. Firing it once also
+matters — re-running it as the navigation
+lands would read the new `/sign-in?redirect=…` as the place to return to and nest one
+encoded copy of the URL inside the next.
+
+`/sign-in`, `/sign-out`, `/register` and `/auth/callback` — reserved as placeholders
+by issue #146 — now resolve to real screens at the same paths.
 
 ## Serving requirements
 

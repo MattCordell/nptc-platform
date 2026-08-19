@@ -8,7 +8,8 @@ this package because Alembic's own tooling expects ``env.py`` inside the
 configured ``script_location`` (see ``[tool.alembic]`` in the root
 ``pyproject.toml``).
 
-Session management (``session.py``) is deliberately not here yet - nothing
-needs it until #43/#44, and an untested engine factory would be pure drag
-on the coverage floor.
+``session.py`` holds the engine and per-request session factory. It was
+deliberately absent until issue #41 gave it its first consumer
+(``nptc.api.dependencies.get_session``) - an untested engine factory would
+have been pure drag on the coverage floor before then.
 """
