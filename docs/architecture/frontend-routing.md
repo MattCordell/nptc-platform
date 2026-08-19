@@ -207,14 +207,22 @@ The seam held: `auth-status.ts` kept its name and return type, and the route tab
 
 | `AuthStatus` | `RequireAuth` renders |
 |---|---|
+| `restoring` | a "checking your session" notice at the requested URL — the cold-load probe has not answered yet |
 | `signed-in` | the route's own screen, at the requested URL |
 | `signed-out` | a redirect to `/sign-in?redirect=…`, replacing rather than pushing |
 | `unavailable` | a notice at the requested URL — deliberately *not* a redirect, which would loop against a sign-in page that also cannot work |
 
-The redirect fires once per mount, from an effect rather than a route `beforeLoad`: on a
-cold load the session is unknown until the silent restore resolves, and a `beforeLoad`
-guard would bounce every already-signed-in user to the sign-in page before their session
-had a chance to come back. Firing it once also matters — re-running it as the navigation
+`restoring` is what makes a cold deep-link work. Tokens live in memory only, so a fresh
+page has none even when the Keycloak SSO session is perfectly good; without a status
+distinct from `signed-out`, opening `/submissions` in a new tab would redirect to
+`/sign-in` and start a full interactive login for a session the user already had.
+
+The redirect fires once per mount, from an effect rather than a route `beforeLoad`. Note
+that the effect alone would not have fixed the cold-load bounce — it fires immediately
+too; it is the `restoring` status that does, by making "not signed in *yet*" distinct from
+"not signed in". The effect is still the right place because the status can change after
+the route has matched, which a `beforeLoad` guard would not see. Firing it once also
+matters — re-running it as the navigation
 lands would read the new `/sign-in?redirect=…` as the place to return to and nest one
 encoded copy of the URL inside the next.
 

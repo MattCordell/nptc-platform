@@ -183,3 +183,25 @@ def test_acr_claim_drives_mfa_satisfied(api: ApiTestApp) -> None:
 
     assert without.json()["mfa_satisfied"] is False
     assert with_mfa.json()["mfa_satisfied"] is True
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_mfa_acr_values_setting_is_actually_consulted(app_db: Connection) -> None:
+    """A regression guard for a wiring bug, not just for the behaviour.
+
+    `current_principal` used to call `get_auth_settings()` directly rather
+    than taking it via `Depends`, so `app.dependency_overrides` never
+    applied and the harness's `mfa_acr_values=` argument was inert - the
+    MFA tests passed only because the process default happened to be
+    `{"2"}`. Configuring a level the token does *not* carry is what proves
+    the setting is read: with the bug, `acr: "2"` would still satisfy MFA
+    here.
+    """
+    for api in build_api_test_app(app_db, mfa_acr_values=frozenset({"3"})):
+        response = api.get(
+            "/auth/me", token=api.token(subject="sub-acr-setting", extra_claims={"acr": "2"})
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["mfa_satisfied"] is False

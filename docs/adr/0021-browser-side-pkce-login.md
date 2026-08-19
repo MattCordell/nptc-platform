@@ -62,6 +62,21 @@ long-lived credential genuinely worth stealing through XSS; `prompt=none` agains
 Keycloak's own SSO cookie does the same job — surviving both an expiring access token and
 a page reload — without one.
 
+### The `nonce` is sent but not validated
+
+`buildAuthorizeUrl` generates and sends a `nonce`, and Keycloak binds it into the ID
+token — but nothing checks it on return, and this is deliberate rather than an oversight.
+
+A `nonce` check is only meaningful against an ID token whose signature has been verified,
+and this application never verifies or trusts an ID token. The access token is the
+credential and the API verifies it server-side (NFR-07); the ID token is used for exactly
+one thing, `id_token_hint` on logout, where a forged one buys an attacker nothing but
+their own logout. Decoding an unverified ID token in order to compare a claim would look
+like a security check while providing none.
+
+It is still sent, so that the check is available to whoever first has a reason to trust an
+ID token client-side.
+
 ### Silent renewal via `prompt=none` in a hidden iframe
 
 `src/auth/silent-renew.ts` performs a `prompt=none` authorization request in a hidden

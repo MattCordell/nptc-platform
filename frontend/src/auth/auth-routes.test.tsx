@@ -51,6 +51,19 @@ describe("/sign-in", () => {
     });
   });
 
+  it("waits instead of redirecting while the session is still restoring", async () => {
+    const signIn = vi.fn(() => Promise.resolve());
+
+    await renderRoute("/sign-in", { auth: { status: "restoring", signIn } });
+
+    expect(
+      await screen.findByRole("heading", { name: /checking your session/i }),
+    ).toBeInTheDocument();
+    // Starting an interactive redirect here would discard a session that is
+    // about to restore.
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
   it("does not redirect a visitor who is already signed in", async () => {
     const signIn = vi.fn(() => Promise.resolve());
 
@@ -155,6 +168,14 @@ describe("/register", () => {
     await waitFor(() => {
       expect(register).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("waits while the session is still restoring", async () => {
+    const register = vi.fn(() => Promise.resolve());
+
+    await renderRoute("/register", { auth: { status: "restoring", register } });
+
+    expect(register).not.toHaveBeenCalled();
   });
 
   it("tells an already-signed-in user there is nothing to do", async () => {

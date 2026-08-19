@@ -23,6 +23,36 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "No credential was presented where one is required, or the token could not be verified. Carries `WWW-Authenticate: Bearer`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not permitted. When the permission would have been granted by a role suppressed for want of MFA, this carries an RFC 9470 `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"` challenge instead of a bare denial (NFR-06).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token resolved to more than one candidate account, or to an untrusted auto-link candidate. A human must resolve it (NFR-05).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -30,6 +60,20 @@
   },
   "components": {
     "schemas": {
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "Every refusal this API makes has this shape - one sentence saying\nwhat to do next, and deliberately nothing else. It never names a role,\na permission or an internal identifier (FR-44, NFR-04)."
+      },
       "SessionResponse": {
         "properties": {
           "authenticated": {

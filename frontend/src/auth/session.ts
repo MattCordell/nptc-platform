@@ -15,7 +15,17 @@ import { createContext, useContext } from "react";
  * server-side; what this context decides is only what the shell *shows*.
  */
 
-export type AuthStatus = "signed-in" | "signed-out" | "unavailable";
+/**
+ * `"restoring"` is the initial status on every cold load, and it is
+ * load-bearing rather than cosmetic. Tokens live in memory only, so a fresh
+ * page starts with none even when the Keycloak SSO cookie is perfectly
+ * valid; without a status distinct from `"signed-out"`, `RequireAuth` would
+ * redirect and `/sign-in` would start a full interactive round trip in the
+ * moment before the silent renewal answered - so deep-linking into an
+ * authenticated screen with a live session would leave the SPA entirely.
+ * Both treat `"restoring"` as "wait".
+ */
+export type AuthStatus = "restoring" | "signed-in" | "signed-out" | "unavailable";
 
 export interface AuthContextValue {
   status: AuthStatus;
@@ -28,7 +38,11 @@ export interface AuthContextValue {
   signIn: (options?: { redirect?: string; acrValues?: string }) => Promise<void>;
   signOut: () => Promise<void>;
   register: () => Promise<void>;
-  /** Cold-load probe: attempts a silent renewal, resolving either way. */
+  /**
+   * Cold-load probe: attempts a silent renewal, resolving either way, and
+   * settling `status` out of `"restoring"`. `AuthProvider` runs this once
+   * on mount; it is exposed for tests and for a manual retry.
+   */
   restore: () => Promise<void>;
   /**
    * Completes a callback, returning the internal path to continue to, or

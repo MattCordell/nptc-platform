@@ -67,6 +67,23 @@ describe("RequireAuth - signed in", () => {
   });
 });
 
+describe("RequireAuth - session still restoring", () => {
+  it.each(GATED_PATHS)("waits at %s rather than redirecting", async (path) => {
+    // The cold deep-link case. Tokens live in memory, so a fresh page has
+    // none for one silent round trip even with a live SSO session; treating
+    // that as signed-out would take the user out of the SPA entirely and
+    // then bring them back through a full interactive login they did not
+    // need.
+    const { router } = await renderRoute(path, { auth: { status: "restoring" } });
+
+    expect(
+      await screen.findByRole("heading", { name: /checking your session/i }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(path);
+    expect(router.history.length).toBe(1);
+  });
+});
+
 describe("RequireAuth - sign-in unavailable", () => {
   it("says so at the requested URL instead of redirecting into a loop", async () => {
     // The failure mode this guards against: with the identity provider

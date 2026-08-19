@@ -7,7 +7,8 @@ import type { AuthConfig } from "./config.ts";
 import { resetEndpointCache } from "./discovery.ts";
 import { InteractionRequiredError } from "./flow.ts";
 import { useAuth, type AuthContextValue } from "./session.ts";
-import { clearTransaction } from "./transaction.ts";
+import type { SilentAuthorize } from "./silent-renew.ts";
+import { clearTransactions } from "./transaction.ts";
 
 /**
  * `AuthProvider` - the in-memory session itself (issue #41, ADR-0021).
@@ -66,7 +67,22 @@ const navigate = (url: string) => {
   assigned.push(url);
 };
 
-function renderProvider(silentAuthorize = vi.fn()) {
+/**
+ * The realistic default: no live SSO session, so the cold-load probe
+ * answers `login_required` and the provider settles to signed-out. A bare
+ * `vi.fn()` would resolve `undefined`, which is a *fault*, not "signed
+ * out", and would settle every test into `unavailable`.
+ */
+function noSession() {
+  return vi.fn(() => Promise.reject(new InteractionRequiredError("login_required")));
+}
+
+/** A probe that never answers, so `"restoring"` can be observed. */
+function pendingRenewal() {
+  return vi.fn(() => new Promise<URLSearchParams>(() => {}));
+}
+
+function renderProvider(silentAuthorize: SilentAuthorize = noSession()) {
   return render(
     <AuthProvider config={CONFIG} silentAuthorize={silentAuthorize} navigate={navigate}>
       <Probe />
@@ -84,7 +100,7 @@ function succeedingRenewal() {
 
 beforeEach(() => {
   resetEndpointCache();
-  clearTransaction();
+  clearTransactions();
   window.sessionStorage.clear();
   assigned = [];
   vi.stubGlobal(
@@ -118,13 +134,53 @@ afterEach(() => {
 });
 
 describe("initial state", () => {
-  it("starts signed out, having made no network call of its own", () => {
-    renderProvider();
+  it("starts in 'restoring', not 'signed-out'", () => {
+    renderProvider(pendingRenewal());
 
-    expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    // The provider must not probe on mount - `SessionRestore` decides that,
-    // so a test (or a screen) can mount it without a surprise round trip.
-    expect(fetch).not.toHaveBeenCalled();
+    // The distinction the whole cold-load path rests on: tokens live in
+    // memory, so a fresh page has none even with a live SSO session.
+    // Reporting "signed-out" here would make `RequireAuth` redirect and
+    // `/sign-in` start an interactive round trip before the silent probe
+    // had answered - taking a signed-in user out of the SPA.
+    expect(screen.getByTestId("status")).toHaveTextContent("restoring");
+  });
+
+  it("settles out of 'restoring' once the probe answers", async () => {
+    const renewal = vi.fn(() =>
+      Promise.reject(new InteractionRequiredError("login_required")),
+    );
+    renderProvider(renewal);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
+  });
+
+  it("settles out of 'restoring' even if the probe throws outright", async () => {
+    // A status nothing can move out of would hang the whole app, so the
+    // probe settles in a `finally`.
+    const renewal = vi.fn(() => Promise.reject(new Error("network down")));
+    renderProvider(renewal);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("unavailable");
+    });
+  });
+
+  it("does not probe on the callback route", async () => {
+    // The code exchange about to run there is what establishes the
+    // session; a concurrent renewal would race it for the same callback.
+    window.history.pushState({}, "", "/auth/callback?code=x&state=y");
+    const renewal = pendingRenewal();
+    try {
+      renderProvider(renewal);
+      await waitFor(() => {
+        expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+      });
+      expect(renewal).not.toHaveBeenCalled();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
   });
 
   it("reports unavailable when there is no configuration to use", () => {
@@ -177,6 +233,32 @@ describe("restore", () => {
     });
 
     expect(screen.getByTestId("status")).toHaveTextContent("unavailable");
+  });
+
+  it("stops reporting unavailable once something succeeds", async () => {
+    // It used to be sticky for the life of the tab, so one transient blip
+    // permanently degraded the shell - including for a user who then
+    // signed in perfectly well.
+    let fail = true;
+    const renewal = vi.fn((url: string) => {
+      if (fail) {
+        return Promise.reject(new Error("network down"));
+      }
+      const state = new URL(url).searchParams.get("state") ?? "";
+      return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+    });
+    renderProvider(renewal);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("unavailable");
+    });
+
+    fail = false;
+    await act(async () => {
+      await api().getAccessToken();
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
   });
 });
 

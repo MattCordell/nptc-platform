@@ -46,7 +46,20 @@ export function createState(): string {
   return randomBase64Url(32);
 }
 
-/** Binds the ID token to this authorisation request (OIDC Core 3.1.2.1). */
+/**
+ * The OIDC `nonce` (OIDC Core 3.1.2.1).
+ *
+ * **Sent, but deliberately not validated on return.** A `nonce` check is
+ * only meaningful against an ID token whose signature has been verified,
+ * and this application never verifies or trusts an ID token: the access
+ * token is the credential, and the API verifies that server-side (NFR-07).
+ * The ID token is used for exactly one thing - `id_token_hint` on logout -
+ * where a forged one buys an attacker nothing but their own logout.
+ *
+ * It is still generated and sent, so that Keycloak binds it into the ID
+ * token and the check is available to whoever first has a reason to trust
+ * an ID token client-side. See ADR-0021.
+ */
 export function createNonce(): string {
   return randomBase64Url(32);
 }

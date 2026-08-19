@@ -59,7 +59,16 @@ export const silentAuthorize: SilentAuthorize = (url, redirectUri) =>
         // been redirected to our own callback it is same-origin and
         // readable - which is why the callback path must be ours.
         const location = frame.contentWindow?.location;
-        if (!location || !location.href.startsWith(redirectUri)) {
+        if (!location) {
+          return;
+        }
+        // Compared as origin + pathname, not `startsWith`: a prefix match
+        // would also accept `/auth/callbackanything`. The same-origin
+        // `try`/`catch` carries the real weight here, but an exact compare
+        // is no longer to write.
+        const expected = new URL(redirectUri);
+        const actual = new URL(location.href);
+        if (actual.origin !== expected.origin || actual.pathname !== expected.pathname) {
           return;
         }
         search = location.search;

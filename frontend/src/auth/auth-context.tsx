@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { readAuthConfig, type AuthConfig } from "./config.ts";
+import { CALLBACK_PATH, readAuthConfig, type AuthConfig } from "./config.ts";
 import {
   buildAuthorizeUrl,
   buildLogoutUrl,
@@ -14,7 +14,7 @@ import {
   silentAuthorize as defaultSilentAuthorize,
   type SilentAuthorize,
 } from "./silent-renew.ts";
-import { clearTransaction } from "./transaction.ts";
+import { clearTransactions, takeTransaction } from "./transaction.ts";
 
 /**
  * The provider that owns the in-memory session (issue #41, ADR-0021).
@@ -58,6 +58,9 @@ export function AuthProvider({
 }) {
   const [tokens, setTokens] = useState<TokenSet | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  //: False until the cold-load probe below has settled - see AuthStatus's
+  //: `"restoring"`.
+  const [restored, setRestored] = useState(false);
   // A ref as well as state: `getAccessToken` must see the freshest token
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
@@ -80,6 +83,13 @@ export function AuthProvider({
   const store = useCallback((next: TokenSet | null) => {
     tokensRef.current = next;
     setTokens(next);
+    if (next) {
+      // Cleared on success, not only set on failure: `unavailable` was
+      // otherwise permanent for the life of the tab, so one transient
+      // network blip degraded the shell for a user who then signed in
+      // perfectly well.
+      setUnavailable(false);
+    }
   }, []);
 
   const renew = useCallback(async (): Promise<TokenSet | null> => {
@@ -89,21 +99,28 @@ export function AuthProvider({
     // De-duplicated: several components asking for a token at once must
     // produce one renewal, not one each.
     renewal.current ??= (async () => {
+      // Remembered so a failure cleans up *this* renewal's transaction and
+      // nothing else. Clearing every transaction here would discard a
+      // concurrent interactive sign-in's, failing a sign-in that worked -
+      // which is the whole reason transactions are keyed by state.
+      let issuedState: string | null = null;
       try {
         const url = await buildAuthorizeUrl(config, { prompt: "none" });
+        issuedState = new URL(url).searchParams.get("state");
         const search = await silentAuthorize(url, config.redirectUri);
         const { tokens: next } = await completeSignIn(config, search);
         store(next);
         return next;
       } catch (error) {
+        if (issuedState) {
+          takeTransaction(issuedState);
+        }
         if (error instanceof InteractionRequiredError) {
           // Not a failure: the SSO session has ended, so the user is simply
           // signed out. This is the path a post-logout renewal takes.
-          clearTransaction();
           store(null);
           return null;
         }
-        clearTransaction();
         store(null);
         setUnavailable(true);
         return null;
@@ -146,7 +163,11 @@ export function AuthProvider({
     // be gone. Ending the remote session without ending the local one is the
     // failure mode that leaves a "signed out" user still signed in.
     store(null);
-    clearTransaction();
+    clearTransactions();
+    // An explicit sign-out is a definitive answer about the session, so it
+    // settles `"restoring"` too - otherwise a user who signs out before the
+    // cold-load probe returns is left on a "checking your session" screen.
+    setRestored(true);
     if (!config || !current) {
       return;
     }
@@ -154,11 +175,40 @@ export function AuthProvider({
   }, [config, store, navigate]);
 
   const restore = useCallback(async () => {
-    if (!config || tokensRef.current) {
+    try {
+      // Yield first, so every `setRestored` below lands after the calling
+      // effect's synchronous phase rather than during it - a synchronous
+      // setState inside an effect triggers a cascading render.
+      await Promise.resolve();
+      if (!config || tokensRef.current) {
+        return;
+      }
+      // Not on the callback route: the code exchange about to run there is
+      // what establishes the session, and a concurrent renewal would be a
+      // second authorize round trip racing it for no benefit.
+      if (window.location.pathname === CALLBACK_PATH) {
+        return;
+      }
+      await renew();
+    } finally {
+      // In a `finally`, so a thrown probe cannot strand the whole app in
+      // `"restoring"` - a status nothing would ever move it out of.
+      setRestored(true);
+    }
+  }, [config, renew]);
+
+  // The cold-load probe, run once. Inside the provider rather than a
+  // sibling component so that `"restoring"` is always resolved by whoever
+  // owns it: a provider that depended on someone else remembering to mount
+  // a probe would hang in `"restoring"` when they forgot.
+  const probed = useRef(false);
+  useEffect(() => {
+    if (probed.current) {
       return;
     }
-    await renew();
-  }, [config, renew]);
+    probed.current = true;
+    void restore();
+  }, [restore]);
 
   const completeCallback = useCallback(
     async (search: URLSearchParams): Promise<string | null> => {
@@ -174,7 +224,10 @@ export function AuthProvider({
         // Keycloak's grant error, and `route-error-page.tsx`'s rule is that
         // a user-facing error says what to do next, never what the server
         // said. The caller renders that guidance.
-        clearTransaction();
+        //
+        // No cleanup here: `completeSignIn` consumes the transaction on
+        // every path it can fail on, and clearing the rest would take a
+        // concurrent renewal's with it.
         return null;
       }
     },
@@ -183,8 +236,18 @@ export function AuthProvider({
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      // Order matters: an unusable configuration or an unreachable provider
+      // outranks everything (the user cannot fix it by signing in), a token
+      // means signed in, and "signed-out" is only asserted once the
+      // cold-load probe has actually answered.
       status:
-        !config || unavailable ? "unavailable" : tokens ? "signed-in" : "signed-out",
+        !config || unavailable
+          ? "unavailable"
+          : tokens
+            ? "signed-in"
+            : restored
+              ? "signed-out"
+              : "restoring",
       getAccessToken,
       signIn,
       signOut,
@@ -196,6 +259,7 @@ export function AuthProvider({
       config,
       unavailable,
       tokens,
+      restored,
       getAccessToken,
       signIn,
       signOut,

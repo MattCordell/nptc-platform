@@ -47,6 +47,18 @@ export function RequireAuth() {
     return <Outlet />;
   }
 
+  if (status === "restoring") {
+    // Deliberately not a redirect. On a cold deep-link the session is
+    // unknown for one silent round trip, and treating that as signed-out
+    // would send a user with a perfectly good SSO session out of the SPA.
+    return (
+      <section aria-labelledby="sign-in-required-heading">
+        <h1 id="sign-in-required-heading">Checking your session</h1>
+        <p>One moment.</p>
+      </section>
+    );
+  }
+
   if (status === "signed-out") {
     return (
       <section aria-labelledby="sign-in-required-heading">

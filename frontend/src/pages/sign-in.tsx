@@ -49,6 +49,17 @@ export function SignInPage() {
     void signIn({ redirect });
   }, [status, signIn, redirect]);
 
+  if (status === "restoring") {
+    // The cold-load probe has not answered yet. Starting an interactive
+    // redirect now would throw away a session that is about to restore.
+    return (
+      <section aria-labelledby="sign-in-heading">
+        <h1 id="sign-in-heading">Checking your session</h1>
+        <p>One moment.</p>
+      </section>
+    );
+  }
+
   if (status === "signed-in") {
     return (
       <section aria-labelledby="sign-in-heading">

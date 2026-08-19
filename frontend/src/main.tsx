@@ -3,7 +3,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { AuthProvider } from "./auth/auth-context.tsx";
-import { SessionRestore } from "./auth/session-restore.tsx";
 import { createAppRouter } from "./router/router.tsx";
 import "./shell/shell.css";
 
@@ -22,7 +21,6 @@ createRoot(container).render(
       deciding whether to redirect.
     */}
     <AuthProvider>
-      <SessionRestore />
       <RouterProvider router={router} />
     </AuthProvider>
   </StrictMode>,

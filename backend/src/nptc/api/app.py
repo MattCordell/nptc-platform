@@ -38,7 +38,8 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # attaching.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[api_settings.frontend_base_url.rstrip("/")],
+        # Already normalised to a bare origin by ApiSettings' validator.
+        allow_origins=[api_settings.frontend_base_url],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],

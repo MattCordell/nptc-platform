@@ -1,75 +1,124 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { clearTransaction, saveTransaction, takeTransaction } from "./transaction.ts";
+import { clearTransactions, saveTransaction, takeTransaction } from "./transaction.ts";
 
 /**
- * The in-flight login transaction (issue #41).
+ * The in-flight login transactions (issue #41).
  *
- * Single use is the security property under test: it is what makes a
- * replayed callback URL fail, without any network call and without relying
- * on Keycloak to notice.
+ * Two properties under test, both security-relevant:
+ *
+ * - **Single use** — what makes a replayed callback URL fail, without a
+ *   network call and without relying on Keycloak to notice.
+ * - **Keyed by `state`** — what lets a silent renewal and an interactive
+ *   sign-in be in flight at once without clobbering each other. With one
+ *   shared slot the loser of that race fails a sign-in that actually
+ *   worked.
  */
 
-const TRANSACTION = {
-  state: "state-value",
-  codeVerifier: "verifier-value",
-  nonce: "nonce-value",
-  redirect: "/submissions",
-};
+function transaction(state: string, redirect?: string) {
+  return { state, codeVerifier: `verifier-${state}`, nonce: `nonce-${state}`, redirect };
+}
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  vi.useRealTimers();
 });
 
 describe("takeTransaction", () => {
-  it("returns what was saved", () => {
-    saveTransaction(TRANSACTION);
+  it("returns what was saved under that state", () => {
+    saveTransaction(transaction("abc", "/submissions"));
 
-    expect(takeTransaction()).toEqual(TRANSACTION);
+    expect(takeTransaction("abc")).toEqual(transaction("abc", "/submissions"));
   });
 
   it("consumes it, so a second read finds nothing", () => {
-    saveTransaction(TRANSACTION);
+    saveTransaction(transaction("abc"));
 
-    expect(takeTransaction()).toEqual(TRANSACTION);
-    expect(takeTransaction()).toBeNull();
+    expect(takeTransaction("abc")).not.toBeNull();
+    expect(takeTransaction("abc")).toBeNull();
   });
 
-  it("returns null when no sign-in was started", () => {
-    expect(takeTransaction()).toBeNull();
+  it("returns null for a state that was never issued", () => {
+    saveTransaction(transaction("abc"));
+
+    // The lookup is the state check: a forged callback simply finds nothing.
+    expect(takeTransaction("not-issued")).toBeNull();
+    // ...and must not have consumed the genuine one on its way past.
+    expect(takeTransaction("abc")).not.toBeNull();
+  });
+
+  it("returns null when no sign-in was started at all", () => {
+    expect(takeTransaction("abc")).toBeNull();
   });
 
   it("discards a corrupt entry rather than leaving it retryable", () => {
-    window.sessionStorage.setItem("nptc.auth.transaction", "{not json");
+    window.sessionStorage.setItem("nptc.auth.transaction.abc", "{not json");
 
-    expect(takeTransaction()).toBeNull();
-    // The delete must happen even on the failure path, or a corrupt entry
-    // would be re-read on every subsequent callback.
-    expect(takeTransaction()).toBeNull();
+    expect(takeTransaction("abc")).toBeNull();
+    expect(takeTransaction("abc")).toBeNull();
   });
 
-  it("rejects a well-formed entry that is missing what the flow needs", () => {
+  it("rejects a well-formed entry missing what the flow needs", () => {
     window.sessionStorage.setItem(
-      "nptc.auth.transaction",
-      JSON.stringify({ redirect: "/somewhere" }),
+      "nptc.auth.transaction.abc",
+      JSON.stringify({ redirect: "/somewhere", createdAt: Date.now() }),
     );
 
-    expect(takeTransaction()).toBeNull();
+    expect(takeTransaction("abc")).toBeNull();
+  });
+});
+
+describe("concurrent flows", () => {
+  it("keeps a silent renewal and an interactive sign-in apart", () => {
+    // The race the single-slot version lost: whichever saved second used
+    // to overwrite the other, and the surviving callback failed its state
+    // check on a sign-in that had worked.
+    saveTransaction(transaction("interactive", "/submissions"));
+    saveTransaction(transaction("renewal"));
+
+    expect(takeTransaction("interactive")?.redirect).toBe("/submissions");
+    expect(takeTransaction("renewal")?.codeVerifier).toBe("verifier-renewal");
+  });
+});
+
+describe("expiry and cleanup", () => {
+  it("abandons a transaction left far too long", () => {
+    vi.useFakeTimers();
+    saveTransaction(transaction("stale"));
+
+    vi.advanceTimersByTime(16 * 60 * 1000);
+
+    expect(takeTransaction("stale")).toBeNull();
+  });
+
+  it("sweeps abandoned transactions when a new flow starts", () => {
+    vi.useFakeTimers();
+    saveTransaction(transaction("stale"));
+
+    vi.advanceTimersByTime(16 * 60 * 1000);
+    saveTransaction(transaction("fresh"));
+
+    // Swept on save, so an abandoned tab does not accumulate entries.
+    expect(window.sessionStorage.getItem("nptc.auth.transaction.stale")).toBeNull();
+    expect(takeTransaction("fresh")).not.toBeNull();
   });
 });
 
 describe("storage discipline", () => {
   it("keeps nothing in localStorage", () => {
-    saveTransaction(TRANSACTION);
+    saveTransaction(transaction("abc"));
 
     // ADR-0021: nothing about a session may outlive the browser session.
     expect(window.localStorage.length).toBe(0);
   });
 
-  it("clearTransaction abandons an in-flight sign-in", () => {
-    saveTransaction(TRANSACTION);
-    clearTransaction();
+  it("clearTransactions abandons every in-flight sign-in", () => {
+    saveTransaction(transaction("one"));
+    saveTransaction(transaction("two"));
 
-    expect(takeTransaction()).toBeNull();
+    clearTransactions();
+
+    expect(takeTransaction("one")).toBeNull();
+    expect(takeTransaction("two")).toBeNull();
   });
 });

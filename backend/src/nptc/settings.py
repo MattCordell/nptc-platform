@@ -20,6 +20,7 @@ notices.
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -161,8 +162,26 @@ class ApiSettings(BaseSettings):
 
     @field_validator("frontend_base_url")
     @classmethod
-    def _not_blank(cls, value: str) -> str:
-        return _require_non_blank(value, "frontend_base_url")
+    def _is_a_bare_origin(cls, value: str) -> str:
+        """Scheme, host and optional port - nothing else.
+
+        A browser sends `Origin: https://app.example` with no path, so a
+        configured value carrying one (`https://app.example/nptc`) can
+        never match, and CORS would fail every authenticated request with
+        nothing in the logs pointing here. Rejecting it at
+        settings-construction time turns a silent runtime failure into a
+        startup error naming the field.
+        """
+        value = _require_non_blank(value, "frontend_base_url").rstrip("/")
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError(f"frontend_base_url must be an http(s) origin, got {value!r}")
+        if parts.path or parts.query or parts.fragment:
+            raise ValueError(
+                f"frontend_base_url must be a bare origin (scheme, host, optional "
+                f"port) with no path, query or fragment, got {value!r}"
+            )
+        return value
 
 
 class MigrationSettings(BaseSettings):

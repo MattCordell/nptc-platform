@@ -31,6 +31,17 @@ export function RegisterPage() {
     void register();
   }, [status, register]);
 
+  if (status === "restoring") {
+    // The cold-load probe has not answered yet. Starting an interactive
+    // redirect now would throw away a session that is about to restore.
+    return (
+      <section aria-labelledby="register-heading">
+        <h1 id="register-heading">Checking your session</h1>
+        <p>One moment.</p>
+      </section>
+    );
+  }
+
   if (status === "signed-in") {
     return (
       <section aria-labelledby="register-heading">

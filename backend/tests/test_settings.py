@@ -6,7 +6,12 @@ No container, no network - pure environment-variable plumbing.
 import pytest
 from pydantic import ValidationError
 
-from nptc.settings import AuthSettings, DatabaseSettings, MigrationSettings
+from nptc.settings import (
+    ApiSettings,
+    AuthSettings,
+    DatabaseSettings,
+    MigrationSettings,
+)
 
 _APP_DSN = "postgresql+psycopg://nptc_app_login:pw@localhost/nptc"
 _MIGRATION_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
@@ -102,3 +107,32 @@ def test_auth_settings_reads_a_comma_separated_list_of_trusted_issuers_from_env(
     monkeypatch.setenv("NPTC_TRUSTED_ISSUERS", "https://a.example, https://b.example")
 
     assert AuthSettings().trusted_issuers == frozenset({"https://a.example", "https://b.example"})
+
+
+@pytest.mark.req("NFR-01")
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://localhost:5173/nptc",
+        "https://app.example/",  # trailing slash is fine, a path is not
+        "app.example",
+        "ftp://app.example",
+        "https://app.example?x=1",
+    ],
+)
+def test_api_settings_rejects_anything_that_is_not_a_bare_origin(value: str) -> None:
+    """A browser sends `Origin:` with no path, so a configured value
+    carrying one can never match and CORS would fail every authenticated
+    request with nothing pointing at the cause. `https://app.example/` is
+    in the list to prove the trailing slash is *normalised*, not rejected -
+    it is the only one expected to pass."""
+    if value == "https://app.example/":
+        assert ApiSettings(frontend_base_url=value).frontend_base_url == ("https://app.example")
+        return
+    with pytest.raises(ValidationError):
+        ApiSettings(frontend_base_url=value)
+
+
+@pytest.mark.req("NFR-01")
+def test_api_settings_defaults_to_the_vite_dev_server() -> None:
+    assert ApiSettings().frontend_base_url == "http://localhost:5173"

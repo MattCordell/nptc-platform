@@ -15,6 +15,8 @@ permission derivation end to end.
 
 from __future__ import annotations
 
+from typing import Any, Final
+
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +24,45 @@ from nptc.api.dependencies import CurrentPrincipal
 from nptc.auth.identity import UserRef
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class ErrorResponse(BaseModel):
+    """Every refusal this API makes has this shape - one sentence saying
+    what to do next, and deliberately nothing else. It never names a role,
+    a permission or an internal identifier (FR-44, NFR-04)."""
+
+    detail: str
+
+
+#: The refusals `nptc.api.errors` can produce on any authenticated route,
+#: declared so `docs/api/openapi.json` carries the error contract and not
+#: just the happy path - #147's generated client is built from that
+#: document, and a client that models only 200 models half the API.
+AUTH_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    401: {
+        "model": ErrorResponse,
+        "description": (
+            "No credential was presented where one is required, or the token "
+            "could not be verified. Carries `WWW-Authenticate: Bearer`."
+        ),
+    },
+    403: {
+        "model": ErrorResponse,
+        "description": (
+            "Authenticated, but not permitted. When the permission would have "
+            "been granted by a role suppressed for want of MFA, this carries an "
+            'RFC 9470 `WWW-Authenticate: Bearer error="insufficient_user_'
+            'authentication"` challenge instead of a bare denial (NFR-06).'
+        ),
+    },
+    409: {
+        "model": ErrorResponse,
+        "description": (
+            "The token resolved to more than one candidate account, or to an "
+            "untrusted auto-link candidate. A human must resolve it (NFR-05)."
+        ),
+    },
+}
 
 
 class SessionResponse(BaseModel):
@@ -50,7 +91,11 @@ class SessionResponse(BaseModel):
     mfa_satisfied: bool
 
 
-@router.get("/me", summary="The current session's user, roles and permissions")
+@router.get(
+    "/me",
+    summary="The current session's user, roles and permissions",
+    responses=AUTH_ERROR_RESPONSES,
+)
 def read_current_session(principal: CurrentPrincipal) -> SessionResponse:
     """Never 401s for an anonymous caller.
 

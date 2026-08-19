@@ -9,7 +9,7 @@ import {
   completeSignIn,
   InteractionRequiredError,
 } from "./flow.ts";
-import { clearTransaction } from "./transaction.ts";
+import { clearTransactions } from "./transaction.ts";
 
 /**
  * The browser half of the PKCE flow (issue #41, NFR-01).
@@ -50,7 +50,7 @@ let tokenRequests: { url: string; body: URLSearchParams }[] = [];
 
 beforeEach(() => {
   resetEndpointCache();
-  clearTransaction();
+  clearTransactions();
   tokenRequests = [];
   vi.stubGlobal(
     "fetch",

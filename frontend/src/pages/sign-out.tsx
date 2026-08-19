@@ -31,7 +31,10 @@ export function SignOutPage() {
     void signOut();
   }, [status, signOut]);
 
-  if (status === "signed-in") {
+  if (status === "signed-in" || status === "restoring") {
+    // "restoring" renders the same waiting screen: telling a user they are
+    // signed out before we know would be wrong, and briefly alarming if
+    // they then turn out to still have a session.
     return (
       <section aria-labelledby="sign-out-heading">
         <h1 id="sign-out-heading">Signing you out</h1>

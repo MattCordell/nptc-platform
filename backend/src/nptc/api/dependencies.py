@@ -134,6 +134,24 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host
 
 
+def _correlation_id(request: Request) -> uuid.UUID:
+    """One id per request, minted on first use and reused thereafter.
+
+    A fresh `uuid4()` per call would give the identity-resolution events
+    (`user_identity.created` on a first login) a different correlation id
+    from every later write in the *same* request - which defeats the one
+    thing a correlation id is for. Stashed on `request.state` rather than
+    threaded through, because the two call sites are separate FastAPI
+    dependencies with no shared scope of their own.
+    """
+    existing: uuid.UUID | None = getattr(request.state, "correlation_id", None)
+    if existing is not None:
+        return existing
+    correlation_id = uuid.uuid4()
+    request.state.correlation_id = correlation_id
+    return correlation_id
+
+
 def request_audit_context(request: Request) -> AuditContext:
     """The per-request `AuditContext` for writes made *after* the actor is
     known. Note `actor_user_id=None`: see `bootstrap_audit_context`.
@@ -146,7 +164,7 @@ def request_audit_context(request: Request) -> AuditContext:
         actor_user_id=None,
         actor_ip=_client_ip(request),
         user_agent=request.headers.get("User-Agent"),
-        correlation_id=uuid.uuid4(),
+        correlation_id=_correlation_id(request),
     )
 
 
@@ -171,6 +189,7 @@ def current_principal(
     request: Request,
     session: Annotated[Session, Depends(get_session)],
     verifier: Annotated[TokenVerifier, Depends(get_token_verifier)],
+    settings: Annotated[AuthSettings, Depends(get_auth_settings)],
 ) -> Principal:
     """The resolved actor for this request - `ANONYMOUS` when no
     credential was presented.
@@ -186,7 +205,6 @@ def current_principal(
     if token is None:
         return ANONYMOUS
 
-    settings = get_auth_settings()
     audit = bootstrap_audit_context(request)
     identity = authenticate_identity(
         session,
@@ -201,9 +219,6 @@ def current_principal(
         claims=identity.claims,
         mfa_acr_values=settings.mfa_acr_values,
     )
-    # Stashed so `audit_context` below can attribute this request's later
-    # writes to the actor we just resolved, without re-running the chain.
-    request.state.principal = principal
     return principal
 
 

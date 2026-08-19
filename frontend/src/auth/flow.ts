@@ -75,6 +75,8 @@ export async function buildAuthorizeUrl(
   url.searchParams.set("scope", "openid profile email");
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("state", state);
+  // Sent, but not validated on return - see `createNonce`'s docstring for
+  // why that is a decision rather than an omission.
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("code_challenge", await createCodeChallenge(codeVerifier));
   url.searchParams.set("code_challenge_method", "S256");
@@ -106,28 +108,34 @@ export async function completeSignIn(
   config: AuthConfig,
   search: URLSearchParams,
 ): Promise<CompletedSignIn> {
-  const transaction = takeTransaction();
+  const state = search.get("state");
 
   const error = search.get("error");
   if (error) {
+    // Consume the transaction on the way out, so a refused attempt cannot
+    // be retried from the same URL.
+    if (state) {
+      takeTransaction(state);
+    }
     if (error === "login_required" || error === "interaction_required") {
       throw new InteractionRequiredError(error);
     }
     throw new AuthFlowError(`the identity provider refused the request (${error})`);
   }
 
-  if (!transaction) {
-    throw new AuthFlowError(
-      "no sign-in was in progress in this tab - the link may have been reused or reloaded",
-    );
-  }
-
-  const state = search.get("state");
   if (!state) {
     throw new AuthFlowError("the callback carried no state parameter");
   }
-  if (state !== transaction.state) {
-    throw new AuthFlowError("the callback's state did not match the request");
+
+  // The lookup *is* the state check: only a `state` this tab issued has a
+  // transaction stored under it, and taking it consumes it. A forged,
+  // replayed or expired callback all land here identically.
+  const transaction = takeTransaction(state);
+  if (!transaction) {
+    throw new AuthFlowError(
+      "no sign-in matching this callback was in progress in this tab - the link " +
+        "may have been reused, reloaded, or left too long",
+    );
   }
 
   const code = search.get("code");
