@@ -7,8 +7,3 @@ packages:
 # widely-audited dependency of vite/vitest and is safe to allow.
 allowBuilds:
   esbuild: true
-
-minimumReleaseAgeExclude:
-  - '@tanstack/react-router@1.170.30'
-  - '@tanstack/router-core@1.171.25'
-  - '@testing-library/user-event@14.6.5'

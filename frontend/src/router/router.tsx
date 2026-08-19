@@ -38,14 +38,36 @@ function parseSearch(searchStr: string): Record<string, unknown> {
   return result;
 }
 
+/**
+ * Only scalars and arrays of scalars are supported - deliberately, not as an
+ * oversight. `parseSearch` above never JSON-parses a value back out (that is
+ * the whole point: a value is never coerced), so a plain object would
+ * `JSON.stringify` cleanly going out but come back on the next parse as an
+ * unparsed JSON string, not the original object - `stringifySearch` and
+ * `parseSearch` would silently stop being inverses of each other. Throwing
+ * here (a route's `validateSearch` output should never contain one) is
+ * cheaper than discovering that gap the day someone adds the first
+ * structured filter param and wonders why it doesn't round-trip.
+ */
 function stringifySearch(search: Record<string, unknown>): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(search)) {
     if (value === undefined) continue;
     if (Array.isArray(value)) {
-      for (const item of value) params.append(key, String(item));
-    } else if (typeof value === "object" && value !== null) {
-      params.set(key, JSON.stringify(value));
+      for (const item of value) {
+        if (item !== null && typeof item === "object") {
+          throw new Error(
+            `stringifySearch: array value for "${key}" contains a non-scalar item - ` +
+              "only scalars and arrays of scalars are supported (router.tsx).",
+          );
+        }
+        params.append(key, String(item));
+      }
+    } else if (value !== null && typeof value === "object") {
+      throw new Error(
+        `stringifySearch: value for "${key}" is a non-scalar object - only scalars ` +
+          "and arrays of scalars are supported (router.tsx).",
+      );
     } else {
       params.set(key, String(value));
     }

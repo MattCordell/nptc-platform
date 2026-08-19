@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
+import { useDocumentTitle } from "./use-document-title.ts";
+
 /**
  * Rendered for any URL that matches no route (`notFoundMode: "fuzzy"` in
  * `router.tsx` means the nearest matching ancestor renders this, so the
@@ -7,6 +9,8 @@ import { Link } from "@tanstack/react-router";
  * somewhere to go, rather than a blank screen).
  */
 export function NotFoundPage() {
+  useDocumentTitle("Page not found — NPTC Catalogue");
+
   return (
     <section aria-labelledby="not-found-heading">
       <h1 id="not-found-heading">We couldn&apos;t find that page</h1>

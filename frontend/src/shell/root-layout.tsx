@@ -12,19 +12,24 @@ import { SkipLink } from "./skip-link.tsx";
  * multi-page site. Moving focus to `<main>` on every route change is the
  * standard SPA fix for that (NFR-31, PRD 17.2 item 4).
  *
- * The ref guard (rather than a render counter) makes this idempotent under
- * `StrictMode`'s double-invocation of effects: skip only the very first
- * commit, not "the first commit per render".
+ * Guards on the *pathname itself* rather than a "have we run yet" boolean:
+ * a boolean flips permanently on the first commit and never resets, so under
+ * `StrictMode` (enabled in `main.tsx`) React's mount -> effect -> cleanup ->
+ * effect-again sequence set it on the first pass and then unconditionally
+ * moved focus on the second - stealing focus on the very first render, not
+ * just after a real navigation. Comparing against the previous pathname is
+ * correct in both worlds: unchanged on the double-invoked initial effect (no
+ * focus move), changed only when the route actually did.
  */
 function useFocusMainOnNavigation(mainRef: RefObject<HTMLElement | null>) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const hasNavigated = useRef(false);
+  const previousPathname = useRef(pathname);
 
   useEffect(() => {
-    if (!hasNavigated.current) {
-      hasNavigated.current = true;
+    if (previousPathname.current === pathname) {
       return;
     }
+    previousPathname.current = pathname;
     mainRef.current?.focus();
   }, [pathname, mainRef]);
 }

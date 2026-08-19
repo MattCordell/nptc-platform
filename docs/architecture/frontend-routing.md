@@ -88,6 +88,23 @@ during development, defaulting a valid `page=3` back to `page=1` on the second p
 Path params never need this treatment — `params.parse` is opt-in and unused here, so
 `/catalogue/code/sct/000123` is a plain string by default.
 
+`stringifySearch` supports scalars and arrays of scalars only, and throws for anything
+else. This isn't an oversight: `parseSearch` never JSON-parses a value back out (never
+coercing is the whole point), so a plain object would `JSON.stringify` cleanly going out
+but return as an unparsed JSON string, not the original object, on the next parse —
+`stringifySearch` and `parseSearch` would silently stop being inverses of each other.
+Throwing surfaces that the day a structured filter param is first added, rather than
+leaving it to be discovered as a quietly wrong round trip.
+
+`asPage` additionally requires the entire search value to be digits (`Number.parseInt`
+alone accepts trailing garbage, e.g. `"3drop"` → `3`) and caps it at a generous but finite
+upper bound (`Number.parseInt` has no ceiling, so an absurd value like
+`"99999999999999999999"` would otherwise pass through as a real, if meaningless, page
+number). `validateSignInSearch`'s `redirect` is restricted to an internal, same-origin
+path (must start with a single `/`, not `//`, and reject a backslash) — accepting an
+arbitrary value would make it an open redirect once issue #41 uses it to send a
+just-signed-in user back where they were.
+
 ## Building a URL
 
 Every internal link goes through the route table's types — `<Link to>`, `useNavigate`, or
@@ -109,14 +126,27 @@ const href = router.buildLocation({ to: "/catalogue/$businessKey", params: { bus
 The `declare module "@tanstack/react-router" { interface Register }` block in
 `router.tsx` is what makes `to`/`params`/`search` a compile error when wrong — a
 `pnpm typecheck` failure, not just a review comment. `eslint.config.js`'s
-`no-restricted-syntax` rule backstops it by rejecting a template literal or `+`
-concatenation that starts with an internal path segment (`route-tree.ts` itself, and test
-files that deliberately deep-link a raw URL to exercise the router, are exempt).
+`no-restricted-syntax` rule backstops it — rejecting a template literal or `+`
+concatenation that builds an internal path, a raw string literal in an `href` attribute,
+and a direct `location.assign`/`.replace`/`.href` — but it is a syntax-shape backstop, not
+an exhaustive guarantee: it cannot see through an indirection (a path built in a variable
+or helper elsewhere). The type system and code review are what a determined bypass still
+has to get past. (`route-tree.ts` itself, and test files that deliberately deep-link a raw
+URL to exercise the router, are exempt from the rule.)
 
 Search-param types intentionally use TanStack's `SearchSchemaInput` brand (via a
 type-only cast in `route-tree.ts`) so `<Link to="/catalogue">` needs no `search` prop at
 all, while the validator functions in `search-params.ts` keep a plain
 `Record<string, unknown>` parameter and stay trivially unit-testable.
+
+`/catalogue`'s route also attaches a `stripSearchParams` search middleware for its
+defaults (`q: ""`, `page: 1`, `sort: "relevance"`). `validateCatalogueSearch` always
+returns all three fields — so consuming code never has to fall back on an absent one —
+but without stripping, every link into `/catalogue` would commit as
+`/catalogue?q=&page=1&sort=relevance` even when nothing was asked for, which is noisier
+than the "pasted link reproduces the identical state" contract implies. The middleware
+only affects what gets written to the URL bar; it does not change `validateCatalogueSearch`
+itself.
 
 No schema library (zod/valibot) is used for search validation — see ADR-0020.
 
@@ -155,6 +185,11 @@ to wire one (PRD §17.2 item 5).
   a raw status code — `router.test.tsx`'s test asserts the exception text is *absent* from
   the DOM, not just that the friendly heading is present (a heading-only assertion would
   still pass with a stack trace printed underneath).
+
+Both set `document.title` themselves via `shell/use-document-title.ts`, rather than relying
+on a route's `head` option: they render in place of whatever route was requested, not as a
+route of their own, so without this a deep link straight to an unknown or erroring URL
+would leave the title at whatever the previous navigation set, or blank on a cold load.
 
 ## Authentication is structural
 
@@ -198,9 +233,13 @@ Two things a deployment must get right that this issue cannot enforce itself:
 
 `src/test/render-route.tsx`'s `renderRoute(url)` mounts the **production**
 `createAppRouter()` over a fresh `createMemoryHistory` — a cold browser session, exactly
-like deep-linking into a new tab, with nothing cached from an earlier route — and awaits
-`router.load()` before returning. Tests query by role (`getByRole`), never by test id, per
-the repository's existing convention. `route-tree.test.tsx`'s `it.each` sweep renders every
-declared route via its typed `to`/`params`/`search`, so the fixture cannot drift from the
-route table without failing to compile, and doubles as the coverage driver for the
-placeholder factory and the shell.
+like deep-linking into a new tab, with nothing cached from an earlier route — under
+`<StrictMode>`, matching `main.tsx` exactly, and awaits `router.load()` before returning.
+Rendering under `StrictMode` is not incidental: it is what caught `root-layout.tsx`'s
+original focus-on-navigation bug (a "have we run yet" boolean flipped permanently on
+React's double-invoked initial effect, so it stole focus on the very first render); a
+helper that skipped it would have let that regress silently again. Tests query by role
+(`getByRole`), never by test id, per the repository's existing convention.
+`route-tree.test.tsx`'s `it.each` sweep renders every declared route via its typed
+`to`/`params`/`search`, so the fixture cannot drift from the route table without failing to
+compile, and doubles as the coverage driver for the placeholder factory and the shell.

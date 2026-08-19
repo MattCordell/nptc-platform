@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute } from "@tanstack/react-router";
+import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react-router";
 
 import { HomePage } from "../pages/home.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
@@ -66,6 +66,16 @@ const catalogueSearchRoute = createRoute({
   validateSearch: validateCatalogueSearch as (
     search: CatalogueSearchInput,
   ) => CatalogueSearch,
+  // validateCatalogueSearch always returns all three fields (consuming code
+  // shouldn't have to fall back on an absent one), which would otherwise
+  // make every link into `/catalogue` commit as
+  // `/catalogue?q=&page=1&sort=relevance` even when nothing was asked for -
+  // noisier than the "pasted link" contract implies. stripSearchParams omits
+  // a value from the *committed URL* when it equals its default, without
+  // touching validateCatalogueSearch's return type.
+  search: {
+    middlewares: [stripSearchParams({ q: "", page: 1, sort: "relevance" })],
+  },
   component: createPlaceholderPage({ title: "Search the catalogue", issue: 138 }),
   head: titled("Search"),
 });
@@ -174,9 +184,7 @@ const termsRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "sign-in",
-  validateSearch: validateSignInSearch as unknown as (
-    search: SignInSearchInput,
-  ) => SignInSearch,
+  validateSearch: validateSignInSearch as (search: SignInSearchInput) => SignInSearch,
   component: createPlaceholderPage({ title: "Sign in", issue: 41 }),
   head: titled("Sign in"),
 });

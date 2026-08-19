@@ -29,21 +29,43 @@ function asString(value: unknown, fallback = ""): string {
 }
 
 /**
+ * Search results are not paginated anywhere near this deep; an upper bound
+ * this generous exists only to reject the pathological input
+ * (`?page=99999999999999999999`), not to model a real result set.
+ */
+const MAX_PAGE = 100_000;
+
+/**
  * TanStack Router re-runs `validateSearch` more than once per navigation
  * (e.g. once inside its lightweight route matching, again while building the
  * committed location), and the second call receives this function's own
  * *already-validated* output, not the raw URL string - `page` arrives back
  * as the NUMBER this function itself returned. `validateSearch` must be
- * idempotent (`asPage(asPage(x)) === asPage(x)`), so a real number in valid
- * range is accepted as-is; only a genuine (string) parse failure falls back
- * to page 1.
+ * idempotent (`asPage(asPage(x)) === asPage(x)`), so a real number already in
+ * valid range is accepted as-is; only a genuine (string) parse failure falls
+ * back to page 1.
+ *
+ * The string branch requires the *entire* value to be digits
+ * (`Number.parseInt` would accept `"3drop"` as `3`, silently swallowing the
+ * rest) and rejects anything past `MAX_PAGE` (`Number.parseInt` has no
+ * ceiling, so `"99999999999999999999"` would otherwise pass through as a
+ * huge, meaningless page number).
  */
 function asPage(value: unknown): number {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 1) {
+  if (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_PAGE
+  ) {
     return value;
   }
-  const parsed = Number.parseInt(asString(value), 10);
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+  const str = asString(value);
+  if (!/^\d+$/.test(str)) {
+    return 1;
+  }
+  const parsed = Number(str);
+  return parsed >= 1 && parsed <= MAX_PAGE ? parsed : 1;
 }
 
 const CATALOGUE_SORTS = ["relevance", "code", "term", "updated"] as const;
@@ -121,9 +143,31 @@ export interface SignInSearch {
   redirect?: string;
 }
 
-export type SignInSearchInput = SignInSearch & SearchSchemaInput;
+export type SignInSearchInput = Partial<SignInSearch> & SearchSchemaInput;
+
+/**
+ * `redirect` must be an internal, same-origin path - never a value #41's
+ * post-login redirect could send a signed-in user off-site to (an open
+ * redirect). Rejects anything that isn't a single leading `/`:
+ * `https://evil.example/`, protocol-relative `//evil.example` (a bare `/`
+ * followed by another `/` is host-relative, not path-relative), and
+ * `javascript:...`/backslash variants some browsers still normalise into a
+ * host-relative URL all fail the check and are dropped, same as an absent
+ * `redirect`.
+ */
+function asInternalRedirect(value: unknown): string | undefined {
+  const candidate = asString(value);
+  if (
+    !candidate.startsWith("/") ||
+    candidate.startsWith("//") ||
+    candidate.includes("\\")
+  ) {
+    return undefined;
+  }
+  return candidate;
+}
 
 export function validateSignInSearch(search: Record<string, unknown>): SignInSearch {
-  const redirect = asString(search.redirect);
+  const redirect = asInternalRedirect(search.redirect);
   return redirect ? { redirect } : {};
 }
