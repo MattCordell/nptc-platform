@@ -120,11 +120,21 @@ def main(argv: list[str] | None = None) -> int:
         from nptc.db.models.user import User
 
         engine = create_engine(database_url)
-        with Session(engine) as session, session.begin():
+        # Deliberately not `with Session(engine) as session, session.begin():`
+        # - a `return` from inside that form exits the `session.begin()`
+        # context manager normally (no exception), which *commits*. Every
+        # refusal path below must roll back explicitly before returning,
+        # so a future change that has `grant_role_unchecked` write
+        # something before raising can never commit a partial grant while
+        # this script reports it as refused.
+        session = Session(engine)
+        try:
+            session.begin()
             user = session.execute(
                 select(User).where(User.username == args.username)
             ).scalar_one_or_none()
             if user is None:
+                session.rollback()
                 print(f"error: no app_user with username {args.username!r}", file=sys.stderr)
                 return EXIT_NOT_FOUND
 
@@ -142,11 +152,21 @@ def main(argv: list[str] | None = None) -> int:
                 # rather than left to the generic handler below, so a
                 # future change to grant_role_unchecked that did start
                 # raising it here fails with the right exit code instead
-                # of a generic 5.
+                # of a generic 5 - and, critically, rolls back rather than
+                # committing whatever was written before the raise.
+                session.rollback()
                 print(f"error: {exc}", file=sys.stderr)
                 return EXIT_REFUSED
+
+            session.commit()
+        finally:
+            session.close()
     except Exception as exc:
-        print(f"error: could not grant role ({type(exc).__name__}: {exc})", file=sys.stderr)
+        # NFR-26: never print the exception body, only its type - a
+        # connection/URL failure (e.g. a malformed DSN) can carry
+        # host/user/database details in its message, and this is an
+        # operator-facing log, not a debugger.
+        print(f"error: could not grant role ({type(exc).__name__})", file=sys.stderr)
         return EXIT_COULD_NOT_COMPLETE
 
     print(f"granted {args.role!r} to {args.username!r}")

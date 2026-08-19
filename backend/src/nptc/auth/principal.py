@@ -82,6 +82,8 @@ ANONYMOUS: Final[Principal] = Principal(
 
 
 def _roles_for_user(session: Session, user_id: uuid.UUID) -> frozenset[Role]:
+    # Same non-domain ValueError-on-divergence caveat as
+    # nptc.auth.grants.roles_for_user - see that function's comment.
     rows = session.execute(select(UserRole.role).where(UserRole.user_id == user_id)).scalars().all()
     return frozenset(Role(value) for value in rows)
 

@@ -16,10 +16,10 @@ from collections.abc import Callable
 
 from nptc.auth.errors_authorisation import MfaRequiredError, PermissionDeniedError
 from nptc.auth.permissions import (
-    MFA_REQUIRED_PERMISSIONS,
     Permission,
     SubmissionQuota,
     effective_quota,
+    permissions_for_roles,
 )
 from nptc.auth.principal import Principal
 
@@ -37,17 +37,27 @@ def require_permission(permission: Permission) -> PermissionCheck:
     """Returns `check(principal) -> principal`, raising `MfaRequiredError`
     or `PermissionDeniedError` otherwise.
 
-    Checks `MFA_REQUIRED_PERMISSIONS` first so the denial is actionable:
-    when the principal holds a role that *would* grant `permission` but it
-    was suppressed for want of MFA (`principal.mfa_suppressed_roles`), the
-    caller gets `MfaRequiredError`, not a bare "not permitted" - see
-    `nptc.auth.principal.principal_for`'s structural suppression.
+    So the denial is actionable: when `permission` would actually have
+    been granted by a role suppressed for want of MFA
+    (`principal.mfa_suppressed_roles`), the caller gets `MfaRequiredError`,
+    not a bare "not permitted" - see `nptc.auth.principal.principal_for`'s
+    structural suppression.
+
+    Deliberately checks membership in
+    `permissions_for_roles(principal.mfa_suppressed_roles)` rather than
+    the coarser "is `permission` MFA-required at all, and is *some* role
+    suppressed" - the two happen to coincide today (only `ADMINISTRATOR`
+    is ever suppressed, and every MFA-required permission is
+    Administrator-only), but the coarser check would mislabel a plain
+    denial as `MfaRequiredError` the moment either fact stops holding
+    (e.g. a second, non-Administrator role gains a suppression condition
+    with permissions of its own that don't include this one).
     """
 
     def check(principal: Principal) -> Principal:
         if principal.has(permission):
             return principal
-        if permission in MFA_REQUIRED_PERMISSIONS and principal.mfa_suppressed_roles:
+        if permission in permissions_for_roles(principal.mfa_suppressed_roles):
             raise MfaRequiredError(
                 f"permission {permission.value!r} requires step-up authentication"
             )

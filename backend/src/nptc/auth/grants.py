@@ -50,14 +50,22 @@ if TYPE_CHECKING:
 #: revoker/closer blocks rather than racing a `SELECT count(*)` snapshot -
 #: see `assert_not_last_administrator`'s docstring for why a plain count
 #: is unsafe here. `FOR UPDATE OF ur` locks only the `user_role` rows,
-#: not the joined `app_user` rows.
+#: not the joined `app_user` rows. Selects `ur.user_id` alongside `ur.id`
+#: so the caller has every fact this query can give it in one round trip -
+#: a second `SELECT ... WHERE id IN (...)` to recover the holder would be
+#: redundant, since the join already produced it.
 _LOCK_ADMINISTRATOR_GRANTS_SQL = text(
-    "SELECT ur.id FROM user_role ur JOIN app_user u ON u.id = ur.user_id "
+    "SELECT ur.id, ur.user_id FROM user_role ur JOIN app_user u ON u.id = ur.user_id "
     "WHERE ur.role = 'administrator' AND u.status = 'active' FOR UPDATE OF ur"
 )
 
 
 def roles_for_user(session: Session, user_id: uuid.UUID) -> frozenset[Role]:
+    # `Role(value)` raises ValueError for a row outside GRANTABLE_ROLES -
+    # unreachable while user_role's `role` CHECK constraint and
+    # GRANTABLE_ROLES agree (test_permissions_data.py asserts they do),
+    # but note that a divergence here surfaces as an unhandled 500 on
+    # every request for the affected user, not a domain-shaped error.
     rows = session.execute(select(UserRole.role).where(UserRole.user_id == user_id)).scalars().all()
     return frozenset(Role(value) for value in rows)
 
@@ -92,16 +100,25 @@ def assert_not_last_administrator(session: Session, *, removing_user_id: uuid.UU
     `nptc.auth.identity.close_account` must call this *before* tombstoning
     - closure never calls `revoke_role`, so without this check here,
     closing your own account would be the trivial bypass of FR-01.
+
+    **TODO (P2 suspend path, not yet written): the suspend code MUST call
+    this function before flipping `app_user.status` to `'suspended'`, for
+    the same reason `close_account` does.** No suspend endpoint exists yet
+    - `UserStatus.SUSPENDED` is only ever *read* today (`nptc.auth.
+    principal.principal_for`) - but when it lands, note that `FOR UPDATE
+    OF ur` above locks only `user_role` rows, not the joined `app_user`
+    row: a concurrent suspend that updates `app_user.status` without going
+    through this lock is a real race against a concurrent `revoke_role`/
+    `close_account` on a *different* administrator, since neither
+    transaction's row lock is visible to the other's `u.status = 'active'`
+    join condition until commit. The suspend path should acquire this same
+    lock (by calling this function) before writing `app_user.status`, not
+    only after.
     """
-    locked_ids = session.execute(_LOCK_ADMINISTRATOR_GRANTS_SQL).scalars().all()
-    if not locked_ids:
-        # removing_user_id holds no active administrator grant at all
-        # (or none exists) - nothing for this guard to refuse.
-        return
-    holder_ids = set(
-        session.execute(select(UserRole.user_id).where(UserRole.id.in_(locked_ids))).scalars().all()
-    )
-    if removing_user_id in holder_ids and holder_ids - {removing_user_id} == set():
+    holder_ids = {
+        row["user_id"] for row in session.execute(_LOCK_ADMINISTRATOR_GRANTS_SQL).mappings()
+    }
+    if holder_ids == {removing_user_id}:
         raise LastAdministratorError(
             "refusing to remove the last active administrator's role grant"
         )
