@@ -36,6 +36,15 @@ updates:
       # PR per major produces a set of PRs that each fail on the others' absence.
       npm-major:
         update-types: ["major"]
+    ignore:
+      # typescript-eslint cannot lint TS 7: TS 7 is the Go port (tsgo) and does not
+      # expose the legacy compiler API typescript-eslint reads, and the likely bridge
+      # is async, which ESLint does not support for parsers. Its peer range is
+      # `>=4.8.4 <6.1.0`. Dependabot raised this major three times (#94, #120, #170)
+      # and each failed CI identically. Revisit when typescript-eslint#10940 ships;
+      # remove this entry then. TS 6.x minors/patches are deliberately NOT ignored.
+      - dependency-name: "typescript"
+        versions: [">=7"]
     labels: ["frontend", "dependencies"]
 
   - package-ecosystem: "github-actions"
