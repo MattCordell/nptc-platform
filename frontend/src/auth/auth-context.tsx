@@ -65,6 +65,12 @@ export function AuthProvider({
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
   const renewal = useRef<Promise<TokenSet | null> | null>(null);
+  // Bumped by every operation that is about to call `store`. A resolving
+  // renewal checks it was still the latest such operation before applying
+  // its result - otherwise the cold-load probe's silent renewal can resolve
+  // *after* a concurrent `completeCallback`'s exchange and clobber the
+  // session it just established back to signed-out.
+  const generation = useRef(0);
 
   const config = useMemo(() => {
     if (providedConfig) {
@@ -98,7 +104,18 @@ export function AuthProvider({
     }
     // De-duplicated: several components asking for a token at once must
     // produce one renewal, not one each.
-    renewal.current ??= (async () => {
+    renewal.current = (async () => {
+      const myGeneration = ++generation.current;
+      // A stale renewal's outcome is discarded, not applied: a newer
+      // operation (typically `completeCallback`, exchanging a real
+      // authorization code) has started since this one began, and its
+      // result must not be clobbered by a slower, superseded silent probe.
+      const applyIfCurrent = (next: TokenSet | null) => {
+        if (generation.current === myGeneration) {
+          store(next);
+        }
+        return next;
+      };
       // Remembered so a failure cleans up *this* renewal's transaction and
       // nothing else. Clearing every transaction here would discard a
       // concurrent interactive sign-in's, failing a sign-in that worked -
@@ -109,8 +126,7 @@ export function AuthProvider({
         issuedState = new URL(url).searchParams.get("state");
         const search = await silentAuthorize(url, config.redirectUri);
         const { tokens: next } = await completeSignIn(config, search);
-        store(next);
-        return next;
+        return applyIfCurrent(next);
       } catch (error) {
         if (issuedState) {
           takeTransaction(issuedState);
@@ -118,12 +134,13 @@ export function AuthProvider({
         if (error instanceof InteractionRequiredError) {
           // Not a failure: the SSO session has ended, so the user is simply
           // signed out. This is the path a post-logout renewal takes.
-          store(null);
-          return null;
+          return applyIfCurrent(null);
         }
-        store(null);
-        setUnavailable(true);
-        return null;
+        const result = applyIfCurrent(null);
+        if (generation.current === myGeneration) {
+          setUnavailable(true);
+        }
+        return result;
       } finally {
         renewal.current = null;
       }
@@ -158,6 +175,9 @@ export function AuthProvider({
 
   const signOut = useCallback(async () => {
     const current = tokensRef.current;
+    // Bumped first so a renewal already in flight cannot land after this
+    // and resurrect the session `signOut` is about to clear.
+    generation.current += 1;
     // Cleared *before* the redirect, not after: if the navigation to
     // Keycloak fails or the user cancels it, the local session must already
     // be gone. Ending the remote session without ending the local one is the
@@ -215,6 +235,7 @@ export function AuthProvider({
       if (!config) {
         return null;
       }
+      generation.current += 1;
       try {
         const { tokens: next, redirect } = await completeSignIn(config, search);
         store(next);
