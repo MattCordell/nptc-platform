@@ -218,8 +218,8 @@ had a chance to come back. Firing it once also matters — re-running it as the 
 lands would read the new `/sign-in?redirect=…` as the place to return to and nest one
 encoded copy of the URL inside the next.
 
-`/sign-in`, `/sign-out`, `/register` and `/auth/callback` — reserved as placeholders by
-#146 — now resolve to real screens at the same paths.
+`/sign-in`, `/sign-out`, `/register` and `/auth/callback` — reserved as placeholders
+by issue #146 — now resolve to real screens at the same paths.
 
 ## Serving requirements
 
