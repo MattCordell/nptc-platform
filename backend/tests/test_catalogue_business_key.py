@@ -120,6 +120,34 @@ def test_advance_sequence_past_never_moves_the_sequence_backwards(
 
 @pytest.mark.req("FR-03")
 @pytest.mark.integration
+def test_advance_sequence_past_reconciles_a_never_called_sequence(db: Connection) -> None:
+    """Regression test for the off-by-one this function once had: Postgres
+    reports `last_value = 1` for a freshly created sequence even though
+    nothing has ever been dispensed from it (`is_called = false`) -
+    comparing against `last_value` alone therefore cannot distinguish
+    "never called" from "1 was issued", and treated reconciling a baseline
+    as small as `NPTC-000001` as a no-op, letting the very next mint
+    reissue that exact key. Every other test in this module calls
+    `allocate_business_key` before `advance_sequence_past`, which sets
+    `is_called` and hid this - this test drops and recreates the real
+    sequence (DDL, unlike `nextval`/`setval`, fully participates in and
+    rolls back with `db`'s own transaction) so it starts genuinely
+    never-called, and uses the *owner* connection throughout rather than
+    `app_db`, since the bug is in the SQL logic, not the privilege grant -
+    owner and app-role sessions run the identical code path here."""
+    db.execute(text("DROP SEQUENCE catalogue_entry_business_key_seq"))
+    db.execute(text("CREATE SEQUENCE catalogue_entry_business_key_seq AS BIGINT START 1"))
+    owner_session = Session(bind=db, join_transaction_mode="create_savepoint")
+
+    advance_sequence_past(owner_session, "NPTC-000001")
+    next_minted = allocate_business_key(owner_session)
+
+    assert next_minted != "NPTC-000001"
+    assert int(next_minted[len("NPTC-") :]) > 1
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.integration
 def test_business_key_sequence_name_matches_the_migration(app_session: Session) -> None:
     """A single source of truth for the sequence name, asserted rather
     than merely hoped for - see `nptc.catalogue.entries.

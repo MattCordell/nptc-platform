@@ -85,8 +85,8 @@ class EntryVersionConflictError(RuntimeError):
 class EntryNotFoundError(LookupError):
     """Raised when no `catalogue_entry` matches the given `business_key` -
     a distinct, HTTP-shaped type (rather than a bare stdlib `LookupError`)
-    so a future router maps it to 404 via the same "read the ClassVar"
-    convention `EntryVersionConflictError` uses, instead of falling
-    through `register_exception_handlers` to an unhandled 500."""
+    mapped to 404 by `nptc.api.errors.register_exception_handlers` via the
+    same "read the ClassVar" convention `EntryVersionConflictError` uses,
+    rather than falling through to an unhandled 500."""
 
     http_status: ClassVar[int] = 404

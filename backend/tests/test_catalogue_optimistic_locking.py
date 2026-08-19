@@ -282,13 +282,13 @@ def test_version_id_col_backstop_catches_a_genuine_concurrent_race(
     privilege `nptc_app` is deliberately refused (FR-03)."""
     business_key = format_business_key(999_000_001)
     with app_engine.connect() as setup_connection:
-        setup_connection.execute(
+        entry_id = setup_connection.execute(
             text(
                 "INSERT INTO catalogue_entry (business_key, preferred_term) "
-                "VALUES (:key, 'Original term')"
+                "VALUES (:key, 'Original term') RETURNING id"
             ),
             {"key": business_key},
-        )
+        ).scalar_one()
         setup_connection.commit()
 
     fired = False
@@ -347,7 +347,11 @@ def test_version_id_col_backstop_catches_a_genuine_concurrent_race(
 
         with owner_engine.connect() as check_connection:
             audit_count = check_connection.execute(
-                text("SELECT count(*) FROM audit_event WHERE entity_type = 'catalogue_entry'")
+                text(
+                    "SELECT count(*) FROM audit_event "
+                    "WHERE entity_type = 'catalogue_entry' AND entity_id = :entity_id"
+                ),
+                {"entity_id": str(entry_id)},
             ).scalar_one()
             assert audit_count == 0
     finally:

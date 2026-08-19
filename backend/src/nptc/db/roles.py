@@ -109,11 +109,13 @@ REVOKE_CATALOGUE_ENTRY_DELETE_SQL = (
 #: ACL-checked - see that model's own comment), `business_key` is minted by
 #: an explicit `nextval()` call in `nptc.catalogue.entries.
 #: allocate_business_key`, evaluated with the *inserting* role's own
-#: privileges - so this needs USAGE (for `nextval`), SELECT (for
-#: `advance_sequence_past`'s read of `last_value`), and UPDATE (Postgres
-#: requires sequence-level `UPDATE`, not `USAGE`, to run `setval` - proven
+#: privileges - so this needs USAGE (covers `nextval`) and UPDATE
+#: (Postgres requires sequence-level `UPDATE`, not `USAGE`, to run
+#: `setval` - `advance_sequence_past` calls it as one atomic
+#: `setval(seq, GREATEST(nextval(seq) - 1, :value), true)` - proven
 #: against a real container, not assumed) granted explicitly, unlike an
-#: identity column's backing sequence.
+#: identity column's backing sequence. No `SELECT`: nothing here reads
+#: the sequence's `last_value`/`currval` directly.
 GRANT_CATALOGUE_BUSINESS_KEY_SEQ_SQL = (
-    "GRANT USAGE, SELECT, UPDATE ON SEQUENCE catalogue_entry_business_key_seq TO nptc_app;"
+    "GRANT USAGE, UPDATE ON SEQUENCE catalogue_entry_business_key_seq TO nptc_app;"
 )

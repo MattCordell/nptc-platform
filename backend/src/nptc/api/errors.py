@@ -35,7 +35,7 @@ from nptc.auth.errors_authorisation import (
     ManualLinkRequiredError,
     MfaRequiredError,
 )
-from nptc.catalogue.errors import EntryVersionConflictError
+from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 
 _logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ _DETAIL_VERSION_CONFLICT = (
     "This entry was changed by someone else since you loaded it. Review the "
     "conflicting changes and try again."
 )
+_DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -142,4 +143,15 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "changed_by": report.changed_by,
                 "changed_at": report.changed_at.isoformat() if report.changed_at else None,
             },
+        )
+
+    @app.exception_handler(EntryNotFoundError)
+    async def _handle_entry_not_found(_request: Request, exc: EntryNotFoundError) -> JSONResponse:
+        # Logged at INFO: a stale bookmark or a race with a since-deleted
+        # entry is ordinary, not an anomaly worth a louder level. The
+        # exception message may name the business_key; the response body
+        # never does, matching this module's own detail-string convention.
+        _logger.info("entry not found: %s", exc)
+        return JSONResponse(
+            status_code=EntryNotFoundError.http_status, content={"detail": _DETAIL_NOT_FOUND}
         )

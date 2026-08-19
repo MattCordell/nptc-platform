@@ -58,6 +58,9 @@ from pathlib import Path
 
 import pytest
 
+from nptc.db import models as _models  # noqa: F401 - import-for-side-effect, see below
+from nptc.db.base import Base
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = [REPO_ROOT / "backend" / "src", REPO_ROOT / "backend" / "migrations"]
 
@@ -316,6 +319,26 @@ def test_no_bulk_statement_against_versioned_table_in_backend_source() -> None:
     assert not violations, "FR-38 versioned-table violation(s) found:\n" + "\n".join(
         str(v) for v in violations
     )
+
+
+@pytest.mark.req("FR-38")
+def test_versioned_table_names_are_derived_from_real_tables() -> None:
+    """`_camel_to_snake` assumes every model's table name is exactly the
+    snake_case form of its class name - true for every model in this
+    codebase today, but an acronym-leading class name added later
+    (`SCTIDBinding` -> `s_c_t_i_d_binding`) would mis-derive silently,
+    quietly disabling the raw-SQL half of rule 4 for that table rather
+    than failing anywhere visible. Asserting the derived name is an actual
+    table in `Base.metadata` (populated by importing `nptc.db.models`,
+    which imports every model for exactly this kind of check) turns that
+    assumption into something that fails loudly instead."""
+    for model_name in sorted(VERSIONED_TABLE_MODELS):
+        table_name = _camel_to_snake(model_name)
+        assert table_name in Base.metadata.tables, (
+            f"_camel_to_snake({model_name!r}) produced {table_name!r}, which is not a "
+            "real table in Base.metadata - VERSIONED_TABLE_MODELS and "
+            "_VERSIONED_RAW_SQL_RE would silently drift apart"
+        )
 
 
 def test_guard_flags_known_violations() -> None:
