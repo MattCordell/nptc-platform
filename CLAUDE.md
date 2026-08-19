@@ -26,41 +26,12 @@ read one before relitigating a stack choice.
 This is a polyglot monorepo: a `uv` workspace for Python, a `pnpm` workspace for the
 frontend, one shared root git repo.
 
-```text
-backend/     nptc        - FastAPI API + background worker
-transform/   nptc_transform - P0 seeding transform (Excel -> import dataset), CLI via typer
-shared/      nptc_shared - code imported by BOTH backend and transform (SCTID/Verhoeff
-                            validation, terminology client contract) so there is never a
-                            second, divergent implementation (ADR-0001, FR-74)
-frontend/    nptc-frontend - React 19 + TypeScript + Vite SPA
-scripts/     traceability_check.py, doc_impact_gate.py - repo governance tooling
-                            (Python, tested, run via uv, not part of the app runtime)
-docs/        prd, adr, architecture, requirements, operations, user, governance
-deploy/      Docker Compose stack (compose.yml, .env.example)
-```
-
-Backend module responsibilities (each currently just an `__init__.py` stub — see
-`backend/src/nptc/__init__.py` for the authoritative list and which GitHub issue lands
-each one):
-
-- `api/` — routers, dependencies, OpenAPI wiring (app factory, the
-  `current_principal`/`permission_dep` dependencies and `GET /api/v1/auth/me` landed with
-  issue #41)
-- `auth/` — OIDC verification, permission framework (FR-44: permissions, not role names)
-- `audit/` — append-only log and hash chain (NFR-08-10)
-- `catalogue/` — entries, designations, code bindings
-- `registry/` — property registry, datatype handler registry (FR-77: `switch` on
-  datatype belongs only here)
-- `terminology/` — FR-53 client consumers (validation sweep, live check); the
-  client interface, stub and Ontoserver implementation live in `nptc_shared.terminology`
-- `submissions/` — workflow state machine, interest, comments
-- `validation/` — findings, sweep orchestration
-- `releases/` — snapshots, export config versions
-- `exports/` — csv, xlsx, fhir supplement renderers
-- `jobs/` — Postgres `SELECT ... FOR UPDATE SKIP LOCKED` queue and scheduler
-- `db/` — models, the Alembic environment (issue #33/P1-1: naming convention, the
-  least-privilege `nptc_app` role, the `audit_event` table) and `session.py`, the engine
-  and per-request session factory (issue #41).
+The `shared/` package (`nptc_shared`) is imported by BOTH `backend/` and `transform/`
+(SCTID/Verhoeff validation, terminology client contract) so there is never a second,
+divergent implementation (ADR-0001, FR-74). `scripts/` is repo governance tooling, not
+part of the app runtime. Each `backend/src/nptc/*` module is currently just an
+`__init__.py` stub — that file is the authoritative list of module responsibilities and
+which GitHub issue lands each one.
 
 ## Technology stack (ADR-0001)
 
@@ -94,19 +65,9 @@ uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
 uv run pytest -m "req('FR-07')"      # tests tagged against a specific requirement
 ```
 
-Frontend commands run from `frontend/` (or via the root `package.json` scripts, which
-proxy to `pnpm --filter nptc-frontend`):
-
-```powershell
-pnpm install --frozen-lockfile
-pnpm dev                 # vite dev server
-pnpm lint                # eslint
-pnpm format:check        # prettier --check
-pnpm typecheck           # tsc -b --noEmit
-pnpm test                # vitest run
-pnpm test:watch          # vitest, watch mode
-pnpm build               # tsc -b && vite build
-```
+Frontend commands run from `frontend/`, or via the root `package.json` scripts, which
+proxy to `pnpm --filter nptc-frontend`. The scripts are the standard set (`dev`,
+`build`, `test`, `lint`, `format:check`, `typecheck`) — see `frontend/package.json`.
 
 Repo governance scripts (Python, at repo root, tested under `scripts/tests/`):
 
