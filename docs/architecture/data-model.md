@@ -568,13 +568,19 @@ table creates; it is not implemented here.
 **There is no `length` column, anywhere (FR-85/FR-24).** `Length` MUST be computed
 from the preferred term and MUST NOT be storable or editable - giving it a column at
 all, even one nothing ever writes to, would leave a seam a future migration could
-accidentally populate. `Designation.length` is a bare Python `@property` computed by
-`nptc.catalogue.designations.preferred_term_length`
+accidentally populate. PRD §6.5 defines `Length` as the *RCPA/catalogue* preferred
+term's character count, which lives on `catalogue_entry.preferred_term` (issue #46),
+never on a `designation` row (see "Where the preferred term lives" below) -
+`CatalogueEntry.length` is therefore the field FR-85 actually publishes.
+`Designation.length` applies the same computation to a designation's own `term` (a
+synonym or a non-en-AU preferred variant), for the same reason, but is a distinct,
+non-authoritative figure. Both are bare Python `@property`s computed by
+`nptc.catalogue.term_hygiene.preferred_term_length`
 (`len(nptc_shared.text.normalise_for_comparison(term))`), with deliberately no
 setter. PRD §6.5's migration note is the test that actually matters here: because the
 current `=LEN()` formula counts a trailing non-breaking space, cleaning that
 whitespace reduces the published length for roughly one entry in five - covered
-directly in `backend/tests/test_catalogue_designations.py`.
+directly on `CatalogueEntry.length` in `backend/tests/test_catalogue_designations.py`.
 
 ### Where the preferred term lives (not duplicated)
 
@@ -617,15 +623,25 @@ under the same term.
 
 ### Term hygiene at entry (FR-63)
 
-`nptc.catalogue.designations.clean_designation_term` (called from the model's own
-`@validates("term")` hook) collapses every normalisable space - a non-breaking space,
-a narrow no-break space, PRD Appendix A.1 - to an ordinary space and strips the
+`nptc.catalogue.term_hygiene.clean_term` (called from both `CatalogueEntry`'s own
+`@validates("preferred_term")` hook and `Designation`'s own `@validates("term")` hook -
+one shared function, since FR-85's published length depends on the same cleaning
+having happened on both fields) collapses every normalisable space - a non-breaking
+space, a narrow no-break space, PRD Appendix A.1 - to an ordinary space and strips the
 edges, via the same `nptc_shared.text.normalise_for_comparison` the P0 transform and
 FR-05 collision detection share (ADR-0001). Anything that survives that pass - a
 zero-width space, a bidi override, a genuine control character - has no single
-correct repair, so it is rejected (`DesignationTermError`) rather than silently
+correct repair, so it is rejected (`TermCleaningError`) rather than silently
 dropped, quoting the offending character escaped (`escape_invisible`), never raw
 (NFR-38 test 2).
+
+`Designation.language` is validated the same way, at both layers:
+`nptc_shared.language.is_well_formed_language_tag` backs both the model's own
+`@validates("language")` hook (raising `DesignationLanguageError`) and
+`ck_designation_language`'s `CHECK` constraint, the latter built from
+`LANGUAGE_TAG_PATTERN.pattern` rather than hand-copied so the two can never silently
+diverge (`backend/tests/test_db_designation.py::
+test_designation_language_check_matches_the_shared_pattern` pins this).
 
 ### FR-04: synonyms are rows, never a delimited string
 

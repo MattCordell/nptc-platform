@@ -1,13 +1,13 @@
 """The `designation` service layer (issue #47, FR-04, FR-24, FR-37, FR-85).
 
-`clean_designation_term`/`preferred_term_length`/`DesignationTermError` are
-re-exported from `nptc.catalogue.designation_term` for convenience - see
-that module's own docstring for why the audit-free pieces had to move
-there rather than live here: `nptc.db.models.designation.Designation`
-needs them for its own `@validates`/`length` hooks, and this module
-imports `nptc.audit.recording` (which reaches back into
-`nptc.db.models` through `nptc.audit.writer`), so the model importing
-*this* module directly would be circular.
+`clean_term`/`preferred_term_length`/`TermCleaningError` are re-exported
+from `nptc.catalogue.term_hygiene` for convenience - see that module's own
+docstring for why the audit-free pieces had to move there rather than
+live here: `nptc.db.models.designation.Designation` (and
+`nptc.db.models.catalogue_entry.CatalogueEntry`) need them for their own
+`@validates`/`length` hooks, and this module imports `nptc.audit.recording`
+(which reaches back into `nptc.db.models` through `nptc.audit.writer`), so
+a model importing *this* module directly would be circular.
 
 FR-05 collision detection (a synonym matching another active entry's
 preferred term, or the same synonym on multiple entries) is deliberately
@@ -26,18 +26,16 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
-from nptc.catalogue.designation_term import (
-    DesignationTermError,
-    clean_designation_term,
-    preferred_term_length,
-)
+from nptc.catalogue.term_hygiene import TermCleaningError, clean_term, preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc_shared.language import DEFAULT_LANGUAGE
 
 __all__ = [
-    "DesignationTermError",
+    "DesignationAlreadyRetiredError",
+    "TermCleaningError",
     "add_designation",
     "add_synonyms",
-    "clean_designation_term",
+    "clean_term",
     "preferred_term_length",
     "retire_designation",
 ]
@@ -51,6 +49,14 @@ if TYPE_CHECKING:
     from nptc.db.models.designation import Designation
 
 
+class DesignationAlreadyRetiredError(ValueError):
+    """Raised by `retire_designation` when `designation` is already
+    `retired` - retiring twice would otherwise silently write a second
+    `designation.retired` audit event with no actual state change, which
+    reads as a real edit to anyone reviewing the audit log even though
+    nothing changed."""
+
+
 def add_designation(
     session: Session,
     ctx: AuditContext,
@@ -58,7 +64,7 @@ def add_designation(
     entry: CatalogueEntry,
     term: str,
     use: str = "synonym",
-    language: str = "en-AU",
+    language: str = DEFAULT_LANGUAGE,
     reason: str,
 ) -> Designation:
     """Adds one designation row to `entry`. `term` is cleaned by
@@ -88,14 +94,29 @@ def add_synonyms(
     *,
     entry: CatalogueEntry,
     terms: Sequence[str],
-    language: str = "en-AU",
+    language: str = DEFAULT_LANGUAGE,
     reason: str,
 ) -> list[Designation]:
     """Adds each of `terms` as its own synonym row (FR-04) - the same
     changelog note covers the whole batch, validated once up front rather
     than once per row, since they are one edit from the caller's point of
-    view."""
+    view.
+
+    Deduplicates by the *cleaned* term before inserting: FR-04's whole
+    premise is cleaning up doubled-delimiter/whitespace-variant cells, so
+    two terms that collapse to the same string after `clean_term` (e.g.
+    `"A"` and `"A "`) are one synonym, not two - inserting both would
+    violate `ix_designation_no_duplicate_active_term` at flush with an
+    unhelpful `IntegrityError`, from a batch the caller reasonably thinks
+    is well-formed."""
     validated_reason = validate_changelog_note(reason)
+    seen: set[str] = set()
+    deduplicated = []
+    for term in terms:
+        cleaned = clean_term(term)
+        if cleaned not in seen:
+            seen.add(cleaned)
+            deduplicated.append(cleaned)
     return [
         add_designation(
             session,
@@ -106,7 +127,7 @@ def add_synonyms(
             language=language,
             reason=validated_reason,
         )
-        for term in terms
+        for term in deduplicated
     ]
 
 
@@ -120,8 +141,12 @@ def retire_designation(
     """Retires `designation` via a `status` transition - never a `DELETE`
     (`nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a privilege-
     level guarantee, matching `CatalogueEntry.status`'s own precedent for
-    deprecation-not-deletion)."""
+    deprecation-not-deletion). Raises `DesignationAlreadyRetiredError`
+    rather than silently no-opping - see that class's own docstring."""
     from nptc.db.models.designation import DesignationStatus
+
+    if designation.status == str(DesignationStatus.RETIRED):
+        raise DesignationAlreadyRetiredError(f"designation {designation.id} is already retired")
 
     validated_reason = validate_changelog_note(reason)
     designation.status = str(DesignationStatus.RETIRED)

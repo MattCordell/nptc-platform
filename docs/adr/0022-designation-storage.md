@@ -58,6 +58,16 @@ about forbidding preferred designations generally.
 module - so a future change that starts copying a served label into a designation row
 fails a test rather than passing review unnoticed.
 
+**A direct consequence: FR-85's `Length` must be computed against
+`catalogue_entry.preferred_term`, not any `designation` row.** PRD §6.5 is explicit that
+`Length` is "the character count of the RCPA preferred term" - and since that string
+never lives on `designation` (the row above), the computed-length property has to sit
+on `CatalogueEntry`, not `Designation`, or it silently computes the wrong entity's
+length. `CatalogueEntry.length` (`nptc.catalogue.term_hygiene.preferred_term_length`
+applied to `preferred_term`) is the field FR-85 actually publishes;
+`Designation.length` applies the same computation to a designation's own `term` for
+the same reason, but is a distinct, non-authoritative figure.
+
 ### Rejected: mirror the preferred term into both tables
 
 Insert a `use='preferred', language='en-AU'` designation row alongside
@@ -85,20 +95,23 @@ code binding is created) with no preferred term at all.
 
 ### Term hygiene: clean the normalisable, reject the ambiguous
 
-`nptc.catalogue.designations.clean_designation_term` (called from
-`Designation`'s own `@validates("term")` hook) collapses every normalisable space - a
-non-breaking space, a narrow no-break space (PRD Appendix A.1) - to an ordinary space
-and strips the edges, via `nptc_shared.text.normalise_for_comparison` (the same function
-the P0 transform and FR-05 collision detection already share, ADR-0001). This mirrors
-FR-71's own doctrine: a normalisable space has exactly one deterministic repair, so
-correcting it silently is correct, not a defect being hidden.
+`nptc.catalogue.term_hygiene.clean_term` (called from both `CatalogueEntry`'s and
+`Designation`'s own `@validates("preferred_term"/"term")` hooks - a single function
+applied to both fields, since FR-85's published length depends on the same cleaning
+having already happened to `CatalogueEntry.preferred_term`) collapses every
+normalisable space - a non-breaking space, a narrow no-break space (PRD Appendix A.1) -
+to an ordinary space and strips the edges, via `nptc_shared.text.
+normalise_for_comparison` (the same function the P0 transform and FR-05 collision
+detection already share, ADR-0001). This mirrors FR-71's own doctrine: a normalisable
+space has exactly one deterministic repair, so correcting it silently is correct, not a
+defect being hidden.
 
 Anything that survives that pass - a zero-width space, a bidi override, a genuine
 control character - has no single correct repair, so it is rejected
-(`DesignationTermError`) rather than silently dropped or silently stored. This is FR-63's
+(`TermCleaningError`) rather than silently dropped or silently stored. This is FR-63's
 "prohibition at entry" half: the platform does not merely clean up defects on ingestion
 from the legacy spreadsheet, it refuses to accept new ones typed directly into the
-system. The error message quotes the offending character escaped
+system, on either field. The error message quotes the offending character escaped
 (`nptc_shared.text.escape_invisible`), never raw, per NFR-38 test 2.
 
 ### Rejected: reject every invisible character outright

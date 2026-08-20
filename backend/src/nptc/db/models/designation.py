@@ -22,11 +22,16 @@ preferred term stays exactly where #46 put it -
 `_NO_EN_AU_PREFERRED_CHECK_SQL` below for the constraint that makes that a
 database invariant rather than a convention.
 
-**`length` has no column, anywhere.** FR-85 requires `Length` to be
-computed from the preferred term and never storable or editable; giving it
-a column at all - even one nothing ever writes to - would leave a seam a
-future migration could accidentally populate. `length` is a plain Python
-`@property` below, computed by `nptc.catalogue.designations.
+**`length` has no column, anywhere.** FR-85's `Length` is specifically the
+*catalogue's* preferred term's character count (PRD §6.5), which lives on
+`CatalogueEntry.preferred_term` - see that model's own `length` property
+for the field FR-85 is actually about. `Designation.length` below is the
+same computation applied to a designation's own `term` (a synonym or a
+non-en-AU preferred variant) - useful for the same reason, but not itself
+the FR-85 published figure. Neither gets a column: giving either one a
+column at all, even one nothing ever writes to, would leave a seam a
+future migration could accidentally populate. Both are bare Python
+`@property`s, computed by `nptc.catalogue.term_hygiene.
 preferred_term_length`, with deliberately no setter.
 
 **Never `DELETE`d, only retired.** A designation that stops being current
@@ -48,19 +53,23 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 from sqlalchemy.sql import func
 
-from nptc.catalogue.designation_term import (
-    DesignationTermError,
-    clean_designation_term,
+from nptc.catalogue.term_hygiene import (
+    DesignationLanguageError,
+    TermCleaningError,
+    clean_term,
     preferred_term_length,
+    validate_language_tag,
 )
 from nptc.db.base import Base
 from nptc.db.models.catalogue_entry import ImmutableFieldError
+from nptc_shared.language import LANGUAGE_TAG_PATTERN
 
 __all__ = [
     "Designation",
+    "DesignationLanguageError",
     "DesignationStatus",
-    "DesignationTermError",
     "DesignationUse",
+    "TermCleaningError",
 ]
 
 
@@ -84,11 +93,13 @@ _STATUS_CHECK_SQL = "status IN ('active','retired')"
 #: worth a constraint, not just a code-review note.
 _TERM_NOT_BLANK_SQL = "length(btrim(term)) > 0"
 #: A syntactic BCP-47 well-formedness check at the database layer too, not
-#: only in `nptc_shared.language.is_well_formed_language_tag` - mirrors that
-#: function's pattern in SQL so a row inserted by anything other than this
-#: model's own `@validates` hook (a future bulk-load path, say) still can't
-#: carry a malformed tag.
-_LANGUAGE_CHECK_SQL = r"language ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'"
+#: only in `nptc_shared.language.is_well_formed_language_tag` (which this
+#: model's own `@validates("language")` hook calls) - so a row inserted by
+#: anything other than that hook (a future bulk-load path, say) still
+#: can't carry a malformed tag. Built from `LANGUAGE_TAG_PATTERN.pattern`
+#: rather than hand-copied, so the two can never silently diverge -
+#: `test_designation_language_check_matches_the_shared_pattern` pins this.
+_LANGUAGE_CHECK_SQL = f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"
 #: The database-layer half of "the catalogue en-AU preferred term lives in
 #: exactly one place" (module docstring) - `catalogue_entry.preferred_term`,
 #: never a `designation` row. A non-en-AU catalogue-authored preferred
@@ -194,11 +205,19 @@ class Designation(Base):
 
     @validates("term")
     def _validate_term(self, _key: str, value: str) -> str:
-        return clean_designation_term(value)
+        return clean_term(value)
+
+    @validates("language")
+    def _validate_language(self, _key: str, value: str) -> str:
+        return validate_language_tag(value)
 
     @property
     def length(self) -> int:
-        """FR-85/FR-24: computed from `term`, never stored, never
-        settable - see the module docstring for why this is a bare
-        `@property` with no backing column at all."""
+        """The character count of this designation's own `term` - the
+        same computation FR-85 requires for `CatalogueEntry.
+        preferred_term` (see that model's own `length` property for the
+        field FR-85 actually publishes), applied here for a synonym or a
+        non-en-AU preferred variant. Never stored, never settable - see
+        the module docstring for why this is a bare `@property` with no
+        backing column at all."""
         return preferred_term_length(self.term)

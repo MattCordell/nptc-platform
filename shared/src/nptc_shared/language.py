@@ -28,6 +28,13 @@ from typing import Final
 #: Each subtag is 2-8 alphanumeric characters, hyphen-separated, with no empty
 #: subtag permitted - the doubled-hyphen defect class PRD Appendix A.4 already
 #: documents for a different column, and just as unrepresentable here.
+#:
+#: The primary subtag is deliberately constrained to 2-3 letters, not
+#: RFC 5646's full 2-8 - this excludes the registered/reserved 4-8 letter
+#: primary subtags the RFC also permits (e.g. a future ISO 639-3 code, or a
+#: private-use primary subtag), none of which this catalogue has ever used
+#: or has a requirement to accept; widen this constant, not a second
+#: pattern, if that changes.
 LANGUAGE_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 
 #: The catalogue's own default (PRD §6.3) - mirrored by ``Designation.language``'s

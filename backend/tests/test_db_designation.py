@@ -13,6 +13,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from nptc.db.models.designation import _LANGUAGE_CHECK_SQL
+from nptc_shared.language import LANGUAGE_TAG_PATTERN
+
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
 _INSUFFICIENT_PRIVILEGE = "42501"
@@ -98,6 +101,16 @@ def test_language_must_be_a_well_formed_tag(db: Connection) -> None:
         _insert_designation(db, entry_id=entry_id, language="not a tag")
 
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+def test_designation_language_check_matches_the_shared_pattern() -> None:
+    """`ck_designation_language`'s regex is built from
+    `LANGUAGE_TAG_PATTERN.pattern` (`nptc.db.models.designation.
+    _LANGUAGE_CHECK_SQL`), not hand-copied - this pins that so the database
+    invariant and `nptc_shared.language.is_well_formed_language_tag` (the
+    model's own `@validates("language")` hook) can never silently
+    diverge."""
+    assert f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'" == _LANGUAGE_CHECK_SQL
 
 
 @pytest.mark.integration

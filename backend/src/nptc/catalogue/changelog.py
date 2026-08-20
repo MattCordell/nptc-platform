@@ -115,6 +115,15 @@ class LowInformationChangelogNoteError(ChangelogNoteError):
     module docstring)."""
 
 
+class ChangelogNoteMissingLetterError(ChangelogNoteError):
+    """Raised when the normalised note contains no letter at all (e.g.
+    `"---"`, `"2026"`) - a distinct failure from `ChangelogNoteTooShortError`
+    even though both would previously report the same "too short" message
+    regardless of which was actually true: a 13-character note of digits
+    and punctuation is not short, it has no informative content, and the
+    two deserve different guidance."""
+
+
 def _fold(note: str) -> str:
     """Casefolded, punctuation-stripped, whitespace-collapsed form used only
     for matching against `LOW_INFORMATION_NOTES` - never what gets
@@ -147,10 +156,16 @@ def validate_changelog_note(note: str | None) -> str:
             "actually changed"
         )
 
-    if len(normalised) < MINIMUM_NOTE_LENGTH or not _HAS_LETTER_RE.search(normalised):
+    if len(normalised) < MINIMUM_NOTE_LENGTH:
         raise ChangelogNoteTooShortError(
             f"a changelog note must be at least {MINIMUM_NOTE_LENGTH} "
             f"characters and describe the change (FR-37); got {normalised!r}"
+        )
+
+    if not _HAS_LETTER_RE.search(normalised):
+        raise ChangelogNoteMissingLetterError(
+            f"a changelog note must contain a letter and describe the change "
+            f"(FR-37); got {normalised!r}"
         )
 
     return normalised

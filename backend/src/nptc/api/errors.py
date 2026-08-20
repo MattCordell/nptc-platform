@@ -19,6 +19,20 @@ asserts exactly this, and these handlers are what must satisfy it: the
 detail strings below are fixed, client-facing sentences, never
 ``str(exc)`` - the exception messages are diagnostic and do mention roles
 and UUIDs, which is correct for a log and wrong for a response.
+
+**Known gap, tracked rather than silent:** issue #47's designation
+constraints (malformed `use`, a duplicate active term, a second active
+preferred designation in one language, the en-AU-preferred exclusion) are
+enforced only at the database layer today (`IntegrityError`, unmapped
+here) except for the two given typed handlers below
+(`TermCleaningError`/`DesignationLanguageError`). There is no HTTP surface
+for catalogue writes yet (#149/#150), so an unhandled `IntegrityError`
+falls through to FastAPI's default 500 with no caller-visible impact
+today - but #149/#150 must not simply reuse this module unchanged: every
+remaining constraint needs either its own typed exception raised before
+the flush (matching the `TermCleaningError`/`DesignationLanguageError`
+precedent) or an explicit handler here, before those routes ship, or a
+routine duplicate-synonym save 500s instead of 409/422ing.
 """
 
 from __future__ import annotations
@@ -36,8 +50,8 @@ from nptc.auth.errors_authorisation import (
     MfaRequiredError,
 )
 from nptc.catalogue.changelog import ChangelogNoteError
-from nptc.catalogue.designation_term import DesignationTermError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 
 _logger = logging.getLogger(__name__)
 
@@ -68,10 +82,11 @@ _DETAIL_CHANGELOG_NOTE = (
     "A changelog note is required and must describe the change. It becomes the "
     'published History text, so single words like "update" or "fix" are not accepted.'
 )
-_DETAIL_DESIGNATION_TERM = (
+_DETAIL_TERM_CLEANING = (
     "This term could not be saved. It may be empty after whitespace cleaning, or "
     "contain a character that must be corrected by hand before it can be stored."
 )
+_DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -171,22 +186,33 @@ def register_exception_handlers(app: FastAPI) -> None:
         _request: Request, exc: ChangelogNoteError
     ) -> JSONResponse:
         # FR-37: a normal, expected refusal on a routine edit, not an
-        # anomaly - INFO, not WARNING. The exception message quotes the
-        # rejected note (useful for support); the response body uses a
-        # fixed, generic sentence instead, matching this module's own
-        # detail-string convention.
-        _logger.info("changelog note refused: %s: %s", type(exc).__name__, exc)
+        # anomaly - INFO, not WARNING. NFR-26/NFR-35: a changelog note is
+        # free text a user is exactly as likely to paste a name or a
+        # ticket-with-PII into as any other free-text field, so - unlike
+        # this module's other handlers, whose exception messages are safe
+        # to log - only the exception *class* is logged here, never
+        # `str(exc)`, which embeds the note itself.
+        _logger.info("changelog note refused: %s", type(exc).__name__)
         return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_CHANGELOG_NOTE})
 
-    @app.exception_handler(DesignationTermError)
-    async def _handle_designation_term_error(
-        _request: Request, exc: DesignationTermError
+    @app.exception_handler(TermCleaningError)
+    async def _handle_term_cleaning_error(
+        _request: Request, exc: TermCleaningError
     ) -> JSONResponse:
-        # FR-63: the exception message quotes the term with any invisible
-        # character escaped (never raw, per NFR-38 test 2) - still not
-        # repeated in the response body, matching this module's convention
-        # of a fixed, generic detail string.
-        _logger.info("designation term refused: %s", exc)
+        # FR-63: applies to both CatalogueEntry.preferred_term and
+        # Designation.term. The exception message quotes the term itself
+        # (with any invisible character escaped, never raw, per NFR-38
+        # test 2) - logged as the class only, not `str(exc)`, for the same
+        # reason `_handle_changelog_note_error` above does: a term typed
+        # directly into the platform is still user-supplied free text.
+        _logger.info("term refused: %s", type(exc).__name__)
+        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_TERM_CLEANING})
+
+    @app.exception_handler(DesignationLanguageError)
+    async def _handle_designation_language_error(
+        _request: Request, exc: DesignationLanguageError
+    ) -> JSONResponse:
+        _logger.info("designation language tag refused: %s", exc)
         return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_TERM}
+            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_LANGUAGE}
         )
