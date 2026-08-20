@@ -11,7 +11,7 @@ import threading
 import uuid
 
 import pytest
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
@@ -258,7 +258,14 @@ def test_grant_and_revoke_each_emit_an_audit_event(app_db: Connection) -> None:
 
 @pytest.mark.req("FR-01")
 @pytest.mark.integration
-def test_revoking_the_last_administrator_is_refused(app_db: Connection) -> None:
+def test_revoking_the_last_administrator_is_refused(
+    app_db: Connection, pristine_audit_event: None
+) -> None:
+    """`pristine_audit_event`: `assert_not_last_administrator` counts
+    Administrator grants across the *whole* `user_role` table (see its
+    docstring), so this test's premise - the seeded admin is the only one
+    that exists - has to be established explicitly, not inherited from
+    whatever else has run in this worker/container (issue #190)."""
     session = Session(bind=app_db)
     admin = _create_user(session, "grants-lone-admin")
     grant_role_unchecked(
@@ -316,14 +323,23 @@ def test_revoking_one_of_two_administrators_succeeds(app_db: Connection) -> None
 @pytest.mark.req("FR-01")
 @pytest.mark.integration
 def test_concurrent_revocation_of_the_last_two_administrators_leaves_exactly_one(
-    app_engine: Engine,
+    app_engine: Engine, pristine_audit_event: None
 ) -> None:
     """The principal failure mode FR-01's guard exists to prevent: two
     concurrent revocations, each independently checking "is there another
     administrator", must not both succeed. `assert_not_last_administrator`'s
     `FOR UPDATE OF ur` row lock is what makes the second transaction
     re-evaluate against the *post-commit* state of the first, rather than
-    a stale snapshot both read before either committed."""
+    a stale snapshot both read before either committed.
+
+    `pristine_audit_event`: the guard counts *every* active Administrator
+    in `user_role`, so `["ok", "refused"]` only holds if these two seeded
+    admins are the only ones that exist - an explicit precondition rather
+    than one inherited from suite ordering (issue #190). It also means a
+    failed assertion below still leaves `audit_event`/`user_role`/
+    `app_user` clean via the fixture's own teardown, without relying on
+    this test's own cleanup running.
+    """
     setup_session = Session(app_engine)
     user_a = User(username="race-admin-a", display_name="Race A")
     user_b = User(username="race-admin-b", display_name="Race B")
@@ -369,14 +385,11 @@ def test_concurrent_revocation_of_the_last_two_administrators_leaves_exactly_one
     thread_a.join(timeout=15)
     thread_b.join(timeout=15)
 
+    # No manual cleanup needed here: `pristine_audit_event`'s teardown
+    # wipes `user_role`/`audit_event`/`app_user` (as the owner role,
+    # which nptc_app lacks DELETE on for app_user at all - NFR-17: users
+    # are never deleted, only pseudonymised) regardless of whether this
+    # assertion passes, so a failure here can no longer leak a committed
+    # administrator row into later tests the way an inline, non-`finally`
+    # cleanup could (issue #190).
     assert sorted(results.values()) == ["ok", "refused"]
-
-    # Only the user_role rows are cleaned up - nptc_app has no DELETE
-    # privilege on app_user at all (NFR-17: users are never deleted, only
-    # pseudonymised), so the two seeded app_user rows are left behind.
-    # Harmless: their usernames are unique to this test and nothing else
-    # in this session queries for or depends on an empty app_user table.
-    cleanup = Session(app_engine)
-    cleanup.execute(delete(UserRole).where(UserRole.user_id.in_([user_a_id, user_b_id])))
-    cleanup.commit()
-    cleanup.close()

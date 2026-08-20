@@ -170,7 +170,7 @@ def test_same_subject_from_a_different_issuer_creates_a_distinct_user(app_db: Co
 def test_no_user_column_ever_holds_the_oidc_subject(app_db: Connection) -> None:
     session = Session(bind=app_db)
     subject = "distinctive-subject-value-xyz"
-    resolve_user_for_claims(
+    result = resolve_user_for_claims(
         session,
         _claims(issuer=_UNTRUSTED, subject=subject, preferred_username="kim", display_name="Kim"),
         trusted_issuers=_TRUSTED,
@@ -178,10 +178,18 @@ def test_no_user_column_ever_holds_the_oidc_subject(app_db: Connection) -> None:
     )
     session.flush()
 
-    rows = app_db.execute(text("SELECT * FROM app_user")).mappings().all()
-    for row in rows:
-        for value in row.values():
-            assert subject not in str(value)
+    # Scoped to the row this test created, not every row `app_user` has
+    # ever committed - a whole-table scan would also depend on nothing
+    # else in the shared container ever having committed this subject
+    # (issue #190).
+    assert result.user is not None
+    row = (
+        app_db.execute(text("SELECT * FROM app_user WHERE id = :id"), {"id": result.user.id})
+        .mappings()
+        .one()
+    )
+    for value in row.values():
+        assert subject not in str(value)
 
 
 @pytest.mark.req("NFR-05")

@@ -20,6 +20,11 @@ Fixture graph::
     app_engine          (session)  engine authenticating as nptc_app_login
     db / app_db         (function) a connection in an outer transaction,
                                     rolled back after the test
+    pristine_audit_event (function) wipes committed audit_event/user_role/
+                                    app_user leftovers before AND after the
+                                    test - requested explicitly by the few
+                                    tests whose assertion is genuinely
+                                    whole-table (issue #190)
 
 No `_no_real_network` autouse guard here, unlike transform/tests and
 shared/tests: testcontainers must open a real TCP socket to the mapped
@@ -170,6 +175,43 @@ def app_db(app_engine: Engine) -> Iterator[Connection]:
             yield connection
         finally:
             transaction.rollback()
+
+
+def _wipe_committed_audit_state(owner_engine: Engine) -> None:
+    """Deletes every row a test in this tree could plausibly have
+    committed to `user_role`, `audit_event` or `app_user` (that order -
+    FK-safe). Only the owner role can (`nptc_app_login` has no DELETE on
+    any of these, NFR-09).
+
+    Safe to run unconditionally: nothing in this test tree relies on
+    inherited rows in these three tables - the tests that commit real rows
+    at all (`test_audit_chain.py`'s concurrency test,
+    `test_grants.py`'s concurrency test, the `*_cli.py` modules) each
+    already clean up their own ids, so anything left here is exactly the
+    accidental leakage issue #190 is about removing.
+    """
+    with owner_engine.connect() as connection:
+        connection.execute(text("DELETE FROM user_role"))
+        connection.execute(text("DELETE FROM audit_event"))
+        connection.execute(text("DELETE FROM app_user"))
+        connection.commit()
+
+
+@pytest.fixture
+def pristine_audit_event(owner_engine: Engine, migrated: None) -> Iterator[None]:
+    """Explicit isolation for the handful of assertions that are genuinely
+    whole-table - an empty-chain check, `first.prev_hash == GENESIS_HASH`,
+    or an exact `count(*)` with no scoping predicate available (issue
+    #190). Cleans **before** yielding as well as after: cleaning only at
+    teardown makes a test's precondition something it inherits from
+    whatever happened to run before it in this worker/container, which is
+    exactly the ordering dependency this fixture exists to remove -
+    scheduling order (serial, randomised, or xdist `--dist loadscope`)
+    then stops mattering.
+    """
+    _wipe_committed_audit_state(owner_engine)
+    yield
+    _wipe_committed_audit_state(owner_engine)
 
 
 @pytest.fixture(scope="session")

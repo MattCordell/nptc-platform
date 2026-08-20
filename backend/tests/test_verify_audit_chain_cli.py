@@ -8,14 +8,18 @@ cannot use the `db`/`app_db` fixtures for the writes under test: those wrap
 each test in an outer transaction rolled back at teardown, so a *separate*
 connection - which is what `verify_audit_chain.main()` opens from the DSN it
 is given - would never see the uncommitted rows. Every write here goes
-through a real, committed connection instead, with an explicit
-`audit_event`/`app_user` cleanup at the end of each test.
+through a real, committed connection instead, so every test that writes
+requests `pristine_audit_event` (backend/tests/conftest.py) - this module
+assumes it owns the whole `audit_event` table (record counts, "the
+middle row", "the max sequence"), so that precondition has to be
+established up front rather than inherited from whatever ran before it
+(issue #190), and cleaned up again afterwards for the next module sharing
+this container.
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -46,20 +50,6 @@ def app_url(owner_engine: Engine, app_login_credentials: tuple[str, str], migrat
     return login_url.render_as_string(hide_password=False)
 
 
-@pytest.fixture
-def clean_audit_event(owner_engine: Engine, migrated: None) -> Iterator[None]:
-    """Commits nothing itself - just guarantees every row this module writes
-    is gone afterwards, real commits and all, so other integration modules
-    never see cross-test leftovers."""
-    try:
-        yield
-    finally:
-        with owner_engine.connect() as connection:
-            connection.execute(text("DELETE FROM audit_event"))
-            connection.execute(text("DELETE FROM app_user"))
-            connection.commit()
-
-
 def _append_three_committed(owner_engine: Engine) -> None:
     with owner_engine.connect() as connection:
         session = Session(bind=connection)
@@ -78,7 +68,10 @@ def _append_three_committed(owner_engine: Engine) -> None:
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
 def test_intact_chain_exits_0_over_the_app_role(
-    owner_engine: Engine, app_url: str, clean_audit_event: None, capsys: pytest.CaptureFixture[str]
+    owner_engine: Engine,
+    app_url: str,
+    pristine_audit_event: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _append_three_committed(owner_engine)
 
@@ -86,18 +79,20 @@ def test_intact_chain_exits_0_over_the_app_role(
 
     assert exit_code == verify.EXIT_OK
     out = capsys.readouterr().out
-    assert "3" in out
+    # Exact record count, not a loose substring - "3" would also match a
+    # leaked "13 row(s)".
+    assert "OK: 3 row(s)" in out
 
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
 def test_empty_table_exits_0(
-    owner_url: str, clean_audit_event: None, capsys: pytest.CaptureFixture[str]
+    owner_url: str, pristine_audit_event: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
     exit_code = verify.main(["--database-url", owner_url])
 
     assert exit_code == verify.EXIT_OK
-    assert "0" in capsys.readouterr().out
+    assert "OK: 0 row(s)" in capsys.readouterr().out
 
 
 @pytest.mark.req("NFR-10")
@@ -105,7 +100,7 @@ def test_empty_table_exits_0(
 def test_corrupted_middle_row_exits_1_naming_the_first_broken_sequence(
     owner_engine: Engine,
     owner_url: str,
-    clean_audit_event: None,
+    pristine_audit_event: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _append_three_committed(owner_engine)
@@ -133,7 +128,7 @@ def test_corrupted_middle_row_exits_1_naming_the_first_broken_sequence(
 def test_truncated_tail_verifies_ok_alone_but_fails_the_supplied_anchor(
     owner_engine: Engine,
     owner_url: str,
-    clean_audit_event: None,
+    pristine_audit_event: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The known gap ADR-0017/hazard H-06 name: deleting the most recent row

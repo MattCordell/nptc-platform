@@ -17,6 +17,7 @@ dev = [
     "types-pyyaml>=6.0.12.20260815",
     "types-openpyxl>=3.1.5.20260807",
     "testcontainers[postgres]>=4.15.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 # --- uv workspace -----------------------------------------------------------

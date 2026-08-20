@@ -37,8 +37,13 @@ def _append(session: Session, entity_id: str) -> None:
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_empty_table_verifies(app_db: Connection) -> None:
-    """An explicit acceptance criterion: an empty chain is not an error."""
+def test_empty_table_verifies(app_db: Connection, pristine_audit_event: None) -> None:
+    """An explicit acceptance criterion: an empty chain is not an error.
+
+    `pristine_audit_event` makes the "empty" precondition explicit rather
+    than inherited from whatever else ran first in this worker/container
+    (issue #190) - `record_count == 0` cannot be expressed as a relative
+    delta the way the other counts in this module can."""
     result = verify_chain(app_db)
 
     assert result.ok is True
@@ -51,9 +56,12 @@ def test_empty_table_verifies(app_db: Connection) -> None:
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_single_row_chain_verifies(app_db: Connection) -> None:
+def test_single_row_chain_verifies(app_db: Connection, pristine_audit_event: None) -> None:
     """The other explicit acceptance criterion: a one-row chain is not a
-    degenerate case verify_chain mishandles."""
+    degenerate case verify_chain mishandles.
+
+    `pristine_audit_event`: `record_count == 1` requires the table to have
+    contained nothing but this test's own row (issue #190)."""
     session = Session(bind=app_db)
     _append(session, "1")
     session.flush()
@@ -68,7 +76,11 @@ def test_single_row_chain_verifies(app_db: Connection) -> None:
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_three_appends_verify_with_correct_bounds(app_db: Connection) -> None:
+def test_three_appends_verify_with_correct_bounds(
+    app_db: Connection, pristine_audit_event: None
+) -> None:
+    """`pristine_audit_event`: `record_count == 3` requires the table to
+    have contained nothing but this test's own three rows (issue #190)."""
     session = Session(bind=app_db)
     for entity_id in ("1", "2", "3"):
         _append(session, entity_id)
@@ -86,7 +98,12 @@ def test_three_appends_verify_with_correct_bounds(app_db: Connection) -> None:
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_each_appends_prev_hash_links_to_its_predecessors_entry_hash(app_db: Connection) -> None:
+def test_each_appends_prev_hash_links_to_its_predecessors_entry_hash(
+    app_db: Connection, pristine_audit_event: None
+) -> None:
+    """`pristine_audit_event`: `first.prev_hash == GENESIS_HASH` asserts
+    this row is the chain's global first row, which only holds if the
+    table was empty beforehand (issue #190)."""
     session = Session(bind=app_db)
     first = append_audit_event(
         session, AuditContext.system(), action="a", entity_type="t", entity_id="1"
@@ -221,6 +238,21 @@ def test_concurrent_append_serialises_through_the_advisory_lock(
         conn_a = app_engine.connect()
         trans_a = conn_a.begin()
         try:
+            # This test commits for real (see docstring above) rather than
+            # rolling back, so it cannot assume the table starts empty the
+            # way the `pristine_audit_event` tests above do - another test
+            # sharing this session-scoped container may have committed
+            # rows of its own. Establishing a baseline first and asserting
+            # only relative to it keeps this test's pass/fail independent
+            # of what else has run (issue #190; same pattern as
+            # test_catalogue_business_key.py's `advance_sequence_past`
+            # tests). A plain count, not `verify_chain(conn_a)`: that
+            # would set `stream_results=True` permanently on `conn_a`
+            # (`Connection.execution_options` mutates the connection
+            # itself, unlike `Engine.execution_options`), which then
+            # corrupts the INSERT immediately below into an invalid
+            # `DECLARE ... CURSOR FOR INSERT`.
+            baseline_count = conn_a.execute(text("SELECT count(*) FROM audit_event")).scalar_one()
             session_a = Session(bind=conn_a)
             first = append_audit_event(
                 session_a, AuditContext.system(), action="a", entity_type="t", entity_id="a"
@@ -263,9 +295,12 @@ def test_concurrent_append_serialises_through_the_advisory_lock(
 
             result = verify_chain(conn_retry)
             assert result.ok is True
-            assert result.record_count == 2
+            assert result.record_count == baseline_count + 2
 
             trans_retry.commit()
+        except BaseException:
+            trans_retry.rollback()
+            raise
         finally:
             conn_retry.close()
     finally:
