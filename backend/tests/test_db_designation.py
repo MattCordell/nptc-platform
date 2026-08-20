@@ -13,8 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from nptc.db.models.designation import _LANGUAGE_CHECK_SQL
-from nptc_shared.language import LANGUAGE_TAG_PATTERN
+from nptc_shared.language import is_well_formed_language_tag
 
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
@@ -103,14 +102,45 @@ def test_language_must_be_a_well_formed_tag(db: Connection) -> None:
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
 
 
-def test_designation_language_check_matches_the_shared_pattern() -> None:
-    """`ck_designation_language`'s regex is built from
-    `LANGUAGE_TAG_PATTERN.pattern` (`nptc.db.models.designation.
-    _LANGUAGE_CHECK_SQL`), not hand-copied - this pins that so the database
-    invariant and `nptc_shared.language.is_well_formed_language_tag` (the
-    model's own `@validates("language")` hook) can never silently
-    diverge."""
-    assert f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'" == _LANGUAGE_CHECK_SQL
+#: A behavioural equivalence check, not a string comparison against the
+#: migration/model's own literal (that would be circular - see the
+#: superseded `test_designation_language_check_matches_the_shared_pattern`
+#: this replaced, which could not fail for any value of the pattern).
+#: Instead, for each tag, `nptc_shared.language.is_well_formed_language_tag`
+#: (the model's own `@validates("language")` hook) and the *deployed*
+#: `ck_designation_language` constraint (`backend/migrations/versions/
+#: 0007_designation.py`, built from the same `LANGUAGE_TAG_PATTERN` - see
+#: that migration's own docstring) are exercised independently and must
+#: agree on every case - so a hand-copied literal drifting from the shared
+#: pattern in either place fails this test against the real database,
+#: not merely against a second copy of the same string.
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("tag", "well_formed"),
+    [
+        ("en", True),
+        ("en-AU", True),
+        ("mi-NZ", True),
+        ("zh-Hans-CN", True),
+        ("", False),
+        ("not a tag", False),
+        ("en_AU", False),
+        ("en--AU", False),
+        ("e", False),
+    ],
+)
+def test_designation_language_check_agrees_with_the_shared_pattern(
+    db: Connection, tag: str, well_formed: bool
+) -> None:
+    entry_id = _insert_entry(db)
+    assert is_well_formed_language_tag(tag) is well_formed
+
+    if well_formed:
+        _insert_designation(db, entry_id=entry_id, language=tag)
+    else:
+        with pytest.raises(IntegrityError) as exc_info:
+            _insert_designation(db, entry_id=entry_id, language=tag)
+        assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
 
 
 @pytest.mark.integration

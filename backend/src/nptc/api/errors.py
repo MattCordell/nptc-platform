@@ -20,19 +20,21 @@ detail strings below are fixed, client-facing sentences, never
 ``str(exc)`` - the exception messages are diagnostic and do mention roles
 and UUIDs, which is correct for a log and wrong for a response.
 
-**Known gap, tracked rather than silent:** issue #47's designation
+**Known gap, tracked rather than silent:** issue #47's remaining designation
 constraints (malformed `use`, a duplicate active term, a second active
 preferred designation in one language, the en-AU-preferred exclusion) are
 enforced only at the database layer today (`IntegrityError`, unmapped
-here) except for the two given typed handlers below
-(`TermCleaningError`/`DesignationLanguageError`). There is no HTTP surface
-for catalogue writes yet (#149/#150), so an unhandled `IntegrityError`
-falls through to FastAPI's default 500 with no caller-visible impact
-today - but #149/#150 must not simply reuse this module unchanged: every
-remaining constraint needs either its own typed exception raised before
-the flush (matching the `TermCleaningError`/`DesignationLanguageError`
-precedent) or an explicit handler here, before those routes ship, or a
-routine duplicate-synonym save 500s instead of 409/422ing.
+here) - a malformed `language` and an already-retired designation are the
+exceptions, given typed handlers below (`DesignationLanguageError`,
+`DesignationAlreadyRetiredError`) alongside `TermCleaningError`. There is
+no HTTP surface for catalogue writes yet (#149/#150), so an unhandled
+`IntegrityError` falls through to FastAPI's default 500 with no
+caller-visible impact today - but #149/#150 must not simply reuse this
+module unchanged: every remaining constraint needs either its own typed
+exception raised before the flush (matching the precedent the four typed
+handlers below already set) or an explicit handler here, before those
+routes ship, or a routine duplicate-synonym save 500s instead of
+409/422ing.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ from nptc.auth.errors_authorisation import (
     MfaRequiredError,
 )
 from nptc.catalogue.changelog import ChangelogNoteError
+from nptc.catalogue.designations import DesignationAlreadyRetiredError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 
@@ -87,6 +90,7 @@ _DETAIL_TERM_CLEANING = (
     "contain a character that must be corrected by hand before it can be stored."
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
+_DETAIL_ALREADY_RETIRED = "This designation has already been retired."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -215,4 +219,13 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("designation language tag refused: %s", exc)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_LANGUAGE}
+        )
+
+    @app.exception_handler(DesignationAlreadyRetiredError)
+    async def _handle_designation_already_retired(
+        _request: Request, exc: DesignationAlreadyRetiredError
+    ) -> JSONResponse:
+        _logger.info("retire refused, already retired: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_ALREADY_RETIRED}
         )

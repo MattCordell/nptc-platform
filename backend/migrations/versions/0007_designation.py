@@ -33,6 +33,14 @@ application convention:
 `length` has no column here at all (FR-85/FR-24) - it is a computed
 Python `@property` on the model, never persisted, so there is nothing for
 this migration to create.
+
+`ck_designation_language`'s regex is imported from `nptc_shared.language.
+LANGUAGE_TAG_PATTERN` rather than hand-copied, the same
+import-the-shared-source-rather-than-duplicate-it precedent this
+migration already follows for `roles.GRANT_DESIGNATION_SQL` and friends
+below - a hand-copied literal here previously let the deployed `CHECK`
+silently drift from the model's own `_LANGUAGE_CHECK_SQL` (both built from
+the same pattern, but never actually compared against each other).
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import sqlalchemy as sa
 from alembic import op
 
 from nptc.db import roles
+from nptc_shared.language import LANGUAGE_TAG_PATTERN
 
 # revision identifiers, used by Alembic.
 revision: str = "0007"
@@ -85,7 +94,7 @@ def upgrade() -> None:
             name=op.f("ck_designation_term_not_blank"),
         ),
         sa.CheckConstraint(
-            r"language ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'",
+            f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'",
             name=op.f("ck_designation_language"),
         ),
         sa.CheckConstraint(

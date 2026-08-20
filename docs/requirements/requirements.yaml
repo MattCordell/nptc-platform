@@ -411,8 +411,8 @@
   priority: MUST
   phase: p4
   title: "SPIA spreadsheet export format"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #47 delivers this requirement's 'no non-ASCII whitespace anywhere ... normalised out during ingestion and can never be introduced through the UI' bullet at entry time, ahead of the export format itself: nptc.catalogue.term_hygiene.clean_term (called from both CatalogueEntry.preferred_term's and Designation.term's @validates hooks) collapses a non-breaking space/narrow no-break space to an ordinary space and strips edges, and rejects (TermCleaningError) any other invisible character with no single deterministic repair (backend/tests/test_catalogue_designations.py::test_catalogue_entry_preferred_term_is_cleaned_at_entry). Remains in-progress: the export format itself (column set/order, the Rev History worksheet, deterministic row ordering, the semicolon delimiter) is unbuilt - that is #63's own scope, unrelated to this issue's numbering."
 - id: "FR-64"
   priority: MUST
   phase: p4

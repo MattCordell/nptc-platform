@@ -18,7 +18,7 @@ this one creates.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy.orm import Session
 
@@ -54,7 +54,18 @@ class DesignationAlreadyRetiredError(ValueError):
     `retired` - retiring twice would otherwise silently write a second
     `designation.retired` audit event with no actual state change, which
     reads as a real edit to anyone reviewing the audit log even though
-    nothing changed."""
+    nothing changed.
+
+    `http_status: ClassVar[int] = 409` - the same convention every other
+    error class this issue adds carries (`TermCleaningError`,
+    `DesignationLanguageError`, `ChangelogNoteError`), so
+    `nptc.api.errors.register_exception_handlers` has a status to read
+    rather than falling through to an unhandled 500 once #149/#150 give
+    this a caller. 409, not 422: the request is well-formed, it just
+    conflicts with the resource's current state - the same reasoning
+    `EntryVersionConflictError` already applies."""
+
+    http_status: ClassVar[int] = 409
 
 
 def add_designation(
