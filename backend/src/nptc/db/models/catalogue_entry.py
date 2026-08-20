@@ -48,6 +48,19 @@ FR-03 permits); `business_key` is `UNIQUE`; and there is no `DELETE`/
 transition, never a row removal - see `nptc.db.roles.
 REVOKE_CATALOGUE_ENTRY_DELETE_SQL`), so no key is ever freed to be
 reissued in the first place.
+
+**`preferred_term` is cleaned at entry (FR-63), and `length` is computed
+from it, never stored (FR-85/FR-24, issue #47).** This is the field FR-85
+is actually about - PRD §6.5: "it is simply the character count of the
+RCPA preferred term" - not any `designation` row (ADR-0022 is explicit
+that the catalogue's own en-AU preferred term is never duplicated into
+`designation` at all). The `@validates("preferred_term")` guard below
+calls the same `nptc.catalogue.term_hygiene.clean_term` `Designation.term`
+uses, so a trailing non-breaking space (PRD Appendix A.1) is collapsed
+here exactly as it would be on a synonym row, and `length` is a bare
+Python `@property` with deliberately no setter and no backing column -
+see `nptc.db.models.designation.Designation.length` for the same
+computation applied to a designation's own term.
 """
 
 from __future__ import annotations
@@ -62,6 +75,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 from sqlalchemy.sql import func
 
+from nptc.catalogue.term_hygiene import clean_term, preferred_term_length
 from nptc.db.base import Base
 
 
@@ -166,3 +180,15 @@ class CatalogueEntry(Base):
                 f"reassigned from {self.__dict__['business_key']!r} to {value!r}"
             )
         return value
+
+    @validates("preferred_term")
+    def _validate_preferred_term(self, _key: str, value: str) -> str:
+        return clean_term(value)
+
+    @property
+    def length(self) -> int:
+        """FR-85/FR-24: the character count of `preferred_term` after the
+        same whitespace cleaning applied at entry - computed here, never
+        stored, never settable. See the module docstring for why this is
+        the field FR-85 is actually about."""
+        return preferred_term_length(self.preferred_term)

@@ -38,7 +38,12 @@ def _audit_event_count(session: Session) -> int:
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_save_with_current_row_version_succeeds_and_bumps_it(app_session: Session) -> None:
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Original term")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for FR-38 test",
+    )
     assert entry.row_version == 1
 
     updated = save_entry(
@@ -47,7 +52,7 @@ def test_save_with_current_row_version_succeeds_and_bumps_it(app_session: Sessio
         business_key=entry.business_key,
         expected_row_version=1,
         changes=EntryChanges(preferred_term="Updated term"),
-        reason="renamed",
+        reason="Renamed the entry",
     )
 
     assert updated.row_version == 2
@@ -61,7 +66,12 @@ def test_stale_row_version_is_rejected_and_names_the_conflict(app_session: Sessi
     """NFR-38 mandated test 8: "A concurrent edit with a stale row_version
     is rejected". The caller must also be shown *what* conflicts, not just
     a bare refusal - FR-38's stated rationale."""
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Original term")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for FR-38 test",
+    )
 
     save_entry(
         app_session,
@@ -100,7 +110,12 @@ def test_a_stale_save_that_would_have_matched_still_reports_zero_conflicts(
     """The version is the contract even if the submitted values happen to
     coincide with the current ones - but the report's `conflicts` must
     stay empty in that case rather than showing a spurious diff."""
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Same term")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Same term",
+        reason="Created for FR-38 test",
+    )
 
     save_entry(
         app_session,
@@ -129,7 +144,12 @@ def test_a_stale_save_that_would_have_matched_still_reports_zero_conflicts(
 def test_a_rejected_save_writes_no_audit_event_and_leaves_the_entry_untouched(
     app_session: Session,
 ) -> None:
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Original term")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for FR-38 test",
+    )
     save_entry(
         app_session,
         AuditContext.system(),
@@ -165,7 +185,12 @@ def test_session_remains_usable_after_a_caught_conflict(app_session: Session) ->
     `Session` unable to issue further statements - the whole point of
     wrapping the version-checked flush in its own savepoint is that a
     caught conflict does not poison the rest of the caller's transaction."""
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Original term")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for FR-38 test",
+    )
     save_entry(
         app_session,
         AuditContext.system(),
@@ -203,7 +228,12 @@ def test_save_entries_bumps_every_entrys_row_version(app_session: Session) -> No
     """#63's bulk reclassify is meant to call this seam, not a Core bulk
     `update()` - see `save_entries`'s own docstring."""
     entries = [
-        create_entry(app_session, AuditContext.system(), preferred_term=f"Entry {i}")
+        create_entry(
+            app_session,
+            AuditContext.system(),
+            preferred_term=f"Entry {i}",
+            reason="Created for FR-38 bulk test",
+        )
         for i in range(3)
     ]
     events_before = _audit_event_count(app_session)
@@ -212,7 +242,9 @@ def test_save_entries_bumps_every_entrys_row_version(app_session: Session) -> No
         (entry.business_key, entry.row_version, EntryChanges(preferred_term=f"Renamed {i}"))
         for i, entry in enumerate(entries)
     ]
-    saved = save_entries(app_session, AuditContext.system(), updates=updates, reason="bulk")
+    saved = save_entries(
+        app_session, AuditContext.system(), updates=updates, reason="Bulk reclassify test"
+    )
 
     assert [entry.row_version for entry in saved] == [2, 2, 2]
     assert _audit_event_count(app_session) == events_before + 3
@@ -222,7 +254,12 @@ def test_save_entries_bumps_every_entrys_row_version(app_session: Session) -> No
 @pytest.mark.integration
 def test_save_entries_stale_middle_entry_does_not_bump_the_first(app_session: Session) -> None:
     entries = [
-        create_entry(app_session, AuditContext.system(), preferred_term=f"Entry {i}")
+        create_entry(
+            app_session,
+            AuditContext.system(),
+            preferred_term=f"Entry {i}",
+            reason="Created for FR-38 bulk test",
+        )
         for i in range(3)
     ]
     # Stale the middle entry out from under the batch before it runs.
@@ -241,7 +278,9 @@ def test_save_entries_stale_middle_entry_does_not_bump_the_first(app_session: Se
     ]
 
     with pytest.raises(EntryVersionConflictError):
-        save_entries(app_session, AuditContext.system(), updates=updates, reason="bulk")
+        save_entries(
+            app_session, AuditContext.system(), updates=updates, reason="Bulk reclassify test"
+        )
 
     first = app_session.execute(
         select(CatalogueEntry).where(CatalogueEntry.business_key == entries[0].business_key)

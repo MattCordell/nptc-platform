@@ -25,6 +25,21 @@ Three rules:
    and anchoring is what keeps an unrelated f-string like
    ``f"failed to update {entity_id}"`` (a plausible future log message) from
    tripping this rule the moment it happens to contain a keyword mid-sentence.
+
+   **A known hole this leaves**, deliberately not closed: a ``CheckConstraint``
+   expression built as an f-string whose literal text starts with a column
+   name rather than a SQL verb - e.g.
+   ``f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"``
+   (``nptc.db.models.designation``) - passes both rule 1 (not a
+   ``text()``/``.execute()``/``.exec_driver_sql()`` call) and rule 2 (its
+   literal text starts with ``"language"``, not a keyword). This is
+   tolerated only because the interpolated value in every such case is a
+   module-level compile-time constant (a shared regex pattern), never
+   request-scoped or otherwise runtime data - the actual concern rules 1-2
+   exist for. If a future ``CheckConstraint``/``Index`` f-string ever
+   interpolates genuine runtime data, this guard will not catch it; that
+   would need a rule 5 walking ``CheckConstraint``/``Index`` call
+   arguments the same way rule 1 walks ``text()``/``.execute()`` ones.
 3. Any string literal combining "GRANT ALL" with the ``audit_event`` table
    name fails outright (NFR-09 riding along on NFR-22's own machinery) -
    TRUNCATE is a distinct, owner-only privilege included in ``ALL`` and

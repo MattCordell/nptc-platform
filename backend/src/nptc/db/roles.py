@@ -119,3 +119,20 @@ REVOKE_CATALOGUE_ENTRY_DELETE_SQL = (
 GRANT_CATALOGUE_BUSINESS_KEY_SEQ_SQL = (
     "GRANT USAGE, UPDATE ON SEQUENCE catalogue_entry_business_key_seq TO nptc_app;"
 )
+
+#: issue #47 (FR-04/FR-24/FR-37/FR-85): SELECT+INSERT only at table level -
+#: same posture as `GRANT_CATALOGUE_ENTRY_SQL` above.
+GRANT_DESIGNATION_SQL = "GRANT SELECT, INSERT ON TABLE designation TO nptc_app;"
+#: Column-level UPDATE, excluding `id`, `entry_id` and `created_at` - a
+#: designation is retired and re-created on a different entry, never
+#: reparented (see `Designation._validate_entry_id_immutable`'s Python-level
+#: guard for the same invariant), matching `business_key`'s own treatment
+#: on `catalogue_entry`.
+GRANT_DESIGNATION_UPDATE_SQL = (
+    "GRANT UPDATE (term, use, language, status, updated_at) ON TABLE designation TO nptc_app;"
+)
+#: No DELETE, no TRUNCATE, ever - a designation is retired via `status`,
+#: never removed ("a retired designation is retained, not deleted", #47's
+#: own acceptance criterion) - the same privilege-level guarantee
+#: `REVOKE_CATALOGUE_ENTRY_DELETE_SQL` already makes for `catalogue_entry`.
+REVOKE_DESIGNATION_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE designation FROM nptc_app;"
