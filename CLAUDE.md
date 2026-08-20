@@ -71,7 +71,7 @@ container. Run the fast subset while iterating, and the full suite (optionally
 parallelised via `pytest-xdist`) once before pushing:
 
 ```powershell
-uv run pytest -m "not integration"                       # no Docker, ~40s
+uv run pytest -m "not integration"                       # no Docker, well under a minute
 uv run pytest -m integration -n auto --dist loadscope     # container tests, parallel
 uv run pytest -n auto --dist loadscope                    # full sweep before pushing
 ```

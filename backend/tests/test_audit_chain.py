@@ -37,7 +37,7 @@ def _append(session: Session, entity_id: str) -> None:
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_empty_table_verifies(app_db: Connection, pristine_audit_event: None) -> None:
+def test_empty_table_verifies(pristine_audit_event: None, app_db: Connection) -> None:
     """An explicit acceptance criterion: an empty chain is not an error.
 
     `pristine_audit_event` makes the "empty" precondition explicit rather
@@ -56,7 +56,7 @@ def test_empty_table_verifies(app_db: Connection, pristine_audit_event: None) ->
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-def test_single_row_chain_verifies(app_db: Connection, pristine_audit_event: None) -> None:
+def test_single_row_chain_verifies(pristine_audit_event: None, app_db: Connection) -> None:
     """The other explicit acceptance criterion: a one-row chain is not a
     degenerate case verify_chain mishandles.
 
@@ -77,7 +77,7 @@ def test_single_row_chain_verifies(app_db: Connection, pristine_audit_event: Non
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
 def test_three_appends_verify_with_correct_bounds(
-    app_db: Connection, pristine_audit_event: None
+    pristine_audit_event: None, app_db: Connection
 ) -> None:
     """`pristine_audit_event`: `record_count == 3` requires the table to
     have contained nothing but this test's own three rows (issue #190)."""
@@ -99,7 +99,7 @@ def test_three_appends_verify_with_correct_bounds(
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
 def test_each_appends_prev_hash_links_to_its_predecessors_entry_hash(
-    app_db: Connection, pristine_audit_event: None
+    pristine_audit_event: None, app_db: Connection
 ) -> None:
     """`pristine_audit_event`: `first.prev_hash == GENESIS_HASH` asserts
     this row is the chain's global first row, which only holds if the
@@ -298,9 +298,6 @@ def test_concurrent_append_serialises_through_the_advisory_lock(
             assert result.record_count == baseline_count + 2
 
             trans_retry.commit()
-        except BaseException:
-            trans_retry.rollback()
-            raise
         finally:
             conn_retry.close()
     finally:

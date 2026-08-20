@@ -179,19 +179,22 @@ def app_db(app_engine: Engine) -> Iterator[Connection]:
 
 def _wipe_committed_audit_state(owner_engine: Engine) -> None:
     """Deletes every row a test in this tree could plausibly have
-    committed to `user_role`, `audit_event` or `app_user` (that order -
-    FK-safe). Only the owner role can (`nptc_app_login` has no DELETE on
-    any of these, NFR-09).
+    committed to `user_role`, `user_identity`, `audit_event` or `app_user`
+    - every table that FK-references `app_user`, deleted before it (that
+    order - FK-safe; `0003_user_and_user_identity.py` gives neither FK an
+    `ON DELETE CASCADE`, so `app_user` must go last). Only the owner role
+    can (`nptc_app_login` has no DELETE on any of these, NFR-09).
 
     Safe to run unconditionally: nothing in this test tree relies on
-    inherited rows in these three tables - the tests that commit real rows
-    at all (`test_audit_chain.py`'s concurrency test,
-    `test_grants.py`'s concurrency test, the `*_cli.py` modules) each
-    already clean up their own ids, so anything left here is exactly the
-    accidental leakage issue #190 is about removing.
+    inherited rows in these tables - the tests that commit real rows at
+    all (`test_audit_chain.py`'s concurrency test, `test_grants.py`'s
+    concurrency test, the `*_cli.py` modules) each already clean up their
+    own ids, so anything left here is exactly the accidental leakage issue
+    #190 is about removing.
     """
     with owner_engine.connect() as connection:
         connection.execute(text("DELETE FROM user_role"))
+        connection.execute(text("DELETE FROM user_identity"))
         connection.execute(text("DELETE FROM audit_event"))
         connection.execute(text("DELETE FROM app_user"))
         connection.commit()

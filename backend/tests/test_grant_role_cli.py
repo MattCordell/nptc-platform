@@ -32,7 +32,7 @@ def app_url(owner_engine: Engine, app_login_credentials: tuple[str, str], migrat
 
 
 @pytest.fixture
-def seeded_user(owner_engine: Engine, migrated: None, pristine_audit_event: None) -> Iterator[str]:
+def seeded_user(pristine_audit_event: None, owner_engine: Engine, migrated: None) -> Iterator[str]:
     """A committed `app_user` row the CLI can look up by username - real
     commits, since `grant_role.main()`'s own connection must see it.
 

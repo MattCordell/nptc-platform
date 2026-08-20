@@ -259,7 +259,7 @@ def test_grant_and_revoke_each_emit_an_audit_event(app_db: Connection) -> None:
 @pytest.mark.req("FR-01")
 @pytest.mark.integration
 def test_revoking_the_last_administrator_is_refused(
-    app_db: Connection, pristine_audit_event: None
+    pristine_audit_event: None, app_db: Connection
 ) -> None:
     """`pristine_audit_event`: `assert_not_last_administrator` counts
     Administrator grants across the *whole* `user_role` table (see its
@@ -323,7 +323,7 @@ def test_revoking_one_of_two_administrators_succeeds(app_db: Connection) -> None
 @pytest.mark.req("FR-01")
 @pytest.mark.integration
 def test_concurrent_revocation_of_the_last_two_administrators_leaves_exactly_one(
-    app_engine: Engine, pristine_audit_event: None
+    pristine_audit_event: None, app_engine: Engine
 ) -> None:
     """The principal failure mode FR-01's guard exists to prevent: two
     concurrent revocations, each independently checking "is there another
