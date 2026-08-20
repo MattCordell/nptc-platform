@@ -46,6 +46,12 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: migration-docstring-placeholder
+        name: no unfilled migration docstring placeholder
+        entry: python -c "import sys; hits = [f for f in sys.argv[1:] if '<FILL IN' in open(f, encoding='utf-8').read()]; sys.exit('Unfilled script.py.mako placeholder in: ' + ', '.join(hits) if hits else 0)"
+        language: system
+        files: ^backend/migrations/versions/.*\.py$
+
       - id: frontend-lint
         name: eslint (frontend)
         entry: bash -c 'cd frontend && corepack pnpm exec eslint .'

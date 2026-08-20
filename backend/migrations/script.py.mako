@@ -4,7 +4,7 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 
-Issue/FR: TODO - which issue and FR/NFR this migration lands.
+Issue #NNN (FR-nn): <FILL IN - which issue and FR/NFR this migration lands>.
 
 Why, not what: the invariants this DDL enforces and the shape rejected instead - this
 docstring is the primary, most detailed account (see CONTRIBUTING.md's "A schema

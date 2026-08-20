@@ -26,26 +26,26 @@ DATABASE_URL`, a DSN for a role that owns the schema (able to `CREATE EXTENSION`
 `nptc_app` runtime role, which cannot do any of that by design. See
 [`configuration.md`](configuration.md) for both database DSNs this stack reads.
 
+**`CREATE EXTENSION` needs superuser** (or a role explicitly granted `CREATE` on the
+database, in a managed Postgres offering that restricts real superuser). The owning role
+used for `NPTC_MIGRATION_DATABASE_URL` must have this - `0001_extensions_and_app_role.py`
+installs `pg_trgm` and `unaccent` and will fail with a permission error otherwise.
+
 ## Migration index
 
-One row per revision. "Operator consequence: none" means there is nothing to do beyond
-`upgrade head` - that migration's reasoning lives entirely in its own docstring and/or
-`data-model.md`, so it gets no section of its own below.
+One row per revision. An operator consequence of `None` means there is nothing to do
+beyond `upgrade head` - that migration's reasoning lives entirely in its own docstring
+and/or `data-model.md`, so it gets no section of its own below.
 
 | Revision | Adds | Operator consequence |
 |---|---|---|
-| [`0001_extensions_and_app_role.py`](../../backend/migrations/versions/0001_extensions_and_app_role.py) | `pg_trgm`, `unaccent`, the `nptc_app` role | Needs a superuser-equivalent DSN; see below and [The asymmetric downgrade](#the-asymmetric-downgrade) |
+| [`0001_extensions_and_app_role.py`](../../backend/migrations/versions/0001_extensions_and_app_role.py) | `pg_trgm`, `unaccent`, the `nptc_app` role | Needs a superuser-equivalent DSN (above); see [The asymmetric downgrade](#the-asymmetric-downgrade) |
 | [`0002_audit_event.py`](../../backend/migrations/versions/0002_audit_event.py) | `audit_event` (see [`data-model.md`](../architecture/data-model.md#audit_event)) | None |
 | [`0003_user_and_user_identity.py`](../../backend/migrations/versions/0003_user_and_user_identity.py) | `app_user`, `user_identity` | See [below](#0003_user_and_user_identitypy) |
 | [`0004_audit_event_hash_chain.py`](../../backend/migrations/versions/0004_audit_event_hash_chain.py) | `prev_hash`/`entry_hash` on `audit_event` | See [below](#0004_audit_event_hash_chainpy) |
 | [`0005_user_role.py`](../../backend/migrations/versions/0005_user_role.py) | `user_role` | See [below](#0005_user_rolepy), plus first-administrator bootstrap |
 | [`0006_catalogue_entry.py`](../../backend/migrations/versions/0006_catalogue_entry.py) | `catalogue_entry` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | None |
 | [`0007_designation.py`](../../backend/migrations/versions/0007_designation.py) | `designation` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | None - `downgrade()` drops the table outright |
-
-**`CREATE EXTENSION` needs superuser** (or a role explicitly granted `CREATE` on the
-database, in a managed Postgres offering that restricts real superuser). The owning role
-used for `NPTC_MIGRATION_DATABASE_URL` must have this - `0001_extensions_and_app_role.py`
-installs `pg_trgm` and `unaccent` and will fail with a permission error otherwise.
 
 ## Provisioning the app role's login
 
