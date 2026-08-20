@@ -25,6 +25,8 @@ CONTRIBUTING.md's "A schema change's prose has one home each".
 | `backend/src/nptc/db/models/user_identity.py` | The `user_identity` table (issue #42) |
 | `backend/src/nptc/db/models/catalogue_entry.py` | The `catalogue_entry` table (issue #46) |
 | `backend/src/nptc/db/models/designation.py` | The `designation` table (issue #47) |
+| `backend/src/nptc/db/models/code_binding.py` | The `code_binding` table (issue #48) |
+| `backend/src/nptc/db/functions.py` | `nptc_sctid_is_valid`, the database-level Verhoeff check (issue #48, ADR-0023) |
 | `backend/src/nptc/db/roles.py` | `APP_ROLE` and every grant/revoke SQL statement, imported by both the migration that applies them and the tests that assert them |
 
 Alembic's configuration lives in the root `pyproject.toml` as `[tool.alembic]`, not a
@@ -595,8 +597,8 @@ places with three different edit postures:
 | String | Home | Editable? |
 |---|---|---|
 | RCPA/catalogue preferred term | `catalogue_entry.preferred_term` (issue #46) | Yes - user-maintained, exists before any code binding is created |
-| SNOMED CT-AU preferred term | `code_binding.au_preferred_term` (issue #48) | No - stored exactly as served (FR-82) |
-| SNOMED CT Fully Specified Name | `code_binding.fsn` (issue #48) | No - as served, semantic tag intact (FR-82) |
+| SNOMED CT-AU preferred term | `code_binding.au_preferred_term` (issue #48, below) | No - stored exactly as served (FR-82) |
+| SNOMED CT Fully Specified Name | `code_binding.fsn` (issue #48, below) | No - as served, semantic tag intact (FR-82) |
 
 `designation` holds only the first kind, and only its non-en-AU variants - the
 catalogue's own en-AU preferred term stays exactly where issue #46 put it,
@@ -612,6 +614,85 @@ A SNOMED CT-served label is never written into `designation` - doing so would
 destroy FR-82's as-served guarantee and make an unchangeable label editable through
 this table's write path. Code bindings (#48) are what makes the served labels
 visible to the platform at all.
+
+## `code_binding` (issue #48, FR-06, FR-08, FR-82, FR-83)
+
+The terminology server's served labels for a `catalogue_entry` - see PRD §6.4.
+FR-84's subsumption check (issue #48's sweep-level neighbour) and FR-05's collision
+detection are both layered on top of the rows this table creates; neither is
+implemented here.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id`. Immutable - see below. |
+| `system` | `TEXT` | `NOT NULL DEFAULT 'http://snomed.info/sct'`, `CHECK` not-blank. Immutable - see below. |
+| `code` | `TEXT` | `NOT NULL`. **Never numeric, at any layer (FR-06).** `CHECK (nptc_sctid_is_valid(code))` - format (`^[0-9]{6,18}$`) and Verhoeff, both at the database layer. Immutable - see below. |
+| `fsn` | `TEXT` | `NOT NULL`, `CHECK` not-blank. Stored exactly as served, semantic tag intact (FR-82) - no cleaning hook of any kind. |
+| `au_preferred_term` | `TEXT` | Nullable (not every edition serves an AU preferred term), `CHECK` not-blank when present. Stored exactly as served (FR-82). |
+| `edition_hint` | `TEXT` | `NOT NULL DEFAULT 'unknown'`, `CHECK IN ('au','int','unknown')` |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
+| `replaced_by_binding_id` | `UUID` | Nullable, self-FK to `code_binding.id`. Only settable while retiring (see below). |
+| `retirement_reason` | `TEXT` | Nullable. Mandatory exactly when `status = 'retired'` (see below). |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+### FR-82: stored exactly as served, no cleaning hook
+
+Unlike `designation.term`/`catalogue_entry.preferred_term`, `fsn` and
+`au_preferred_term` have **no `@validates` hook at all** - not `clean_term`, not any
+whitespace normalisation. A stored value that has been transformed cannot be
+distinguished from one that has not, and that ambiguity is the entire source of
+FR-83's tag-stripping hazard (below); storing as served makes every value's state
+unambiguous by construction. `backend/tests/test_catalogue_bindings.py` asserts this
+structurally: `nptc.db.models.code_binding`'s source has no reference to
+`clean_term`/`normalise_for_comparison`/`strip_semantic_tag`.
+
+### FR-06: the database enforces format and Verhoeff, not just Python
+
+`ck_code_binding_code` calls `nptc_sctid_is_valid(code)` - a `LANGUAGE sql IMMUTABLE`
+function (`nptc.db.functions`, migration 0008) that folds the Verhoeff D5 tables the
+same way `nptc_shared.sctid.has_valid_check_digit` does in Python, because a `CHECK`
+constraint permits no subquery or CTE and the fold cannot be spelled as a plain
+inline expression. See `docs/adr/0023-database-level-sctid-validation.md` for why a
+database function is the right shape here and not the kind of hidden business logic
+PRD §14.1 warns against, and `backend/tests/test_db_sctid_function.py` for the parity
+test that keeps it from silently diverging from the Python implementation.
+
+### FR-08: retired, never deleted
+
+- `ck_code_binding_retirement_reason`: `(status = 'retired') = (retirement_reason IS
+  NOT NULL AND length(btrim(retirement_reason)) > 0)` - mandatory on retirement,
+  forbidden while active.
+- `ck_code_binding_replaced_by_requires_retired`: `replaced_by_binding_id IS NULL OR
+  status = 'retired'` - a binding can only name a successor once it is itself
+  retired.
+- `ck_code_binding_no_self_supersession`: a binding cannot name itself as its own
+  replacement.
+- `ix_code_binding_one_active_per_entry` - `UNIQUE (entry_id) WHERE status = 'active'`
+  - at most one active binding per entry.
+
+Grants: `SELECT, INSERT` at table level, column-level `UPDATE (fsn,
+au_preferred_term, edition_hint, status, replaced_by_binding_id, retirement_reason,
+updated_at)` - excluding `entry_id`, `system` and `code`, so rebinding to a different
+concept is a retire-and-replace, never an in-place edit - and no `DELETE`/`TRUNCATE`
+grant at all. `fsn`/`au_preferred_term` remain updatable so the FR-45 validation
+sweep can refresh a drifted served label from the terminology server; that is a
+refresh from the wire, never a re-derivation.
+
+### FR-83: the semantic tag strip has exactly one call site
+
+`nptc.exports.semantic_tag.render_display_term` is the one place a served FSN's
+final parenthesised group is ever removed. It wraps
+`nptc_shared.terminology.strip_semantic_tag` (which exists separately for FR-97's
+seeding-time reconciliation, and deliberately returns its input unchanged rather than
+raising when there is no trailing group) with the two defensive assertions FR-83
+requires of an export that runs unattended: the input must end with a parenthesised
+group, or the value is not a served FSN and the export fails loudly rather than
+publish it; the result must be non-empty. `391483001`'s FSN, `"Microscopy (acid fast
+bacilli) (procedure)"`, is the regression fixture - it renders as `"Microscopy (acid
+fast bacilli)"`, and a second application of the rule to that output is never
+reached on any code path. `backend/tests/test_catalogue_bindings.py` asserts
+structurally that the strip is referenced from no module outside `nptc.exports`.
 
 ### Two partial unique indexes
 

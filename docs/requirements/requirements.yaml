@@ -69,8 +69,8 @@
   priority: MUST
   phase: p1
   title: "SNOMED CT identifiers MUST be stored, transported and exported as strings at every layer"
-  status: in-progress
-  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). transform/nptc_transform/cell_defects.py screens every text-typed code cell with it unconditionally, after the same correction dataset.py applies before seeding, so CODE_NOT_WELL_FORMED blocks --emit-dataset on its own rather than only ever firing as a side effect of the opt-in --check-terminology network pass (#131); the terminology pass filters on the same check before submitting anything, rather than reporting it a second time (#27). Issue #37: nptc.audit.serialisation.normalise_json_value normalises an SCTID to its .value (a str) for an audit diff, and raises on a bare int in its place rather than coercing it - test_audit_diff_write_path.py::test_sctid_in_a_diff_is_stored_as_a_jsonb_string proves the stored JSONB value is genuinely a string. DB check constraint, API/JSON/CSV/xlsx layers still owed."
+  status: implemented
+  notes: "shared/nptc_shared/sctid.py: SCTID is a string-only dataclass with ^[0-9]{6,18}$ format and Verhoeff check-digit validation, no __int__/__index__ (#32, P0-10). transform/nptc_transform/cell_defects.py screens every text-typed code cell with it unconditionally, after the same correction dataset.py applies before seeding, so CODE_NOT_WELL_FORMED blocks --emit-dataset on its own rather than only ever firing as a side effect of the opt-in --check-terminology network pass (#131); the terminology pass filters on the same check before submitting anything, rather than reporting it a second time (#27). Issue #37: nptc.audit.serialisation.normalise_json_value normalises an SCTID to its .value (a str) for an audit diff, and raises on a bare int in its place rather than coercing it - test_audit_diff_write_path.py::test_sctid_in_a_diff_is_stored_as_a_jsonb_string proves the stored JSONB value is genuinely a string. Issue #48: code_binding.code is TEXT with ck_code_binding_code CHECK (nptc_sctid_is_valid(code)) - a database function (nptc.db.functions, ADR-0023) enforcing both ^[0-9]{6,18}$ and Verhoeff at the column itself, parity-tested against has_valid_format/has_valid_check_digit (test_db_sctid_function.py). The xlsx round-trip layer is FR-07, tracked separately."
 - id: "FR-07"
   priority: MUST
   phase: p1
@@ -81,8 +81,8 @@
   priority: SHOULD
   phase: p1
   title: "An entry SHOULD permit at most one active code binding"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #48: ix_code_binding_one_active_per_entry (UNIQUE (entry_id) WHERE status = 'active') enforces at most one active binding per entry at the database layer. Retirement is a status transition (nptc.catalogue.bindings.retire_binding), never a DELETE (REVOKE_CODE_BINDING_DELETE_SQL); ck_code_binding_retirement_reason makes retirement_reason mandatory exactly when status='retired', and replaced_by_binding_id (nullable, populated only in the replacement case PRD FR-08 describes) may only be set on a binding that is itself retired (ck_code_binding_replaced_by_requires_retired) and never on itself (ck_code_binding_no_self_supersession). See backend/tests/test_db_code_binding.py."
 - id: "FR-09"
   priority: MUST
   phase: p1
@@ -525,14 +525,14 @@
   priority: MUST
   phase: p1
   title: "The platform MUST store fsn and au_preferred_term exactly as the terminology server returns them, with the semantic tag intact on the FSN"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #48: code_binding.fsn/au_preferred_term carry no @validates hook and no CHECK beyond not-blank - unlike designation.term/catalogue_entry.preferred_term, neither is cleaned, trimmed or otherwise transformed at rest. backend/tests/test_catalogue_bindings.py asserts this structurally (no reference to clean_term/normalise_for_comparison/strip_semantic_tag in nptc.db.models.code_binding) and round-trips the 391483001 / 'Microscopy (acid fast bacilli) (procedure)' fixture byte for byte with the tag intact."
 - id: "FR-83"
   priority: MUST
   phase: p1
   title: "Semantic tag removal happens only in the export renderer, never in storage or in validation"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #48: nptc.exports.semantic_tag.render_display_term is the one call site, landed early (ahead of the P4 export renderers) so the guarantee is structural from the moment a served FSN first has anywhere to live. It wraps nptc_shared.terminology.strip_semantic_tag (a second, narrowly-scoped call site for FR-97 seeding reconciliation) with FR-83's two defensive assertions: the input must end with a parenthesised group or the export fails loudly (NotAServedFSNError) rather than publish a non-served value, and the result must be non-empty. backend/tests/test_catalogue_bindings.py's ast walk asserts the strip is referenced from no module outside nptc.exports; backend/tests/test_semantic_tag_render.py covers the 391483001 fixture (NFR-38 test 11) and the fail-loud case (test 12)."
 - id: "FR-84"
   priority: MUST
   phase: p1

@@ -136,3 +136,25 @@ GRANT_DESIGNATION_UPDATE_SQL = (
 #: own acceptance criterion) - the same privilege-level guarantee
 #: `REVOKE_CATALOGUE_ENTRY_DELETE_SQL` already makes for `catalogue_entry`.
 REVOKE_DESIGNATION_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE designation FROM nptc_app;"
+
+#: issue #48 (FR-06/FR-08/FR-82): SELECT+INSERT only at table level - same
+#: posture as `GRANT_DESIGNATION_SQL` above.
+GRANT_CODE_BINDING_SQL = "GRANT SELECT, INSERT ON TABLE code_binding TO nptc_app;"
+#: Column-level UPDATE, conspicuously excluding `id`, `entry_id`, `system`
+#: and `code` - rebinding to a different concept is a retire-and-replace,
+#: never an in-place edit, which is what makes FR-82's provenance guarantee
+#: a privilege-level invariant rather than an application convention (the
+#: same trick `GRANT_CATALOGUE_ENTRY_UPDATE_SQL` plays for `business_key`).
+#: `fsn`/`au_preferred_term` ARE included: the FR-45 validation sweep must
+#: be able to refresh a drifted served label from the terminology server -
+#: a refresh from the wire, never a re-derivation.
+GRANT_CODE_BINDING_UPDATE_SQL = (
+    "GRANT UPDATE (fsn, au_preferred_term, edition_hint, status, "
+    "replaced_by_binding_id, retirement_reason, updated_at) "
+    "ON TABLE code_binding TO nptc_app;"
+)
+#: No DELETE, no TRUNCATE, ever - a binding is retired via `status`, never
+#: removed (FR-08: "the superseded binding is retained") - the same
+#: privilege-level guarantee `REVOKE_DESIGNATION_DELETE_SQL` already makes
+#: for `designation`.
+REVOKE_CODE_BINDING_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE code_binding FROM nptc_app;"

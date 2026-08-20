@@ -8,6 +8,7 @@ isn't imported through this package is invisible to autogenerate and to
 
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.code_binding import CodeBinding, CodeBindingEditionHint, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
@@ -17,6 +18,9 @@ __all__ = [
     "AuditEvent",
     "CatalogueEntry",
     "CatalogueEntryStatus",
+    "CodeBinding",
+    "CodeBindingEditionHint",
+    "CodeBindingStatus",
     "Designation",
     "DesignationStatus",
     "DesignationUse",
