@@ -105,13 +105,35 @@ Silence is not an option, and CI enforces that.
 | If you changed | Update |
 |---|---|
 | An API endpoint or schema | `docs/api/openapi.json` (regenerated), `docs/architecture/` |
-| The database schema | `docs/operations/upgrade.md`, `docs/architecture/data-model.md` |
+| The database schema | `docs/operations/upgrade.md` (operational facts), `docs/architecture/data-model.md` (schema shape) — see below for who owns what |
 | Configuration or an env var | `deploy/.env.example` **and** `docs/operations/configuration.md` |
 | Jobs, backups, sweeps, exports | `docs/operations/runbooks/` |
 | Anything a Reviewer or Admin does in the UI | `docs/user/` |
 | A design decision with a rejected alternative | A new ADR in `docs/adr/` |
 | A clinical safety consideration | `docs/governance/hazard-log.md` |
 | Setup, quickstart or prerequisites | `README.md`, `CONTRIBUTING.md` |
+
+### A schema change's prose has one home each
+
+A DB schema change used to get its design rationale written up three times: the
+migration's own docstring, the table's section in `data-model.md`, and a per-migration
+note in `upgrade.md`. That isn't extra rigor, it's the same paragraph paid for three
+times, and three copies of one rationale can silently drift apart from each other —
+exactly the class of defect (a description and the thing it describes disagreeing) this
+platform exists to eliminate elsewhere. Each fact gets exactly one home:
+
+| The fact | Its home |
+|---|---|
+| *Why* it is built this way — the invariants enforced, the shape rejected, the trap avoided | The migration's own module docstring. It's reviewed alongside the DDL it explains, so it's the copy most likely to be revisited and kept honest. |
+| The schema *shape* — columns, types, constraints, indexes — plus reasoning that is genuinely architectural (spans multiple tables or issues) | `docs/architecture/data-model.md` |
+| *Operational* facts an operator must act on — "only succeeds against an empty table", "provisions a new role", a manual out-of-band step, a non-obvious downgrade order | `docs/operations/upgrade.md`, linking to the migration for the reasoning rather than re-summarising it |
+
+Two rules follow: **link, don't restate** — a document referring to a fact that lives
+elsewhere cites it instead of repeating it; and **a migration with no operator-facing
+consequence gets a one-line row in `upgrade.md`'s migration index, not a section** (that's
+why some revisions have no `upgrade.md` section at all — it isn't a gap, and it doesn't
+make the doc-impact declaration above optional). See `0007_designation.py` and its
+`upgrade.md`/`data-model.md` entries for a worked example.
 
 ## Issue checklists
 

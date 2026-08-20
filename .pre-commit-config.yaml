@@ -46,6 +46,12 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: migration-docstring-placeholder
+        name: no unfilled migration docstring placeholder (uv run)
+        entry: uv run python scripts/migration_placeholder_check.py
+        language: system
+        files: ^backend/migrations/versions/.*\.py$
+
       - id: frontend-lint
         name: eslint (frontend)
         entry: bash -c 'cd frontend && corepack pnpm exec eslint .'

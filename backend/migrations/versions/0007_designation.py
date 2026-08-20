@@ -25,14 +25,22 @@ application convention:
 - At most one active preferred designation per `(entry_id, language)`, and
   no duplicate active `(entry_id, term, language)` - both partial unique
   indexes, `postgresql_where`-scoped to `status = 'active'` so a retired
-  row never blocks a fresh one from being added under the same term.
+  row never blocks a fresh one from being added under the same term. The
+  second exists because the same synonym attached twice to one entry -
+  whether from a doubled delimiter or a whitespace variant, PRD Appendix
+  A.4 - must be unrepresentable, not merely discouraged by convention.
 - No `DELETE`/`TRUNCATE` grant at all - a designation is retired via
   `status`, never removed ("a retired designation is retained, not
-  deleted").
+  deleted"). The column-level `UPDATE` grant also excludes `entry_id` -
+  matching `catalogue_entry.business_key`'s own immutability treatment
+  (0006) - a designation is retired and re-created on a different entry,
+  never reparented.
 
 `length` has no column here at all (FR-85/FR-24) - it is a computed
 Python `@property` on the model, never persisted, so there is nothing for
-this migration to create.
+this migration to create. Giving it a column at all, even one nothing
+ever writes to, would leave a seam a future migration could accidentally
+populate - the absence is deliberate, not an oversight to backfill later.
 
 `ck_designation_language`'s regex is imported from `nptc_shared.language.
 LANGUAGE_TAG_PATTERN` rather than hand-copied, the same

@@ -6,6 +6,12 @@ least-privilege role model, and a testcontainers integration harness. Everything
 describes what exists today; later issues (#35, #36, #42, #46-#48, #51-#55, #138) extend
 it rather than replace it.
 
+This document owns schema *shape* - columns, types, constraints, indexes - plus reasoning
+that is genuinely architectural (spans multiple tables or issues). *Why* a single
+migration is built the way it is lives in that migration's own docstring; *operational*
+facts an operator must act on live in [`upgrade.md`](../operations/upgrade.md) - see
+CONTRIBUTING.md's "A schema change's prose has one home each".
+
 ## Migration layout
 
 | File | Responsibility |
@@ -565,10 +571,9 @@ table creates; it is not implemented here.
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 
-**There is no `length` column, anywhere (FR-85/FR-24).** `Length` MUST be computed
-from the preferred term and MUST NOT be storable or editable - giving it a column at
-all, even one nothing ever writes to, would leave a seam a future migration could
-accidentally populate. PRD §6.5 defines `Length` as the *RCPA/catalogue* preferred
+**There is no `length` column, anywhere (FR-85/FR-24)** - computed `@property`, never
+storable or editable; see `0007_designation.py`'s docstring for why. PRD §6.5 defines
+`Length` as the *RCPA/catalogue* preferred
 term's character count, which lives on `catalogue_entry.preferred_term` (issue #46),
 never on a `designation` row (see "Where the preferred term lives" below) -
 `CatalogueEntry.length` is therefore the field FR-85 actually publishes.
@@ -610,16 +615,15 @@ visible to the platform at all.
 
 ### Two partial unique indexes
 
-- `ix_designation_one_active_preferred_per_entry_language` - at most one active
-  preferred designation per `(entry_id, language)`.
-- `ix_designation_no_duplicate_active_term` - no duplicate active
-  `(entry_id, term, language)`. The same synonym attached twice to one entry -
-  whether from a doubled delimiter or a whitespace variant, PRD Appendix A.4 - is
-  unrepresentable rather than merely discouraged.
+- `ix_designation_one_active_preferred_per_entry_language` - `UNIQUE (entry_id, language)
+  WHERE status = 'active' AND use = 'preferred'` - at most one active preferred
+  designation per `(entry_id, language)`.
+- `ix_designation_no_duplicate_active_term` - `UNIQUE (entry_id, term, language) WHERE
+  status = 'active'` - no duplicate active `(entry_id, term, language)`.
 
-Both are scoped `postgresql_where=status = 'active'` (the first also requires
-`use = 'preferred'`) so a retired row never blocks a fresh one from being added
-under the same term.
+Both are scoped to `status = 'active'` so a retired row never blocks a fresh one from
+being added under the same term. See `0007_designation.py`'s docstring for why these are
+enforced at the database layer rather than by application convention.
 
 ### Term hygiene at entry (FR-63)
 
@@ -655,12 +659,11 @@ seed import) is what turns a spreadsheet cell like `'ADA RBC, ADA red cells'` or
 ### Never `DELETE`d, only retired
 
 A designation that stops being current moves to `status='retired'` (mirroring
-`CatalogueEntryStatus.WITHDRAWN`'s own precedent), never removed -
-`nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes "a retired designation is
-retained, not deleted" a privilege-level guarantee: no `DELETE`/`TRUNCATE` grant on
-`designation` at all. The column-level `UPDATE` grant also excludes `entry_id` -
-matching `catalogue_entry.business_key`'s own immutability treatment, a designation
-is retired and re-created on a different entry, never reparented.
+`CatalogueEntryStatus.WITHDRAWN`'s own precedent), never removed. Grants:
+`SELECT, INSERT` at table level, column-level `UPDATE (term, use, language, status,
+updated_at)` - excluding `entry_id`, so a designation is retired and re-created on a
+different entry, never reparented - and no `DELETE`/`TRUNCATE` grant at all. See
+`0007_designation.py`'s docstring for the reasoning.
 
 ### FR-37: every write requires a changelog note
 
