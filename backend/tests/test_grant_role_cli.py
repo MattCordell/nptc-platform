@@ -32,9 +32,15 @@ def app_url(owner_engine: Engine, app_login_credentials: tuple[str, str], migrat
 
 
 @pytest.fixture
-def seeded_user(owner_engine: Engine, migrated: None) -> Iterator[str]:
+def seeded_user(pristine_audit_event: None, owner_engine: Engine, migrated: None) -> Iterator[str]:
     """A committed `app_user` row the CLI can look up by username - real
-    commits, since `grant_role.main()`'s own connection must see it."""
+    commits, since `grant_role.main()`'s own connection must see it.
+
+    `pristine_audit_event` (backend/tests/conftest.py) replaces this
+    fixture's own teardown-only `DELETE FROM user_role/audit_event/
+    app_user`: cleaning only at teardown made every test using this
+    fixture inherit its "table is otherwise empty" precondition from
+    whatever ran before it, rather than establishing it (issue #190)."""
     username = "grant-role-cli-test-user"
     with owner_engine.connect() as connection:
         connection.execute(
@@ -42,14 +48,7 @@ def seeded_user(owner_engine: Engine, migrated: None) -> Iterator[str]:
             {"username": username},
         )
         connection.commit()
-    try:
-        yield username
-    finally:
-        with owner_engine.connect() as connection:
-            connection.execute(text("DELETE FROM user_role"))
-            connection.execute(text("DELETE FROM audit_event"))
-            connection.execute(text("DELETE FROM app_user"))
-            connection.commit()
+    yield username
 
 
 @pytest.mark.req("FR-01")
@@ -67,7 +66,7 @@ def test_grants_administrator_to_a_real_user_and_records_an_audit_event(
     with owner_engine.connect() as connection:
         role_row = connection.execute(
             text(
-                "SELECT ur.role, ur.granted_by_user_id FROM user_role ur "
+                "SELECT ur.id, ur.role, ur.granted_by_user_id FROM user_role ur "
                 "JOIN app_user u ON u.id = ur.user_id WHERE u.username = :username"
             ),
             {"username": seeded_user},
@@ -75,8 +74,16 @@ def test_grants_administrator_to_a_real_user_and_records_an_audit_event(
         assert role_row.role == "administrator"
         assert role_row.granted_by_user_id is None
 
+        # Scoped to this grant's own entity_id, not an unfiltered table
+        # count - correct regardless of what else has committed a
+        # 'user_role.granted' event (issue #190), and `pristine_audit_event`
+        # above still holds this belt-and-braces.
         audit_count = connection.execute(
-            text("SELECT count(*) FROM audit_event WHERE action = 'user_role.granted'")
+            text(
+                "SELECT count(*) FROM audit_event "
+                "WHERE action = 'user_role.granted' AND entity_id = :entity_id"
+            ),
+            {"entity_id": str(role_row.id)},
         ).scalar_one()
         assert audit_count == 1
 

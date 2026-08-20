@@ -65,6 +65,25 @@ uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
 uv run pytest -m "req('FR-07')"      # tests tagged against a specific requirement
 ```
 
+Fast iteration vs. full sweep (issue #190): most of the wall time is the ~220
+`@pytest.mark.integration` tests (testcontainers Postgres), not the ~900 that need no
+container. Run the fast subset while iterating, and the full suite (optionally
+parallelised via `pytest-xdist`) once before pushing:
+
+```powershell
+uv run pytest -m "not integration"                       # no Docker, well under a minute
+uv run pytest -m integration -n auto --dist loadscope     # container tests, parallel
+uv run pytest -n auto --dist loadscope                    # full sweep before pushing
+```
+
+`--dist loadscope` is required, not optional, whenever `-n` is used against
+`backend/tests`: `postgres_container`/`owner_engine`/`app_engine` are session-scoped per
+*worker process*, so grouping by module is what keeps each module's tests on the one
+container `-n` gives that worker, rather than xdist spreading a module's tests (and their
+shared container assumptions) across workers. This is local-dev tooling only - CI's own
+`pytest` invocations are unchanged, since each CI job is already fast (~2-3 min) and one
+container per worker is a heavier ask of a CI runner than of a dev machine.
+
 Frontend commands run from `frontend/`, or via the root `package.json` scripts, which
 proxy to `pnpm --filter nptc-frontend`. The scripts are the standard set (`dev`,
 `build`, `test`, `lint`, `format:check`, `typecheck`) — see `frontend/package.json`.
@@ -96,6 +115,15 @@ pre-commit run --all-files
 - Test trees (`backend/tests`, `transform/tests`, `shared/tests`, `scripts/tests`) have
   no `__init__.py` — pytest runs with `--import-mode=importlib`, and more than one tree
   is allowed to reuse a basename like `test_scaffolding.py` without colliding.
+- A test must never assert an absolute count/state on a table another test could
+  plausibly have written to first (issue #190) — `backend/tests` shares one
+  session-scoped Postgres container across every test in the run. Assert a relative
+  delta against a baseline established in the test (see
+  `test_catalogue_business_key.py`'s `advance_sequence_past` tests), scope the query to
+  rows this test itself created, or — only when neither is possible, e.g. a check that is
+  genuinely whole-table by definition — request an explicit isolation fixture
+  (`pristine_audit_event` in `backend/tests/conftest.py`) rather than relying on
+  incidental file-execution order.
 
 ## Hard constraints (from CONTRIBUTING.md — will be pushed back on in review)
 
