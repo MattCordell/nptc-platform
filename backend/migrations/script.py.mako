@@ -4,6 +4,13 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 
+Issue/FR: TODO - which issue and FR/NFR this migration lands.
+
+Why, not what: the invariants this DDL enforces and the shape rejected instead - this
+docstring is the primary, most detailed account (see CONTRIBUTING.md's "A schema
+change's prose has one home each"). Schema shape belongs in data-model.md; an
+operator-facing consequence (a precondition, a manual step, a non-obvious downgrade
+order) belongs in upgrade.md, linking back here rather than restating this reasoning.
 """
 
 from __future__ import annotations

@@ -28,7 +28,10 @@ application convention:
   row never blocks a fresh one from being added under the same term.
 - No `DELETE`/`TRUNCATE` grant at all - a designation is retired via
   `status`, never removed ("a retired designation is retained, not
-  deleted").
+  deleted"). The column-level `UPDATE` grant also excludes `entry_id` -
+  matching `catalogue_entry.business_key`'s own immutability treatment
+  (0006) - a designation is retired and re-created on a different entry,
+  never reparented.
 
 `length` has no column here at all (FR-85/FR-24) - it is a computed
 Python `@property` on the model, never persisted, so there is nothing for
