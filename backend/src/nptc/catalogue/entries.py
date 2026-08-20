@@ -32,6 +32,15 @@ savepoint rollback discards only the attempted (and never-persisted)
 `UPDATE`, and no audit row is ever built in the first place. Both paths
 have their own test (`backend/tests/test_catalogue_optimistic_locking.py`);
 one passing proves nothing about the other.
+
+**FR-37 (issue #47): `reason` is a required argument, not an optional one.**
+Every write path here validates it via
+`nptc.catalogue.changelog.validate_changelog_note` *before* touching the
+row - the same precondition-before-mutation posture the row-version check
+above already uses - so a rejected note leaves neither a partial write nor
+an audit event behind. There is no exemption: the ADR-0010 seeded-import
+path supplies `nptc.catalogue.changelog.SEED_IMPORT_NOTE`, which passes
+validation on its own merits rather than bypassing it.
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.policy import policy_for
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
+from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.errors import (
     ConflictReport,
     EntryNotFoundError,
@@ -157,15 +167,19 @@ def create_entry(
     ctx: AuditContext,
     *,
     preferred_term: str,
+    reason: str,
     status: CatalogueEntryStatus | str = CatalogueEntryStatus.DRAFT,
     specimen_unconstrained: bool = False,
-    reason: str | None = None,
     business_key: str | None = None,
 ) -> CatalogueEntry:
     """Creates a new entry. `business_key` is minted via
     `allocate_business_key` unless the caller supplies one explicitly - the
     seeded-import path (ADR-0010) supplies its own, positionally-derived
-    key rather than minting."""
+    key rather than minting.
+
+    `reason` (FR-37) is validated before anything is added to the session -
+    see the module docstring."""
+    validated_reason = validate_changelog_note(reason)
     resolved_key = business_key if business_key is not None else allocate_business_key(session)
     entry = CatalogueEntry(
         business_key=resolved_key,
@@ -180,7 +194,7 @@ def create_entry(
         action="catalogue_entry.created",
         instance=entry,
         kind=ChangeKind.CREATED,
-        reason=reason,
+        reason=validated_reason,
     )
     return entry
 
@@ -258,7 +272,7 @@ def save_entry(
     business_key: str,
     expected_row_version: int,
     changes: EntryChanges,
-    reason: str | None = None,
+    reason: str,
 ) -> CatalogueEntry:
     """Applies `changes` to the entry identified by `business_key`,
     enforcing FR-38 optimistic locking. Raises `EntryVersionConflictError`
@@ -266,7 +280,11 @@ def save_entry(
     caught by the explicit precondition check below or by the
     `version_id_col` backstop for a genuine concurrent race - see the
     module docstring for why neither path ever leaves an audit event
-    behind."""
+    behind.
+
+    `reason` (FR-37) is validated before the entry is even loaded, so a
+    rejected note never reaches the row-version check at all."""
+    validated_reason = validate_changelog_note(reason)
     entry = _load_for_update(session, business_key)
 
     if entry.row_version != expected_row_version:
@@ -298,7 +316,7 @@ def save_entry(
             action="catalogue_entry.updated",
             instance=entry,
             kind=ChangeKind.UPDATED,
-            reason=reason,
+            reason=validated_reason,
         )
         # Committing the savepoint here, inside the try, makes the
         # guarantee local to this function: it relies only on
@@ -330,7 +348,7 @@ def save_entries(
     ctx: AuditContext,
     *,
     updates: Sequence[tuple[str, int, EntryChanges]],
-    reason: str | None = None,
+    reason: str,
 ) -> list[CatalogueEntry]:
     """Applies a batch of `(business_key, expected_row_version, changes)`
     updates, one `save_entry` call - and one savepoint - per entry (FR-39's

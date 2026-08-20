@@ -125,6 +125,22 @@ revoke path through this script; once a second Administrator exists, every furth
 grant/revoke should go through the ordinary checked functions (`nptc.auth.grants.
 grant_role`/`revoke_role`, landing with the P2 user-administration endpoints).
 
+## `0007_designation.py`
+
+Adds `designation` (issue #47, FR-04, FR-24, FR-37, FR-85 - see
+[`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)).
+Its privilege grants and revokes live in this same migration, following the same
+reasoning as `0002_audit_event.py` above: `SELECT, INSERT` at table level, column-level
+`UPDATE (term, use, language, status, updated_at)` - excluding `entry_id`, matching
+`catalogue_entry.business_key`'s own immutability treatment - and no `DELETE`/
+`TRUNCATE` grant at all, since a retired designation is retained, not deleted.
+
+Two partial unique indexes are created alongside the table (`postgresql_where`-scoped
+to `status = 'active'`): at most one active preferred designation per
+`(entry_id, language)`, and no duplicate active `(entry_id, term, language)`. There is
+no `length` column - FR-85 requires it computed, never stored, so there is nothing for
+this migration to create.
+
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely

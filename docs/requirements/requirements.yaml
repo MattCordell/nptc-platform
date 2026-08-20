@@ -57,8 +57,8 @@
   priority: MUST
   phase: p1
   title: "Synonyms MUST be modelled as separate rows, not as a delimited string"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #47: the designation table (backend/src/nptc/db/models/designation.py) has no delimited-string column at all; nptc.catalogue.designations.add_synonyms inserts each synonym as its own row. The sample's real defects - a comma delimiter, a doubled semicolon, whitespace variants - are split by the existing transform/src/nptc_transform/cell_defects.split_synonyms (not reimplemented in the backend, per ADR-0001/FR-74) and inserted as the correct individual rows with no empty row (backend/tests/test_catalogue_designations.py). A partial unique index (ix_designation_no_duplicate_active_term) refuses a duplicate active (entry_id, term, language) at the database layer (backend/tests/test_db_designation.py). Remains without an HTTP surface until #149/#150; FR-05 collision detection is #49."
 - id: "FR-05"
   priority: MUST
   phase: p1
@@ -177,8 +177,8 @@
   priority: MUST
   phase: p2
   title: "Computed fields MUST NOT appear as editable inputs anywhere, for any role"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #47: Designation.length (backend/src/nptc/db/models/designation.py) is a bare Python @property with no backing column and deliberately no setter - nptc.catalogue.designations.preferred_term_length is the one computation, never duplicated. backend/tests/test_catalogue_designations.py asserts both the missing setter (AttributeError on assignment) and the missing column. Remains in-progress: this covers only the designation/preferred-term-length case: the wider claim (no computed field editable anywhere, for any role) needs the registry (#51-#55) and the edit-screen work (#149-#151) before it can move to implemented."
 - id: "FR-25"
   priority: MUST
   phase: p2
@@ -255,8 +255,8 @@
   priority: MUST
   phase: p1
   title: "Every save requires a changelog note"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #47: nptc.catalogue.changelog.validate_changelog_note is the server-side authority - normalises the note (nptc_shared.text.normalise_for_comparison, so invisible-character padding cannot game the length floor), then refuses an empty note, one matching a low-information list ('update', 'fix', '.', and neighbours), or one shorter than 10 characters (backend/tests/test_changelog_note.py). nptc.catalogue.entries.create_entry/save_entry/save_entries and nptc.catalogue.designations.add_designation/add_synonyms/retire_designation all require reason as a mandatory keyword argument and validate it before any mutation, so a rejected note leaves no partial write or audit event (backend/tests/test_catalogue_designations.py's negative-path test). No exemption: the ADR-0010 seeded-import path uses SEED_IMPORT_NOTE, a real sentence that passes validation on its own merits. Remains in-progress: #62 is the client-side gate, and there is no HTTP surface until #149/#150."
 - id: "FR-38"
   priority: MUST
   phase: p1
@@ -543,8 +543,8 @@
   priority: MUST
   phase: p1
   title: "Length MUST be computed from the preferred term and MUST NOT be storable or editable (FR-24)"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #47: nptc.catalogue.designations.preferred_term_length computes len(normalise_for_comparison(term)) - the RCPA/catalogue preferred term's character count after the same whitespace cleaning applied at entry, never stored anywhere. designation has no length column at all (backend/src/nptc/db/models/designation.py); Designation.length is a read-only @property. backend/tests/test_catalogue_designations.py covers the PRD §6.5 migration case directly: a trailing non-breaking space shifts the published length once it collapses to nothing after cleaning. Remains in-progress: 'continues to be published, for continuity' needs the export/presentation layer (#63) and the configurable-maximum/distribution-report follow-on is #152 (FR-86/FR-87)."
 - id: "FR-86"
   priority: SHOULD
   phase: p1

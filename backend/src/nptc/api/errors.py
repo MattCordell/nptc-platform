@@ -35,6 +35,8 @@ from nptc.auth.errors_authorisation import (
     ManualLinkRequiredError,
     MfaRequiredError,
 )
+from nptc.catalogue.changelog import ChangelogNoteError
+from nptc.catalogue.designation_term import DesignationTermError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 
 _logger = logging.getLogger(__name__)
@@ -62,6 +64,14 @@ _DETAIL_VERSION_CONFLICT = (
     "conflicting changes and try again."
 )
 _DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
+_DETAIL_CHANGELOG_NOTE = (
+    "A changelog note is required and must describe the change. It becomes the "
+    'published History text, so single words like "update" or "fix" are not accepted.'
+)
+_DETAIL_DESIGNATION_TERM = (
+    "This term could not be saved. It may be empty after whitespace cleaning, or "
+    "contain a character that must be corrected by hand before it can be stored."
+)
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -154,4 +164,29 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("entry not found: %s", exc)
         return JSONResponse(
             status_code=EntryNotFoundError.http_status, content={"detail": _DETAIL_NOT_FOUND}
+        )
+
+    @app.exception_handler(ChangelogNoteError)
+    async def _handle_changelog_note_error(
+        _request: Request, exc: ChangelogNoteError
+    ) -> JSONResponse:
+        # FR-37: a normal, expected refusal on a routine edit, not an
+        # anomaly - INFO, not WARNING. The exception message quotes the
+        # rejected note (useful for support); the response body uses a
+        # fixed, generic sentence instead, matching this module's own
+        # detail-string convention.
+        _logger.info("changelog note refused: %s: %s", type(exc).__name__, exc)
+        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_CHANGELOG_NOTE})
+
+    @app.exception_handler(DesignationTermError)
+    async def _handle_designation_term_error(
+        _request: Request, exc: DesignationTermError
+    ) -> JSONResponse:
+        # FR-63: the exception message quotes the term with any invisible
+        # character escaped (never raw, per NFR-38 test 2) - still not
+        # repeated in the response body, matching this module's convention
+        # of a fixed, generic detail string.
+        _logger.info("designation term refused: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_TERM}
         )

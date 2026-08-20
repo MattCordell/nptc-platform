@@ -53,7 +53,12 @@ def test_allocate_business_key_mints_sequential_keys(app_session: Session) -> No
 @pytest.mark.req("FR-03")
 @pytest.mark.integration
 def test_create_entry_mints_a_key_when_none_supplied(app_session: Session) -> None:
-    entry = create_entry(app_session, AuditContext.system(), preferred_term="Full blood count")
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Full blood count",
+        reason="Created for FR-03 minting test",
+    )
 
     assert entry.business_key.startswith("NPTC-")
 
@@ -68,6 +73,7 @@ def test_create_entry_accepts_an_explicit_seeded_key(app_session: Session) -> No
         AuditContext.system(),
         preferred_term="Full blood count",
         business_key="NPTC-000042",
+        reason="Created for FR-03 seeded-key test",
     )
 
     assert entry.business_key == "NPTC-000042"
@@ -93,6 +99,7 @@ def test_advance_sequence_past_prevents_a_collision_with_seeded_keys(
         AuditContext.system(),
         preferred_term="Seeded entry",
         business_key=seeded_key,
+        reason="Created for FR-03 sequence-reconciliation test",
     )
 
     advance_sequence_past(app_session, seeded_key)
@@ -163,7 +170,7 @@ def test_business_key_sequence_name_matches_the_migration(app_session: Session) 
 @pytest.mark.integration
 def test_a_withdrawn_entrys_key_is_never_reissued(app_session: Session) -> None:
     entry = create_entry(
-        app_session, AuditContext.system(), preferred_term="Old test", reason="seed"
+        app_session, AuditContext.system(), preferred_term="Old test", reason="Seeded for test"
     )
     withdrawn_key = entry.business_key
 
@@ -176,6 +183,11 @@ def test_a_withdrawn_entrys_key_is_never_reissued(app_session: Session) -> None:
         reason="withdrawing",
     )
 
-    new_entry = create_entry(app_session, AuditContext.system(), preferred_term="New test")
+    new_entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="New test",
+        reason="Created after withdrawal for FR-03 reuse test",
+    )
 
     assert new_entry.business_key != withdrawn_key

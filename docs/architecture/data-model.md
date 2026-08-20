@@ -17,6 +17,8 @@ it rather than replace it.
 | `backend/src/nptc/db/models/audit.py` | The `audit_event` table |
 | `backend/src/nptc/db/models/user.py` | The `app_user` table (issue #42) |
 | `backend/src/nptc/db/models/user_identity.py` | The `user_identity` table (issue #42) |
+| `backend/src/nptc/db/models/catalogue_entry.py` | The `catalogue_entry` table (issue #46) |
+| `backend/src/nptc/db/models/designation.py` | The `designation` table (issue #47) |
 | `backend/src/nptc/db/roles.py` | `APP_ROLE` and every grant/revoke SQL statement, imported by both the migration that applies them and the tests that assert them |
 
 Alembic's configuration lives in the root `pyproject.toml` as `[tool.alembic]`, not a
@@ -546,6 +548,113 @@ actually conflicts.
 per-entry path (one `save_entry` call, one savepoint, per entry) rather than a
 single Core bulk statement - the seam #63's bulk reclassify is meant to call instead
 of inventing one under deadline.
+
+## `designation` (issue #47, FR-04, FR-24, FR-37, FR-85)
+
+Catalogue-side designations - synonyms and non-en-AU preferred-term variants - see PRD
+§6.3. FR-05's collision detection (issue #49) is layered on top of the rows this
+table creates; it is not implemented here.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id`. Immutable - see below. |
+| `term` | `TEXT` | `NOT NULL`, `CHECK (length(btrim(term)) > 0)`. Cleaned at entry (FR-63) - see below. |
+| `use` | `TEXT` | `NOT NULL DEFAULT 'synonym'`, `CHECK IN ('preferred','synonym')` |
+| `language` | `TEXT` | `NOT NULL DEFAULT 'en-AU'`, `CHECK` against a BCP-47 well-formedness regex |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+**There is no `length` column, anywhere (FR-85/FR-24).** `Length` MUST be computed
+from the preferred term and MUST NOT be storable or editable - giving it a column at
+all, even one nothing ever writes to, would leave a seam a future migration could
+accidentally populate. `Designation.length` is a bare Python `@property` computed by
+`nptc.catalogue.designations.preferred_term_length`
+(`len(nptc_shared.text.normalise_for_comparison(term))`), with deliberately no
+setter. PRD §6.5's migration note is the test that actually matters here: because the
+current `=LEN()` formula counts a trailing non-breaking space, cleaning that
+whitespace reduces the published length for roughly one entry in five - covered
+directly in `backend/tests/test_catalogue_designations.py`.
+
+### Where the preferred term lives (not duplicated)
+
+There are three preferred-term-shaped strings in this platform, in three different
+places with three different edit postures:
+
+| String | Home | Editable? |
+|---|---|---|
+| RCPA/catalogue preferred term | `catalogue_entry.preferred_term` (issue #46) | Yes - user-maintained, exists before any code binding is created |
+| SNOMED CT-AU preferred term | `code_binding.au_preferred_term` (issue #48) | No - stored exactly as served (FR-82) |
+| SNOMED CT Fully Specified Name | `code_binding.fsn` (issue #48) | No - as served, semantic tag intact (FR-82) |
+
+`designation` holds only the first kind, and only its non-en-AU variants - the
+catalogue's own en-AU preferred term stays exactly where issue #46 put it,
+`catalogue_entry.preferred_term`, never duplicated into a row here.
+`ck_designation_no_en_au_preferred` (`NOT (use = 'preferred' AND language = 'en-AU')`)
+makes that a database invariant, not a convention: a non-en-AU catalogue-authored
+preferred variant (e.g. `use='preferred', language='mi-NZ'`) is still permitted. See
+`docs/adr/0022-designation-storage.md` for the full reasoning and the rejected
+alternatives (mirroring the preferred term into both tables; dropping
+`catalogue_entry.preferred_term` entirely).
+
+A SNOMED CT-served label is never written into `designation` - doing so would
+destroy FR-82's as-served guarantee and make an unchangeable label editable through
+this table's write path. Code bindings (#48) are what makes the served labels
+visible to the platform at all.
+
+### Two partial unique indexes
+
+- `ix_designation_one_active_preferred_per_entry_language` - at most one active
+  preferred designation per `(entry_id, language)`.
+- `ix_designation_no_duplicate_active_term` - no duplicate active
+  `(entry_id, term, language)`. The same synonym attached twice to one entry -
+  whether from a doubled delimiter or a whitespace variant, PRD Appendix A.4 - is
+  unrepresentable rather than merely discouraged.
+
+Both are scoped `postgresql_where=status = 'active'` (the first also requires
+`use = 'preferred'`) so a retired row never blocks a fresh one from being added
+under the same term.
+
+### Term hygiene at entry (FR-63)
+
+`nptc.catalogue.designations.clean_designation_term` (called from the model's own
+`@validates("term")` hook) collapses every normalisable space - a non-breaking space,
+a narrow no-break space, PRD Appendix A.1 - to an ordinary space and strips the
+edges, via the same `nptc_shared.text.normalise_for_comparison` the P0 transform and
+FR-05 collision detection share (ADR-0001). Anything that survives that pass - a
+zero-width space, a bidi override, a genuine control character - has no single
+correct repair, so it is rejected (`DesignationTermError`) rather than silently
+dropped, quoting the offending character escaped (`escape_invisible`), never raw
+(NFR-38 test 2).
+
+### FR-04: synonyms are rows, never a delimited string
+
+There is no delimited-string column anywhere in this table - each synonym is its own
+row, added via `nptc.catalogue.designations.add_synonyms`. The backend does not
+reimplement the delimiter-splitting logic: `transform/src/nptc_transform/
+cell_defects.split_synonyms` (already the ADR-0001-shared implementation for the P0
+seed import) is what turns a spreadsheet cell like `'ADA RBC, ADA red cells'` or
+`'Zovirax;;Cyclir'` into the individual strings this table's rows are built from.
+
+### Never `DELETE`d, only retired
+
+A designation that stops being current moves to `status='retired'` (mirroring
+`CatalogueEntryStatus.WITHDRAWN`'s own precedent), never removed -
+`nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes "a retired designation is
+retained, not deleted" a privilege-level guarantee: no `DELETE`/`TRUNCATE` grant on
+`designation` at all. The column-level `UPDATE` grant also excludes `entry_id` -
+matching `catalogue_entry.business_key`'s own immutability treatment, a designation
+is retired and re-created on a different entry, never reparented.
+
+### FR-37: every write requires a changelog note
+
+`nptc.catalogue.changelog.validate_changelog_note` is the server-side authority every
+write path in this table (and `catalogue_entry`'s own `create_entry`/`save_entry`/
+`save_entries`) calls before any mutation: an empty note, one matching a
+low-information list (`'update'`, `'fix'`, `'.'`, and neighbours), or one shorter
+than ten characters after normalisation is refused. There is no exemption - the
+ADR-0010 seeded-import path supplies `SEED_IMPORT_NOTE`, a real sentence that passes
+validation on its own merits.
 
 ## Property registry (design, lands with #51-#55)
 
