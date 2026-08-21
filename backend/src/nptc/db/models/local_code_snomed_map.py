@@ -130,6 +130,13 @@ class LocalCodeSnomedMap(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # `onupdate` is unreachable in practice - `REVOKE_LOCAL_CODE_SNOMED_MAP_
+    # WRITE_SQL` revokes UPDATE outright, and the module docstring's "never
+    # edited, only replaced" is the actual policy. Kept anyway, rather than
+    # a bare `created_at`-only shape, so this table's column set matches
+    # every sibling table's (`created_at`/`updated_at` are always a pair in
+    # this schema) - a future privilege change would not also have to
+    # remember to add the column back.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

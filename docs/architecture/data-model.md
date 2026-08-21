@@ -1073,7 +1073,8 @@ but `release` does not exist yet (`nptc.releases` is a P4 stub). `status`/
 `deprecated_at` plus the NFR-08 audit trail every write here goes through make past
 state reconstructable in the meantime, matching `designation_collision_acknowledgement`'s
 own "narrow table now, expected to be subsumed later" precedent. Pinning a code's state
-to a specific release is filed as a follow-up issue rather than attempted here.
+to a specific release is filed as [#199](https://github.com/MattCordell/nptc-platform/issues/199)
+rather than attempted here.
 
 ### `LocalCodeLookup` (issue #56, ADR-0013)
 

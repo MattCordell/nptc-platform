@@ -573,8 +573,8 @@
   priority: MUST
   phase: p1
   title: "Discipline and Subgroup MUST each be implemented as a governed local code system owned by RCPA-QAP"
-  status: implemented
-  notes: "Issue #56: local_code_system/local_code tables, administrator-only management (Permission.REGISTRY_MANAGE) through the same audit/changelog discipline as every other content change. Version history tied to catalogue releases is deferred to a follow-up issue - release does not exist yet (nptc.releases is a P4 stub); status/deprecated_at plus the NFR-08 audit trail make past state reconstructable in the meantime. The transform's own seeding-time treatment (P0-9/#31, COMPOUND_VALUE_SPLIT) remains the pre-existing note about the source cell shape."
+  status: in-progress
+  notes: "Issue #56: local_code_system/local_code tables, administrator-only management (Permission.REGISTRY_MANAGE) through the same audit/changelog discipline as every other content change. Three of the four bullets are implemented; the fourth - version history tied to catalogue releases - is deferred to #199, since release does not exist yet (nptc.releases is a P4 stub). status/deprecated_at plus the NFR-08 audit trail make past state reconstructable in the meantime. The transform's own seeding-time treatment (P0-9/#31, COMPOUND_VALUE_SPLIT) remains the pre-existing note about the source cell shape."
 - id: "FR-91"
   priority: SHOULD
   phase: p1

@@ -44,6 +44,25 @@ verification table determines:
 - The `subgroup` system is seeded with no codes at all - FR-92 assigns
   the vocabulary decision to RCPA-QAP; seeding a `subgroup` code here
   would be exactly the guessing-at-structure FR-92 forbids.
+
+**These seed inserts deliberately bypass `nptc.registry.local_codes` and
+its NFR-08 audit trail** - unlike a state-changing write made through the
+running application (what NFR-08 actually governs), this is bootstrap
+data written before any `app_user`/`Principal` exists to attribute it to,
+the same posture `0001_extensions_and_app_role.py`'s `CREATE_APP_ROLE_SQL`
+already takes for the role itself. A later change to this seed data (a
+corrected URI, an added map row) is a new migration, reviewed the way any
+schema change is, not a service-layer write.
+
+**The seed `uri` values use the reserved `nptc.example.org` domain
+(RFC 2606) as an explicit placeholder** - no real external namespace for
+NPTC's own local code systems has been decided yet (see `deploy/
+.env.example`: even `NPTC_FRONTEND_BASE_URL` is `localhost` pending a real
+deployment). Replacing it is a follow-up issue, not a decision this
+migration can make on the maintainer's behalf; `uri`'s `UNIQUE` constraint
+means that follow-up is itself a data migration on a published
+identifier; the earlier that happens (this migration is the identifier's
+first appearance), the cheaper it is.
 """
 
 from __future__ import annotations
@@ -240,7 +259,7 @@ def upgrade() -> None:
             name=op.f("ck_local_code_deprecation_reason"),
         ),
         sa.CheckConstraint(
-            "deprecated_at IS NULL OR status = 'deprecated'",
+            "(status = 'deprecated') = (deprecated_at IS NOT NULL)",
             name=op.f("ck_local_code_deprecated_at"),
         ),
         sa.ForeignKeyConstraint(

@@ -25,6 +25,7 @@ carry more than one map row (see that model's own docstring)."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from sqlalchemy import select
@@ -37,11 +38,14 @@ from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Permission
 from nptc.auth.principal import Principal
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.db.models.code_binding import SNOMED_CT_SYSTEM
 from nptc.db.models.local_code import LocalCode, LocalCodeStatus
 from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap, SnomedMapMatchStrength
-from nptc.db.models.local_code_system import LocalCodeSystem, LocalCodeSystemStatus
+from nptc.db.models.local_code_system import KEY_PATTERN, LocalCodeSystem, LocalCodeSystemStatus
+from nptc_shared.sctid import SCTID
 
 __all__ = [
+    "InvalidLocalCodeSystemKeyError",
     "InvalidMatchStrengthError",
     "LocalCodeAlreadyDeprecatedError",
     "LocalCodeSystemAlreadyDeprecatedError",
@@ -68,6 +72,16 @@ class LocalCodeAlreadyDeprecatedError(ValueError):
     same posture as `LocalCodeSystemAlreadyDeprecatedError` above."""
 
     http_status: ClassVar[int] = 409
+
+
+class InvalidLocalCodeSystemKeyError(ValueError):
+    """Raised by `create_local_code_system` when `key` does not match
+    `KEY_PATTERN` - `ck_local_code_system_key` is the actual database
+    invariant; this is the fail-loud Python-level layer, checked before
+    anything is added to the session, matching `create_snomed_map_row`'s
+    own pre-insert treatment of `code`."""
+
+    http_status: ClassVar[int] = 422
 
 
 class InvalidMatchStrengthError(ValueError):
@@ -101,6 +115,10 @@ def create_local_code_system(
     `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
     validated_reason = validate_changelog_note(reason)
+    if not KEY_PATTERN.fullmatch(key):
+        raise InvalidLocalCodeSystemKeyError(
+            f"{key!r} is not a valid local code system key - expected {KEY_PATTERN.pattern!r}"
+        )
 
     system = LocalCodeSystem(key=key, uri=uri, title=title, description=description, owner=owner)
     session.add(system)
@@ -194,7 +212,12 @@ def deprecate_local_code(
     """Deprecates `code` via a `status` transition - never a `DELETE`
     (`nptc.db.roles.REVOKE_LOCAL_CODE_DELETE_SQL` makes this a
     privilege-level guarantee). This is also what the FR-45 validation
-    sweep's `local_code_retired` warning (PRD line 689) keys off. Requires
+    sweep's `local_code_retired` warning (PRD line 689) keys off. Sets
+    `deprecated_at` (`ck_local_code_deprecated_at` requires it exactly
+    when `status = 'deprecated'` - the deferred-version-history argument
+    in this table's own docstring depends on this timestamp actually being
+    set, not merely permitted), matching `AppUser.closed_at`'s own
+    `datetime.now(UTC)` precedent for a manually-set timestamp. Requires
     `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
     if code.status == str(LocalCodeStatus.DEPRECATED):
@@ -202,6 +225,7 @@ def deprecate_local_code(
 
     validated_reason = validate_changelog_note(reason)
     code.status = str(LocalCodeStatus.DEPRECATED)
+    code.deprecated_at = datetime.now(UTC)
     code.deprecation_reason = validated_reason
     record_change(
         session,
@@ -224,16 +248,22 @@ def create_snomed_map_row(
     display: str,
     match_strength: str,
     advisory_note: str,
-    system: str = "http://snomed.info/sct",
+    system: str = SNOMED_CT_SYSTEM,
     reason: str,
 ) -> LocalCodeSnomedMap:
     """Adds one advisory SNOMED map row for `local_code` (FR-91). No
     uniqueness check against existing rows for `local_code` - see the
     module docstring for why a local code may validly carry more than one
-    row (PRD SS6.6's `Microbiology` ambiguity). Requires
-    `Permission.REGISTRY_MANAGE`."""
+    row (PRD SS6.6's `Microbiology` ambiguity). `code` is validated via
+    `SCTID` before the row is constructed - `ck_local_code_snomed_map_code`
+    (`nptc_sctid_is_valid`) is the actual database invariant; this is the
+    fail-loud Python-level layer, matching `nptc.catalogue.bindings.
+    create_binding`'s own treatment of `code` (and giving it a real
+    `InvalidSCTIDError` instead of a raw `IntegrityError` at flush).
+    Requires `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
     validated_reason = validate_changelog_note(reason)
+    validated_code = SCTID(code).value
 
     try:
         validated_match_strength = str(SnomedMapMatchStrength(match_strength))
@@ -246,7 +276,7 @@ def create_snomed_map_row(
     map_row = LocalCodeSnomedMap(
         local_code_id=local_code.id,
         system=system,
-        code=code,
+        code=validated_code,
         display=display,
         match_strength=validated_match_strength,
         advisory_note=advisory_note,
@@ -265,10 +295,32 @@ def create_snomed_map_row(
 
 def find_local_code(session: Session, *, system_key: str, code: str) -> LocalCode | None:
     """Looks up a `local_code` by its owning system's `key` and its own
-    `code` - the read path `nptc.registry.lookup.DatabaseLocalCodeLookup`
-    is built on."""
+    `code`. Does not surface the owning system's own `status` - see
+    `find_local_code_with_system_status` for the read path that does; this
+    function's callers (`create_snomed_map_row`'s admin flows, this
+    module's own tests) already hold the `LocalCodeSystem` they created
+    the code under, so they have no need of it."""
     return session.execute(
         select(LocalCode)
         .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
         .where(LocalCodeSystem.key == system_key, LocalCode.code == code)
     ).scalar_one_or_none()
+
+
+def find_local_code_with_system_status(
+    session: Session, *, system_key: str, code: str
+) -> tuple[LocalCode, str] | None:
+    """`nptc.registry.lookup.DatabaseLocalCodeLookup`'s read path. Unlike
+    `find_local_code` above, also returns the owning `LocalCodeSystem`'s
+    own `status` - `deprecate_local_code_system` deprecates the system
+    without touching its member codes' own `status` (deprecating every
+    code individually is a separate, per-code editorial decision), so a
+    caller resolving a code through a since-deprecated system needs both
+    facts to tell "this code is fine but its system is retired" apart from
+    "this code itself is retired"."""
+    row = session.execute(
+        select(LocalCode, LocalCodeSystem.status)
+        .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
+        .where(LocalCodeSystem.key == system_key, LocalCode.code == code)
+    ).one_or_none()
+    return None if row is None else (row[0], row[1])

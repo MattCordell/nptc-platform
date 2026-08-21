@@ -8,6 +8,8 @@ statement aborts the surrounding transaction, 25P02).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -249,6 +251,60 @@ def test_active_code_with_a_deprecation_reason_is_refused(db: Connection) -> Non
         _insert_code(db, system_id=system_id, status="active", deprecation_reason="superseded")
 
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-90")
+@pytest.mark.integration
+def test_deprecating_without_deprecated_at_is_refused(db: Connection) -> None:
+    """`ck_local_code_deprecated_at` requires the timestamp exactly when
+    `status = 'deprecated'` - a reason alone is not enough."""
+    system_id = _insert_system(db, key="deprecate_no_timestamp", uri="https://nptc.example.org/dnt")
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_code(
+            db,
+            system_id=system_id,
+            status="deprecated",
+            deprecation_reason="superseded",
+            deprecated_at=None,
+        )
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-90")
+@pytest.mark.integration
+def test_active_code_with_deprecated_at_is_refused(db: Connection) -> None:
+    system_id = _insert_system(db, key="active_with_timestamp", uri="https://nptc.example.org/awt")
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_code(
+            db,
+            system_id=system_id,
+            status="active",
+            deprecated_at=datetime.now(UTC),
+        )
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-90")
+@pytest.mark.integration
+def test_deprecating_with_both_reason_and_timestamp_is_accepted(db: Connection) -> None:
+    system_id = _insert_system(db, key="deprecate_complete", uri="https://nptc.example.org/dc2")
+
+    code_id = _insert_code(
+        db,
+        system_id=system_id,
+        status="deprecated",
+        deprecation_reason="superseded",
+        deprecated_at=datetime.now(UTC),
+    )
+
+    row = db.execute(
+        text("SELECT deprecated_at FROM local_code WHERE id = :id"), {"id": code_id}
+    ).one()
+    assert row.deprecated_at is not None
 
 
 # --- local_code_snomed_map ---

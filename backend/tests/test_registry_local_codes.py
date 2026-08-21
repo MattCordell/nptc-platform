@@ -23,6 +23,7 @@ from nptc.db.models.local_code import LocalCodeStatus
 from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap
 from nptc.db.models.local_code_system import LocalCodeSystemStatus
 from nptc.registry.local_codes import (
+    InvalidLocalCodeSystemKeyError,
     InvalidMatchStrengthError,
     LocalCodeAlreadyDeprecatedError,
     LocalCodeSystemAlreadyDeprecatedError,
@@ -32,8 +33,10 @@ from nptc.registry.local_codes import (
     deprecate_local_code,
     deprecate_local_code_system,
     find_local_code,
+    find_local_code_with_system_status,
 )
 from nptc.registry.lookup import DatabaseLocalCodeLookup
+from nptc_shared.sctid import InvalidSCTIDError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -85,6 +88,28 @@ def test_create_local_code_system_requires_registry_manage(app_session: Session)
             owner="RCPA-QAP",
             reason="test-only fixture",
         )
+
+
+def test_create_local_code_system_rejects_a_malformed_key(app_session: Session) -> None:
+    """`ck_local_code_system_key` is the actual database invariant; this
+    pins the fail-loud Python-level layer that pre-empts it - a malformed
+    key never reaches the session, let alone flush."""
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(InvalidLocalCodeSystemKeyError):
+        create_local_code_system(
+            app_session,
+            AuditContext.system(),
+            actor=_administrator(),
+            key="Not A Valid Key",
+            uri="https://nptc.example.org/CodeSystem/invalid_key_test",
+            title="Discipline",
+            description="test",
+            owner="RCPA-QAP",
+            reason="test-only fixture",
+        )
+
+    assert _audit_event_count(app_session) == before
 
 
 @pytest.mark.req("FR-90")
@@ -288,6 +313,7 @@ def test_deprecate_local_code_is_a_status_transition(app_session: Session) -> No
     )
 
     assert code.status == str(LocalCodeStatus.DEPRECATED)
+    assert code.deprecated_at is not None
     assert code.deprecation_reason == "superseded"
     assert _audit_event_count(app_session) == before + 1
 
@@ -420,6 +446,52 @@ def test_create_snomed_map_row_rejects_an_invalid_match_strength(app_session: Se
     assert _audit_event_count(app_session) == before
 
 
+@pytest.mark.req("FR-91")
+def test_create_snomed_map_row_rejects_an_invalid_sctid(app_session: Session) -> None:
+    """`ck_local_code_snomed_map_code` (`nptc_sctid_is_valid`) is the
+    actual database invariant; this pins the fail-loud Python-level layer
+    that pre-empts it, matching `create_binding`'s own treatment of
+    `code`."""
+    system = create_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        key="map_bad_code_svc_test",
+        uri="https://nptc.example.org/CodeSystem/map_bad_code_svc_test",
+        title="Discipline",
+        description="test",
+        owner="RCPA-QAP",
+        reason="creating a test fixture code system",
+    )
+    app_session.flush()
+    code = create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="chemical_pathology",
+        display="Chemical pathology",
+        reason="creating a test fixture code",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(InvalidSCTIDError):
+        create_snomed_map_row(
+            app_session,
+            AuditContext.system(),
+            actor=_administrator(),
+            local_code=code,
+            code="not-a-code",
+            display="Chemical pathology",
+            match_strength="exact",
+            advisory_note="Advisory only, not a code_binding: test fixture.",
+            reason="publishing the advisory map",
+        )
+
+    assert _audit_event_count(app_session) == before
+
+
 def test_create_snomed_map_row_requires_registry_manage(app_session: Session) -> None:
     system = create_local_code_system(
         app_session,
@@ -470,6 +542,7 @@ def test_database_local_code_lookup_resolves_a_seeded_discipline(app_session: Se
     assert resolved is not None
     assert resolved.display == "Chemical pathology"
     assert resolved.status == str(LocalCodeStatus.ACTIVE)
+    assert resolved.system_status == str(LocalCodeSystemStatus.ACTIVE)
     assert resolved.provisional is False
 
 
@@ -481,6 +554,58 @@ def test_database_local_code_lookup_returns_none_for_an_unknown_code(app_session
 
 def test_find_local_code_returns_none_for_an_unknown_system(app_session: Session) -> None:
     assert find_local_code(app_session, system_key="not_a_real_system", code="x") is None
+    assert (
+        find_local_code_with_system_status(app_session, system_key="not_a_real_system", code="x")
+        is None
+    )
+
+
+@pytest.mark.req("FR-90")
+def test_lookup_surfaces_system_deprecation_independently_of_the_code(
+    app_session: Session,
+) -> None:
+    """`deprecate_local_code_system` deprecates the system without
+    touching its member codes' own `status` - a caller resolving a code
+    through a since-deprecated system needs `system_status` to see that;
+    `status` alone still reads `active`."""
+    system = create_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        key="system_deprecation_visible_test",
+        uri="https://nptc.example.org/CodeSystem/system_deprecation_visible_test",
+        title="Discipline",
+        description="test",
+        owner="RCPA-QAP",
+        reason="creating a test fixture code system",
+    )
+    app_session.flush()
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="untouched_code",
+        display="Untouched code",
+        reason="creating a test fixture code",
+    )
+    app_session.flush()
+    deprecate_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        reason="deprecating this system",
+    )
+    app_session.flush()
+
+    resolved = DatabaseLocalCodeLookup(app_session).resolve(
+        "system_deprecation_visible_test", "untouched_code"
+    )
+
+    assert resolved is not None
+    assert resolved.status == str(LocalCodeStatus.ACTIVE)
+    assert resolved.system_status == str(LocalCodeSystemStatus.DEPRECATED)
 
 
 # --- Acceptance criterion: the advisory map is never treated as a

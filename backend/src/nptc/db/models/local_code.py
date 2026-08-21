@@ -23,8 +23,17 @@ own treatment; `nptc_app`'s column-level grant excludes `id`, `system_id`
 and `code` for the same reason `code_binding.entry_id`/`code` are
 excluded (rebinding to a different system or code is a new row, not an
 edit). `deprecated_at`/`deprecation_reason` follow `property_definition`'s
-and `code_binding.retirement_reason`'s own precedent respectively: tied to
-`status = 'deprecated'` by a `CHECK`, mandatory exactly then.
+and `code_binding.retirement_reason`'s own precedent respectively: **both**
+mandatory exactly when `status = 'deprecated'`, forbidden otherwise -
+`ck_local_code_deprecated_at`'s `(status = 'deprecated') = (deprecated_at
+IS NOT NULL)` makes the timestamp a real database invariant rather than a
+value the one write path (`nptc.registry.local_codes.deprecate_local_code`)
+merely happens to set. This matters beyond the row itself: FR-90's
+"version history tied to catalogue releases" (its own third bullet) is
+deferred to a follow-up issue precisely because `deprecated_at` plus the
+NFR-08 audit trail are what make past state reconstructable in the
+meantime - a table where that timestamp could be silently skipped would
+undercut the argument used to defer.
 
 **What reads this table.** The FR-45 validation sweep's `local_code_retired`
 warning (PRD line 689: "Do local code system values still resolve to an
@@ -67,7 +76,11 @@ _DEPRECATION_REASON_CHECK_SQL = (
     "(status = 'deprecated') = "
     "(deprecation_reason IS NOT NULL AND length(btrim(deprecation_reason)) > 0)"
 )
-_DEPRECATED_AT_CHECK_SQL = "deprecated_at IS NULL OR status = 'deprecated'"
+#: Mandatory exactly when deprecated, forbidden while active - tightened
+#: from an earlier "may be set only when deprecated" reading after review
+#: (the one write path setting it is not itself a database invariant
+#: without this). Mirrors `_DEPRECATION_REASON_CHECK_SQL`'s own shape.
+_DEPRECATED_AT_CHECK_SQL = "(status = 'deprecated') = (deprecated_at IS NOT NULL)"
 
 
 class LocalCode(Base):
@@ -82,13 +95,14 @@ class LocalCode(Base):
             "definition",
             "provisional",
             "status",
+            "deprecated_at",
             "deprecation_reason",
             "display_order",
         }
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"id", "created_at", "updated_at", "deprecated_at"}
+        {"id", "created_at", "updated_at"}
     )
 
     __table_args__ = (
@@ -130,7 +144,9 @@ class LocalCode(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'active'"), active_history=True
     )
-    deprecated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deprecated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, active_history=True
+    )
     deprecation_reason: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     display_order: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0"), active_history=True

@@ -29,7 +29,7 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
-from nptc.registry.local_codes import find_local_code
+from nptc.registry.local_codes import find_local_code_with_system_status
 
 __all__ = ["DatabaseLocalCodeLookup", "LocalCodeLookup", "ResolvedLocalCode"]
 
@@ -40,11 +40,20 @@ class ResolvedLocalCode:
     enough for `CodeHandler` to validate a `property_value` and render a
     display term, without exposing the full `LocalCode` ORM row (mirrors
     `nptc.terminology`'s own served-label-shaped return types, not the
-    SQLAlchemy model, across that module boundary)."""
+    SQLAlchemy model, across that module boundary).
+
+    **`status` and `system_status` are deliberately two separate fields.**
+    `nptc.registry.local_codes.deprecate_local_code_system` deprecates a
+    system without touching its member codes' own `status` - the two
+    facts are independent, and a handler that only checked `status` would
+    treat a code as fine after its owning system had been retired
+    wholesale. See `find_local_code_with_system_status`, which this is
+    built from."""
 
     code: str
     display: str
     status: str
+    system_status: str
     provisional: bool
 
 
@@ -68,23 +77,26 @@ class LocalCodeLookup(Protocol):
 
 class DatabaseLocalCodeLookup:
     """The database-backed `LocalCodeLookup` implementation, built on
-    `nptc.registry.local_codes.find_local_code`. Holds a `Session` for the
-    lifetime of one request/job, matching every other service-layer
-    caller's own session-per-call-site convention (`nptc.catalogue.
-    bindings.create_binding` and siblings) - this is not a singleton, so
-    `HandlerDeps` construction (ADR-0013) stays per-request, matching
-    `TerminologyClient`'s own non-singleton treatment (NFR-37)."""
+    `nptc.registry.local_codes.find_local_code_with_system_status`. Holds
+    a `Session` for the lifetime of one request/job, matching every other
+    service-layer caller's own session-per-call-site convention
+    (`nptc.catalogue.bindings.create_binding` and siblings) - this is not
+    a singleton, so `HandlerDeps` construction (ADR-0013) stays
+    per-request, matching `TerminologyClient`'s own non-singleton
+    treatment (NFR-37)."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
     def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None:
-        local_code = find_local_code(self._session, system_key=system_key, code=code)
-        if local_code is None:
+        found = find_local_code_with_system_status(self._session, system_key=system_key, code=code)
+        if found is None:
             return None
+        local_code, system_status = found
         return ResolvedLocalCode(
             code=local_code.code,
             display=local_code.display,
             status=local_code.status,
+            system_status=system_status,
             provisional=local_code.provisional,
         )

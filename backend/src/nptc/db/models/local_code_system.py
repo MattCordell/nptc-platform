@@ -45,6 +45,7 @@ discipline every other governed table in this schema uses
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -58,11 +59,16 @@ from sqlalchemy.sql import func
 from nptc.db.base import Base
 from nptc.db.models.catalogue_entry import ImmutableFieldError
 
-__all__ = ["LocalCodeSystem", "LocalCodeSystemStatus"]
+__all__ = ["KEY_PATTERN", "LocalCodeSystem", "LocalCodeSystemStatus"]
 
 #: Matches `property_definition.key`'s own pattern (ADR-0012) - see the
 #: module docstring for why the two vocabularies are kept in lockstep.
-_KEY_PATTERN_SQL = "^[a-z][a-z0-9_]{0,62}$"
+#: Exported (not `_`-prefixed) so `nptc.registry.local_codes.
+#: create_local_code_system` can validate a candidate key in Python before
+#: it ever reaches `_KEY_CHECK_SQL` below - built from `KEY_PATTERN.
+#: pattern`, matching `designation.py`'s own `_LANGUAGE_CHECK_SQL`/
+#: `LANGUAGE_TAG_PATTERN` precedent, so the two can never silently diverge.
+KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
 class LocalCodeSystemStatus(StrEnum):
@@ -73,7 +79,7 @@ class LocalCodeSystemStatus(StrEnum):
 #: Plain string literals, never built from the `StrEnum` above - matches
 #: every other model's own precedent, enforced by
 #: `test_sql_parameterisation.py`'s AST guard.
-_KEY_CHECK_SQL = f"key ~ '{_KEY_PATTERN_SQL}'"
+_KEY_CHECK_SQL = f"key ~ '{KEY_PATTERN.pattern}'"
 _URI_NOT_BLANK_SQL = "length(btrim(uri)) > 0"
 _TITLE_NOT_BLANK_SQL = "length(btrim(title)) > 0"
 _OWNER_NOT_BLANK_SQL = "length(btrim(owner)) > 0"
