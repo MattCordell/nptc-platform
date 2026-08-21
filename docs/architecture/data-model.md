@@ -470,6 +470,7 @@ designations/code bindings (#47/#48) are separate tables layered on top.
 | `specimen_unconstrained` | `BOOLEAN` | `NOT NULL DEFAULT false` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 | `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. See "Optimistic locking" below. |
+| `preferred_term_key` | `TEXT` | `NOT NULL DEFAULT ''`, indexed. FR-05's comparison key - see "Collision detection" below. |
 
 ### `business_key` minting and immutability (FR-03)
 
@@ -561,13 +562,14 @@ of inventing one under deadline.
 
 Catalogue-side designations - synonyms and non-en-AU preferred-term variants - see PRD
 §6.3. FR-05's collision detection (issue #49) is layered on top of the rows this
-table creates; it is not implemented here.
+table creates - see "Collision detection" below.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `UUID` | PK, `gen_random_uuid()` |
 | `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id`. Immutable - see below. |
 | `term` | `TEXT` | `NOT NULL`, `CHECK (length(btrim(term)) > 0)`. Cleaned at entry (FR-63) - see below. |
+| `term_key` | `TEXT` | `NOT NULL DEFAULT ''`, indexed. FR-05's comparison key - see "Collision detection" below. |
 | `use` | `TEXT` | `NOT NULL DEFAULT 'synonym'`, `CHECK IN ('preferred','synonym')` |
 | `language` | `TEXT` | `NOT NULL DEFAULT 'en-AU'`, `CHECK` against a BCP-47 well-formedness regex |
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
@@ -618,9 +620,10 @@ visible to the platform at all.
 ## `code_binding` (issue #48, FR-06, FR-08, FR-82, FR-83)
 
 The terminology server's served labels for a `catalogue_entry` - see PRD §6.4.
-FR-84's subsumption check (issue #48's sweep-level neighbour) and FR-05's collision
-detection are both layered on top of the rows this table creates; neither is
-implemented here.
+FR-84's subsumption check (issue #48's sweep-level neighbour) is layered on top of
+the rows this table creates and is not implemented here. FR-08's blocking severity
+(one active code, bound to at most one entry) *is* implemented here - see
+"Collision detection" below.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -670,6 +673,9 @@ test that keeps it from silently diverging from the Python implementation.
   replacement.
 - `ix_code_binding_one_active_per_entry` - `UNIQUE (entry_id) WHERE status = 'active'`
   - at most one active binding per entry.
+- `ix_code_binding_one_active_entry_per_code` (issue #49) - `UNIQUE (system, code)
+  WHERE status = 'active'` - the code side of the same invariant: one active code
+  cannot be bound to two *different* entries. See "Collision detection" below.
 
 Grants: `SELECT, INSERT` at table level, column-level `UPDATE (fsn,
 au_preferred_term, edition_hint, status, replaced_by_binding_id, retirement_reason,
@@ -706,12 +712,100 @@ shared package's own re-export of the functions themselves.
 - `ix_designation_one_active_preferred_per_entry_language` - `UNIQUE (entry_id, language)
   WHERE status = 'active' AND use = 'preferred'` - at most one active preferred
   designation per `(entry_id, language)`.
-- `ix_designation_no_duplicate_active_term` - `UNIQUE (entry_id, term, language) WHERE
-  status = 'active'` - no duplicate active `(entry_id, term, language)`.
+- `ix_designation_no_duplicate_active_term` - `UNIQUE (entry_id, term_key, language)
+  WHERE status = 'active'` (re-keyed on `term_key` in issue #49; originally `term`) -
+  no duplicate active synonym under FR-05's comparison fold, not merely a byte-for-byte
+  duplicate.
 
 Both are scoped to `status = 'active'` so a retired row never blocks a fresh one from
 being added under the same term. See `0007_designation.py`'s docstring for why these are
 enforced at the database layer rather than by application convention.
+
+## Collision detection (issue #49, FR-05, FR-08)
+
+Three severities, three different postures - `nptc.catalogue.collisions`'s own module
+docstring is the authoritative account; this section is the schema-shape summary.
+
+**Error - the save is rejected.** A synonym that exactly matches another live entry's
+preferred term, or the symmetric case (a preferred term matching another live entry's
+active synonym or preferred term) - FR-05 only states the first direction, but the
+PRD's own A.5 fixture is symmetric: whichever side is edited second creates the
+identical ordering hazard. `nptc.catalogue.collisions.assert_no_error_collisions` runs
+before any row is constructed in every write path of `nptc.catalogue.designations` and
+`nptc.catalogue.entries`, so a rejected save leaves no audit event - the same
+precondition-before-mutation posture FR-38's optimistic locking already holds.
+
+**Warning - the save is permitted.** The same synonym on multiple live entries (PRD
+A.5's `'ADA2'`, genuinely attached to three adenosine deaminase entries disambiguated
+by specimen). Never raised - `nptc.catalogue.collisions.warning_collisions` is a query
+a caller (#149's edit screen) asks, and `acknowledge_collision` (gated on
+`Permission.VALIDATION_ACKNOWLEDGE`, FR-44) records that the warning has been seen and
+accepted for one entry, so it does not recur on that entry's next save.
+
+**Blocking - unrepresentable.** FR-08's other half: one active SNOMED code bound to at
+most one entry across the whole catalogue, not merely per entry -
+`ix_code_binding_one_active_entry_per_code` (above) is the database invariant;
+`nptc.catalogue.bindings.create_binding`'s `CodeBindingCodeAlreadyBoundError` is the
+pre-insert domain error. No acknowledgement path: a code is either free or it isn't.
+
+### The comparison key: casefolded, punctuation-folded, not merely whitespace-cleaned
+
+FR-05 requires normalising case, Unicode whitespace *and punctuation* before
+comparing - strictly more than `nptc.catalogue.term_hygiene.clean_term`'s own
+whitespace-only fold (`nptc_shared.text.normalise_for_comparison`, which deliberately
+preserves case and punctuation for FR-82's own reasons). `nptc_shared.similarity.
+collision_key` composes that module's existing `tokenise`/`token_key` primitives
+instead of adding a second implementation: punctuation and whitespace both become
+token separators, and each token is casefolded - so `'17-OHP'`/`'17 OHP'` collide,
+`'ADA2'`/`'ada2'` collide, but `'AntiDNA'` and `'Anti-DNA'` do not silently merge into
+one token.
+
+The key is **stored and indexed**, not recomputed per comparison:
+`designation.term_key` and `catalogue_entry.preferred_term_key` are written by the
+same `@validates` hook that already cleans the underlying term
+(`Designation._validate_term`, `CatalogueEntry._validate_preferred_term`), so the two
+can never drift apart, and `nptc.catalogue.collisions` reads them via a plain indexed
+equality lookup (`ix_designation_term_key`, `ix_catalogue_entry_preferred_term_key`)
+rather than scanning every entry on every save. Both carry `server_default = ''` -
+not a correct key for any real term, only so a raw `INSERT` that bypasses the ORM
+(every `backend/tests/test_db_*.py` constraint/privilege test) still satisfies
+`NOT NULL`; every write through `Designation`/`CatalogueEntry` themselves always
+supplies the real, computed value.
+
+### Candidate scope: `draft` and `active`, not only `active`
+
+FR-05's own wording is "a different *active* entry", but this is deliberately wider:
+`deprecated`/`withdrawn` entries never collide (the PRD's own acceptance criterion),
+while a `draft` entry colliding with another live entry is exactly the same hazard the
+moment either is published - catching it before that point is strictly safer than the
+literal reading. `nptc.catalogue.collisions._LIVE_STATUSES` is the one place this is
+spelled out.
+
+### `designation_collision_acknowledgement` (warning-severity acknowledgement)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id` |
+| `term_key` | `TEXT` | `NOT NULL`, `CHECK` not-blank |
+| `language` | `TEXT` | `NOT NULL DEFAULT 'en-AU'`, `CHECK` against the same BCP-47 regex `designation.language` uses |
+| `acknowledged_by_user_id` | `UUID` | Nullable FK to `app_user.id` - `NULL` for a system-attributed acknowledgement |
+| `reason` | `TEXT` | `NOT NULL`, `CHECK` not-blank |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+`ix_designation_collision_ack_entry_term_language` - `UNIQUE (entry_id, term_key,
+language)` - scopes an acknowledgement to the entry it was made against, not to the
+term key alone: a fourth entry later joining an already-acknowledged group (PRD A.5's
+`'ADA2'`) still warns once, on its own save, rather than silently inheriting another
+entry's editorial decision. Grants: `SELECT, INSERT` only - `UPDATE, DELETE, TRUNCATE`
+are revoked, since an acknowledgement is a record of a decision at a point in time,
+never edited or withdrawn (withdrawal is out of scope for #49).
+
+**Deliberately not PRD §6.1's `ValidationFinding` lifecycle** (`open` / `acknowledged`
+/ `resolved` / `superseded`). That entity is P3 (`nptc.validation` is still a
+placeholder module); FR-05's own acknowledgement requirement cannot wait on it. This
+table is narrow and purpose-built for exactly one finding shape, and is expected to be
+subsumed by `ValidationFinding` once it lands, not to sit alongside it indefinitely.
 
 ### Term hygiene at entry (FR-63)
 

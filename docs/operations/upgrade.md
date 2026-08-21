@@ -46,6 +46,8 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0005_user_role.py`](../../backend/migrations/versions/0005_user_role.py) | `user_role` | See [below](#0005_user_rolepy), plus first-administrator bootstrap |
 | [`0006_catalogue_entry.py`](../../backend/migrations/versions/0006_catalogue_entry.py) | `catalogue_entry` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | None |
 | [`0007_designation.py`](../../backend/migrations/versions/0007_designation.py) | `designation` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | None - `downgrade()` drops the table outright |
+| [`0008_code_binding.py`](../../backend/migrations/versions/0008_code_binding.py) | `code_binding` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None - `downgrade()` drops the table outright |
+| [`0009_collision_detection.py`](../../backend/migrations/versions/0009_collision_detection.py) | `designation.term_key`/`catalogue_entry.preferred_term_key`, `designation_collision_acknowledgement`, `ix_code_binding_one_active_entry_per_code` (see [`data-model.md`](../architecture/data-model.md#collision-detection-issue-49-fr-05-fr-08)) | See [below](#0009_collision_detectionpy) - backfills the two key columns from existing rows before adding `NOT NULL` |
 
 ## Provisioning the app role's login
 
@@ -143,6 +145,18 @@ case that column is nullable for), and is still idempotent. There is no `--force
 revoke path through this script; once a second Administrator exists, every further
 grant/revoke should go through the ordinary checked functions (`nptc.auth.grants.
 grant_role`/`revoke_role`, landing with the P2 user-administration endpoints).
+
+## `0009_collision_detection.py`
+
+Adds `designation.term_key`/`catalogue_entry.preferred_term_key` (issue #49, FR-05 - see
+[`data-model.md`](../architecture/data-model.md#collision-detection-issue-49-fr-05-fr-08)),
+`designation_collision_acknowledgement`, and `ix_code_binding_one_active_entry_per_code`.
+Unlike `0004_audit_event_hash_chain.py` above, the two new key columns **do** backfill: for
+every pre-existing `designation`/`catalogue_entry` row, the migration computes
+`nptc_shared.similarity.collision_key(term)` in Python (the same function a fresh write
+uses) and writes it before the column becomes `NOT NULL` - so a deployment upgrading with
+real catalogue content already in place never has to backfill by hand. Pre-alpha, no seed
+data has ever been loaded, so this backfill has never had a real row to act on in practice.
 
 ## Testcontainers and Docker
 
