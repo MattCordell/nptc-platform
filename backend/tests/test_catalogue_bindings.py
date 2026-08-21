@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -23,13 +24,14 @@ from nptc.catalogue.bindings import (
     CodeBindingAlreadyActiveError,
     CodeBindingAlreadyRetiredError,
     CodeBindingNotRetiredError,
+    CodeBindingSelfSupersessionError,
     InvalidCodeBindingEditionHintError,
     InvalidCodeBindingSystemError,
     create_binding,
     link_replacement,
     retire_binding,
 )
-from nptc.catalogue.entries import create_entry
+from nptc.catalogue.entries import allocate_business_key, create_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
@@ -220,6 +222,56 @@ def test_link_replacement_refuses_an_unflushed_successor(app_session: Session) -
             successor=unflushed_successor,
             reason="Attempting to link an unflushed successor",
         )
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_link_replacement_refuses_self_supersession(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    binding = _new_binding(app_session, entry)
+    app_session.flush()
+    retire_binding(app_session, AuditContext.system(), binding=binding, reason="Superseded")
+
+    with pytest.raises(CodeBindingSelfSupersessionError):
+        link_replacement(
+            app_session,
+            AuditContext.system(),
+            superseded=binding,
+            successor=binding,
+            reason="Attempting to name itself as its own replacement",
+        )
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_create_binding_flushes_an_unflushed_entry_before_binding_it(
+    app_session: Session,
+) -> None:
+    """A transient `entry` (added to the session, never flushed) has no
+    identity yet. `CodeBinding(entry_id=entry.id, ...)` evaluates
+    `entry.id` immediately, not lazily - so without flushing `entry`
+    first, the constructed row would carry `entry_id=None` forever (a
+    plain Python attribute, never retroactively fixed once `entry` is
+    flushed later), and would fail `code_binding.entry_id`'s `NOT NULL`
+    constraint at flush. `create_binding`'s own pre-check for an existing
+    active binding has the same hazard one step earlier: it would bake a
+    stale `entry_id IS NULL` predicate into its query. `create_binding`
+    must therefore flush a not-yet-flushed `entry` before doing either -
+    `_new_entry` (used by every other test here) goes through
+    `nptc.catalogue.entries.create_entry`, which always flushes
+    internally as part of its own audit write, so this is the one test
+    that builds `entry` directly to exercise the transient case at all."""
+    entry = CatalogueEntry(
+        business_key=allocate_business_key(app_session), preferred_term="Unflushed entry"
+    )
+    app_session.add(entry)
+    assert sa_inspect(entry).identity is None
+
+    binding = _new_binding(app_session, entry)
+    app_session.flush()
+
+    assert entry.id is not None
+    assert binding.entry_id == entry.id
 
 
 @pytest.mark.req("FR-08")

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -51,6 +52,7 @@ __all__ = [
     "CodeBindingAlreadyActiveError",
     "CodeBindingAlreadyRetiredError",
     "CodeBindingNotRetiredError",
+    "CodeBindingSelfSupersessionError",
     "InvalidCodeBindingEditionHintError",
     "InvalidCodeBindingSystemError",
     "create_binding",
@@ -85,6 +87,15 @@ class CodeBindingNotRetiredError(ValueError):
     database invariant; this is the fail-loud Python-level layer, and the
     reason `link_replacement` is its own step rather than a parameter on
     `retire_binding` (see the module docstring)."""
+
+    http_status: ClassVar[int] = 409
+
+
+class CodeBindingSelfSupersessionError(ValueError):
+    """Raised by `link_replacement` when `successor is superseded` -
+    `ck_code_binding_no_self_supersession` is the actual database
+    invariant; this is the fail-loud Python-level layer, checked before
+    anything is assigned."""
 
     http_status: ClassVar[int] = 409
 
@@ -146,6 +157,20 @@ def create_binding(
     validated_code = SCTID(code).value
     validated_edition_hint = _validate_edition_hint(edition_hint)
     validated_system = _validate_system(system)
+
+    # `entry.id` is read into the `where(...)` predicate below *before*
+    # `session.execute()`'s own autoflush would otherwise populate it - a
+    # brand-new, not-yet-flushed `entry` has no identity yet, which would
+    # bake a stale value into the query and make this check vacuous (it
+    # would find zero rows regardless of what `entry` actually binds to).
+    # Flushing first, only when needed, closes that gap. Checked via
+    # `sa_inspect(...).identity` (matching `nptc.audit.recording.
+    # _default_entity_id`'s own precedent) rather than `entry.id is None`:
+    # `Mapped[uuid.UUID]` is typed non-optional, so mypy would flag the
+    # latter as an unreachable comparison even though it is true at
+    # runtime before the first flush.
+    if not sa_inspect(entry).identity:
+        session.flush()
 
     existing_active_id = session.execute(
         select(CodeBinding.id).where(
@@ -226,14 +251,23 @@ def link_replacement(
 
     Raises `CodeBindingNotRetiredError` if `superseded` is not retired -
     `ck_code_binding_replaced_by_requires_retired` is the database
-    invariant this pre-empts. Raises `ValueError` if `successor.id` is
-    `None` (not yet flushed) - assigning it directly would otherwise
-    silently write `NULL` into `replaced_by_binding_id`, since `CodeBinding.
-    id` has no Python-side default, only `server_default=func.
-    gen_random_uuid()`."""
+    invariant this pre-empts. Raises `CodeBindingSelfSupersessionError` if
+    `successor is superseded` - `ck_code_binding_no_self_supersession` is
+    the database invariant this pre-empts. Raises a bare `ValueError`
+    (deliberately with no `http_status`, unlike its siblings above: this
+    is a caller sequencing bug - forgetting to flush the successor before
+    linking it - not a state a well-formed API request could ever land in)
+    if `successor.id` is `None` (not yet flushed) - assigning it directly
+    would otherwise silently write `NULL` into `replaced_by_binding_id`,
+    since `CodeBinding.id` has no Python-side default, only
+    `server_default=func.gen_random_uuid()`."""
     if superseded.status != str(CodeBindingStatus.RETIRED):
         raise CodeBindingNotRetiredError(
             f"code binding {superseded.id} must be retired before it can name a successor"
+        )
+    if successor is superseded:
+        raise CodeBindingSelfSupersessionError(
+            f"code binding {superseded.id} cannot be its own replacement"
         )
     if successor.id is None:
         raise ValueError(
