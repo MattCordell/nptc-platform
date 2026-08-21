@@ -932,13 +932,17 @@ ordinary `SELECT`/`INSERT`/`UPDATE`/`DELETE`, since removing a value is normal e
 the case FR-11 protects against.
 
 The four `origin = 'system'` properties - `discipline`, `subgroup`, `specimen`,
-`usage_guidance` - are seeded by `nptc.registry.bootstrap.seed_system_properties`, an
-idempotent application-level function that inserts through `PropertyDefinition`'s own mapped
-`INSERT`, never `op.bulk_insert` (ADR-0012): a data migration would bypass the validation a
-real write goes through. It is safe to call repeatedly - it re-checks existing `key`s against
-the database on every call - which is also FR-09's own acceptance test for this issue: adding
-a property is ordinary row data, so nothing about seeding (or an administrator adding a fifth
-property afterwards) requires a migration, a restart, or a deployment.
+`usage_guidance` - are seeded by `nptc.db.bootstrap.seed_system_properties`, an idempotent
+application-level function that inserts through `PropertyDefinition`'s own mapped `INSERT`,
+never `op.bulk_insert` (ADR-0012): a data migration would bypass the validation a real write
+goes through. It lives under `nptc.db`, not `nptc.registry`, because ADR-0013 (#137) fixes
+`nptc.registry` as a leaf package that never imports `nptc.db` - this module imports the
+`PropertyDefinition` ORM model directly, which is exactly what that rule keeps out of
+`registry/`. It is safe to call repeatedly, and safe under two concurrent callers racing the
+same key (each row's insert runs in its own `SAVEPOINT`, catching only a genuine unique
+violation) - which is also FR-09's own acceptance test for this issue: adding a property is
+ordinary row data, so nothing about seeding (or an administrator adding a fifth property
+afterwards) requires a migration, a restart, or a deployment.
 
 FR-13's generated indexes (`ix_propval_p{index_seq}_{slot}`, see the truncation caveat above)
 will be excluded from Alembic autogenerate and this file's own round-trip fingerprint via an

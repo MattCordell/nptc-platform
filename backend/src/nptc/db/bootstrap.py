@@ -2,6 +2,20 @@
 (issue #51, PRD S6.5/S6.6): Discipline, Subgroup, Specimen and Usage
 guidance.
 
+**Lives under `nptc.db`, not `nptc.registry`, because of ADR-0013 SS2's
+leaf rule** - `nptc.registry` may import `nptc_shared`, SQLAlchemy,
+`jsonschema` and the stdlib, and nothing else from `nptc`, specifically so
+`registry/**` never imports `nptc.db`
+(`test_datatype_dispatch.py::test_registry_never_imports_a_non_leaf_sibling_package`
+enforces this mechanically). This module imports the `PropertyDefinition`
+ORM model directly to insert rows, which is exactly what the leaf rule
+exists to keep out of `registry/`; ADR-0013 itself names
+`registry/definitions.py` as the not-yet-built PropertyDefinition service
+(#51/#55) that will eventually own this concern from the registry side,
+constructing rows from a datatype-agnostic spec rather than importing the
+ORM model by name - this module is the pre-#52/#137 bootstrap seeding
+alone, not that service.
+
 **Seeds through `PropertyDefinition`'s own mapped `INSERT`, never
 `op.bulk_insert` or hand-written SQL** (ADR-0012) - a data migration
 bypasses the handler, the schema derivation and the binding validation,

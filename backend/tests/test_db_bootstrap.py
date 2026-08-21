@@ -1,4 +1,4 @@
-"""`nptc.registry.bootstrap.seed_system_properties` tests (issue #51).
+"""`nptc.db.bootstrap.seed_system_properties` tests (issue #51).
 
 Uses an ORM `Session` bound to `app_db` - see
 `test_catalogue_optimistic_locking.py`'s own `app_session` fixture for why
@@ -14,8 +14,8 @@ from sqlalchemy import select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
+from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin
-from nptc.registry.bootstrap import seed_system_properties
 
 
 @pytest.fixture
