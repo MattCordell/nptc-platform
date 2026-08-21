@@ -83,7 +83,10 @@ class StringHandler:
         if op is FilterOp.IN:
             return type_cast("ColumnElement[bool]", text_column.in_(value))
         if op is FilterOp.PREFIX:
-            return text_column.startswith(value)
+            # autoescape=True: without it, a caller-supplied `%`/`_` in
+            # `value` is a LIKE wildcard, not a literal character - "a_c"
+            # would otherwise match "abc".
+            return text_column.startswith(value, autoescape=True)
         raise UnsupportedFilterOpError(f"string handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:

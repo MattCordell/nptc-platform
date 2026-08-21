@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from numbers import Real
 from typing import Any
 from typing import cast as type_cast
@@ -37,7 +38,10 @@ class DecimalHandler:
         return {"type": "object", "additionalProperties": False}
 
     def validate(self, value: Any, spec: PropertyDefinitionSpec) -> Sequence[ValidationIssue]:
-        if isinstance(value, bool) or not isinstance(value, Real):
+        # `decimal.Decimal` registers as `numbers.Number`, not
+        # `numbers.Real` - checked explicitly, since a JSONB/Numeric
+        # round-trip commonly hands a handler a Decimal, not a float.
+        if isinstance(value, bool) or not isinstance(value, Real | Decimal):
             return [ValidationIssue(code="wrong-type", message="value must be a number")]
         return []
 

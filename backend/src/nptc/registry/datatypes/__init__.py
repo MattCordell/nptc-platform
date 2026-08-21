@@ -24,8 +24,15 @@ from nptc.registry.handlers import DatatypeHandler, HandlerDeps
 
 BUILTIN_DATATYPES: tuple[str, ...] = ("code", "string", "decimal", "positiveInt", "url")
 """Exactly PRD SS6.5's five, no sixth. Extensibility is proven by #53's
-synthetic-datatype test, not by pre-registering speculative ones. `boolean`
-is deliberately excluded (FR-89 - see `nptc.registry.handlers` module docs)."""
+synthetic-datatype test, not by pre-registering speculative ones.
+
+`boolean` is deliberately excluded, on a semantic ground load-bearing for
+FR-89 (ADR-0013 SS9): a `0..1` boolean has three states, and the absent
+state is exactly the "accepts any specimen" vs "nobody has filled this in
+yet" ambiguity FR-89's `specimen_unconstrained` core column exists to
+destroy. The registry *can* accept a `boolean` handler; none is registered
+here, and registering one later needs its own decision about that tri-state
+problem, not a drop-in default."""
 
 
 def build_builtin_handlers(deps: HandlerDeps) -> tuple[DatatypeHandler, ...]:

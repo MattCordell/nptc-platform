@@ -9,6 +9,7 @@ given a `StubTerminologyClient` (NFR-37: no network access).
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import jsonschema
 import pytest
@@ -102,6 +103,15 @@ def test_string_facet_clause_compiles_to_sql_with_no_database() -> None:
 
 
 @pytest.mark.req("FR-77")
+def test_string_prefix_filter_escapes_like_wildcards() -> None:
+    """Without autoescape, a caller-supplied `%`/`_` is a LIKE wildcard, not
+    a literal character - "a_c" would otherwise match "abc"."""
+    table = Table("t", MetaData(), Column("value", String))
+    clause = StringHandler().filter_clause(FilterOp.PREFIX, "a_c", table.c.value)
+    assert "ESCAPE" in _compiled(clause).upper()
+
+
+@pytest.mark.req("FR-77")
 def test_string_unsupported_filter_op_raises() -> None:
     table = Table("t", MetaData(), Column("value", String))
     with pytest.raises(UnsupportedFilterOpError):
@@ -134,6 +144,23 @@ def test_url_defaults_to_https_only() -> None:
 
 
 @pytest.mark.req("FR-77")
+def test_url_scheme_constraint_is_case_insensitive() -> None:
+    """`urlsplit` lowercases the parsed scheme - a constraint spelled
+    "HTTPS" must still match, not silently reject every value."""
+    handler = UrlHandler()
+    spec = _spec("url", constraints={"schemes": ["HTTPS"]})
+
+    assert handler.validate("https://example.org/vs", spec) == []
+
+
+@pytest.mark.req("FR-77")
+def test_url_prefix_filter_escapes_like_wildcards() -> None:
+    table = Table("t", MetaData(), Column("value", String))
+    clause = UrlHandler().filter_clause(FilterOp.PREFIX, "https://a_c", table.c.value)
+    assert "ESCAPE" in _compiled(clause).upper()
+
+
+@pytest.mark.req("FR-77")
 def test_url_schema_fragment_is_a_well_formed_schema() -> None:
     fragment = UrlHandler().json_schema_fragment(_spec("url"))
     jsonschema.Draft202012Validator.check_schema(dict(fragment))
@@ -162,6 +189,15 @@ def test_decimal_rejects_bool_despite_bool_being_an_int_subclass() -> None:
     would silently accept a boolean as a decimal value."""
     handler = DecimalHandler()
     assert handler.validate(True, _spec("decimal"))[0].code == "wrong-type"
+
+
+@pytest.mark.req("FR-77")
+def test_decimal_accepts_a_decimal_decimal() -> None:
+    """`decimal.Decimal` registers as `numbers.Number`, not `numbers.Real` -
+    a value arriving from a JSONB/Numeric round-trip is commonly a Decimal,
+    not a float, and must not be rejected as `wrong-type`."""
+    handler = DecimalHandler()
+    assert handler.validate(Decimal("1.50"), _spec("decimal")) == []
 
 
 @pytest.mark.req("FR-77")
@@ -258,6 +294,31 @@ def test_code_rejects_missing_required_field() -> None:
     )
 
 
+@pytest.mark.req("FR-77")
+@pytest.mark.req("FR-06")
+def test_code_rejects_a_numeric_code_as_a_validation_issue_not_a_crash() -> None:
+    """`json_schema_fragment` declares `code` as `"type": "string"` - a
+    numeric code must fail here, not reach `has_valid_format` and raise
+    `TypeError`, and never flow through to storage as a number (FR-06's
+    defect class)."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    value = {"system": "http://example.org/local", "code": 138875005}
+
+    issues = handler.validate(value, _spec("code"))
+
+    assert [issue.code for issue in issues] == ["wrong-type"]
+
+
+@pytest.mark.req("FR-77")
+def test_code_rejects_a_numeric_system() -> None:
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    value = {"system": 12345, "code": "138875005"}
+
+    issues = handler.validate(value, _spec("code"))
+
+    assert [issue.code for issue in issues] == ["wrong-type"]
+
+
 @pytest.mark.req("FR-10")
 def test_code_binding_check_surfaces_a_not_in_value_set_result() -> None:
     """FR-10's live binding check, through a StubTerminologyClient - no
@@ -300,6 +361,22 @@ def test_code_local_code_system_without_lookup_raises_loudly() -> None:
     )
     spec = _spec("code", binding=binding)
     value = {"system": "http://example.org/local", "code": "DISC-1"}
+
+    with pytest.raises(UnsupportedBindingError):
+        handler.validate(value, spec)
+
+
+@pytest.mark.req("FR-10")
+def test_code_value_set_binding_without_a_uri_raises_loudly() -> None:
+    """A `BindingSpec(binding_target="value_set", value_set_uri=None)` is a
+    malformed property definition, not a bad value - it must not silently
+    call the terminology server with `value_set_url=None`."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    binding = BindingSpec(
+        binding_target="value_set", value_set_uri=None, strength="required", edition="edition"
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://snomed.info/sct", "code": "138875005"}
 
     with pytest.raises(UnsupportedBindingError):
         handler.validate(value, spec)
@@ -349,3 +426,23 @@ def test_code_serialise_never_touches_display_text() -> None:
     serialised = handler.serialise(value, SerialisationTarget.JSON)
 
     assert serialised["display"] == "SNOMED CT Concept (procedure)"
+
+
+@pytest.mark.req("FR-77")
+def test_code_serialise_gives_each_target_its_own_representation() -> None:
+    """Not `dict(value)` for all three - `PLAIN_TEXT` (a CSV/xlsx cell) must
+    be a scalar, and `FHIR_VALUE` a Coding, not this handler's internal
+    storage shape verbatim."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    value = {
+        "system": "http://snomed.info/sct",
+        "code": "138875005",
+        "display": "SNOMED CT Concept (procedure)",
+    }
+
+    assert handler.serialise(value, SerialisationTarget.PLAIN_TEXT) == "138875005"
+    assert handler.serialise(value, SerialisationTarget.FHIR_VALUE) == {
+        "system": "http://snomed.info/sct",
+        "code": "138875005",
+        "display": "SNOMED CT Concept (procedure)",
+    }

@@ -78,9 +78,20 @@ class CodeHandler:
                     code="missing-field", message=f"missing required field(s): {sorted(missing)}"
                 )
             ]
-        issues: list[ValidationIssue] = []
         system = value["system"]
         code = value["code"]
+        # `json_schema_fragment` declares both as `"type": "string"` - a
+        # numeric `code` must fail here as a ValidationIssue, not reach
+        # `has_valid_format` and raise TypeError, and never flow through to
+        # storage as a number (FR-06's defect class, one layer up from
+        # SCTID's own str-only discipline).
+        if not isinstance(system, str) or not isinstance(code, str):
+            return [
+                ValidationIssue(
+                    code="wrong-type", message="'system' and 'code' must both be strings"
+                )
+            ]
+        issues: list[ValidationIssue] = []
         if system == SNOMED_SYSTEM:
             if not has_valid_format(code):
                 issues.append(
@@ -100,6 +111,12 @@ class CodeHandler:
     def _validate_binding(
         self, code: str, spec: PropertyDefinitionSpec
     ) -> Sequence[ValidationIssue]:
+        """Raises `UnsupportedBindingError` for a *misconfigured binding*,
+        never for a bad *value* - a property definition whose binding this
+        handler cannot service is a deployment/config defect, not something
+        the value being validated could have avoided, so it is deliberately
+        not surfaced as a `ValidationIssue` (ADR-0013 open question 1: "a
+        loud refusal, never a silent pass", until #56 lands)."""
         binding = spec.binding
         assert binding is not None  # narrowed by the caller
         if binding.binding_target == "local_code_system":
@@ -111,6 +128,12 @@ class CodeHandler:
             # #56 has not yet defined LocalCodeLookup's shape (ADR-0013 open
             # question 1) - nothing further to call here until it does.
             return []
+        if binding.value_set_uri is None:
+            raise UnsupportedBindingError(
+                "binding_target 'value_set' requires a value_set_uri; "
+                "got None - this is a malformed PropertyDefinitionSpec, not "
+                "a bad value"
+            )
         edition = Edition(module_id=binding.edition, label=binding.edition)
         result = self._terminology.validate_code(
             code, edition=edition, value_set_url=binding.value_set_uri
@@ -142,9 +165,24 @@ class CodeHandler:
         )
 
     def serialise(self, value: Any, target: SerialisationTarget) -> Any:
-        # No handler may strip a semantic tag (FR-83) - this handler never
-        # touches `display`/FSN text at all, so there is nothing to strip.
-        return dict(value)
+        """Deliberately three different shapes, one per representation - not
+        `dict(value)` for all three, which would make `PLAIN_TEXT` (a CSV
+        cell, an SPIA xlsx cell) hold a Python dict.
+
+        No handler may strip a semantic tag (FR-83) - this handler never
+        touches `display`/FSN text at all, so there is nothing to strip in
+        any of the three.
+        """
+        if target is SerialisationTarget.PLAIN_TEXT:
+            return value["code"]
+        if target is SerialisationTarget.JSON:
+            return dict(value)
+        if target is SerialisationTarget.FHIR_VALUE:
+            coding: dict[str, Any] = {"system": value["system"], "code": value["code"]}
+            if "display" in value:
+                coding["display"] = value["display"]
+            return coding
+        raise AssertionError(f"unhandled SerialisationTarget: {target}")
 
     def index_shape(self, spec: PropertyDefinitionSpec) -> IndexShape | None:
         if not spec.filterable:

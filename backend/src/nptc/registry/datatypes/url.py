@@ -44,7 +44,10 @@ class UrlHandler:
         schemes = spec.constraints.get("schemes")
         if schemes is None:
             return _DEFAULT_SCHEMES
-        return tuple(schemes)
+        # `urlsplit` lowercases the parsed scheme (validate() compares
+        # against this same tuple), so a constraint of "HTTPS" must be
+        # normalised here or it can never match.
+        return tuple(scheme.lower() for scheme in schemes)
 
     def validate(self, value: Any, spec: PropertyDefinitionSpec) -> Sequence[ValidationIssue]:
         if not isinstance(value, str):
@@ -87,7 +90,8 @@ class UrlHandler:
         if op is FilterOp.IN:
             return type_cast("ColumnElement[bool]", text_column.in_(value))
         if op is FilterOp.PREFIX:
-            return text_column.startswith(value)
+            # autoescape=True: see string.py's filter_clause for why.
+            return text_column.startswith(value, autoescape=True)
         raise UnsupportedFilterOpError(f"url handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
