@@ -1,4 +1,5 @@
-"""Bounded edit-distance tokenising and near-match primitives (FR-79, H-04).
+"""Bounded edit-distance tokenising and near-match primitives (FR-79, H-04),
+and the FR-05 collision comparison key (issue #49).
 
 Lives in ``shared``, not ``transform``, because FR-79's misspelling
 detection has two call sites that must never independently drift (FR-74,
@@ -8,6 +9,20 @@ check on save in the application. A new module rather than an addition to
 hygiene (NFC normalisation, invisible-character detection), not to fuzzy
 comparison. ``tokenise`` and ``near_match_distance`` build on
 ``text.normalise_for_comparison`` rather than reimplementing it.
+
+**Why ``collision_key`` lives here too.** FR-05 requires collision
+detection to normalise case, Unicode whitespace *and punctuation* before
+comparing two terms - a strictly stronger fold than
+``text.normalise_for_comparison`` deliberately provides, since that
+function's own docstring explains why it preserves case and punctuation
+(FR-82's as-served label reconciliation treats a case difference as real
+editorial signal, not noise). ``collision_key`` cannot live in ``text.py``
+without ``text.py`` depending on tokenisation; it composes ``tokenise``
+(which already collapses whitespace via ``normalise_for_comparison`` and
+splits on every non-word character, i.e. punctuation) and ``token_key``
+(casefold), so a punctuation difference and a case difference are both
+folded away for comparison, exactly as a delimiter difference already is
+for ``tokenise``'s own FR-71 purpose.
 
 **Suspect vs. reference eligibility, and where the line sits.** FR-79's
 heuristic needs two related but distinct gates: every token that can be
@@ -167,3 +182,30 @@ def near_match_distance(a: str, b: str, *, max_distance: int = MAX_EDIT_DISTANCE
     if min(len(a), len(b)) < LONG_TOKEN_LENGTH:
         return None
     return bounded_edit_distance(a, b, max_distance=max_distance)
+
+
+def collision_key(term: str) -> str:
+    """FR-05's comparison form for ``term``: casefolded, with every
+    punctuation/whitespace character treated as a separator rather than
+    compared literally, so ``'17-OHP'`` and ``'17 OHP'`` collide while
+    ``'AntiDNA'`` and ``'Anti-DNA'`` do not lose the token boundary that
+    distinguishes them from a different compound word entirely - the same
+    posture ``tokenise`` already takes for FR-71's delimiter-independence,
+    applied here to FR-05's case-and-punctuation fold instead.
+
+    Two tokens joined by a single ordinary space, never re-concatenated
+    into one word - collapsing ``'17 OHP'`` to ``'17ohp'`` would make it
+    collide with the unrelated token ``'17OHP'`` typed with no separator at
+    all, which is a coincidence FR-05 has no basis to treat as the same
+    designation.
+
+    Falls back to a plain casefolded, whitespace-collapsed comparison for a
+    term that tokenises to nothing at all (e.g. one consisting only of
+    punctuation) - such a term is pathological input this function must
+    still return a stable, non-empty-unless-genuinely-empty key for, not a
+    case ``tokenise`` needs to special-case for its own FR-79 purpose.
+    """
+    tokens = tokenise(term)
+    if not tokens:
+        return normalise_for_comparison(term).casefold()
+    return " ".join(token_key(t) for t in tokens)

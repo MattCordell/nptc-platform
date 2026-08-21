@@ -9,10 +9,14 @@ live here: `nptc.db.models.designation.Designation` (and
 (which reaches back into `nptc.db.models` through `nptc.audit.writer`), so
 a model importing *this* module directly would be circular.
 
-FR-05 collision detection (a synonym matching another active entry's
-preferred term, or the same synonym on multiple entries) is deliberately
-**not** here - it is issue #49's own module, layered on top of the rows
-this one creates.
+FR-05 error-severity collision detection runs here, before every row is
+constructed (`nptc.catalogue.collisions.assert_no_error_collisions`) - a
+rejected save leaves no audit event, matching every other precondition
+check in this package. Warning-severity ("the same synonym on multiple
+entries") is deliberately **not** checked here: it never blocks a save,
+so it is a query a caller (#149's edit screen) asks of
+`nptc.catalogue.collisions.warning_collisions`, not a precondition this
+module enforces.
 """
 
 from __future__ import annotations
@@ -26,9 +30,11 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.catalogue.collisions import assert_no_error_collisions
 from nptc.catalogue.term_hygiene import TermCleaningError, clean_term, preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc_shared.language import DEFAULT_LANGUAGE
+from nptc_shared.similarity import collision_key
 
 __all__ = [
     "DesignationAlreadyRetiredError",
@@ -79,14 +85,19 @@ def add_designation(
     reason: str,
 ) -> Designation:
     """Adds one designation row to `entry`. `term` is cleaned by
-    `Designation`'s own `@validates` hook; `reason` is validated here,
-    before the row is even constructed, so a rejected note leaves nothing
-    behind to roll back (matching `save_entry`'s precondition-before-
-    mutation posture for FR-38)."""
+    `Designation`'s own `@validates` hook, but cleaned again here first so
+    FR-05's error-severity collision check
+    (`nptc.catalogue.collisions.assert_no_error_collisions`) compares the
+    same value that will actually be stored; `reason` is validated here,
+    before the row is even constructed, so a rejected note (or a rejected
+    collision) leaves nothing behind to roll back (matching `save_entry`'s
+    precondition-before-mutation posture for FR-38)."""
     from nptc.db.models.designation import Designation
 
     validated_reason = validate_changelog_note(reason)
-    designation = Designation(entry_id=entry.id, term=term, use=use, language=language)
+    cleaned_term = clean_term(term)
+    assert_no_error_collisions(session, entry=entry, term=cleaned_term, language=language, use=use)
+    designation = Designation(entry_id=entry.id, term=cleaned_term, use=use, language=language)
     session.add(designation)
     record_change(
         session,
@@ -113,32 +124,53 @@ def add_synonyms(
     than once per row, since they are one edit from the caller's point of
     view.
 
-    Deduplicates by the *cleaned* term before inserting: FR-04's whole
-    premise is cleaning up doubled-delimiter/whitespace-variant cells, so
-    two terms that collapse to the same string after `clean_term` (e.g.
-    `"A"` and `"A "`) are one synonym, not two - inserting both would
-    violate `ix_designation_no_duplicate_active_term` at flush with an
-    unhelpful `IntegrityError`, from a batch the caller reasonably thinks
-    is well-formed."""
+    Deduplicates by *collision key* before inserting, not merely by the
+    cleaned term: `ix_designation_no_duplicate_active_term` (issue #49) is
+    itself keyed on `term_key`, so two terms that collapse to the same
+    comparison key after `collision_key` (a case or punctuation variant,
+    not only a whitespace one - e.g. `"ADA2"` and `"ada2"`) are one
+    synonym, not two - inserting both would violate that index at flush
+    with an unhelpful `IntegrityError`, from a batch the caller reasonably
+    thinks is well-formed. FR-04's whole premise is cleaning up doubled-
+    delimiter/whitespace-variant cells; this extends the same posture to
+    the stronger FR-05 comparison fold.
+
+    **Inserted in comparison-key order, not caller order.** Each call to
+    `add_designation` below acquires `nptc.catalogue.collisions.
+    assert_no_error_collisions`'s `pg_advisory_xact_lock` and holds it
+    until this transaction commits - so a batch of N terms holds up to N
+    locks at once. Two concurrent batches sharing two keys, acquired in
+    opposite order (transaction A saving `["ADA2", "17-OHP"]`, transaction
+    B saving `["17-OHP", "ADA2"]`), would otherwise each hold one lock and
+    wait on the other - a genuine deadlock (Postgres `40P01`), not merely
+    contention, and one this codebase has no handler for. Sorting the
+    deduplicated terms by their own comparison key first makes acquisition
+    order the same for every caller regardless of the order terms were
+    submitted in, so two batches can only ever block on each other, never
+    deadlock. The returned list is therefore ordered by comparison key,
+    not by the order `terms` was given in - #149's caller should not rely
+    on positional correspondence between `terms` and the return value."""
     validated_reason = validate_changelog_note(reason)
     seen: set[str] = set()
-    deduplicated = []
+    deduplicated: list[tuple[str, str]] = []
     for term in terms:
         cleaned = clean_term(term)
-        if cleaned not in seen:
-            seen.add(cleaned)
-            deduplicated.append(cleaned)
+        key = collision_key(cleaned)
+        if key not in seen:
+            seen.add(key)
+            deduplicated.append((key, cleaned))
+    deduplicated.sort(key=lambda pair: pair[0])
     return [
         add_designation(
             session,
             ctx,
             entry=entry,
-            term=term,
+            term=cleaned,
             use="synonym",
             language=language,
             reason=validated_reason,
         )
-        for term in deduplicated
+        for _key, cleaned in deduplicated
     ]
 
 

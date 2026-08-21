@@ -39,6 +39,16 @@ moves to `status='retired'` (mirroring `CatalogueEntryStatus.WITHDRAWN`'s
 own precedent) - `nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a
 privilege-level guarantee, the same trick already used for
 `catalogue_entry`.
+
+**`term_key` is FR-05's comparison form, stored and indexed (issue #49).**
+The same `@validates("term")` hook that cleans the term also derives
+`term_key` via `nptc_shared.similarity.collision_key` - casefolded, with
+punctuation and whitespace folded to a separator, strictly stronger than
+`clean_term`'s own whitespace-only fold. Stored rather than a bare
+`@property` (unlike `length` above) because `nptc.catalogue.collisions`
+needs an indexed equality lookup across every entry's designations, not a
+per-row computation. Never independently meaningful once `term` is set,
+so it is `__audit_ignored__`.
 """
 
 from __future__ import annotations
@@ -63,6 +73,7 @@ from nptc.catalogue.term_hygiene import (
 from nptc.db.base import Base
 from nptc.db.models.catalogue_entry import ImmutableFieldError
 from nptc_shared.language import LANGUAGE_TAG_PATTERN
+from nptc_shared.similarity import collision_key
 
 __all__ = [
     "Designation",
@@ -118,7 +129,7 @@ class Designation(Base):
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"id", "created_at", "updated_at"}
+        {"id", "created_at", "updated_at", "term_key"}
     )
 
     __table_args__ = (
@@ -138,18 +149,27 @@ class Designation(Base):
             unique=True,
             postgresql_where=text("status = 'active' AND use = 'preferred'"),
         ),
-        # No duplicate active (entry_id, term, language) - the same synonym
-        # attached twice to one entry (whether from a doubled delimiter or a
-        # whitespace variant, PRD Appendix A.4) collapses to one row rather
-        # than being representable at all.
+        # No duplicate active (entry_id, term_key, language) - the same
+        # synonym attached twice to one entry (whether from a doubled
+        # delimiter, a whitespace variant, or now a case/punctuation
+        # variant, PRD Appendix A.4) collapses to one row rather than being
+        # representable at all. Keyed on `term_key`, not `term`, since
+        # issue #49 - two surface forms that fold to the same collision key
+        # are one synonym for this purpose, matching `add_synonyms`'s own
+        # dedup-before-insert behaviour.
         Index(
             "ix_designation_no_duplicate_active_term",
             "entry_id",
-            "term",
+            "term_key",
             "language",
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+        # FR-05, issue #49: an indexed lookup for a cross-entry collision -
+        # `nptc.catalogue.collisions` filters this by `status`/entry status
+        # in the query itself, so a plain btree (not partial) index is
+        # sufficient here.
+        Index("ix_designation_term_key", "term_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -169,6 +189,14 @@ class Designation(Base):
         active_history=True,
     )
     term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
+    # FR-05/issue #49: derived from `term` by the same `@validates` hook
+    # below - never independently assignable through the ORM. See the
+    # module docstring. `server_default=''` exists only so a raw INSERT
+    # that bypasses the ORM entirely (every `backend/tests/test_db_*.py`
+    # constraint/privilege test) still satisfies `NOT NULL` - every write
+    # that goes through `Designation` itself always supplies the real,
+    # computed value, which overrides this default.
+    term_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     # Plain literals, not built from the `StrEnum`s above -
     # `test_sql_parameterisation.py`'s AST guard forbids a SQL call's first
     # argument being built from an f-string, matching `catalogue_entry.py`'s
@@ -205,7 +233,9 @@ class Designation(Base):
 
     @validates("term")
     def _validate_term(self, _key: str, value: str) -> str:
-        return clean_term(value)
+        cleaned = clean_term(value)
+        self.term_key = collision_key(cleaned)
+        return cleaned
 
     @validates("language")
     def _validate_language(self, _key: str, value: str) -> str:

@@ -87,7 +87,11 @@ def test_sample_defect_strings_become_individual_rows_with_no_empty_row(
         reason="Split synonyms from the sample cell",
     )
 
-    assert [d.term for d in created] == list(expected)
+    # Order-independent: `add_synonyms` inserts in comparison-key order,
+    # not caller order (issue #49's deadlock-avoidance fix), so this
+    # asserts the same *set* of rows exists, not positional equality.
+    assert {d.term for d in created} == set(expected)
+    assert len(created) == len(expected)
     assert all(term for term in (d.term for d in created))
 
 
@@ -147,7 +151,8 @@ def test_add_synonyms_deduplicates_terms_that_collapse_after_cleaning(
     )
     app_session.flush()
 
-    assert [d.term for d in created] == ["FBC", "CBC"]
+    # Order-independent - see the sibling test above's own comment.
+    assert {d.term for d in created} == {"FBC", "CBC"}
 
 
 # --- The three-strings boundary ---------------------------------------------

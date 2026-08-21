@@ -23,6 +23,7 @@ from nptc.audit.writer import AuditContext
 from nptc.catalogue.bindings import (
     CodeBindingAlreadyActiveError,
     CodeBindingAlreadyRetiredError,
+    CodeBindingCodeAlreadyBoundError,
     CodeBindingNotRetiredError,
     CodeBindingSelfSupersessionError,
     InvalidCodeBindingEditionHintError,
@@ -340,6 +341,39 @@ def test_create_binding_rejects_a_second_active_binding_on_the_same_entry(
 
     with pytest.raises(CodeBindingAlreadyActiveError):
         _new_binding(app_session, entry, code="71388002", fsn="Procedure (procedure)")
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_create_binding_rejects_a_code_already_bound_to_a_different_entry(
+    app_session: Session,
+) -> None:
+    """Issue #49's blocking severity - the code side of "one active
+    binding" that the previous test's entry-side check doesn't cover."""
+    first_entry = _new_entry(app_session)
+    second_entry = _new_entry(app_session, preferred_term="Something else")
+    _new_binding(app_session, first_entry)
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(CodeBindingCodeAlreadyBoundError):
+        _new_binding(app_session, second_entry)
+
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_code_is_rebindable_once_the_first_binding_is_retired(app_session: Session) -> None:
+    first_entry = _new_entry(app_session)
+    second_entry = _new_entry(app_session, preferred_term="Something else")
+    binding = _new_binding(app_session, first_entry)
+    app_session.flush()
+    retire_binding(app_session, AuditContext.system(), binding=binding, reason="Superseded")
+
+    rebound = _new_binding(app_session, second_entry)
+
+    assert rebound.code == _VALID_CODE
 
 
 @pytest.mark.req("FR-06")

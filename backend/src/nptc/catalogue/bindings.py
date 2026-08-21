@@ -25,6 +25,14 @@ FR-84's subsumption check (every binding subsumed by `71388002`
 \\|Procedure\\|) is deliberately **not** here - it is the FR-45 validation
 sweep's own concern, layered on top of the rows this module creates, the
 same relationship FR-05 collision detection (#49) has to `designations.py`.
+
+**Blocking severity (issue #49, FR-08): one active binding per code, full
+stop.** `CodeBindingAlreadyActiveError` above already checks the entry
+side (`ix_code_binding_one_active_per_entry`); `create_binding` below
+adds the code side too - the same code active on a *different* entry
+(`ix_code_binding_one_active_entry_per_code`) - as its own domain error
+rather than a raw `IntegrityError`. Unlike FR-05's error/warning pair,
+this has no acknowledgement path: a code is either free or it isn't.
 """
 
 from __future__ import annotations
@@ -51,6 +59,7 @@ from nptc_shared.sctid import SCTID
 __all__ = [
     "CodeBindingAlreadyActiveError",
     "CodeBindingAlreadyRetiredError",
+    "CodeBindingCodeAlreadyBoundError",
     "CodeBindingNotRetiredError",
     "CodeBindingSelfSupersessionError",
     "InvalidCodeBindingEditionHintError",
@@ -77,6 +86,17 @@ class CodeBindingAlreadyActiveError(ValueError):
     real conflict on this table, checked before insert so it surfaces as
     a domain error rather than `ix_code_binding_one_active_per_entry`'s
     raw `IntegrityError`. 409: well-formed request, conflicting state."""
+
+    http_status: ClassVar[int] = 409
+
+
+class CodeBindingCodeAlreadyBoundError(ValueError):
+    """Raised by `create_binding` when `code` is already actively bound to
+    a *different* entry - issue #49's blocking severity, the other half of
+    FR-08's "one active binding" that `CodeBindingAlreadyActiveError`
+    above doesn't cover. Checked before insert so it surfaces as a domain
+    error rather than `ix_code_binding_one_active_entry_per_code`'s raw
+    `IntegrityError`. 409: well-formed request, conflicting state."""
 
     http_status: ClassVar[int] = 409
 
@@ -181,6 +201,22 @@ def create_binding(
     if existing_active_id is not None:
         raise CodeBindingAlreadyActiveError(
             f"entry {entry.id} already has an active code binding ({existing_active_id})"
+        )
+
+    # Issue #49's blocking severity: the code side of "one active binding",
+    # not the entry side checked above - see `CodeBindingCodeAlreadyBoundError`'s
+    # own docstring.
+    already_bound_entry_id = session.execute(
+        select(CodeBinding.entry_id).where(
+            CodeBinding.system == validated_system,
+            CodeBinding.code == validated_code,
+            CodeBinding.status == str(CodeBindingStatus.ACTIVE),
+        )
+    ).scalar_one_or_none()
+    if already_bound_entry_id is not None:
+        raise CodeBindingCodeAlreadyBoundError(
+            f"code {validated_code!r} on {validated_system!r} is already actively bound "
+            f"to entry {already_bound_entry_id}"
         )
 
     binding = CodeBinding(

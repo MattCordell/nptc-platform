@@ -61,15 +61,19 @@ from nptc.audit.policy import policy_for
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.catalogue.collisions import assert_no_error_collisions
 from nptc.catalogue.errors import (
     ConflictReport,
     EntryNotFoundError,
     EntryVersionConflictError,
     FieldConflict,
 )
+from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.designation import DesignationUse
 from nptc.db.models.user import User
+from nptc_shared.language import DEFAULT_LANGUAGE
 
 #: The single Python source of truth for the FR-03 format - shared by
 #: `format_business_key`, `advance_sequence_past`, and mirrored (never
@@ -178,12 +182,26 @@ def create_entry(
     key rather than minting.
 
     `reason` (FR-37) is validated before anything is added to the session -
-    see the module docstring."""
+    see the module docstring. FR-05's error-severity collision check
+    (`nptc.catalogue.collisions.assert_no_error_collisions`) runs
+    immediately after, before `business_key` is even minted - a rejected
+    collision must not consume a sequence value. There is no exemption for
+    the seeded-import path: PRD Section 6.3's own consequence is that a
+    baseline carrying a genuine error-severity collision cannot be created
+    until it is resolved editorially."""
     validated_reason = validate_changelog_note(reason)
+    cleaned_preferred_term = clean_term(preferred_term)
+    assert_no_error_collisions(
+        session,
+        entry=None,
+        term=cleaned_preferred_term,
+        language=DEFAULT_LANGUAGE,
+        use=str(DesignationUse.PREFERRED),
+    )
     resolved_key = business_key if business_key is not None else allocate_business_key(session)
     entry = CatalogueEntry(
         business_key=resolved_key,
-        preferred_term=preferred_term,
+        preferred_term=cleaned_preferred_term,
         status=str(status),
         specimen_unconstrained=specimen_unconstrained,
     )
@@ -297,6 +315,19 @@ def save_entry(
                 changed_by=changed_by,
                 changed_at=changed_at,
             )
+        )
+
+    if changes.preferred_term is not None:
+        # FR-05: checked after the row_version precondition (a stale
+        # caller should see the version conflict, not a collision against
+        # data it never actually saw) and before the savepoint opens - a
+        # rejected collision must never reach `record_change`.
+        assert_no_error_collisions(
+            session,
+            entry=entry,
+            term=clean_term(changes.preferred_term),
+            language=DEFAULT_LANGUAGE,
+            use=str(DesignationUse.PREFERRED),
         )
 
     # The savepoint must open *before* any attribute is mutated: opening

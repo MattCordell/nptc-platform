@@ -158,3 +158,25 @@ GRANT_CODE_BINDING_UPDATE_SQL = (
 #: privilege-level guarantee `REVOKE_DESIGNATION_DELETE_SQL` already makes
 #: for `designation`.
 REVOKE_CODE_BINDING_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE code_binding FROM nptc_app;"
+
+#: issue #49 (FR-05): `term_key`/`preferred_term_key` are new columns added
+#: in migration 0009, after 0006/0007 already granted their tables' other
+#: columns - a **separate** statement, executed only by 0009, rather than
+#: editing `GRANT_DESIGNATION_UPDATE_SQL`/`GRANT_CATALOGUE_ENTRY_UPDATE_SQL`
+#: in place. Editing those in place would make migrations 0006/0007 grant a
+#: column that does not exist yet on a from-scratch replay
+#: (`test_db_round_trip.py`'s downgrade/upgrade fingerprint test).
+GRANT_DESIGNATION_TERM_KEY_UPDATE_SQL = "GRANT UPDATE (term_key) ON TABLE designation TO nptc_app;"
+GRANT_CATALOGUE_ENTRY_PREFERRED_TERM_KEY_UPDATE_SQL = (
+    "GRANT UPDATE (preferred_term_key) ON TABLE catalogue_entry TO nptc_app;"
+)
+
+#: issue #49 (FR-05): SELECT+INSERT only - an acknowledgement is a record of
+#: an editorial decision, never edited or removed (see the model's own
+#: docstring for why withdrawal is out of scope).
+GRANT_DESIGNATION_COLLISION_ACK_SQL = (
+    "GRANT SELECT, INSERT ON TABLE designation_collision_acknowledgement TO nptc_app;"
+)
+REVOKE_DESIGNATION_COLLISION_ACK_WRITE_SQL = (
+    "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE designation_collision_acknowledgement FROM nptc_app;"
+)

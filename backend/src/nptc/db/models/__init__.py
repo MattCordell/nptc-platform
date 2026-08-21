@@ -10,6 +10,9 @@ from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBinding, CodeBindingEditionHint, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
+from nptc.db.models.designation_collision_acknowledgement import (
+    DesignationCollisionAcknowledgement,
+)
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.models.user_role import UserRole
@@ -22,6 +25,7 @@ __all__ = [
     "CodeBindingEditionHint",
     "CodeBindingStatus",
     "Designation",
+    "DesignationCollisionAcknowledgement",
     "DesignationStatus",
     "DesignationUse",
     "User",

@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from nptc_shared.language import is_well_formed_language_tag
+from nptc_shared.similarity import collision_key
 
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
@@ -24,8 +25,8 @@ _INSERT_ENTRY = text(
     "VALUES (:business_key, :preferred_term) RETURNING id"
 )
 _INSERT_DESIGNATION = text(
-    "INSERT INTO designation (entry_id, term, use, language) "
-    "VALUES (:entry_id, :term, :use, :language) RETURNING id"
+    "INSERT INTO designation (entry_id, term, term_key, use, language) "
+    "VALUES (:entry_id, :term, :term_key, :use, :language) RETURNING id"
 )
 
 
@@ -48,9 +49,23 @@ def _insert_designation(
     use: str = "synonym",
     language: str = "en-AU",
 ) -> None:
+    # `term_key` is computed here via the real `collision_key` (issue
+    # #49), not left to the column's own `server_default = ''` - every
+    # test in this module exercises `designation` as if a real write path
+    # had populated it, matching what `Designation._validate_term` always
+    # does in practice. Leaving it at the default would make
+    # `ix_designation_no_duplicate_active_term` (now keyed on `term_key`)
+    # read as "at most one raw-inserted active designation per
+    # (entry_id, language)" instead of the real, term-scoped invariant.
     connection.execute(
         _INSERT_DESIGNATION,
-        {"entry_id": entry_id, "term": term, "use": use, "language": language},
+        {
+            "entry_id": entry_id,
+            "term": term,
+            "term_key": collision_key(term),
+            "use": use,
+            "language": language,
+        },
     )
 
 
@@ -187,6 +202,24 @@ def test_duplicate_active_synonym_on_the_same_entry_is_refused(db: Connection) -
 
     with pytest.raises(IntegrityError) as exc_info:
         _insert_designation(db, entry_id=entry_id, term="FBC")
+
+    assert exc_info.value.orig.sqlstate == _UNIQUE_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_case_and_punctuation_variant_of_an_active_synonym_is_also_refused(
+    db: Connection,
+) -> None:
+    """Issue #49 re-keys `ix_designation_no_duplicate_active_term` on
+    `term_key`, not `term` - a case/punctuation variant of an
+    already-active synonym on the same entry is unrepresentable too, not
+    merely a byte-for-byte duplicate (the case the previous test covers)."""
+    entry_id = _insert_entry(db)
+    _insert_designation(db, entry_id=entry_id, term="ADA2")
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_designation(db, entry_id=entry_id, term="ada2.")
 
     assert exc_info.value.orig.sqlstate == _UNIQUE_VIOLATION  # type: ignore[union-attr]
 

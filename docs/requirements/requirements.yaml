@@ -63,8 +63,8 @@
   priority: MUST
   phase: p1
   title: "On save, the system MUST detect collisions between a designation and a designation on a different active entry"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #49: nptc.catalogue.collisions.assert_no_error_collisions rejects a save where a synonym exactly matches another live (draft/active) entry's preferred term, or the symmetric case - checked in every write path of nptc.catalogue.designations/entries before a row is constructed, so a rejected save leaves no audit event. warning_collisions/acknowledge_collision (gated on Permission.VALIDATION_ACKNOWLEDGE, FR-44) implement the warning severity: the same synonym on multiple live entries is visible and resolvable to an acknowledged state (designation_collision_acknowledgement, scoped per entry) rather than recurring every save. The comparison key (nptc_shared.similarity.collision_key) folds case, Unicode whitespace and punctuation, stored/indexed on designation.term_key/catalogue_entry.preferred_term_key so a case, whitespace or punctuation variant is still caught (PRD Appendix A.1). See backend/tests/test_catalogue_collisions.py, which uses the PRD Appendix A.5 fixtures ('Adrenal Ab', 'ADA2') verbatim."
 - id: "FR-06"
   priority: MUST
   phase: p1
@@ -82,7 +82,7 @@
   phase: p1
   title: "An entry SHOULD permit at most one active code binding"
   status: implemented
-  notes: "Issue #48: ix_code_binding_one_active_per_entry (UNIQUE (entry_id) WHERE status = 'active') enforces at most one active binding per entry at the database layer. Retirement is a status transition (nptc.catalogue.bindings.retire_binding), never a DELETE (REVOKE_CODE_BINDING_DELETE_SQL); ck_code_binding_retirement_reason makes retirement_reason mandatory exactly when status='retired', and replaced_by_binding_id (nullable, populated only in the replacement case PRD FR-08 describes) may only be set on a binding that is itself retired (ck_code_binding_replaced_by_requires_retired) and never on itself (ck_code_binding_no_self_supersession). See backend/tests/test_db_code_binding.py."
+  notes: "Issue #48: ix_code_binding_one_active_per_entry (UNIQUE (entry_id) WHERE status = 'active') enforces at most one active binding per entry at the database layer. Retirement is a status transition (nptc.catalogue.bindings.retire_binding), never a DELETE (REVOKE_CODE_BINDING_DELETE_SQL); ck_code_binding_retirement_reason makes retirement_reason mandatory exactly when status='retired', and replaced_by_binding_id (nullable, populated only in the replacement case PRD FR-08 describes) may only be set on a binding that is itself retired (ck_code_binding_replaced_by_requires_retired) and never on itself (ck_code_binding_no_self_supersession). See backend/tests/test_db_code_binding.py. Issue #49 closes the other half - ix_code_binding_one_active_entry_per_code (UNIQUE (system, code) WHERE status = 'active') blocks the same code being bound active on two different entries, with CodeBindingCodeAlreadyBoundError as the pre-insert domain error. See backend/tests/test_catalogue_bindings.py."
 - id: "FR-09"
   priority: MUST
   phase: p1
@@ -869,7 +869,7 @@
   phase: foundation
   title: "Specific tests that MUST exist, because each closes a defect class documented in Section 16"
   status: planned
-  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5 (audit log tampering is detected) is now fully landed: issue #36's hash chain detection (backend/tests/test_audit_tamper_detection.py) plus issue #38's operator-command half (scripts/verify_audit_chain.py, backend/tests/test_verify_audit_chain_cli.py). Test 8 (a concurrent edit with a stale row_version is rejected) landed with #46: backend/tests/test_catalogue_optimistic_locking.py::test_stale_row_version_is_rejected_and_names_the_conflict."
+  notes: "The 16 mandated tests land with the features they close; this ID tracks the umbrella requirement. Test 13 (a code not subsumed by <<71388002 blocks, and the check is asserted to issue ceil(N/chunk_size) batch requests rather than one per code) landed with #27. Test 5 (audit log tampering is detected) is now fully landed: issue #36's hash chain detection (backend/tests/test_audit_tamper_detection.py) plus issue #38's operator-command half (scripts/verify_audit_chain.py, backend/tests/test_verify_audit_chain_cli.py). Test 8 (a concurrent edit with a stale row_version is rejected) landed with #46: backend/tests/test_catalogue_optimistic_locking.py::test_stale_row_version_is_rejected_and_names_the_conflict. Test 4 (a synonym matching another entry's preferred term is rejected at error severity) landed with #49: backend/tests/test_catalogue_collisions.py::test_synonym_matching_another_entrys_preferred_term_is_rejected, using the PRD Appendix A.5 'Adrenal Ab'/'21-Hydroxylase Ab' fixture verbatim."
 - id: "NFR-39"
   priority: SHOULD
   phase: p1

@@ -24,14 +24,15 @@ and UUIDs, which is correct for a log and wrong for a response.
 constraints (malformed `use`, a duplicate active term, a second active
 preferred designation in one language, the en-AU-preferred exclusion) are
 enforced only at the database layer today (`IntegrityError`, unmapped
-here) - a malformed `language` and an already-retired designation are the
-exceptions, given typed handlers below (`DesignationLanguageError`,
-`DesignationAlreadyRetiredError`) alongside `TermCleaningError`. There is
-no HTTP surface for catalogue writes yet (#149/#150), so an unhandled
+here) - a malformed `language`, an already-retired designation, and
+(issue #49) a collision are the exceptions, given typed handlers below
+(`DesignationLanguageError`, `DesignationAlreadyRetiredError`,
+`DesignationCollisionError`) alongside `TermCleaningError`. There is no
+HTTP surface for catalogue writes yet (#149/#150), so an unhandled
 `IntegrityError` falls through to FastAPI's default 500 with no
 caller-visible impact today - but #149/#150 must not simply reuse this
 module unchanged: every remaining constraint needs either its own typed
-exception raised before the flush (matching the precedent the four typed
+exception raised before the flush (matching the precedent the typed
 handlers below already set) or an explicit handler here, before those
 routes ship, or a routine duplicate-synonym save 500s instead of
 409/422ing.
@@ -52,6 +53,7 @@ from nptc.auth.errors_authorisation import (
     MfaRequiredError,
 )
 from nptc.catalogue.changelog import ChangelogNoteError
+from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import DesignationAlreadyRetiredError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
@@ -91,6 +93,11 @@ _DETAIL_TERM_CLEANING = (
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
+_DETAIL_DESIGNATION_COLLISION = (
+    "This term matches another entry's preferred term or synonym, once case, spacing "
+    "and punctuation are ignored. Choose a different term, or resolve the conflict on "
+    "the other entry first."
+)
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -228,4 +235,32 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("retire refused, already retired: %s", exc)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_ALREADY_RETIRED}
+        )
+
+    @app.exception_handler(DesignationCollisionError)
+    async def _handle_designation_collision_error(
+        _request: Request, exc: DesignationCollisionError
+    ) -> JSONResponse:
+        # FR-05: a routine, expected refusal on a normal edit, not an
+        # anomaly - INFO, not WARNING. Logged as the class and colliding
+        # business_keys only, never `str(exc)` in full: the exception
+        # message quotes the submitted term itself (NFR-26/NFR-35), which
+        # is user-supplied free text exactly like a changelog note.
+        _logger.info(
+            "designation collision refused against %s",
+            [c.business_key for c in exc.collisions],
+        )
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={
+                "detail": _DETAIL_DESIGNATION_COLLISION,
+                "collisions": [
+                    {
+                        "severity": c.severity.value,
+                        "business_key": c.business_key,
+                        "preferred_term": c.preferred_term,
+                    }
+                    for c in exc.collisions
+                ],
+            },
         )
