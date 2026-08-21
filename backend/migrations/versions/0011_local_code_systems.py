@@ -1,7 +1,7 @@
 """local_code_systems
 
-Revision ID: 0010
-Revises: 0009
+Revision ID: 0011
+Revises: 0010
 Create Date: 2026-08-21
 
 Issue #56 (FR-90, FR-91, FR-92): Discipline and Subgroup as governed local
@@ -9,6 +9,11 @@ code systems owned by RCPA-QAP, plus an advisory, non-authoritative SNOMED
 CT map for Discipline. See `nptc.db.models.local_code_system`,
 `nptc.db.models.local_code` and `nptc.db.models.local_code_snomed_map` for
 the full per-table reasoning.
+
+Renumbered from `0010` to `0011` (originally cut before #196/issue #51's
+`0010_property_definition_and_value.py` merged and claimed that number
+first) - `down_revision` below now points at that migration rather than
+`0009`.
 
 The privilege grants live in this same migration, not a later
 "permissions" one - see 0008's own docstring for the same
@@ -76,8 +81,8 @@ from alembic import op
 from nptc.db import roles
 
 # revision identifiers, used by Alembic.
-revision: str = "0010"
-down_revision: str | None = "0009"
+revision: str = "0011"
+down_revision: str | None = "0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

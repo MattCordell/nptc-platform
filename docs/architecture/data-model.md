@@ -957,7 +957,7 @@ would fail the downgrade/upgrade comparison in `test_db_round_trip.py`.
 with no `value_set_uri` - deliberately FK-less, so this property metadata was representable
 before `local_code_system` existed, and stays representable now without either table needing
 to reference the other's primary key. The two `key`s match `local_code_system.key`'s own
-seeded values (migration `0010`, below) by convention, not by constraint: nothing in the
+seeded values (migration `0011`, below) by convention, not by constraint: nothing in the
 schema enforces that a `code`-datatype property's binding actually names a real
 `local_code_system.key`, since #53 has not yet wired `CodeHandler` to look one up (see
 `LocalCodeLookup` below).
@@ -1056,7 +1056,7 @@ There is deliberately **no row at all** for `Molecular` or `Serology`: PRD SS6.6
 no genuine SNOMED match for either, and FR-91 requires that gap to stay visible rather
 than be papered over with a plausible-looking wrong mapping.
 
-### Seed data (migration `0010`)
+### Seed data (migration `0011`)
 
 The first seeding migration in the repository. Seeds the `discipline` system and its six
 PRD SS6.6 codes, plus four advisory map rows (`Chemical pathology`, `Haematology`,

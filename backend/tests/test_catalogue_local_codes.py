@@ -546,7 +546,7 @@ def test_database_local_code_lookup_satisfies_the_protocol_structurally() -> Non
 
 
 def test_database_local_code_lookup_resolves_a_seeded_discipline(app_session: Session) -> None:
-    """Exercises migration 0010's own seed data end to end."""
+    """Exercises migration 0011's own seed data end to end."""
     lookup = DatabaseLocalCodeLookup(app_session)
 
     resolved = lookup.resolve("discipline", "chemical_pathology")

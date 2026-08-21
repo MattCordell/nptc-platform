@@ -580,13 +580,13 @@
   phase: p1
   title: "A published non-authoritative map from the local Discipline code system to SNOMED CT concepts, for consumers who want a SNOMED view"
   status: implemented
-  notes: "Issue #56: the local_code_snomed_map table, seeded (migration 0010) from PRD SS6.6's own verification table - Chemical pathology/Haematology/Immunopathology at exact strength, Microbiology mapped twice at ambiguous strength, and deliberately no row for Molecular or Serology. Never a code_binding structurally (no entry_id, no FK to catalogue_entry) - backend/tests/test_registry_local_codes.py's AST guard pins that the sweep/binding modules never reference LocalCodeSnomedMap."
+  notes: "Issue #56: the local_code_snomed_map table, seeded (migration 0011) from PRD SS6.6's own verification table - Chemical pathology/Haematology/Immunopathology at exact strength, Microbiology mapped twice at ambiguous strength, and deliberately no row for Molecular or Serology. Never a code_binding structurally (no entry_id, no FK to catalogue_entry) - backend/tests/test_catalogue_local_codes.py's AST guard pins that the sweep/binding modules never reference LocalCodeSnomedMap."
 - id: "FR-92"
   priority: SHOULD
   phase: p1
   title: "Subgroup migration MUST reconcile inconsistent classification axes and pluralisation before the code system is populated"
   status: planned
-  notes: "Issue #56 lands the storage mechanism this requirement needs (local_code.provisional, seeded true with no definition for a value migrated verbatim) but does not itself reconcile the Subgroup axes or pluralisation - that is RCPA-QAP's editorial decision, still outstanding. The subgroup code system is seeded (migration 0010) with no codes at all, so no code exists yet to be provisional. Out of scope for the transform's seeding-time treatment (P0-9/#31): compound-value splitting (see FR-90's note) migrates each hand-typed value verbatim as a provisional property value, and does not itself reconcile axis or pluralisation inconsistencies."
+  notes: "Issue #56 lands the storage mechanism this requirement needs (local_code.provisional, seeded true with no definition for a value migrated verbatim) but does not itself reconcile the Subgroup axes or pluralisation - that is RCPA-QAP's editorial decision, still outstanding. The subgroup code system is seeded (migration 0011) with no codes at all, so no code exists yet to be provisional. Out of scope for the transform's seeding-time treatment (P0-9/#31): compound-value splitting (see FR-90's note) migrates each hand-typed value verbatim as a provisional property value, and does not itself reconcile axis or pluralisation inconsistencies."
 - id: "FR-93"
   priority: MUST
   phase: p4

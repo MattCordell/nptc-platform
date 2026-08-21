@@ -16,7 +16,7 @@ existing strings verbatim as provisional codes" until then. A migrated
 `Subgroup` string therefore lands with `provisional = true` and
 `definition = NULL`: "not yet reconciled" is a stored fact, not an
 absence a reader has to infer. `Discipline` codes seeded from the PRD's
-own verified table (migration 0010) are never provisional.
+own verified table (migration 0011) are never provisional.
 
 **Retired via `status`, never deleted** - mirrors `code_binding.status`'s
 own treatment; `nptc_app`'s column-level grant excludes `id`, `system_id`
