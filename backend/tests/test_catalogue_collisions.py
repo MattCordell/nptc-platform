@@ -488,7 +488,7 @@ def test_add_synonyms_deduplicates_by_collision_key(app_session: Session) -> Non
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_serialised(
-    app_engine: Engine, owner_engine: Engine
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
 ) -> None:
     """The race `assert_no_error_collisions`'s advisory lock exists to
     close: without it, two concurrent transactions each creating an entry
@@ -507,7 +507,13 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
     container rather than relying on `app_session`'s rolled-back
     savepoint, so without both of those a rerun (`--lf`, a rerun plugin,
     xdist re-execution) would find its own previous run's row already
-    committed and get `["collision", "collision"]` instead."""
+    committed and get `["collision", "collision"]` instead. `pristine_
+    audit_event` (issue #190) is what cleans up the `audit_event` row the
+    winning `create_entry` call commits - without it, a whole-table
+    assertion elsewhere in the suite (e.g. `test_db_audit_privileges.py`,
+    which has no scoping predicate to filter this test's leaked row out
+    with) fails depending on run order, exactly the class of bug #190
+    exists to remove."""
     racing_term = f"Concurrent Race Term {uuid.uuid4()}"
     barrier = threading.Barrier(2)
     results: dict[str, str] = {}
@@ -572,7 +578,7 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_add_synonyms_batches_do_not_deadlock_on_opposite_lock_order(
-    app_engine: Engine, owner_engine: Engine
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
 ) -> None:
     """The deadlock `add_synonyms`'s comparison-key sort exists to avoid:
     two concurrent batches sharing two keys, submitted in opposite order,
@@ -581,7 +587,13 @@ def test_add_synonyms_batches_do_not_deadlock_on_opposite_lock_order(
     acquisition order the same regardless of caller order, so both
     batches can only block on each other, never deadlock. Same synonym on
     two different entries is warning, not error, severity - both batches
-    are expected to succeed."""
+    are expected to succeed.
+
+    Both entries and all four designations this test commits are real
+    writes into the shared session-scoped container, exactly like the
+    concurrency test above - `pristine_audit_event` (issue #190) cleans up
+    the `audit_event` rows they generate; the `finally` block below cleans
+    up `designation`/`catalogue_entry` themselves."""
     first_key = f"race-term-one-{uuid.uuid4()}"
     second_key = f"race-term-two-{uuid.uuid4()}"
     barrier = threading.Barrier(2)
