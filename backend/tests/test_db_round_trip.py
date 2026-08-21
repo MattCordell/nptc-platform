@@ -142,11 +142,30 @@ def _fingerprint(engine: Engine) -> dict[str, Any]:
             ]
         )
 
+        # issue #48/ADR-0023: `nptc_sctid_is_valid` is this repo's first
+        # database function, created by migration 0008 and referenced by
+        # `ck_code_binding_code`. Without asserting its own survival here,
+        # a downgrade that dropped the function but a re-upgrade that
+        # failed to recreate it would pass every other check above (the
+        # table's own CHECK constraint list is unaffected by whether the
+        # function it calls actually exists).
+        functions = sorted(
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT proname FROM pg_proc "
+                    "JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace "
+                    "WHERE pg_namespace.nspname = 'public'"
+                )
+            )
+        )
+
     return {
         "tables": tables,
         "extensions": extensions,
         "grants": grants,
         "column_grants": column_grants,
+        "functions": functions,
     }
 
 
