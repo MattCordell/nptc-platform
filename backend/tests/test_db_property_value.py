@@ -39,7 +39,7 @@ def _seed(connection: Connection, *, key: str) -> uuid.UUID:
             "INSERT INTO property_definition "
             "(key, label, datatype, cardinality, scope, required_for_submission, "
             "required_for_publication, filterable, origin, display_order) "
-            "VALUES (:key, :key, 'string', '0..*', 'entry', false, false, false, 'admin', 0)"
+            "VALUES (:key, :key, 'string', '0..*', 'both', false, false, false, 'admin', 0)"
         ),
         {"key": key},
     )

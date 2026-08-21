@@ -88,7 +88,8 @@ def upgrade() -> None:
             name=op.f("ck_property_definition_cardinality"),
         ),
         sa.CheckConstraint(
-            "scope IN ('entry','designation')", name=op.f("ck_property_definition_scope")
+            "scope IN ('submission','maintenance','both')",
+            name=op.f("ck_property_definition_scope"),
         ),
         sa.CheckConstraint(
             "origin IN ('system','admin')", name=op.f("ck_property_definition_origin")

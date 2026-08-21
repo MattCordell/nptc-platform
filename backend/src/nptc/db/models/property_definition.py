@@ -78,8 +78,9 @@ class PropertyCardinality(StrEnum):
 
 
 class PropertyScope(StrEnum):
-    ENTRY = "entry"
-    DESIGNATION = "designation"
+    SUBMISSION = "submission"
+    MAINTENANCE = "maintenance"
+    BOTH = "both"
 
 
 class PropertyOrigin(StrEnum):
@@ -108,7 +109,7 @@ class BindingStrength(StrEnum):
 #: runtime data, matching every other model's own precedent.
 _KEY_CHECK_SQL = "key ~ '^[a-z][a-z0-9_]{0,62}$'"
 _CARDINALITY_CHECK_SQL = "cardinality IN ('0..1','1..1','0..*','1..*')"
-_SCOPE_CHECK_SQL = "scope IN ('entry','designation')"
+_SCOPE_CHECK_SQL = "scope IN ('submission','maintenance','both')"
 _ORIGIN_CHECK_SQL = "origin IN ('system','admin')"
 _STATUS_CHECK_SQL = "status IN ('active','deprecated')"
 _BINDING_TARGET_CHECK_SQL = "binding_target IN ('value_set','local_code_system')"

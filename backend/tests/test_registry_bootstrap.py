@@ -90,7 +90,7 @@ def test_system_properties_travel_the_same_write_path_as_an_admin_property(
         label="Admin defined",
         datatype="string",
         cardinality="0..1",
-        scope="entry",
+        scope="both",
         required_for_submission=False,
         required_for_publication=False,
         filterable=False,

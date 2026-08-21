@@ -32,6 +32,13 @@ Field values below are fixed against PRD SS6.5/6.6, not invented here:
   specimen_unconstrained` (issue #46) for where that flag actually lives.
 - **Usage guidance** (OI-12): free text, `0..1`, no binding, not
   filterable - retained as an editorial field, never structured.
+
+**`scope`**: `Discipline`/`Subgroup`/`Specimen` are `both` - classification
+that belongs on the submission form and stays editable during maintenance
+(FR-23). `Usage guidance` is `maintenance`-only - an editorial field
+RCPA-QAP fills in after submission, per OI-12's "empty throughout the
+sample but intended" note; it does not belong on the submission form
+itself.
 """
 
 from __future__ import annotations
@@ -64,7 +71,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             label="Discipline",
             datatype="code",
             cardinality=PropertyCardinality.ZERO_OR_MANY,
-            scope=PropertyScope.ENTRY,
+            scope=PropertyScope.BOTH,
             required_for_submission=False,
             required_for_publication=True,
             binding_target=BindingTarget.LOCAL_CODE_SYSTEM,
@@ -78,7 +85,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             label="Subgroup",
             datatype="code",
             cardinality=PropertyCardinality.ZERO_OR_MANY,
-            scope=PropertyScope.ENTRY,
+            scope=PropertyScope.BOTH,
             required_for_submission=False,
             required_for_publication=False,
             binding_target=BindingTarget.LOCAL_CODE_SYSTEM,
@@ -92,7 +99,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             label="Specimen",
             datatype="code",
             cardinality=PropertyCardinality.ZERO_OR_MANY,
-            scope=PropertyScope.ENTRY,
+            scope=PropertyScope.BOTH,
             required_for_submission=False,
             required_for_publication=False,
             binding_target=BindingTarget.VALUE_SET,
@@ -108,7 +115,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             label="Usage guidance",
             datatype="string",
             cardinality=PropertyCardinality.ZERO_OR_ONE,
-            scope=PropertyScope.ENTRY,
+            scope=PropertyScope.MAINTENANCE,
             required_for_submission=False,
             required_for_publication=False,
             filterable=False,

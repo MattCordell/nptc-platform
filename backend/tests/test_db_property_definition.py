@@ -27,7 +27,7 @@ _INSERT_DEFINITION = text(
     "INSERT INTO property_definition "
     "(key, label, datatype, cardinality, scope, required_for_submission, "
     "required_for_publication, filterable, origin, display_order) "
-    "VALUES (:key, :label, 'string', '0..1', 'entry', false, false, false, 'admin', 0) "
+    "VALUES (:key, :label, 'string', '0..1', 'both', false, false, false, 'admin', 0) "
     "RETURNING id"
 )
 
@@ -36,7 +36,7 @@ _INSERT_CODE_DEFINITION = text(
     "(key, label, datatype, cardinality, scope, required_for_submission, "
     "required_for_publication, binding_target, value_set_uri, strength, "
     "filterable, origin, display_order) "
-    "VALUES (:key, :label, 'code', '0..1', 'entry', false, false, "
+    "VALUES (:key, :label, 'code', '0..1', 'both', false, false, "
     "'value_set', 'https://example.test/vs', 'required', false, 'admin', 0) "
     "RETURNING id"
 )
@@ -66,7 +66,7 @@ def test_code_datatype_without_binding_is_rejected(db: Connection) -> None:
                 "INSERT INTO property_definition "
                 "(key, label, datatype, cardinality, scope, required_for_submission, "
                 "required_for_publication, filterable, origin, display_order) "
-                "VALUES ('coded_prop', 'Coded prop', 'code', '0..1', 'entry', "
+                "VALUES ('coded_prop', 'Coded prop', 'code', '0..1', 'both', "
                 "false, false, false, 'admin', 0)"
             )
         )
@@ -84,7 +84,7 @@ def test_value_set_binding_without_a_value_set_uri_is_rejected(db: Connection) -
                 "(key, label, datatype, cardinality, scope, required_for_submission, "
                 "required_for_publication, binding_target, strength, filterable, origin, "
                 "display_order) "
-                "VALUES ('coded_prop', 'Coded prop', 'code', '0..1', 'entry', "
+                "VALUES ('coded_prop', 'Coded prop', 'code', '0..1', 'both', "
                 "false, false, 'value_set', 'required', false, 'admin', 0)"
             )
         )
@@ -117,7 +117,7 @@ def test_deprecated_status_requires_a_deprecated_at_timestamp(db: Connection) ->
                 "INSERT INTO property_definition "
                 "(key, label, datatype, cardinality, scope, required_for_submission, "
                 "required_for_publication, filterable, origin, status, display_order) "
-                "VALUES ('deprecated_prop', 'Deprecated prop', 'string', '0..1', 'entry', "
+                "VALUES ('deprecated_prop', 'Deprecated prop', 'string', '0..1', 'both', "
                 "false, false, false, 'admin', 'deprecated', 0)"
             )
         )
