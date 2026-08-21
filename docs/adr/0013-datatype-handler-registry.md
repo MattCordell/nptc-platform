@@ -512,7 +512,8 @@ class DatatypeRegistry:
 
 
 class LocalCodeLookup(Protocol):
-    """#56 (FR-90) landed this shape in `nptc.registry.lookup`:
+    """#56 (FR-90) landed this shape directly in `nptc.registry.handlers`
+    (this module), replacing the placeholder ADR-0013 first sketched:
 
     ```python
     @dataclass(frozen=True, slots=True)
@@ -520,24 +521,36 @@ class LocalCodeLookup(Protocol):
         code: str
         display: str
         status: str
+        system_status: str
         provisional: bool
 
     class LocalCodeLookup(Protocol):
         def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None: ...
     ```
 
+    Both stay leaf-safe (stdlib-only), unlike `nptc.catalogue.
+    local_codes` (below), which #56 could not land inside `nptc.registry`
+    itself - #197/#53's own leaf-package rule (SS2) forbids it importing
+    `nptc.audit`/`nptc.auth`/`nptc.db.models`, which the write path and
+    the database-backed lookup both need.
+
     One read method, deliberately - management goes through
-    `nptc.registry.local_codes`, gated on `Permission.REGISTRY_MANAGE`
+    `nptc.catalogue.local_codes`, gated on `Permission.REGISTRY_MANAGE`
     (FR-90's "administrator-only management"), not through this Protocol.
     `resolve` returning `None` is "does not exist in `system_key` at all";
-    `ResolvedLocalCode.status == 'deprecated'` is "exists, but retired" -
-    the same distinction `code_binding.status` supports for SNOMED
-    bindings, and what the FR-45 sweep's `local_code_retired` warning
-    reads. `nptc.registry.lookup.DatabaseLocalCodeLookup` is the
-    database-backed implementation #53 constructs `HandlerDeps` with;
-    #53 still owns lifting `UnsupportedBindingError` for `binding_target
-    = 'local_code_system'` (open question 1 below) - #56 only supplies the
-    shape and the implementation, not the handler wiring."""
+    `ResolvedLocalCode.status == 'deprecated'` is "exists, but retired",
+    and `system_status` carries the same fact for the owning system
+    independently (deprecating a system does not cascade to its member
+    codes) - the same distinction `code_binding.status` supports for
+    SNOMED bindings, and what the FR-45 sweep's `local_code_retired`
+    warning reads. `nptc.catalogue.local_codes.DatabaseLocalCodeLookup`
+    is the database-backed implementation #53 constructs `HandlerDeps`
+    with; #53 still owns lifting `UnsupportedBindingError` for
+    `binding_target = 'local_code_system'` and wiring `CodeHandler.
+    validate()`'s `local_code_system` branch to actually call `resolve()`
+    (open question 1 below, and `CodeHandler._validate_binding`'s own
+    comment) - #56 supplies the shape and the implementation, not the
+    handler wiring."""
 
 
 @dataclass(frozen=True, slots=True)

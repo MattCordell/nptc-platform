@@ -21,7 +21,20 @@ create_binding`'s pre-insert check for `ix_code_binding_one_active_per_
 entry`, `local_code_snomed_map` has no uniqueness constraint on
 `local_code_id` at all - PRD SS6.6 verifies `Microbiology` as genuinely
 ambiguous between two SNOMED candidates, so a local code may validly
-carry more than one map row (see that model's own docstring)."""
+carry more than one map row (see that model's own docstring).
+
+**Lives in `nptc.catalogue`, not `nptc.registry`, despite the FR-90/91/92
+requirement IDs living in the property-registry area of the PRD.** #197
+(issue #53) landed `nptc.registry` as a leaf package - "may import
+`nptc_shared`, SQLAlchemy, `jsonschema` and the stdlib, and nothing else
+from `nptc`" (ADR-0013 SS2, `registry/__init__.py`'s own docstring) - and
+this module needs `nptc.audit`, `nptc.auth`, `nptc.catalogue.changelog`
+and the ORM models, same as every other file in this package. Only
+`nptc.registry.handlers.LocalCodeLookup`/`ResolvedLocalCode` - the
+dependency-free read contract `CodeHandler` actually consumes - live on
+the leaf side; `DatabaseLocalCodeLookup` below, which needs a `Session`,
+lives here alongside the write path it is built on, matching every other
+service module in this package."""
 
 from __future__ import annotations
 
@@ -42,9 +55,11 @@ from nptc.db.models.code_binding import SNOMED_CT_SYSTEM
 from nptc.db.models.local_code import LocalCode, LocalCodeStatus
 from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap, SnomedMapMatchStrength
 from nptc.db.models.local_code_system import KEY_PATTERN, LocalCodeSystem, LocalCodeSystemStatus
+from nptc.registry.handlers import ResolvedLocalCode
 from nptc_shared.sctid import SCTID
 
 __all__ = [
+    "DatabaseLocalCodeLookup",
     "InvalidLocalCodeSystemKeyError",
     "InvalidMatchStrengthError",
     "LocalCodeAlreadyDeprecatedError",
@@ -54,6 +69,8 @@ __all__ = [
     "create_snomed_map_row",
     "deprecate_local_code",
     "deprecate_local_code_system",
+    "find_local_code",
+    "find_local_code_with_system_status",
 ]
 
 
@@ -310,7 +327,7 @@ def find_local_code(session: Session, *, system_key: str, code: str) -> LocalCod
 def find_local_code_with_system_status(
     session: Session, *, system_key: str, code: str
 ) -> tuple[LocalCode, str] | None:
-    """`nptc.registry.lookup.DatabaseLocalCodeLookup`'s read path. Unlike
+    """`DatabaseLocalCodeLookup`'s read path (below). Unlike
     `find_local_code` above, also returns the owning `LocalCodeSystem`'s
     own `status` - `deprecate_local_code_system` deprecates the system
     without touching its member codes' own `status` (deprecating every
@@ -324,3 +341,36 @@ def find_local_code_with_system_status(
         .where(LocalCodeSystem.key == system_key, LocalCode.code == code)
     ).one_or_none()
     return None if row is None else (row[0], row[1])
+
+
+class DatabaseLocalCodeLookup:
+    """The database-backed implementation of `nptc.registry.handlers.
+    LocalCodeLookup`, built on `find_local_code_with_system_status`
+    above. Not itself declared to subclass that `Protocol` - structural
+    typing is the point (mirrors `nptc.terminology`'s own stub-client
+    treatment, ADR-0003) - but satisfies it, which `backend/tests/
+    test_catalogue_local_codes.py` pins with an explicit assignment mypy
+    would flag if the shapes ever drifted apart.
+
+    Holds a `Session` for the lifetime of one request/job, matching every
+    other service-layer caller's own session-per-call-site convention
+    (`nptc.catalogue.bindings.create_binding` and siblings) - this is not
+    a singleton, so `HandlerDeps` construction (ADR-0013) stays
+    per-request, matching `TerminologyClient`'s own non-singleton
+    treatment (NFR-37)."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None:
+        found = find_local_code_with_system_status(self._session, system_key=system_key, code=code)
+        if found is None:
+            return None
+        local_code, system_status = found
+        return ResolvedLocalCode(
+            code=local_code.code,
+            display=local_code.display,
+            status=local_code.status,
+            system_status=system_status,
+            provisional=local_code.provisional,
+        )

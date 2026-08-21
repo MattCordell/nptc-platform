@@ -27,7 +27,7 @@ and `code_binding.retirement_reason`'s own precedent respectively: **both**
 mandatory exactly when `status = 'deprecated'`, forbidden otherwise -
 `ck_local_code_deprecated_at`'s `(status = 'deprecated') = (deprecated_at
 IS NOT NULL)` makes the timestamp a real database invariant rather than a
-value the one write path (`nptc.registry.local_codes.deprecate_local_code`)
+value the one write path (`nptc.catalogue.local_codes.deprecate_local_code`)
 merely happens to set. This matters beyond the row itself: FR-90's
 "version history tied to catalogue releases" (its own third bullet) is
 deferred to a follow-up issue precisely because `deprecated_at` plus the
@@ -37,7 +37,7 @@ undercut the argument used to defer.
 
 **What reads this table.** The FR-45 validation sweep's `local_code_retired`
 warning (PRD line 689: "Do local code system values still resolve to an
-active local code?") keys off `status` here; `nptc.registry.lookup.
+active local code?") keys off `status` here; `nptc.registry.handlers.
 LocalCodeLookup` is the read path once #53 wires a `code`-datatype property
 bound to `binding_target = 'local_code_system'`."""
 

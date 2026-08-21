@@ -17,7 +17,7 @@ fact rather than assuming it.
 edition served by Ontoserver; a row here is the platform's own record,
 validated internally (PRD line 415: "Local code systems ... are validated
 internally against the platform's own `LocalCode` table, because Ontoserver
-does not hold them"). `nptc.registry.lookup.LocalCodeLookup` is the read
+does not hold them"). `nptc.registry.handlers.LocalCodeLookup` is the read
 path a `binding_target = 'local_code_system'` property (ADR-0013) will use
 once #53 wires it up - this module only owns storage.
 
@@ -63,7 +63,7 @@ __all__ = ["KEY_PATTERN", "LocalCodeSystem", "LocalCodeSystemStatus"]
 
 #: Matches `property_definition.key`'s own pattern (ADR-0012) - see the
 #: module docstring for why the two vocabularies are kept in lockstep.
-#: Exported (not `_`-prefixed) so `nptc.registry.local_codes.
+#: Exported (not `_`-prefixed) so `nptc.catalogue.local_codes.
 #: create_local_code_system` can validate a candidate key in Python before
 #: it ever reaches `_KEY_CHECK_SQL` below - built from `KEY_PATTERN.
 #: pattern`, matching `designation.py`'s own `_LANGUAGE_CHECK_SQL`/

@@ -45,7 +45,7 @@ verification table determines:
   the vocabulary decision to RCPA-QAP; seeding a `subgroup` code here
   would be exactly the guessing-at-structure FR-92 forbids.
 
-**These seed inserts deliberately bypass `nptc.registry.local_codes` and
+**These seed inserts deliberately bypass `nptc.catalogue.local_codes` and
 its NFR-08 audit trail** - unlike a state-changing write made through the
 running application (what NFR-08 actually governs), this is bootstrap
 data written before any `app_user`/`Principal` exists to attribute it to,

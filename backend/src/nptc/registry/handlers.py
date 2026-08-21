@@ -203,8 +203,12 @@ class UnsupportedFilterOpError(ValueError):
 class UnsupportedBindingError(ValueError):
     """Raised by CodeHandler.validate() when binding_target =
     'local_code_system' and the handler was constructed with
-    local_code_lookup=None - a loud refusal, never a silent pass, until
-    #56 supplies a real LocalCodeLookup (ADR-0013 open question 1)."""
+    local_code_lookup=None - a loud refusal, never a silent pass
+    (ADR-0013 open question 1). #56 has now supplied LocalCodeLookup's
+    real shape below; CodeHandler._validate_binding still returns []
+    unconditionally for a supplied lookup rather than calling resolve()
+    - wiring that call through is left to a follow-up rather than edited
+    here, alongside #53's own merged module."""
 
 
 # --- the registry and its construction ------------------------------------
@@ -240,11 +244,54 @@ class DatatypeRegistry:
         return frozenset(self._by_datatype)
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedLocalCode:
+    """What a `LocalCodeLookup` returns for a code that exists - just
+    enough for `CodeHandler` to validate a `property_value` and render a
+    display term, without exposing the ORM row that backs it (`nptc.
+    registry` is a leaf - see the module docstring - so this dataclass,
+    not `nptc.db.models.local_code.LocalCode`, is what crosses the
+    boundary; mirrors `nptc.terminology`'s own served-label-shaped return
+    types for the same reason).
+
+    **`status` and `system_status` are deliberately two separate fields.**
+    `nptc.catalogue.local_codes.deprecate_local_code_system` deprecates a
+    system without touching its member codes' own `status` - the two
+    facts are independent, and a handler that only checked `status` would
+    treat a code as fine after its owning system had been retired
+    wholesale."""
+
+    code: str
+    display: str
+    status: str
+    system_status: str
+    provisional: bool
+
+
 class LocalCodeLookup(Protocol):
-    """Placeholder with no members - #56 (FR-90) owns its real shape.
-    Present here only so HandlerDeps below is a type-checkable,
-    non-forward reference and #53 has something concrete to pass None in
-    place of."""
+    """#56 (FR-90)'s real shape for this Protocol. The read contract a
+    `code`-datatype handler needs to validate a value bound to
+    `binding_target = 'local_code_system'` (PRD line 415: "validated
+    internally against the platform's own `LocalCode` table, because
+    Ontoserver does not hold them"). Deliberately narrow - no write
+    methods; management goes through `nptc.catalogue.local_codes`, gated
+    on `Permission.REGISTRY_MANAGE` (FR-90's "administrator-only
+    management"), which is exactly why that module lives outside this
+    leaf package rather than in it. `nptc.catalogue.local_codes.
+    DatabaseLocalCodeLookup` is the database-backed implementation -
+    constructing one, and wiring `CodeHandler.validate()`'s
+    `local_code_system` branch to actually call `resolve()` rather than
+    return `[]` unconditionally, remains #53's job (see
+    `UnsupportedBindingError`'s own docstring and `CodeHandler.
+    _validate_binding`'s comment)."""
+
+    def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None:
+        """Returns the resolved code, or `None` if `code` does not exist
+        in the `system_key` system at all - a handler distinguishes "does
+        not exist" from "exists but deprecated" via `ResolvedLocalCode.
+        status`, the same distinction `code_binding.status` supports for
+        SNOMED bindings."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-"""`nptc.registry.local_codes` service-layer tests (issue #56, FR-90,
+"""`nptc.catalogue.local_codes` service-layer tests (issue #56, FR-90,
 FR-91, FR-92), plus the AST guard for this issue's acceptance criterion:
 the advisory SNOMED map must never be treated as a code binding by the
 validation sweep.
@@ -18,11 +18,8 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Role, permissions_for_roles
 from nptc.auth.principal import Principal
-from nptc.db.models.audit import AuditEvent
-from nptc.db.models.local_code import LocalCodeStatus
-from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap
-from nptc.db.models.local_code_system import LocalCodeSystemStatus
-from nptc.registry.local_codes import (
+from nptc.catalogue.local_codes import (
+    DatabaseLocalCodeLookup,
     InvalidLocalCodeSystemKeyError,
     InvalidMatchStrengthError,
     LocalCodeAlreadyDeprecatedError,
@@ -35,7 +32,11 @@ from nptc.registry.local_codes import (
     find_local_code,
     find_local_code_with_system_status,
 )
-from nptc.registry.lookup import DatabaseLocalCodeLookup
+from nptc.db.models.audit import AuditEvent
+from nptc.db.models.local_code import LocalCodeStatus
+from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap
+from nptc.db.models.local_code_system import LocalCodeSystemStatus
+from nptc.registry.handlers import LocalCodeLookup
 from nptc_shared.sctid import InvalidSCTIDError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -533,6 +534,17 @@ def test_create_snomed_map_row_requires_registry_manage(app_session: Session) ->
 # --- LocalCodeLookup ----------------------------------------------------------
 
 
+def test_database_local_code_lookup_satisfies_the_protocol_structurally() -> None:
+    """`DatabaseLocalCodeLookup` deliberately does not subclass
+    `LocalCodeLookup` (see its own docstring) - this is the check mypy
+    would already give us for free, made explicit and independent of
+    mypy actually being run, so a future edit to either shape that
+    breaks the match fails a test, not just a type-check that could be
+    skipped."""
+    conforms: LocalCodeLookup = DatabaseLocalCodeLookup.__new__(DatabaseLocalCodeLookup)
+    assert hasattr(conforms, "resolve")
+
+
 def test_database_local_code_lookup_resolves_a_seeded_discipline(app_session: Session) -> None:
     """Exercises migration 0010's own seed data end to end."""
     lookup = DatabaseLocalCodeLookup(app_session)
@@ -649,7 +661,7 @@ _MAP_NAMES = frozenset({"LocalCodeSnomedMap"})
 _ALLOWED_REFERENCES = frozenset(
     {
         REPO_ROOT / "backend" / "src" / "nptc" / "db" / "models" / "__init__.py",
-        REPO_ROOT / "backend" / "src" / "nptc" / "registry" / "local_codes.py",
+        REPO_ROOT / "backend" / "src" / "nptc" / "catalogue" / "local_codes.py",
     }
 )
 

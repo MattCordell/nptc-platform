@@ -1043,7 +1043,7 @@ posture.
 **Never a `code_binding`, structurally - this is the issue's acceptance criterion.**
 There is no `entry_id` anywhere on this table, and no foreign key to `catalogue_entry`
 at all - a `code_binding` row is authoritative and revalidated by the FR-45 sweep; a row
-here is advisory and never revalidated. `backend/tests/test_registry_local_codes.py`
+here is advisory and never revalidated. `backend/tests/test_catalogue_local_codes.py`
 pins this with an AST guard: no module under `nptc.validation` or `nptc.catalogue.
 bindings` may reference `LocalCodeSnomedMap` at all, plus a structural check that the
 mapped table has neither an `entry_id` column nor a foreign key to `catalogue_entry`.
@@ -1078,15 +1078,23 @@ rather than attempted here.
 
 ### `LocalCodeLookup` (issue #56, ADR-0013)
 
-`nptc.registry.lookup.LocalCodeLookup` is the read contract a `code`-datatype property
+`nptc.registry.handlers.LocalCodeLookup` is the read contract a `code`-datatype property
 bound to `binding_target = 'local_code_system'` will use (PRD line 415: "validated
 internally against the platform's own `LocalCode` table, because Ontoserver does not
 hold them") - a `Protocol`, not the ORM model directly, matching
 `nptc.terminology.TerminologyClient`'s own contract-not-implementation shape (ADR-0003,
-NFR-37). `DatabaseLocalCodeLookup` is the database-backed implementation, built on
-`nptc.registry.local_codes.find_local_code`. This module defines the shape only - #53
-adopts it into `CodeHandler` and lifts ADR-0013's `UnsupportedBindingError` for
-`binding_target = 'local_code_system'`; that wiring is out of scope here.
+NFR-37). It replaces the placeholder #197/#53 landed alongside `HandlerDeps`, staying
+leaf-safe (stdlib only) per that PR's own module-boundary rule (ADR-0013 SS2).
+
+`nptc.catalogue.local_codes.DatabaseLocalCodeLookup` is the database-backed
+implementation, built on that module's own `find_local_code_with_system_status` - it
+lives in `nptc.catalogue`, not `nptc.registry`, precisely because it needs a live
+`Session` and the write path it is built on, which the leaf rule forbids `nptc.registry`
+itself from depending on. #53 still owns adopting it into `CodeHandler` (constructing
+`HandlerDeps` with it) and lifting ADR-0013's `UnsupportedBindingError` for
+`binding_target = 'local_code_system'` - `CodeHandler._validate_binding` currently
+returns `[]` unconditionally rather than calling `resolve()`; wiring that call through is
+left to a follow-up rather than edited here, alongside #53's own already-merged module.
 
 ## Extensions
 

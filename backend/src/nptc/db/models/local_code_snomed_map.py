@@ -10,7 +10,7 @@ the sweep must never treat a row here the same way. There is no
 `entry_id` anywhere on this table, and no foreign key to
 `catalogue_entry` at all - a change that starts joining this table into
 sweep logic would have to invent that join from nothing, which is the
-point. `backend/tests/test_registry_local_codes.py` pins this with an AST
+point. `backend/tests/test_catalogue_local_codes.py` pins this with an AST
 guard: no module under `nptc.validation` or `nptc.catalogue.bindings` may
 reference `LocalCodeSnomedMap`.
 
