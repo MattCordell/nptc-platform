@@ -106,7 +106,7 @@ _SQL_CALL_ATTRS = frozenset({"execute", "exec_driver_sql"})
 #: same doctrine for) - the raw-SQL regex below is derived from this same
 #: set, via `_camel_to_snake`, so the two can never silently drift apart
 #: the way two independently-maintained literals could.
-VERSIONED_TABLE_MODELS = frozenset({"CatalogueEntry"})
+VERSIONED_TABLE_MODELS = frozenset({"CatalogueEntry", "PropertyDefinition"})
 _BULK_STATEMENT_FUNCS = frozenset({"update", "delete"})
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
 

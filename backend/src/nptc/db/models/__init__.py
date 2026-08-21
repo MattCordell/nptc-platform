@@ -13,12 +13,24 @@ from nptc.db.models.designation import Designation, DesignationStatus, Designati
 from nptc.db.models.designation_collision_acknowledgement import (
     DesignationCollisionAcknowledgement,
 )
+from nptc.db.models.property_definition import (
+    BindingStrength,
+    BindingTarget,
+    PropertyCardinality,
+    PropertyDefinition,
+    PropertyOrigin,
+    PropertyScope,
+    PropertyStatus,
+)
+from nptc.db.models.property_value import PropertyValue
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.models.user_role import UserRole
 
 __all__ = [
     "AuditEvent",
+    "BindingStrength",
+    "BindingTarget",
     "CatalogueEntry",
     "CatalogueEntryStatus",
     "CodeBinding",
@@ -28,6 +40,12 @@ __all__ = [
     "DesignationCollisionAcknowledgement",
     "DesignationStatus",
     "DesignationUse",
+    "PropertyCardinality",
+    "PropertyDefinition",
+    "PropertyOrigin",
+    "PropertyScope",
+    "PropertyStatus",
+    "PropertyValue",
     "User",
     "UserIdentity",
     "UserRole",

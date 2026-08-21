@@ -180,3 +180,36 @@ GRANT_DESIGNATION_COLLISION_ACK_SQL = (
 REVOKE_DESIGNATION_COLLISION_ACK_WRITE_SQL = (
     "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE designation_collision_acknowledgement FROM nptc_app;"
 )
+
+#: issue #51 (FR-09/FR-11/FR-12), per ADR-0012: SELECT+INSERT only at table
+#: level - same posture as `GRANT_CATALOGUE_ENTRY_SQL` above.
+GRANT_PROPERTY_DEFINITION_SQL = "GRANT SELECT, INSERT ON TABLE property_definition TO nptc_app;"
+#: Column-level UPDATE excluding `key`, `id`, `index_seq`, `origin` and
+#: `created_at` - never table-level `UPDATE`, which would supersede this
+#: column list. This is what makes FR-12 ("INSERT may set key, UPDATE may
+#: not touch it") a database invariant: an UPDATE reaching `key` fails with
+#: `42501` regardless of what the ORM or a future contributor believes.
+#: `row_version` MUST be included - SQLAlchemy's `version_id_col` machinery
+#: issues `UPDATE ... SET row_version = ...` as part of every mapped
+#: update, matching `GRANT_CATALOGUE_ENTRY_UPDATE_SQL`'s own precedent.
+GRANT_PROPERTY_DEFINITION_UPDATE_SQL = (
+    "GRANT UPDATE (label, datatype, cardinality, scope, required_for_submission, "
+    "required_for_publication, binding_target, value_set_uri, strength, edition, "
+    "filterable, status, display_order, constraints, deprecated_at, updated_at, "
+    "row_version) ON TABLE property_definition TO nptc_app;"
+)
+#: No DELETE grant at all - FR-11's stronger, unconditional form (ADR-0012):
+#: the PRD's conditional test ("has it appeared in a published export?") is
+#: never asked, so it can never be got wrong.
+REVOKE_PROPERTY_DEFINITION_DELETE_SQL = (
+    "REVOKE DELETE, TRUNCATE ON TABLE property_definition FROM nptc_app;"
+)
+
+#: issue #51 (FR-09/FR-10), per ADR-0012: SELECT+INSERT+UPDATE+DELETE - a
+#: value is ordinary editable content (removing a specimen from an entry is
+#: normal editing, not the case FR-11 protects against), unlike
+#: `property_definition` above.
+GRANT_PROPERTY_VALUE_SQL = (
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE property_value TO nptc_app;"
+)
+REVOKE_PROPERTY_VALUE_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE property_value FROM nptc_app;"
