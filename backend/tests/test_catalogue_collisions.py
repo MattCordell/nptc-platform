@@ -168,6 +168,32 @@ def test_create_entry_rejects_a_preferred_term_colliding_with_another_entrys_syn
     assert _audit_event_count(app_session) == before
 
 
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_non_en_au_preferred_variant_does_not_collide_across_languages(
+    app_session: Session,
+) -> None:
+    """`CatalogueEntry.preferred_term` is always en-AU
+    (`ck_designation_no_en_au_preferred`) - a non-en-AU preferred variant
+    (issue #47's own mi-NZ example) folding to the same key as an
+    unrelated entry's en-AU preferred term must not collide just because
+    the two surface forms match; they are not comparable designations at
+    all once language is taken into account."""
+    _new_entry(app_session, "Adrenal Ab")
+    other_entry = _new_entry(app_session, "21-Hydroxylase Ab")
+    app_session.flush()
+
+    add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=other_entry,
+        term="Adrenal Ab",
+        use="preferred",
+        language="mi-NZ",
+        reason="A non-en-AU preferred variant that happens to share a surface form",
+    )
+
+
 # --- FR-05: normalisation (principal failure mode) --------------------------
 
 

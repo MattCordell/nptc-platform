@@ -275,12 +275,20 @@ def assert_no_error_collisions(
             exclude_entry_id=exclude_entry_id,
         )
     else:
-        # `use == 'preferred'`. A `CatalogueEntry.preferred_term` is always
-        # en-AU; a non-en-AU `Designation.use == 'preferred'` row can never
-        # collide with it via `_matching_entries` (`preferred_term_key` is
-        # always keyed against an en-AU term) - so this branch only makes
-        # sense, and is only called, for `entries.py`'s own write paths.
-        collisions += _matching_entries(session, term_key=key, exclude_entry_id=exclude_entry_id)
+        # `use == 'preferred'`. `CatalogueEntry.preferred_term` is always
+        # en-AU (`ck_designation_no_en_au_preferred` forbids an en-AU
+        # `Designation.use == 'preferred'` row from ever existing), so
+        # `_matching_entries` only makes sense when `language ==
+        # DEFAULT_LANGUAGE` - `entries.py`'s own write paths always pass
+        # exactly that, but a non-en-AU preferred variant added via
+        # `designations.py` (issue #47's own mi-NZ example) must not be
+        # compared against an unrelated en-AU preferred term across
+        # entries just because the two surface forms happen to fold to the
+        # same key.
+        if language == DEFAULT_LANGUAGE:
+            collisions += _matching_entries(
+                session, term_key=key, exclude_entry_id=exclude_entry_id
+            )
         collisions += _matching_designations(
             session,
             term_key=key,
