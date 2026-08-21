@@ -21,6 +21,10 @@ dependencies = [
     # The backend now imports httpx directly for OIDC discovery (issue
     # #43); previously only transitive via nptc-shared.
     "httpx>=0.28",
+    # Registry-owned JSON Schema fragments (FR-77, ADR-0013 SS2 permits this
+    # import in `nptc.registry`) - the datatype dispatch tests assert every
+    # handler's fragment is a well-formed Draft 2020-12 schema.
+    "jsonschema>=4.23",
 ]
 
 [tool.uv.sources]

@@ -135,8 +135,9 @@ pre-commit run --all-files
   **negative** case (access correctly denied) needs its own test, not just the positive
   path.
 - Every state-changing write path emits an audit event (NFR-08).
-- `switch`/`match` on property datatype only inside the `registry/` handler module
-  (FR-77) — not scattered across storage, export, or search code.
+- `switch`/`match` on property datatype only inside the `registry/datatypes/` handler
+  package (FR-77, ADR-0013) — not scattered across storage, export, or search code, and
+  not elsewhere in `registry/` either. Enforced by `backend/tests/test_datatype_dispatch.py`.
 - No secrets, tokens, or personal information in code, logs, or fixtures (NFR-26, NFR-35).
 
 ## Documentation is part of the change

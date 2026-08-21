@@ -66,6 +66,7 @@ always passes (CLAUDE.md's "principal failure mode" rule).
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -76,8 +77,19 @@ import pytest
 from nptc.db import models as _models  # noqa: F401 - import-for-side-effect, see below
 from nptc.db.base import Base
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SCAN_DIRS = [REPO_ROOT / "backend" / "src", REPO_ROOT / "backend" / "migrations"]
+# `backend/tests` has no `__init__.py` (pytest's `--import-mode=importlib`),
+# so a plain `from ast_guard_support import ...` cannot resolve - loaded by
+# file path instead, matching this tree's existing *_support.py convention.
+_ast_guard_support_spec = importlib.util.spec_from_file_location(
+    "_ast_guard_support", Path(__file__).parent / "ast_guard_support.py"
+)
+assert _ast_guard_support_spec is not None and _ast_guard_support_spec.loader is not None
+_ast_guard_support = importlib.util.module_from_spec(_ast_guard_support_spec)
+_ast_guard_support_spec.loader.exec_module(_ast_guard_support)
+
+REPO_ROOT = _ast_guard_support.REPO_ROOT
+SCAN_DIRS = _ast_guard_support.SCAN_DIRS
+_display = _ast_guard_support.display_path
 
 _SQL_KEYWORD_RE = re.compile(
     r"^\s*(select|insert|update|delete|drop|create|alter|grant|revoke|truncate)\b",
@@ -198,13 +210,6 @@ def _query_bulk_statement_target(node: ast.Call) -> str | None:
             return cursor.args[0].id
         cursor = cursor.func.value
     return None
-
-
-def _display(path: Path) -> str:
-    try:
-        return path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _check_source(
