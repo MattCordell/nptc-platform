@@ -12,10 +12,13 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import nptc.db.bootstrap as bootstrap
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin
+from nptc.registry import BUILTIN_DATATYPES
 
 
 @pytest.fixture
@@ -147,6 +150,8 @@ def test_seed_system_properties_is_safe_under_a_concurrent_caller(
     """
     connection_a = app_engine.connect().execution_options(isolation_level="REPEATABLE READ")
     connection_b = app_engine.connect().execution_options(isolation_level="REPEATABLE READ")
+    session_a: Session | None = None
+    session_b: Session | None = None
     try:
         session_a = Session(bind=connection_a)
         session_b = Session(bind=connection_b)
@@ -167,6 +172,15 @@ def test_seed_system_properties_is_safe_under_a_concurrent_caller(
 
         assert inserted_b == []
     finally:
+        # Close the ORM Sessions before their underlying Connections - a
+        # Session left open holds identity-map/transactional state against
+        # a Connection that is about to be closed out from under it. Guarded
+        # by None-checks since a failure while constructing either Session
+        # would otherwise mask itself with a NameError/AttributeError here.
+        if session_a is not None:
+            session_a.close()
+        if session_b is not None:
+            session_b.close()
         connection_a.close()
         connection_b.close()
         with owner_engine.connect() as cleanup_connection:
@@ -177,3 +191,56 @@ def test_seed_system_properties_is_safe_under_a_concurrent_caller(
                 )
             )
             cleanup_connection.commit()
+
+
+@pytest.mark.req("FR-77")
+def test_seeded_datatypes_are_registered_handlers() -> None:
+    """The module docstring's "a data migration could seed a definition
+    the running application would itself reject" claim is checkable now
+    that #137 (ADR-0013) has landed the registry - this makes it true
+    rather than aspirational. No database needed: `BUILTIN_DATATYPES` is
+    the deps-free enumeration `nptc.registry.datatypes` exports precisely
+    so a check like this one doesn't need a constructed `DatatypeRegistry`
+    (with its `HandlerDeps`/`TerminologyClient`) just to read the valid
+    set."""
+    seeded_datatypes = {
+        definition.datatype for definition in bootstrap._build_system_property_definitions()
+    }
+    assert seeded_datatypes <= set(BUILTIN_DATATYPES)
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_a_non_unique_integrity_error_propagates(
+    app_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowed `except IntegrityError` re-raises anything that is not
+    a `23505` unique violation - proving the branch that previously went
+    untested. Monkeypatches `_build_system_property_definitions` to return
+    one row that violates `binding_required_for_code` (a `code` datatype
+    with no `binding_target`), which `seed_system_properties`'s own
+    existing-keys check cannot have already filtered out since the table
+    starts empty."""
+
+    def _one_invalid_definition() -> tuple[PropertyDefinition, ...]:
+        return (
+            PropertyDefinition(
+                key="invalid_prop",
+                label="Invalid prop",
+                datatype="code",
+                cardinality="0..1",
+                scope="both",
+                required_for_submission=False,
+                required_for_publication=False,
+                filterable=False,
+                origin="admin",
+                display_order=0,
+            ),
+        )
+
+    monkeypatch.setattr(bootstrap, "_build_system_property_definitions", _one_invalid_definition)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        seed_system_properties(app_session)
+
+    assert exc_info.value.orig.sqlstate != "23505"  # type: ignore[union-attr]

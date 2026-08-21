@@ -889,7 +889,7 @@ workflow) still build on top of what is described here.
 | `index_seq` | `BIGINT` | `NOT NULL`, `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
 | `key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
 | `label` | `TEXT` | `NOT NULL`. Human-facing, changeable |
-| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point; #137's ADR owns the valid set and how it is checked at write time |
+| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point; ADR-0013 (#137, merged) fixes the valid set as `DatatypeRegistry.known_datatypes()`, checked at write time by the registry, not this table |
 | `cardinality` | `TEXT` | `NOT NULL`, CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
 | `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` (PRD SS6.5) |
 | `required_for_submission` | `BOOLEAN` | `NOT NULL` |
@@ -898,7 +898,7 @@ workflow) still build on top of what is described here.
 | `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
 | `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` (FR-10) |
 | `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no vocabulary CHECK (ADR-0012 does not fix this vocabulary), but still subject to `binding_fields_require_target` above |
-| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - interior validation is #137's ADR |
+| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - ADR-0013 (#137, merged) fixes interior validation as each handler's own `constraints_schema()` |
 | `filterable` | `BOOLEAN` | `NOT NULL`. Will drive #54's index generation (FR-13) |
 | `origin` | `TEXT` | `NOT NULL`. `system` or `admin` |
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`. `active` or `deprecated` - no delete (FR-11) |

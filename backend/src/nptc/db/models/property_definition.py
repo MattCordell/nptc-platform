@@ -14,7 +14,8 @@ closed, stable vocabularies and get named `CHECK`s instead.
 `_BINDING_REQUIRED_CHECK_SQL` below. Open-ended per-datatype parameters (a
 string's max length, a decimal's range) go in the handler-owned
 `constraints` JSONB column instead - this model only reserves the column;
-issue #137's ADR owns its interior.
+ADR-0013 (#137) owns its interior, as each handler's own
+`constraints_schema()`.
 
 **`row_version` is owned by exactly one write path**: SQLAlchemy's
 mapper-level optimistic concurrency (`version_id_col`) on this model's
@@ -36,8 +37,8 @@ uses.
 
 **`constraints` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`**
 - an in-place mutation (`definition.constraints["max"] = 5`) is invisible
-to the unit of work and will not persist. #137's handler code, which owns
-this column's interior, MUST replace the whole attribute
+to the unit of work and will not persist. ADR-0013 (#137)'s handler code,
+which owns this column's interior, MUST replace the whole attribute
 (`definition.constraints = {**definition.constraints, "max": 5}`) rather
 than mutate it in place.
 """
@@ -226,7 +227,7 @@ class PropertyDefinition(Base):
         Text, nullable=False, server_default=text("'active'"), active_history=True
     )
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, active_history=True)
-    # Handler-owned (issue #137's ADR); this model only reserves the column.
+    # Handler-owned (ADR-0013, #137); this model only reserves the column.
     constraints: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), active_history=True
     )
