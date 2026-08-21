@@ -512,9 +512,32 @@ class DatatypeRegistry:
 
 
 class LocalCodeLookup(Protocol):
-    """Placeholder with no members - #56 (FR-90) owns its real shape.
-    Present here only so HandlerDeps below is a type-checkable, non-forward
-    reference and #53 has something concrete to pass None in place of."""
+    """#56 (FR-90) landed this shape in `nptc.registry.lookup`:
+
+    ```python
+    @dataclass(frozen=True, slots=True)
+    class ResolvedLocalCode:
+        code: str
+        display: str
+        status: str
+        provisional: bool
+
+    class LocalCodeLookup(Protocol):
+        def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None: ...
+    ```
+
+    One read method, deliberately - management goes through
+    `nptc.registry.local_codes`, gated on `Permission.REGISTRY_MANAGE`
+    (FR-90's "administrator-only management"), not through this Protocol.
+    `resolve` returning `None` is "does not exist in `system_key` at all";
+    `ResolvedLocalCode.status == 'deprecated'` is "exists, but retired" -
+    the same distinction `code_binding.status` supports for SNOMED
+    bindings, and what the FR-45 sweep's `local_code_retired` warning
+    reads. `nptc.registry.lookup.DatabaseLocalCodeLookup` is the
+    database-backed implementation #53 constructs `HandlerDeps` with;
+    #53 still owns lifting `UnsupportedBindingError` for `binding_target
+    = 'local_code_system'` (open question 1 below) - #56 only supplies the
+    shape and the implementation, not the handler wiring."""
 
 
 @dataclass(frozen=True, slots=True)

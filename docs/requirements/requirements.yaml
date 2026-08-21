@@ -573,20 +573,20 @@
   priority: MUST
   phase: p1
   title: "Discipline and Subgroup MUST each be implemented as a governed local code system owned by RCPA-QAP"
-  status: planned
-  notes: "The transform's seeding-time treatment (P0-9/#31): a Discipline/Subgroup cell holding a compound 'X or Y' value is split into separate provisional property values (COMPOUND_VALUE_SPLIT, auto-correctable) rather than seeded as one string. The governed code system itself, owned by RCPA-QAP, belongs to the backend registry (P1) and remains planned."
+  status: implemented
+  notes: "Issue #56: local_code_system/local_code tables, administrator-only management (Permission.REGISTRY_MANAGE) through the same audit/changelog discipline as every other content change. Version history tied to catalogue releases is deferred to a follow-up issue - release does not exist yet (nptc.releases is a P4 stub); status/deprecated_at plus the NFR-08 audit trail make past state reconstructable in the meantime. The transform's own seeding-time treatment (P0-9/#31, COMPOUND_VALUE_SPLIT) remains the pre-existing note about the source cell shape."
 - id: "FR-91"
   priority: SHOULD
   phase: p1
   title: "A published non-authoritative map from the local Discipline code system to SNOMED CT concepts, for consumers who want a SNOMED view"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #56: the local_code_snomed_map table, seeded (migration 0010) from PRD SS6.6's own verification table - Chemical pathology/Haematology/Immunopathology at exact strength, Microbiology mapped twice at ambiguous strength, and deliberately no row for Molecular or Serology. Never a code_binding structurally (no entry_id, no FK to catalogue_entry) - backend/tests/test_registry_local_codes.py's AST guard pins that the sweep/binding modules never reference LocalCodeSnomedMap."
 - id: "FR-92"
   priority: SHOULD
   phase: p1
   title: "Subgroup migration MUST reconcile inconsistent classification axes and pluralisation before the code system is populated"
   status: planned
-  notes: "Out of scope for the transform's seeding-time treatment (P0-9/#31): compound-value splitting (see FR-90's note) migrates each hand-typed value verbatim as a provisional property value, and does not itself reconcile axis or pluralisation inconsistencies - that reconciliation belongs to the backend registry (P1) and remains planned."
+  notes: "Issue #56 lands the storage mechanism this requirement needs (local_code.provisional, seeded true with no definition for a value migrated verbatim) but does not itself reconcile the Subgroup axes or pluralisation - that is RCPA-QAP's editorial decision, still outstanding. The subgroup code system is seeded (migration 0010) with no codes at all, so no code exists yet to be provisional. Out of scope for the transform's seeding-time treatment (P0-9/#31): compound-value splitting (see FR-90's note) migrates each hand-typed value verbatim as a provisional property value, and does not itself reconcile axis or pluralisation inconsistencies."
 - id: "FR-93"
   priority: MUST
   phase: p4

@@ -27,6 +27,9 @@ CONTRIBUTING.md's "A schema change's prose has one home each".
 | `backend/src/nptc/db/models/designation.py` | The `designation` table (issue #47) |
 | `backend/src/nptc/db/models/code_binding.py` | The `code_binding` table (issue #48) |
 | `backend/src/nptc/db/functions.py` | `nptc_sctid_is_valid`, the database-level Verhoeff check (issue #48, ADR-0023) |
+| `backend/src/nptc/db/models/local_code_system.py` | The `local_code_system` table (issue #56) |
+| `backend/src/nptc/db/models/local_code.py` | The `local_code` table (issue #56) |
+| `backend/src/nptc/db/models/local_code_snomed_map.py` | The `local_code_snomed_map` table (issue #56) |
 | `backend/src/nptc/db/roles.py` | `APP_ROLE` and every grant/revoke SQL statement, imported by both the migration that applies them and the tests that assert them |
 
 Alembic's configuration lives in the root `pyproject.toml` as `[tool.alembic]`, not a
@@ -948,6 +951,141 @@ FR-13's generated indexes (`ix_propval_p{index_seq}_{slot}`, see the truncation 
 will be excluded from Alembic autogenerate and this file's own round-trip fingerprint via an
 `include_object` hook in `env.py` when #54 lands - without it, the first index #54 creates
 would fail the downgrade/upgrade comparison in `test_db_round_trip.py`.
+
+**`discipline`/`subgroup` name the local code systems #56 lands below.** `nptc.db.bootstrap`'s
+`key="discipline"`/`key="subgroup"` rows set `binding_target = BindingTarget.LOCAL_CODE_SYSTEM`
+with no `value_set_uri` - deliberately FK-less, so this property metadata was representable
+before `local_code_system` existed, and stays representable now without either table needing
+to reference the other's primary key. The two `key`s match `local_code_system.key`'s own
+seeded values (migration `0010`, below) by convention, not by constraint: nothing in the
+schema enforces that a `code`-datatype property's binding actually names a real
+`local_code_system.key`, since #53 has not yet wired `CodeHandler` to look one up (see
+`LocalCodeLookup` below).
+
+## Local code systems and the advisory SNOMED map (issue #56, FR-90, FR-91, FR-92)
+
+PRD SS6.6 verifies that RCPA's `Discipline` values cannot be expressed as a single
+coherent SNOMED CT value set: three of the six disciplines match `<394595002` exactly,
+`Microbiology` is ambiguous between two candidates, and `Molecular`/`Serology` have no
+match in the specialty hierarchy at all - their nearest neighbours (`708179009`,
+`708188000`) are healthcare *service* concepts, confirmed not-subsumed by
+`check_subsumption`. `Subgroup` has never been governed at all. FR-90 answers both by
+making each column a code system the platform itself governs, "owned by RCPA-QAP"; FR-91
+publishes an advisory, non-authoritative SNOMED map for `Discipline` beside it.
+
+### `local_code_system`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')` - matches `property_definition.key`'s own pattern (ADR-0012) - immutable |
+| `uri` | `TEXT` | `NOT NULL`, `UNIQUE`, not blank |
+| `title`, `description`, `owner` | `TEXT` | `NOT NULL`, `owner` not blank - FR-90's "owned by RCPA-QAP" recorded rather than assumed |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','deprecated')` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+Grants: `SELECT, INSERT` at table level; column-level `UPDATE (uri, title, description,
+owner, status, updated_at)`, excluding `id`, `key` and `created_at` - `key` is immutable
+for the same reason `catalogue_entry.business_key` is. No `DELETE`/`TRUNCATE` - a system
+is deprecated via `status`, never removed.
+
+### `local_code`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `system_id` | `UUID` | `NOT NULL`, FK to `local_code_system.id`, indexed, immutable |
+| `code` | `TEXT` | `NOT NULL`, not blank, immutable - always a string, the same FR-06 discipline `code_binding.code` follows |
+| `display` | `TEXT` | `NOT NULL`, not blank |
+| `definition` | `TEXT` | Nullable - a provisional migrated code has none yet |
+| `provisional` | `BOOLEAN` | `NOT NULL DEFAULT false` - see FR-92 below |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','deprecated')` - the FR-45 sweep's `local_code_retired` warning keys off this |
+| `deprecated_at` | `TIMESTAMPTZ` | Nullable, `CHECK` ties it to `status = 'deprecated'` |
+| `deprecation_reason` | `TEXT` | Nullable, `CHECK` mandatory exactly when deprecated - mirrors `code_binding.retirement_reason` |
+| `display_order` | `INTEGER` | `NOT NULL DEFAULT 0` |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+`uq_local_code_system_id_code` - `UNIQUE (system_id, code)` - codes are unique within a
+system, not globally. Grants: `SELECT, INSERT` at table level; column-level `UPDATE
+(display, definition, provisional, status, deprecated_at, deprecation_reason,
+display_order, updated_at)`, excluding `id`, `system_id`, `code` and `created_at` - a
+code is deprecated and replaced by a new row, never reparented or rebound in place. No
+`DELETE`/`TRUNCATE`.
+
+**FR-92: `provisional` is the storage answer for `Subgroup`.** The sample mixes
+classification axes (`Coagulation`/`Drug measurement` classify by analyte,
+`Microbial Culture`/`Mycobacteria culture`/`Mycobacterial microscopy` classify by
+method) and is inconsistently pluralised - PRD SS6.6 assigns the real vocabulary
+decision to RCPA-QAP, and "migrate the existing strings verbatim as provisional codes"
+until then. A migrated `Subgroup` string lands with `provisional = true` and
+`definition = NULL`: "not yet reconciled" is a stored fact, not an absence a reader has
+to infer. Migration `0010` seeds the `subgroup` system itself but deliberately no codes
+under it - seeding one now would be the guessing-at-structure FR-92 forbids.
+
+### `local_code_snomed_map` (FR-91: the advisory map)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `local_code_id` | `UUID` | `NOT NULL`, FK to `local_code.id`, immutable |
+| `system` | `TEXT` | `NOT NULL DEFAULT 'http://snomed.info/sct'`, not blank |
+| `code` | `TEXT` | `NOT NULL`, `CHECK (nptc_sctid_is_valid(code))` - reuses `code_binding`'s own Verhoeff function |
+| `display` | `TEXT` | `NOT NULL`, not blank - the served label at the time the row was written |
+| `match_strength` | `TEXT` | `NOT NULL`, `CHECK IN ('exact','narrower','broader','ambiguous')` - FR-91's "match strength per row" |
+| `advisory_note` | `TEXT` | `NOT NULL`, not blank - why this row is advisory / its caveat |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+Grants: `SELECT, INSERT` only - `UPDATE, DELETE, TRUNCATE` are revoked. A map row is a
+point-in-time editorial judgement, never edited or withdrawn (a revised mapping is a new
+row), matching `designation_collision_acknowledgement`'s own "never edited or withdrawn"
+posture.
+
+**Never a `code_binding`, structurally - this is the issue's acceptance criterion.**
+There is no `entry_id` anywhere on this table, and no foreign key to `catalogue_entry`
+at all - a `code_binding` row is authoritative and revalidated by the FR-45 sweep; a row
+here is advisory and never revalidated. `backend/tests/test_registry_local_codes.py`
+pins this with an AST guard: no module under `nptc.validation` or `nptc.catalogue.
+bindings` may reference `LocalCodeSnomedMap` at all, plus a structural check that the
+mapped table has neither an `entry_id` column nor a foreign key to `catalogue_entry`.
+
+**No uniqueness constraint on `local_code_id`.** PRD SS6.6 verifies `Microbiology` as
+genuinely ambiguous between two SNOMED candidates (`408454008` and `394820005`, neither
+named plainly "Microbiology") - collapsing that to one row would be exactly the
+approximation FR-91 forbids, so a local code may have zero, one, or several map rows.
+There is deliberately **no row at all** for `Molecular` or `Serology`: PRD SS6.6 found
+no genuine SNOMED match for either, and FR-91 requires that gap to stay visible rather
+than be papered over with a plausible-looking wrong mapping.
+
+### Seed data (migration `0010`)
+
+The first seeding migration in the repository. Seeds the `discipline` system and its six
+PRD SS6.6 codes, plus four advisory map rows (`Chemical pathology`, `Haematology`,
+`Immunopathology` at `exact` strength; `Microbiology` mapped twice, at `ambiguous`
+strength, to both `408454008` and `394820005`) - and no map row for `Molecular` or
+`Serology`. The `subgroup` system is seeded with no codes at all (FR-92). Seed values are
+a module-level constant inside the migration itself, not imported from `src/`, so a later
+refactor of the service layer cannot silently rewrite this migration's history.
+
+### Version history: deferred, not dropped
+
+FR-90's third bullet asks for local-code version history "tied to catalogue releases",
+but `release` does not exist yet (`nptc.releases` is a P4 stub). `status`/
+`deprecated_at` plus the NFR-08 audit trail every write here goes through make past
+state reconstructable in the meantime, matching `designation_collision_acknowledgement`'s
+own "narrow table now, expected to be subsumed later" precedent. Pinning a code's state
+to a specific release is filed as a follow-up issue rather than attempted here.
+
+### `LocalCodeLookup` (issue #56, ADR-0013)
+
+`nptc.registry.lookup.LocalCodeLookup` is the read contract a `code`-datatype property
+bound to `binding_target = 'local_code_system'` will use (PRD line 415: "validated
+internally against the platform's own `LocalCode` table, because Ontoserver does not
+hold them") - a `Protocol`, not the ORM model directly, matching
+`nptc.terminology.TerminologyClient`'s own contract-not-implementation shape (ADR-0003,
+NFR-37). `DatabaseLocalCodeLookup` is the database-backed implementation, built on
+`nptc.registry.local_codes.find_local_code`. This module defines the shape only - #53
+adopts it into `CodeHandler` and lifts ADR-0013's `UnsupportedBindingError` for
+`binding_target = 'local_code_system'`; that wiring is out of scope here.
 
 ## Extensions
 
