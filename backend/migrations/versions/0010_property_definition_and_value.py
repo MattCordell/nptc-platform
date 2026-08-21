@@ -97,11 +97,11 @@ def upgrade() -> None:
             "status IN ('active','deprecated')", name=op.f("ck_property_definition_status")
         ),
         sa.CheckConstraint(
-            "binding_target IN ('value_set','concept')",
+            "binding_target IN ('value_set','local_code_system')",
             name=op.f("ck_property_definition_binding_target"),
         ),
         sa.CheckConstraint(
-            "strength IN ('required','extensible')",
+            "strength IN ('required','extensible','example')",
             name=op.f("ck_property_definition_strength"),
         ),
         sa.CheckConstraint(

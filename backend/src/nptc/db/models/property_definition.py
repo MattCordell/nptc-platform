@@ -94,12 +94,13 @@ class PropertyStatus(StrEnum):
 
 class BindingTarget(StrEnum):
     VALUE_SET = "value_set"
-    CONCEPT = "concept"
+    LOCAL_CODE_SYSTEM = "local_code_system"
 
 
 class BindingStrength(StrEnum):
     REQUIRED = "required"
     EXTENSIBLE = "extensible"
+    EXAMPLE = "example"
 
 
 #: Plain string literals, never built from the `StrEnum`s above -
@@ -110,8 +111,8 @@ _CARDINALITY_CHECK_SQL = "cardinality IN ('0..1','1..1','0..*','1..*')"
 _SCOPE_CHECK_SQL = "scope IN ('entry','designation')"
 _ORIGIN_CHECK_SQL = "origin IN ('system','admin')"
 _STATUS_CHECK_SQL = "status IN ('active','deprecated')"
-_BINDING_TARGET_CHECK_SQL = "binding_target IN ('value_set','concept')"
-_STRENGTH_CHECK_SQL = "strength IN ('required','extensible')"
+_BINDING_TARGET_CHECK_SQL = "binding_target IN ('value_set','local_code_system')"
+_STRENGTH_CHECK_SQL = "strength IN ('required','extensible','example')"
 #: Makes "a code datatype always has a binding" a schema invariant (ADR-0012).
 #: Only sound because `datatype` is `NOT NULL` - a nullable `datatype` would
 #: let Postgres treat the comparison as `NULL`, which a `CHECK` treats as a
