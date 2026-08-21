@@ -133,27 +133,44 @@ def add_synonyms(
     with an unhelpful `IntegrityError`, from a batch the caller reasonably
     thinks is well-formed. FR-04's whole premise is cleaning up doubled-
     delimiter/whitespace-variant cells; this extends the same posture to
-    the stronger FR-05 comparison fold."""
+    the stronger FR-05 comparison fold.
+
+    **Inserted in comparison-key order, not caller order.** Each call to
+    `add_designation` below acquires `nptc.catalogue.collisions.
+    assert_no_error_collisions`'s `pg_advisory_xact_lock` and holds it
+    until this transaction commits - so a batch of N terms holds up to N
+    locks at once. Two concurrent batches sharing two keys, acquired in
+    opposite order (transaction A saving `["ADA2", "17-OHP"]`, transaction
+    B saving `["17-OHP", "ADA2"]`), would otherwise each hold one lock and
+    wait on the other - a genuine deadlock (Postgres `40P01`), not merely
+    contention, and one this codebase has no handler for. Sorting the
+    deduplicated terms by their own comparison key first makes acquisition
+    order the same for every caller regardless of the order terms were
+    submitted in, so two batches can only ever block on each other, never
+    deadlock. The returned list is therefore ordered by comparison key,
+    not by the order `terms` was given in - #149's caller should not rely
+    on positional correspondence between `terms` and the return value."""
     validated_reason = validate_changelog_note(reason)
     seen: set[str] = set()
-    deduplicated = []
+    deduplicated: list[tuple[str, str]] = []
     for term in terms:
         cleaned = clean_term(term)
         key = collision_key(cleaned)
         if key not in seen:
             seen.add(key)
-            deduplicated.append(cleaned)
+            deduplicated.append((key, cleaned))
+    deduplicated.sort(key=lambda pair: pair[0])
     return [
         add_designation(
             session,
             ctx,
             entry=entry,
-            term=term,
+            term=cleaned,
             use="synonym",
             language=language,
             reason=validated_reason,
         )
-        for term in deduplicated
+        for _key, cleaned in deduplicated
     ]
 
 

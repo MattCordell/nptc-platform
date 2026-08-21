@@ -57,10 +57,16 @@ serialises exactly the transactions contending for the *same* key
 (`hashtext` collisions between unrelated keys only cost extra, harmless
 serialisation, never a false negative) and is released automatically at
 commit/rollback - needs no grant (advisory locks are role-agnostic) and
-is not a trigger or stored function, so PRD SS14.1 is untouched. This
-relies on `nptc.db.session.REQUIRED_ISOLATION_LEVEL` already pinning
-every connection to `READ COMMITTED` (unlike `append_audit_event`, which
-re-verifies this at runtime because it is the one write path NFR-10
+is not a trigger or stored function, so PRD SS14.1 is untouched.
+`hashtext` itself is an internal, undocumented Postgres function with no
+cross-major-version stability contract - harmless for this use (the
+value is never persisted, and a hash collision only ever costs the extra
+serialisation already described, never a correctness gap), but worth
+naming as exactly that rather than letting a reader assume it is a
+documented, guaranteed-stable function. This relies on `nptc.db.session.
+REQUIRED_ISOLATION_LEVEL` already pinning every connection to `READ
+COMMITTED` (unlike `append_audit_event`, which re-verifies this at
+runtime because it is the one write path NFR-10
 treats as security-critical enough to distrust its own caller's
 connection setup - collision detection has no equivalent runtime guard,
 and shares the connection-level guarantee instead).
@@ -431,6 +437,20 @@ def acknowledge_collision(
     `DesignationAlreadyRetiredError`-style "reject the repeat" case here:
     re-acknowledging the same thing twice is not a caller error worth
     surfacing).
+
+    **Deliberately unprotected against two truly concurrent
+    acknowledgements of the same `(entry, term_key, language)`** - the
+    select-first above is still read-then-write, and two transactions
+    that both read "no existing row" before either commits will still
+    have one of them hit the `UNIQUE` index's `IntegrityError` at flush,
+    unmapped in `nptc.api.errors` today. Unlike `assert_no_error_
+    collisions`'s own race (see the module docstring's "Concurrency"
+    note), this is not given a `pg_advisory_xact_lock`: the failure mode
+    of losing this race is an occasional 500 on a rare double-click, not
+    a safety-relevant false negative, and #149/#150's own HTTP layer is
+    the right place to give that `IntegrityError` a typed 409 if it turns
+    out to matter in practice, rather than pre-emptively adding a lock no
+    caller has yet demonstrated needing.
 
     Deliberately does not check that `(term_key, language)` is currently
     a live `warning_collisions` finding for `entry` - acknowledging ahead

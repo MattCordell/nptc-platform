@@ -15,7 +15,7 @@ import threading
 import uuid
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
@@ -488,7 +488,7 @@ def test_add_synonyms_deduplicates_by_collision_key(app_session: Session) -> Non
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_serialised(
-    app_engine: Engine,
+    app_engine: Engine, owner_engine: Engine
 ) -> None:
     """The race `assert_no_error_collisions`'s advisory lock exists to
     close: without it, two concurrent transactions each creating an entry
@@ -498,9 +498,20 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
     transaction blocks until the first commits, then sees it and is
     rejected - `pg_advisory_xact_lock` serialises real, concurrent
     Postgres transactions, so this needs two genuine sessions/threads, not
-    a single session exercising the code path twice."""
+    a single session exercising the code path twice.
+
+    The racing term is a fresh `uuid4()` every run, and the winning row is
+    deleted (via `owner_engine`, since `nptc_app` has no `DELETE` grant on
+    `catalogue_entry`) once the outcome is captured - this is the one test
+    in this module that `commit()`s into the shared session-scoped
+    container rather than relying on `app_session`'s rolled-back
+    savepoint, so without both of those a rerun (`--lf`, a rerun plugin,
+    xdist re-execution) would find its own previous run's row already
+    committed and get `["collision", "collision"]` instead."""
+    racing_term = f"Concurrent Race Term {uuid.uuid4()}"
     barrier = threading.Barrier(2)
     results: dict[str, str] = {}
+    errors: dict[str, BaseException] = {}
 
     def _create(key: str) -> None:
         session = Session(app_engine)
@@ -509,7 +520,7 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
             create_entry(
                 session,
                 AuditContext.system(),
-                preferred_term="Concurrent Race Term",
+                preferred_term=racing_term,
                 reason=f"Concurrent create attempt {key}",
             )
             session.commit()
@@ -517,6 +528,9 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
         except DesignationCollisionError:
             session.rollback()
             results[key] = "collision"
+        except BaseException as exc:  # see the docstring: surfaced below, not swallowed
+            session.rollback()
+            errors[key] = exc
         finally:
             session.close()
 
@@ -527,17 +541,127 @@ def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_seri
     thread_a.join(timeout=15)
     thread_b.join(timeout=15)
 
-    assert sorted(results.values()) == ["collision", "ok"]
-
-    cleanup = Session(app_engine)
     try:
-        surviving = (
-            cleanup.execute(
+        if errors:
+            # A deadlock, a dropped connection, or anything other than
+            # the expected collision must fail loudly with the real
+            # exception attached - not as an opaque length/value mismatch
+            # on `results` below, which would be missing the failed
+            # thread's key entirely.
+            _first_key, first_exc = next(iter(errors.items()))
+            raise AssertionError(
+                f"unexpected exception(s) in concurrent threads: {errors}"
+            ) from first_exc
+        assert sorted(results.values()) == ["collision", "ok"]
+
+        with Session(app_engine) as verify_session:
+            surviving = verify_session.execute(
                 select(func.count())
                 .select_from(CatalogueEntry)
-                .where(CatalogueEntry.preferred_term == "Concurrent Race Term")
-            )
-        ).scalar_one()
+                .where(CatalogueEntry.preferred_term == racing_term)
+            ).scalar_one()
         assert surviving == 1
     finally:
-        cleanup.close()
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM catalogue_entry WHERE preferred_term = :term"),
+                {"term": racing_term},
+            )
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_add_synonyms_batches_do_not_deadlock_on_opposite_lock_order(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """The deadlock `add_synonyms`'s comparison-key sort exists to avoid:
+    two concurrent batches sharing two keys, submitted in opposite order,
+    would otherwise each hold one `pg_advisory_xact_lock` and wait on the
+    other - Postgres `40P01`, unmapped in `api/errors.py`. Sorting makes
+    acquisition order the same regardless of caller order, so both
+    batches can only block on each other, never deadlock. Same synonym on
+    two different entries is warning, not error, severity - both batches
+    are expected to succeed."""
+    first_key = f"race-term-one-{uuid.uuid4()}"
+    second_key = f"race-term-two-{uuid.uuid4()}"
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+    errors: dict[str, BaseException] = {}
+
+    # Both entries are created and committed *before* the threads start,
+    # not inside them: `create_entry`'s own audit-event append takes
+    # `nptc.audit.writer.AUDIT_APPEND_LOCK_KEY` - one fixed key shared by
+    # every append in the whole database - and holds it until that
+    # transaction commits. Creating the entries inside the racing threads
+    # would serialise on *that* lock before either thread ever reaches the
+    # barrier, which is a real but different contention point from the one
+    # this test targets, and was long enough in practice to blow the
+    # barrier's own wait timeout.
+    setup_session = Session(app_engine)
+    entry_a = create_entry(
+        setup_session,
+        AuditContext.system(),
+        preferred_term="Deadlock test entry a",
+        reason="Entry for deadlock-avoidance test a",
+    )
+    entry_b = create_entry(
+        setup_session,
+        AuditContext.system(),
+        preferred_term="Deadlock test entry b",
+        reason="Entry for deadlock-avoidance test b",
+    )
+    setup_session.commit()
+    entry_a_id, entry_b_id = entry_a.id, entry_b.id
+    setup_session.close()
+
+    def _add_batch(key: str, entry_id: uuid.UUID, terms: list[str]) -> None:
+        session = Session(app_engine)
+        try:
+            entry = session.get_one(CatalogueEntry, entry_id)
+            barrier.wait(timeout=5)
+            add_synonyms(
+                session,
+                AuditContext.system(),
+                entry=entry,
+                terms=terms,
+                reason=f"Batch {key}, opposite lock order",
+            )
+            session.commit()
+            results[key] = "ok"
+        except BaseException as exc:  # see below: surfaced, not swallowed
+            session.rollback()
+            errors[key] = exc
+        finally:
+            session.close()
+
+    thread_a = threading.Thread(target=_add_batch, args=("a", entry_a_id, [first_key, second_key]))
+    thread_b = threading.Thread(target=_add_batch, args=("b", entry_b_id, [second_key, first_key]))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=15)
+    thread_b.join(timeout=15)
+
+    try:
+        if errors:
+            _first_key, first_exc = next(iter(errors.items()))
+            raise AssertionError(
+                f"unexpected exception(s) in concurrent threads: {errors}"
+            ) from first_exc
+        assert results == {"a": "ok", "b": "ok"}
+    finally:
+        # `designation.entry_id` has no `ON DELETE CASCADE` - the rows
+        # `add_synonyms` created must go first, or the entry delete below
+        # hits a foreign-key violation.
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM designation WHERE entry_id IN "
+                    "(SELECT id FROM catalogue_entry WHERE preferred_term LIKE "
+                    "'Deadlock test entry %')"
+                )
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM catalogue_entry WHERE preferred_term LIKE 'Deadlock test entry %'"
+                )
+            )
