@@ -38,6 +38,19 @@ preferred_term_key` are plain (non-partial) btree indexes: `nptc.catalogue.
 collisions` filters by entry status in the query itself, so there is no
 fixed `WHERE` clause a partial index could usefully pin.
 
+**Both new `UNIQUE` indexes are strictly narrower than what they replace
+or add, and can fail against pre-existing data.** The re-keyed
+`ix_designation_no_duplicate_active_term` now also catches a case/
+punctuation variant that the old `(entry_id, term, language)` version
+never would have; `ix_code_binding_one_active_entry_per_code` is new and
+catches exactly the legacy-workbook defect FR-08 exists to fix (the same
+code active on two entries). `_check_for_index_violations` below runs
+after the backfill but before either index is created, so a deployment
+carrying such a row gets one clear, actionable error naming every
+offending group - not an opaque `IntegrityError` mid-`CREATE INDEX` with
+no indication of which rows to fix. Pre-alpha, no seed data has ever been
+loaded, so this has never had a real violation to catch in practice.
+
 **Warning severity's acknowledgement is a new, narrow table -
 `designation_collision_acknowledgement` - not the PRD SS6.1
 `ValidationFinding` lifecycle.** That entity is P3 (`nptc.validation` is
@@ -70,29 +83,87 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+class CollisionMigrationError(RuntimeError):
+    """Raised by `_check_for_index_violations` when pre-existing data would
+    violate one of the two new `UNIQUE` indexes this migration creates -
+    see the module docstring's "can fail against pre-existing data" note.
+    A deliberately loud, actionable failure before `CREATE INDEX` is ever
+    attempted, rather than an opaque `IntegrityError` naming a constraint
+    but not the offending rows."""
+
+
 def _backfill_term_keys() -> None:
     """Computes `term_key`/`preferred_term_key` for every row that
     predates this migration, via the same `collision_key` a fresh insert
     would use - see the module docstring for why this must be the real
     function, not a hand-written SQL approximation of it. A from-scratch
     test database has no rows to backfill; this is exercised for real only
-    against a pre-existing deployment."""
+    against a pre-existing deployment.
+
+    One `executemany`-shaped call per table (a list of parameter dicts
+    passed to a single `bind.execute`), not one round trip per row - the
+    row-by-row shape costs nothing against an empty or small table, but
+    would matter for a real catalogue's full row count."""
     bind = op.get_bind()
 
     designation_rows = bind.execute(sa.text("SELECT id, term FROM designation")).all()
-    for row in designation_rows:
+    if designation_rows:
         bind.execute(
             sa.text("UPDATE designation SET term_key = :term_key WHERE id = :id"),
-            {"term_key": collision_key(row.term), "id": row.id},
+            [{"term_key": collision_key(row.term), "id": row.id} for row in designation_rows],
         )
 
     entry_rows = bind.execute(sa.text("SELECT id, preferred_term FROM catalogue_entry")).all()
-    for row in entry_rows:
+    if entry_rows:
         bind.execute(
             sa.text(
                 "UPDATE catalogue_entry SET preferred_term_key = :preferred_term_key WHERE id = :id"
             ),
-            {"preferred_term_key": collision_key(row.preferred_term), "id": row.id},
+            [
+                {"preferred_term_key": collision_key(row.preferred_term), "id": row.id}
+                for row in entry_rows
+            ],
+        )
+
+
+def _check_for_index_violations() -> None:
+    """Raises `CollisionMigrationError` naming every group of rows that
+    would violate `ix_designation_no_duplicate_active_term` (re-keyed) or
+    `ix_code_binding_one_active_entry_per_code` (new) - see the module
+    docstring. Run after the backfill (so `term_key` is populated) but
+    before either index is created."""
+    bind = op.get_bind()
+    problems: list[str] = []
+
+    duplicate_terms = bind.execute(
+        sa.text(
+            "SELECT entry_id, term_key, language, COUNT(*) AS n FROM designation "
+            "WHERE status = 'active' GROUP BY entry_id, term_key, language HAVING COUNT(*) > 1"
+        )
+    ).all()
+    for row in duplicate_terms:
+        problems.append(
+            f"designation: entry {row.entry_id} has {row.n} active synonyms folding to the "
+            f"same comparison key {row.term_key!r} in language {row.language!r} - retire or "
+            "reword all but one before upgrading"
+        )
+
+    duplicate_codes = bind.execute(
+        sa.text(
+            "SELECT system, code, COUNT(*) AS n FROM code_binding "
+            "WHERE status = 'active' GROUP BY system, code HAVING COUNT(*) > 1"
+        )
+    ).all()
+    for row in duplicate_codes:
+        problems.append(
+            f"code_binding: code {row.code!r} on {row.system!r} is actively bound to {row.n} "
+            "entries - retire all but one binding before upgrading"
+        )
+
+    if problems:
+        raise CollisionMigrationError(
+            "cannot create issue #49's collision-detection indexes against existing data "
+            "that would violate them:\n" + "\n".join(f"  - {p}" for p in problems)
         )
 
 
@@ -107,6 +178,7 @@ def upgrade() -> None:
     )
 
     _backfill_term_keys()
+    _check_for_index_violations()
 
     op.alter_column("designation", "term_key", nullable=False)
     op.alter_column("catalogue_entry", "preferred_term_key", nullable=False)

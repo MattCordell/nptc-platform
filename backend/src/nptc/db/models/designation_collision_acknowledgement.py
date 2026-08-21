@@ -77,9 +77,13 @@ class DesignationCollisionAcknowledgement(Base):
         CheckConstraint(_REASON_NOT_BLANK_SQL, name="reason_not_blank"),
         CheckConstraint(_LANGUAGE_CHECK_SQL, name="language"),
         # One acknowledgement per (entry, term_key, language) - a second
-        # attempt is a no-op at the service layer, matching
-        # `DesignationAlreadyRetiredError`'s own "don't silently write a
-        # second no-change event" posture.
+        # attempt is a no-op at the service layer
+        # (`nptc.catalogue.collisions.acknowledge_collision` selects first
+        # and returns the existing row), matching `nptc.auth.grants.
+        # grant_role`'s own "granting a role already held is a no-op"
+        # precedent, not `DesignationAlreadyRetiredError`'s "reject the
+        # repeat" - re-acknowledging the same thing twice is not a caller
+        # error worth surfacing.
         Index(
             "ix_designation_collision_ack_entry_term_language",
             "entry_id",

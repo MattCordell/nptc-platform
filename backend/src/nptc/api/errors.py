@@ -94,8 +94,9 @@ _DETAIL_TERM_CLEANING = (
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
 _DETAIL_DESIGNATION_COLLISION = (
-    "This term exactly matches another entry's preferred term or synonym. Choose a "
-    "different term, or resolve the conflict on the other entry first."
+    "This term matches another entry's preferred term or synonym, once case, spacing "
+    "and punctuation are ignored. Choose a different term, or resolve the conflict on "
+    "the other entry first."
 )
 
 

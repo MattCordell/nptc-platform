@@ -40,18 +40,42 @@ from what `nptc_shared.similarity.collision_key` would compute fresh - see
 those models' own module docstrings. This module never calls
 `collision_key` on anything already stored; only on the term a caller is
 currently trying to save.
+
+**Concurrency: `assert_no_error_collisions` is check-then-insert, so it
+takes the same advisory-lock precaution `nptc.audit.writer.
+append_audit_event` already does for the analogous "read the current
+state, then write" race.** Two concurrent transactions each saving a term
+that folds to the same comparison key could otherwise both pass the check
+against a snapshot that predates the other's still-uncommitted insert, and
+both commit - exactly the state FR-05 forbids, with nothing to detect it
+after the fact (there is no cross-row, cross-table `UNIQUE` index that
+could express "no two live rows, in either of two tables, share this
+key" - see `docs/architecture/data-model.md`'s "Collision detection"
+section for why a trigger is not the answer, PRD SS14.1). `pg_advisory_
+xact_lock(hashtext(key))`, acquired before the comparison queries run,
+serialises exactly the transactions contending for the *same* key
+(`hashtext` collisions between unrelated keys only cost extra, harmless
+serialisation, never a false negative) and is released automatically at
+commit/rollback - needs no grant (advisory locks are role-agnostic) and
+is not a trigger or stored function, so PRD SS14.1 is untouched. This
+relies on `nptc.db.session.REQUIRED_ISOLATION_LEVEL` already pinning
+every connection to `READ COMMITTED` (unlike `append_audit_event`, which
+re-verifies this at runtime because it is the one write path NFR-10
+treats as security-critical enough to distrust its own caller's
+connection setup - collision detection has no equivalent runtime guard,
+and shares the connection-level guarantee instead).
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -84,6 +108,8 @@ if TYPE_CHECKING:
 #: criterion) - see the module docstring for why `draft` is nonetheless
 #: included alongside `active`.
 _LIVE_STATUSES = ("draft", "active")
+
+_ACQUIRE_COLLISION_LOCK_SQL = text("SELECT pg_advisory_xact_lock(hashtext(:key))")
 
 
 class CollisionSeverity(StrEnum):
@@ -207,19 +233,10 @@ def _matching_designations(
 def _fill_term(collisions: tuple[Collision, ...], term: str) -> tuple[Collision, ...]:
     """`_matching_entries`/`_matching_designations` don't know the
     submitted surface form - only the caller does - so it is filled in
-    here rather than threaded through every query above."""
-    return tuple(
-        Collision(
-            severity=c.severity,
-            term=term,
-            term_key=c.term_key,
-            language=c.language,
-            business_key=c.business_key,
-            preferred_term=c.preferred_term,
-            colliding_use=c.colliding_use,
-        )
-        for c in collisions
-    )
+    here rather than threaded through every query above. `dataclasses.
+    replace` rather than rebuilding every field by hand, so a future field
+    added to `Collision` can't silently be dropped here."""
+    return tuple(replace(c, term=term) for c in collisions)
 
 
 def assert_no_error_collisions(
@@ -260,6 +277,10 @@ def assert_no_error_collisions(
         exclude_entry_id = entry.id
 
     key = collision_key(term)
+    # See the module docstring's "Concurrency" note - serialises exactly
+    # the transactions contending for this key, before either's snapshot
+    # is read below.
+    session.execute(_ACQUIRE_COLLISION_LOCK_SQL, {"key": key})
     collisions: tuple[Collision, ...] = ()
 
     if use == str(DesignationUse.SYNONYM):
@@ -289,11 +310,25 @@ def assert_no_error_collisions(
             collisions += _matching_entries(
                 session, term_key=key, exclude_entry_id=exclude_entry_id
             )
+        # Both other designation `use`s: a non-en-AU preferred variant
+        # must be checked against another live entry's *synonym* under
+        # the same key (symmetric with the `SYNONYM` branch above) *and*
+        # against another live entry's own preferred variant in the same
+        # language - two entries each holding, say, an `mi-NZ` preferred
+        # designation that folds to the same key is the most ambiguous
+        # case FR-05 names, and was silently unchecked before this line.
         collisions += _matching_designations(
             session,
             term_key=key,
             language=language,
             use=str(DesignationUse.SYNONYM),
+            exclude_entry_id=exclude_entry_id,
+        )
+        collisions += _matching_designations(
+            session,
+            term_key=key,
+            language=language,
+            use=str(DesignationUse.PREFERRED),
             exclude_entry_id=exclude_entry_id,
         )
 
@@ -317,7 +352,15 @@ def warning_collisions(
     #149's edit screen calls to render the warning banner, both before a
     save (on the terms about to be submitted) and when simply displaying
     an entry's existing synonyms.
-    """
+
+    A brand-new, not-yet-flushed `entry` is flushed here first, matching
+    `assert_no_error_collisions`'s own precondition - `entry.id` is `None`
+    client-side before the first flush, which would otherwise silently
+    exclude nothing from the comparison and return an empty
+    acknowledgement set regardless of what was actually acknowledged."""
+    if not sa_inspect(entry).identity:
+        session.flush()
+
     acknowledged = {
         (row.term_key, row.language)
         for row in session.execute(
@@ -377,11 +420,41 @@ def acknowledge_collision(
 
     Scoped to `entry`, not to `term_key` alone - see `Designation
     CollisionAcknowledgement`'s own module docstring for why a fourth
-    entry later joining the group still warns once, on its own save."""
+    entry later joining the group still warns once, on its own save.
+
+    Idempotent: acknowledging a `(entry, term_key, language)` already
+    acknowledged returns the existing row rather than raising or writing
+    a second no-change audit event - `ix_designation_collision_ack_
+    entry_term_language`'s `UNIQUE` constraint is what a second `INSERT`
+    would otherwise hit, matching `nptc.auth.grants.grant_role`'s own
+    "granting a role already held is a no-op" precedent (there is no
+    `DesignationAlreadyRetiredError`-style "reject the repeat" case here:
+    re-acknowledging the same thing twice is not a caller error worth
+    surfacing).
+
+    Deliberately does not check that `(term_key, language)` is currently
+    a live `warning_collisions` finding for `entry` - acknowledging ahead
+    of an actual warning is harmless (it only ever suppresses a warning
+    that would otherwise fire) and letting a caller do so avoids a
+    read-then-write race between checking and acknowledging that would
+    gain nothing here, unlike the error-severity check's own race (see
+    the module docstring's "Concurrency" note), since a false-positive
+    *suppression* has no safety consequence in the way a false-negative
+    *collision* would."""
     if not acknowledger.has(Permission.VALIDATION_ACKNOWLEDGE):
         raise PermissionDeniedError(
             f"permission {Permission.VALIDATION_ACKNOWLEDGE.value!r} is required"
         )
+
+    existing = session.execute(
+        select(DesignationCollisionAcknowledgement).where(
+            DesignationCollisionAcknowledgement.entry_id == entry.id,
+            DesignationCollisionAcknowledgement.term_key == term_key,
+            DesignationCollisionAcknowledgement.language == language,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
 
     validated_reason = validate_changelog_note(reason)
     acknowledgement = DesignationCollisionAcknowledgement(

@@ -11,11 +11,12 @@ entries (warning severity).
 
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -194,6 +195,46 @@ def test_a_non_en_au_preferred_variant_does_not_collide_across_languages(
     )
 
 
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_two_non_en_au_preferred_variants_in_the_same_language_do_collide(
+    app_session: Session,
+) -> None:
+    """The most ambiguous case FR-05 names: two entries each holding an
+    `mi-NZ` preferred designation that folds to the same key. Distinct
+    from the synonym-vs-preferred and preferred-vs-synonym checks above -
+    this is preferred-vs-preferred, on the `Designation` side only (a
+    `CatalogueEntry.preferred_term` is always en-AU, so this case can only
+    arise between two non-en-AU `Designation` rows)."""
+    first_entry = _new_entry(app_session, "Full blood count")
+    second_entry = _new_entry(app_session, "Something else")
+    add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=first_entry,
+        term="Panui toto katoa",
+        use="preferred",
+        language="mi-NZ",
+        reason="First entry's mi-NZ preferred term",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(DesignationCollisionError) as exc_info:
+        add_designation(
+            app_session,
+            AuditContext.system(),
+            entry=second_entry,
+            term="Panui toto katoa",
+            use="preferred",
+            language="mi-NZ",
+            reason="Second entry's colliding mi-NZ preferred term",
+        )
+
+    assert exc_info.value.collisions[0].business_key == first_entry.business_key
+    assert _audit_event_count(app_session) == before
+
+
 # --- FR-05: normalisation (principal failure mode) --------------------------
 
 
@@ -356,6 +397,45 @@ def test_acknowledged_warning_does_not_recur_for_that_entry(app_session: Session
     assert warning_collisions(app_session, entry=fourth, terms=["ADA2"])
 
 
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session) -> None:
+    """`ix_designation_collision_ack_entry_term_language`'s `UNIQUE`
+    constraint is what a second, naive `INSERT` would hit - this asserts
+    the service layer returns the existing row instead, writing no second
+    audit event, matching `grant_role`'s own "granting a role already
+    held is a no-op" precedent."""
+    entry = _new_entry(app_session, "Adenosine deaminase")
+    app_session.flush()
+    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+
+    first = acknowledge_collision(
+        app_session,
+        AuditContext.system(),
+        acknowledger=reviewer,
+        entry=entry,
+        term_key=collision_key("ADA2"),
+        language="en-AU",
+        reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    second = acknowledge_collision(
+        app_session,
+        AuditContext.system(),
+        acknowledger=reviewer,
+        entry=entry,
+        term_key=collision_key("ADA2"),
+        language="en-AU",
+        reason="Acknowledging the same collision again",
+    )
+    app_session.flush()
+
+    assert second.id == first.id
+    assert _audit_event_count(app_session) == before
+
+
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_acknowledge_without_the_permission_is_refused(app_session: Session) -> None:
@@ -400,3 +480,64 @@ def test_add_synonyms_deduplicates_by_collision_key(app_session: Session) -> Non
     app_session.flush()
 
     assert [d.term for d in created] == ["ADA2"]
+
+
+# --- FR-05: concurrency ------------------------------------------------------
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_concurrent_creation_of_two_entries_with_the_same_preferred_term_is_serialised(
+    app_engine: Engine,
+) -> None:
+    """The race `assert_no_error_collisions`'s advisory lock exists to
+    close: without it, two concurrent transactions each creating an entry
+    with the same preferred term could both pass the check against a
+    snapshot that predates the other's still-uncommitted insert, and both
+    commit - exactly the state FR-05 forbids. With the lock, the second
+    transaction blocks until the first commits, then sees it and is
+    rejected - `pg_advisory_xact_lock` serialises real, concurrent
+    Postgres transactions, so this needs two genuine sessions/threads, not
+    a single session exercising the code path twice."""
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+
+    def _create(key: str) -> None:
+        session = Session(app_engine)
+        try:
+            barrier.wait(timeout=5)
+            create_entry(
+                session,
+                AuditContext.system(),
+                preferred_term="Concurrent Race Term",
+                reason=f"Concurrent create attempt {key}",
+            )
+            session.commit()
+            results[key] = "ok"
+        except DesignationCollisionError:
+            session.rollback()
+            results[key] = "collision"
+        finally:
+            session.close()
+
+    thread_a = threading.Thread(target=_create, args=("a",))
+    thread_b = threading.Thread(target=_create, args=("b",))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=15)
+    thread_b.join(timeout=15)
+
+    assert sorted(results.values()) == ["collision", "ok"]
+
+    cleanup = Session(app_engine)
+    try:
+        surviving = (
+            cleanup.execute(
+                select(func.count())
+                .select_from(CatalogueEntry)
+                .where(CatalogueEntry.preferred_term == "Concurrent Race Term")
+            )
+        ).scalar_one()
+        assert surviving == 1
+    finally:
+        cleanup.close()

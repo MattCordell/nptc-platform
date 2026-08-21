@@ -748,6 +748,22 @@ most one entry across the whole catalogue, not merely per entry -
 `nptc.catalogue.bindings.create_binding`'s `CodeBindingCodeAlreadyBoundError` is the
 pre-insert domain error. No acknowledgement path: a code is either free or it isn't.
 
+### Error severity is check-then-insert, so it takes an advisory lock
+
+Unlike the blocking severity above, FR-05's error check has no cross-row, cross-table
+`UNIQUE` index to fall back on - "no two live rows, across either of two tables, share
+this key" is not expressible as plain DDL, and a trigger is not the answer (PRD
+§14.1). `assert_no_error_collisions` therefore takes the same precaution
+`nptc.audit.writer.append_audit_event` already does for its own read-then-write race:
+`pg_advisory_xact_lock(hashtext(key))`, acquired before the comparison queries run,
+serialises exactly the transactions contending for the *same* key (an unrelated key
+hashing to the same lock only costs extra, harmless serialisation, never a false
+negative) and releases automatically at commit/rollback. This relies on
+`nptc.db.session.REQUIRED_ISOLATION_LEVEL` already pinning every connection to `READ
+COMMITTED`, the same guarantee `append_audit_event`'s own runtime check re-verifies for
+its higher-stakes NFR-10 purpose - collision detection trusts the connection-level
+setting rather than re-checking it itself.
+
 ### The comparison key: casefolded, punctuation-folded, not merely whitespace-cleaned
 
 FR-05 requires normalising case, Unicode whitespace *and punctuation* before
