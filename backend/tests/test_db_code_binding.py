@@ -213,6 +213,37 @@ def test_second_active_binding_on_the_same_entry_is_refused(db: Connection) -> N
 
 @pytest.mark.req("FR-08")
 @pytest.mark.integration
+def test_same_code_active_on_two_entries_is_refused(db: Connection) -> None:
+    """Issue #49's blocking severity: `ix_code_binding_one_active_per_entry`
+    only rules out one entry holding two active bindings, not the same
+    code bound active on two *different* entries."""
+    first_entry_id = _insert_entry(db)
+    second_entry_id = _insert_entry(db, business_key="NPTC-200002", preferred_term="Other")
+    _insert_binding(db, entry_id=first_entry_id)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_binding(db, entry_id=second_entry_id)
+
+    assert exc_info.value.orig.sqlstate == _UNIQUE_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_same_code_is_rebindable_once_the_first_binding_is_retired(db: Connection) -> None:
+    first_entry_id = _insert_entry(db)
+    second_entry_id = _insert_entry(db, business_key="NPTC-200003", preferred_term="Other")
+    _insert_binding(
+        db,
+        entry_id=first_entry_id,
+        status="retired",
+        retirement_reason="Superseded",
+    )
+
+    _insert_binding(db, entry_id=second_entry_id)
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
 def test_retiring_without_a_reason_is_refused(db: Connection) -> None:
     entry_id = _insert_entry(db)
 

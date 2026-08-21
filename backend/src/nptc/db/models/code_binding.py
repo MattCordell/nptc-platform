@@ -40,6 +40,17 @@ what makes FR-82's provenance guarantee a privilege-level invariant rather
 than an application convention. `fsn`/`au_preferred_term` *are* updatable:
 the FR-45 validation sweep must be able to refresh a drifted label from the
 server, which is a refresh from the wire, not a re-derivation.
+
+**Blocking severity, issue #49: one active binding per code, full stop.**
+`ix_code_binding_one_active_per_entry` above only rules out *one entry*
+holding two active bindings; it says nothing about the same code being
+bound active on *two different* entries, which is FR-08's other
+half. `ix_code_binding_one_active_entry_per_code` below closes that gap -
+a genuine database invariant, not merely `nptc.catalogue.bindings.
+create_binding`'s own pre-insert check, which exists only so the
+rejection is a domain error rather than a raw `IntegrityError`. Partial on
+`status = 'active'`, matching every other index on this table, so a code
+freed by retirement is immediately rebindable elsewhere.
 """
 
 from __future__ import annotations
@@ -144,6 +155,15 @@ class CodeBinding(Base):
         Index(
             "ix_code_binding_one_active_per_entry",
             "entry_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+        # FR-08/issue #49: at most one active binding per code, across every
+        # entry - the module docstring's "blocking severity" invariant.
+        Index(
+            "ix_code_binding_one_active_entry_per_code",
+            "system",
+            "code",
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),

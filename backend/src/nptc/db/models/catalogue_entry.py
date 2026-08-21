@@ -61,6 +61,18 @@ here exactly as it would be on a synonym row, and `length` is a bare
 Python `@property` with deliberately no setter and no backing column -
 see `nptc.db.models.designation.Designation.length` for the same
 computation applied to a designation's own term.
+
+**`preferred_term_key` is FR-05's comparison form, stored and indexed
+(issue #49).** The same `@validates("preferred_term")` hook that cleans
+the term also derives `preferred_term_key` via
+`nptc_shared.similarity.collision_key`, so there is no code path that can
+set one without the other - a stored, indexed column rather than a
+per-save recomputation, matching `Designation.term_key`'s own treatment.
+It is deliberately not `Designation.length`'s "bare property, no column"
+pattern: FR-05 detection needs an indexed equality lookup across
+`catalogue_entry`, and `nptc.catalogue.collisions` is the only reader.
+Never independently meaningful once `preferred_term` is set, so it is
+`__audit_ignored__`, matching `row_version`'s own treatment.
 """
 
 from __future__ import annotations
@@ -70,13 +82,14 @@ from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Integer, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 from sqlalchemy.sql import func
 
 from nptc.catalogue.term_hygiene import clean_term, preferred_term_length
 from nptc.db.base import Base
+from nptc_shared.similarity import collision_key
 
 
 class CatalogueEntryStatus(StrEnum):
@@ -121,12 +134,17 @@ class CatalogueEntry(Base):
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"id", "created_at", "updated_at", "row_version"}
+        {"id", "created_at", "updated_at", "row_version", "preferred_term_key"}
     )
 
     __table_args__ = (
         CheckConstraint(_STATUS_CHECK_SQL, name="status"),
         CheckConstraint(_BUSINESS_KEY_CHECK_SQL, name="business_key"),
+        # FR-05, issue #49: an indexed lookup for a cross-entry collision -
+        # `nptc.catalogue.collisions` filters by `status` in the query
+        # itself, so a plain btree (not partial) index is sufficient here,
+        # matching `Designation.term_key`'s own treatment.
+        Index("ix_catalogue_entry_preferred_term_key", "preferred_term_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -138,6 +156,14 @@ class CatalogueEntry(Base):
         Text, unique=True, nullable=False, active_history=True
     )
     preferred_term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
+    # FR-05/issue #49: derived from `preferred_term` by the same
+    # `@validates` hook below - never independently assignable through the
+    # ORM. Indexed (see the migration) so `nptc.catalogue.collisions` can
+    # look up a collision by equality rather than scanning every entry.
+    # `server_default=''` exists only so a raw INSERT that bypasses the ORM
+    # (every `backend/tests/test_db_*.py` constraint/privilege test) still
+    # satisfies `NOT NULL` - see `Designation.term_key`'s identical comment.
+    preferred_term_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     # A quoted literal, not the bare `CatalogueEntryStatus.DRAFT` value -
     # matches `app_user.status`'s own precedent (an unquoted server_default
     # string is rendered verbatim as SQL, and `DEFAULT draft` with no
@@ -183,7 +209,9 @@ class CatalogueEntry(Base):
 
     @validates("preferred_term")
     def _validate_preferred_term(self, _key: str, value: str) -> str:
-        return clean_term(value)
+        cleaned = clean_term(value)
+        self.preferred_term_key = collision_key(cleaned)
+        return cleaned
 
     @property
     def length(self) -> int:
