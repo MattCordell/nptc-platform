@@ -89,7 +89,11 @@ class PropertyValue(Base):
     # and then fail at flush with a constraint violation instead of a type
     # error. A property with no recorded value is simply absent as a row
     # (FR-09's row-per-value shape), never a value of `None`.
-    value: Mapped[dict[str, object] | list[object] | str | float | bool] = mapped_column(
+    # `int` listed explicitly alongside `float` - this column's whole point
+    # is holding arbitrary JSON scalars, and it type-checked without `int`
+    # only via mypy's numeric-tower promotion to `float`, which is less
+    # clear than naming it.
+    value: Mapped[dict[str, object] | list[object] | str | int | float | bool] = mapped_column(
         JSONB, nullable=False, active_history=True
     )
     justification: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)

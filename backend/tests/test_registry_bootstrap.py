@@ -10,8 +10,8 @@ own `commit()` calls nest inside the outer test transaction that
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.engine import Connection
+from sqlalchemy import select, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin
@@ -55,15 +55,17 @@ def test_is_idempotent_on_a_repeat_call(app_session: Session) -> None:
     app_session.commit()
 
     assert second == []
-    # Scoped to the four keys seeding itself owns, not every origin='system'
-    # row in the table (issue #190's no-absolute-table-state rule) - this
-    # test's own two seeding calls are the only writers of these rows
-    # within its rolled-back transaction, so an exact count of exactly
-    # these keys is safe to assert.
+    # `len(rows) == 4` would be tautological here - `first` already holds
+    # four keys and `uq_property_definition_key` makes more than four
+    # impossible, so it can't fail independently of `second == []` above.
+    # Assert the set of keys instead, confirming the repeat call didn't
+    # replace any row under a different identity. Scoped to the keys
+    # seeding itself owns, not every origin='system' row in the table
+    # (issue #190's no-absolute-table-state rule).
     rows = app_session.scalars(
         select(PropertyDefinition).where(PropertyDefinition.key.in_(first))
     ).all()
-    assert len(rows) == 4
+    assert {row.key for row in rows} == set(first)
 
 
 @pytest.mark.req("FR-10")
@@ -118,3 +120,60 @@ def test_system_properties_travel_the_same_write_path_as_an_admin_property(
     ).all()
     origins = {row.key: row.origin for row in rows}
     assert origins == {"discipline": "system", "admin_defined": "admin"}
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_seed_system_properties_is_safe_under_a_concurrent_caller(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """Reproduces the actual race `seed_system_properties`'s per-row
+    `SAVEPOINT` exists to handle - two independent sessions that both see
+    every key missing, not merely a serial repeat call
+    (`test_is_idempotent_on_a_repeat_call` already covers that).
+
+    Both connections run `REPEATABLE READ`, and a bare `SELECT 1` on each
+    fixes its snapshot before either has written anything - Postgres
+    takes a `REPEATABLE READ` snapshot at the transaction's first
+    statement, not at `BEGIN`. Session A then seeds and commits for real.
+    Session B's own snapshot predates that commit, so its existing-keys
+    `SELECT` still reports every key missing, exactly as a second real
+    concurrent process's would; each of its four `INSERT`s then collides
+    with a row A already committed - Postgres detects this write-write
+    conflict against the committed row regardless of B's read snapshot,
+    the same first-committer-wins behaviour two genuinely concurrent
+    processes would hit. Real commits land in the shared container, so a
+    `finally` block cleans them up via `owner_engine` (issue #190).
+    """
+    connection_a = app_engine.connect().execution_options(isolation_level="REPEATABLE READ")
+    connection_b = app_engine.connect().execution_options(isolation_level="REPEATABLE READ")
+    try:
+        session_a = Session(bind=connection_a)
+        session_b = Session(bind=connection_b)
+        session_a.execute(text("SELECT 1"))
+        session_b.execute(text("SELECT 1"))
+
+        inserted_a = seed_system_properties(session_a)
+        session_a.commit()
+        assert set(inserted_a) == {"discipline", "subgroup", "specimen", "usage_guidance"}
+
+        inserted_b = seed_system_properties(session_b)
+        # The caught IntegrityError's SAVEPOINT rollback must expunge the
+        # losing instance from the session - otherwise this commit would
+        # try to flush the same doomed INSERT a second time, outside the
+        # savepoint that caught it the first time, and raise.
+        assert len(session_b.new) == 0
+        session_b.commit()
+
+        assert inserted_b == []
+    finally:
+        connection_a.close()
+        connection_b.close()
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text(
+                    "DELETE FROM property_definition WHERE key IN "
+                    "('discipline', 'subgroup', 'specimen', 'usage_guidance')"
+                )
+            )
+            cleanup_connection.commit()
