@@ -213,3 +213,42 @@ GRANT_PROPERTY_VALUE_SQL = (
     "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE property_value TO nptc_app;"
 )
 REVOKE_PROPERTY_VALUE_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE property_value FROM nptc_app;"
+
+#: issue #56 (FR-90): SELECT+INSERT only at table level - same posture as
+#: `GRANT_CODE_BINDING_SQL` above.
+GRANT_LOCAL_CODE_SYSTEM_SQL = "GRANT SELECT, INSERT ON TABLE local_code_system TO nptc_app;"
+#: Column-level UPDATE, excluding `id`, `key` and `created_at` - `key` is
+#: immutable for the same reason `catalogue_entry.business_key` is (see
+#: `LocalCodeSystem._validate_key_immutable`).
+GRANT_LOCAL_CODE_SYSTEM_UPDATE_SQL = (
+    "GRANT UPDATE (uri, title, description, owner, status, updated_at) "
+    "ON TABLE local_code_system TO nptc_app;"
+)
+#: No DELETE, no TRUNCATE, ever - a code system is deprecated via `status`,
+#: never removed.
+REVOKE_LOCAL_CODE_SYSTEM_DELETE_SQL = (
+    "REVOKE DELETE, TRUNCATE ON TABLE local_code_system FROM nptc_app;"
+)
+
+#: issue #56 (FR-90/FR-92): SELECT+INSERT only - same posture as
+#: `GRANT_CODE_BINDING_SQL` above.
+GRANT_LOCAL_CODE_SQL = "GRANT SELECT, INSERT ON TABLE local_code TO nptc_app;"
+#: Column-level UPDATE, excluding `id`, `system_id`, `code` and
+#: `created_at` - a code is deprecated and replaced by a new row, never
+#: reparented or rebound in place (the same trick `GRANT_CODE_BINDING_
+#: UPDATE_SQL` plays for `entry_id`/`code`).
+GRANT_LOCAL_CODE_UPDATE_SQL = (
+    "GRANT UPDATE (display, definition, provisional, status, deprecated_at, "
+    "deprecation_reason, display_order, updated_at) ON TABLE local_code TO nptc_app;"
+)
+#: No DELETE, no TRUNCATE, ever - a code is deprecated via `status`, never
+#: removed.
+REVOKE_LOCAL_CODE_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE local_code FROM nptc_app;"
+
+#: issue #56 (FR-91): SELECT+INSERT only - an advisory map row is a
+#: point-in-time editorial judgement, never edited or removed (see the
+#: model's own "never edited, only replaced" docstring note).
+GRANT_LOCAL_CODE_SNOMED_MAP_SQL = "GRANT SELECT, INSERT ON TABLE local_code_snomed_map TO nptc_app;"
+REVOKE_LOCAL_CODE_SNOMED_MAP_WRITE_SQL = (
+    "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE local_code_snomed_map FROM nptc_app;"
+)
