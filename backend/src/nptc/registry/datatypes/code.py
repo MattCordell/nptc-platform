@@ -29,7 +29,7 @@ from nptc.registry.handlers import (
     ValueExpression,
 )
 from nptc_shared.sctid import has_valid_check_digit, has_valid_format
-from nptc_shared.terminology import Edition, TerminologyClient
+from nptc_shared.terminology import SNOMED_SYSTEM, Edition, TerminologyClient
 
 _SUPPORTED_OPS = frozenset({FilterOp.EQUALS, FilterOp.IN})
 _REQUIRED_KEYS = frozenset({"system", "code"})
@@ -81,7 +81,7 @@ class CodeHandler:
         issues: list[ValidationIssue] = []
         system = value["system"]
         code = value["code"]
-        if system == "http://snomed.info/sct":
+        if system == SNOMED_SYSTEM:
             if not has_valid_format(code):
                 issues.append(
                     ValidationIssue(code="invalid-sctid-format", message=f"{code!r} is not a SCTID")
