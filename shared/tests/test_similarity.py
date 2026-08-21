@@ -13,6 +13,7 @@ from nptc_shared.similarity import (
     MAX_EDIT_DISTANCE,
     MIN_TOKEN_LENGTH,
     bounded_edit_distance,
+    collision_key,
     is_comparable_token,
     near_match_distance,
     token_key,
@@ -20,6 +21,7 @@ from nptc_shared.similarity import (
 )
 
 NBSP = chr(0x00A0)  # non-breaking space
+NNBSP = chr(0x202F)  # narrow no-break space
 
 
 # -- bounded_edit_distance ----------------------------------------------------
@@ -169,3 +171,52 @@ def test_min_token_length_constant() -> None:
 @pytest.mark.req("FR-79")
 def test_token_key_is_a_casefolded_comparison_key() -> None:
     assert token_key("ADA") == token_key("ada") == "ada"
+
+
+# -- collision_key (FR-05, issue #49) --------------------------------------
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_folds_case() -> None:
+    assert collision_key("Adrenal Ab") == collision_key("adrenal ab") == collision_key("ADRENAL AB")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_folds_a_trailing_non_breaking_space() -> None:
+    """PRD Appendix A.1: a trailing non-breaking space must not hide a
+    collision that would otherwise be caught."""
+    assert collision_key("Adrenal Ab") == collision_key(f"Adrenal Ab{NBSP}")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_folds_a_narrow_no_break_space() -> None:
+    assert collision_key("Adrenal Ab") == collision_key(f"Adrenal{NNBSP}Ab")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_folds_punctuation_as_a_separator() -> None:
+    """A hyphen and a bare space are equally non-word separators - matching
+    ``17-OHP``/``17 OHP`` from the PRD's own A.5 warning-collision sample -
+    and trailing punctuation does not survive into the key either."""
+    assert collision_key("17-OHP") == collision_key("17 OHP")
+    assert collision_key("Adrenal Ab") == collision_key("Adrenal Ab.")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_does_not_merge_tokens_across_a_folded_separator() -> None:
+    """Folding the separator must not concatenate the tokens on either side
+    of it - '17 OHP' and '17OHP' are not the same key, even though the
+    hyphen/space variants of the former are."""
+    assert collision_key("17 OHP") != collision_key("17OHP")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_distinguishes_a_genuinely_different_compound_word() -> None:
+    assert collision_key("Anti-DNA") != collision_key("AntiDNA")
+
+
+@pytest.mark.req("FR-05")
+def test_collision_key_of_punctuation_only_term_is_stable_and_non_empty() -> None:
+    key = collision_key("--")
+    assert key == collision_key("--")
+    assert key != ""
