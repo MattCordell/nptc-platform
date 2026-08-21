@@ -179,7 +179,7 @@ an admin bypass, and a bypass that's always used is not a control.
   (FR-06). This is the defect class the platform exists to eliminate.
 - Authorisation checked against a role name instead of a permission (FR-44).
 - A write path that does not emit an audit event (NFR-08).
-- `switch` on property datatype outside the handler module (FR-77).
+- `switch`/`match` on property datatype outside `registry/datatypes/` (FR-77, ADR-0013).
 - Business logic in database triggers or functions (PRD §14.1).
 - A test that requires network access to a terminology server (NFR-37).
 - Secrets, tokens or personal information in code, logs or fixtures (NFR-26, NFR-35).

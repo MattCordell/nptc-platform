@@ -495,8 +495,8 @@
   priority: SHOULD
   phase: p1
   title: "The design MUST accommodate the addition of new datatypes to the registry, not only new properties, without a rebuild"
-  status: planned
-  notes: "ADR-0013 (issue #137) fixes the design: an eleven-member DatatypeHandler Protocol, explicit construction via build_builtin_handlers(deps), ControlKind naming form controls after the interaction rather than the datatype, and a pure-ast backend/tests/test_datatype_dispatch.py guard banning datatype dispatch outside registry/datatypes/. Stays planned: this is a design record, not implementation - #53 owes the running application that proves it (ADR-0002's distinction)."
+  status: implemented
+  notes: "Issue #53 implements ADR-0013's design: a ten-member DatatypeHandler Protocol in backend/src/nptc/registry/handlers.py (the ADR's eleventh member, sort_key, is dropped per its own open question 5 - no caller needs it), five builtin handlers built via explicit build_builtin_handlers(deps) construction under backend/src/nptc/registry/datatypes/, and the named enforcement mechanism, backend/tests/test_datatype_dispatch.py, a pure-ast guard banning datatype dispatch outside registry/datatypes/. backend/tests/test_synthetic_datatype.py proves extensibility with a wholly synthetic `duration` datatype exercised through save/validate/filter/export via only a new handler. #51/#52/#54 (storage, schema derivation, indexing) are still open, so the proof runs at the contract level, not against a live database or export/search layer."
 - id: "FR-78"
   priority: MUST
   phase: p4

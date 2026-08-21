@@ -645,6 +645,13 @@ Following ADR-0012's precedent of naming the deciding issue rather than guessing
    [#53](https://github.com/MattCordell/nptc-platform/issues/53) may drop it. Named as the one
    speculative member of the eleven, rather than letting it arrive unargued.
 
+   **Resolved by #53: dropped.** No caller needs it - #139's faceted filters need
+   `supported_filter_ops`/`filter_clause`/`facet_expression`, not a sort key - and an unused
+   Protocol member is a cost every future handler pays for no benefit. `DatatypeHandler` as
+   implemented has ten members, not eleven; §1 and §10 above are historical (the design record
+   as accepted) and are not edited to match, per this ADR's own practice of naming a resolution
+   rather than rewriting the decision it resolves.
+
 ## Verification
 
 Documentation-only, so verification is the repo's own gates plus a read-through against
