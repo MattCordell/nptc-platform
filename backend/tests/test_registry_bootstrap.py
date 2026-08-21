@@ -55,12 +55,13 @@ def test_is_idempotent_on_a_repeat_call(app_session: Session) -> None:
     app_session.commit()
 
     assert second == []
-    count = app_session.scalar(
-        select(PropertyDefinition.id).where(PropertyDefinition.origin == "system")
-    )
-    assert count is not None
+    # Scoped to the four keys seeding itself owns, not every origin='system'
+    # row in the table (issue #190's no-absolute-table-state rule) - this
+    # test's own two seeding calls are the only writers of these rows
+    # within its rolled-back transaction, so an exact count of exactly
+    # these keys is safe to assert.
     rows = app_session.scalars(
-        select(PropertyDefinition).where(PropertyDefinition.origin == "system")
+        select(PropertyDefinition).where(PropertyDefinition.key.in_(first))
     ).all()
     assert len(rows) == 4
 
@@ -105,10 +106,15 @@ def test_system_properties_travel_the_same_write_path_as_an_admin_property(
     app_session.add(admin_property)
     app_session.commit()
 
-    rows = app_session.scalars(select(PropertyDefinition).order_by(PropertyDefinition.key)).all()
+    # Scoped to the two keys this test itself wrote, not the whole table
+    # (issue #190) - the load-bearing assertion is that both origins read
+    # back correctly from one shared table via one shared code path, with
+    # nothing else to check: there is no separate "system property" table
+    # or query to diverge from in the first place.
+    rows = app_session.scalars(
+        select(PropertyDefinition).where(
+            PropertyDefinition.key.in_(["discipline", "admin_defined"])
+        )
+    ).all()
     origins = {row.key: row.origin for row in rows}
-    assert origins["discipline"] == "system"
-    assert origins["admin_defined"] == "admin"
-    # Same table, same columns, same constraints applied to both - there is
-    # no separate "system property" table or code path to diverge from.
-    assert {type(row) for row in rows} == {PropertyDefinition}
+    assert origins == {"discipline": "system", "admin_defined": "admin"}

@@ -114,6 +114,11 @@ def upgrade() -> None:
             name=op.f("ck_property_definition_value_set_uri_required"),
         ),
         sa.CheckConstraint(
+            "binding_target IS NOT NULL "
+            "OR (value_set_uri IS NULL AND strength IS NULL AND edition IS NULL)",
+            name=op.f("ck_property_definition_binding_fields_require_target"),
+        ),
+        sa.CheckConstraint(
             "(status = 'deprecated') = (deprecated_at IS NOT NULL)",
             name=op.f("ck_property_definition_deprecated_at_required"),
         ),
@@ -143,6 +148,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint(
             "entry_id", "property_key", "ordinal", name=op.f("pk_property_value")
         ),
+    )
+    op.create_index(
+        "ix_property_value_property_key", "property_value", ["property_key"], unique=False
     )
 
     op.execute(roles.GRANT_PROPERTY_DEFINITION_SQL)

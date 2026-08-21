@@ -22,6 +22,13 @@ cardinality's upper bound; that is issue #52's job at validation time.
 **`justification` supports FR-10's extensible-strength case** - a coded
 value bound to an `extensible` value set may carry free text explaining an
 out-of-valueset choice.
+
+**`value` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`** - an
+in-place mutation of a dict/list-shaped value (`instance.value["x"] = 1`)
+is invisible to the unit of work and will not persist. Every write MUST
+replace the whole attribute (`instance.value = {**instance.value, "x": 1}`)
+rather than mutate it in place; #52/#137, which will read and write this
+column, need to honour that.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Integer, Text
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,6 +67,12 @@ class PropertyValue(Base):
             ["property_definition.key"],
             name="property_key_property_definition",
         ),
+        # property_key is only the *second* column of the composite PK, so
+        # it gets no index of its own from the PK alone - both FK-side
+        # maintenance on property_definition and a "which entries use this
+        # property" lookup (#55's deprecation workflow) would otherwise be
+        # a sequential scan.
+        Index("ix_property_value_property_key", "property_key"),
     )
 
     entry_id: Mapped[uuid.UUID] = mapped_column(
@@ -70,7 +83,13 @@ class PropertyValue(Base):
     )
     property_key: Mapped[str] = mapped_column(Text, primary_key=True, active_history=True)
     ordinal: Mapped[int] = mapped_column(Integer, primary_key=True, active_history=True)
-    value: Mapped[dict[str, object] | list[object] | str | float | bool | None] = mapped_column(
+    # No `| None` in the annotation: the column is `NOT NULL`, and
+    # SQLAlchemy's JSONB serialises a Python `None` as SQL `NULL` (not
+    # `'null'::jsonb`) - so a `None` would type-check under `mypy --strict`
+    # and then fail at flush with a constraint violation instead of a type
+    # error. A property with no recorded value is simply absent as a row
+    # (FR-09's row-per-value shape), never a value of `None`.
+    value: Mapped[dict[str, object] | list[object] | str | float | bool] = mapped_column(
         JSONB, nullable=False, active_history=True
     )
     justification: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)

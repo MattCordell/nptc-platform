@@ -33,6 +33,13 @@ second, fail-loud Python-level layer.
 definition with no recorded timestamp (or an active one with a stale one)
 cannot exist - the same make-it-unrepresentable trick the binding `CHECK`
 uses.
+
+**`constraints` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`**
+- an in-place mutation (`definition.constraints["max"] = 5`) is invisible
+to the unit of work and will not persist. #137's handler code, which owns
+this column's interior, MUST replace the whole attribute
+(`definition.constraints = {**definition.constraints, "max": 5}`) rather
+than mutate it in place.
 """
 
 from __future__ import annotations
@@ -125,6 +132,15 @@ _BINDING_REQUIRED_CHECK_SQL = "(datatype = 'code') = (binding_target IS NOT NULL
 _VALUE_SET_URI_REQUIRED_CHECK_SQL = (
     "binding_target IS DISTINCT FROM 'value_set' OR value_set_uri IS NOT NULL"
 )
+#: The binding CHECKs above close only one direction (a code property
+#: without a binding is unrepresentable) - nothing without this CHECK stops
+#: `value_set_uri`/`strength`/`edition` being populated on a non-`code`
+#: property (`binding_target IS NULL`), leaving stray binding data on a
+#: property no handler will ever read. Closes the other direction: every
+#: binding field is `NULL` whenever there is no `binding_target`.
+_BINDING_FIELDS_REQUIRE_TARGET_CHECK_SQL = (
+    "binding_target IS NOT NULL OR (value_set_uri IS NULL AND strength IS NULL AND edition IS NULL)"
+)
 _DEPRECATED_AT_CHECK_SQL = "(status = 'deprecated') = (deprecated_at IS NOT NULL)"
 
 
@@ -153,6 +169,11 @@ class PropertyDefinition(Base):
         }
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
+    # `deprecated_at` is ignored, not audited, because `status` already is:
+    # the deprecation transition itself is visible on the `status` diff,
+    # so the timestamp is bookkeeping the `_DEPRECATED_AT_CHECK_SQL` CHECK
+    # ties to `status` rather than an independently meaningful edit -
+    # the same treatment `row_version`/`created_at`/`updated_at` get here.
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
         {"id", "index_seq", "created_at", "updated_at", "row_version", "deprecated_at"}
     )
@@ -167,6 +188,9 @@ class PropertyDefinition(Base):
         CheckConstraint(_STRENGTH_CHECK_SQL, name="strength"),
         CheckConstraint(_BINDING_REQUIRED_CHECK_SQL, name="binding_required_for_code"),
         CheckConstraint(_VALUE_SET_URI_REQUIRED_CHECK_SQL, name="value_set_uri_required"),
+        CheckConstraint(
+            _BINDING_FIELDS_REQUIRE_TARGET_CHECK_SQL, name="binding_fields_require_target"
+        ),
         CheckConstraint(_DEPRECATED_AT_CHECK_SQL, name="deprecated_at_required"),
     )
 

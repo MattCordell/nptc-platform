@@ -19,6 +19,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from nptc.db.models.catalogue_entry import ImmutableFieldError
+from nptc.db.models.property_definition import PropertyDefinition
+
 _CHECK_VIOLATION = "23514"
 _INSUFFICIENT_PRIVILEGE = "42501"
 _GENERATED_ALWAYS_VIOLATION = "428C9"
@@ -95,9 +98,9 @@ def test_value_set_binding_without_a_value_set_uri_is_rejected(db: Connection) -
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_datatype_with_a_value_set_binding_is_accepted(db: Connection) -> None:
-    _insert_code_definition = db.execute(
-        _INSERT_CODE_DEFINITION, {"key": "coded_prop", "label": "Coded prop"}
-    )
+    result = db.execute(_INSERT_CODE_DEFINITION, {"key": "coded_prop", "label": "Coded prop"})
+    assert result.scalar_one() is not None
+
     row = db.execute(
         text(
             "SELECT binding_target, value_set_uri FROM property_definition WHERE key = 'coded_prop'"
@@ -105,7 +108,6 @@ def test_code_datatype_with_a_value_set_binding_is_accepted(db: Connection) -> N
     ).one()
     assert row.binding_target == "value_set"
     assert row.value_set_uri == "https://example.test/vs"
-    assert _insert_code_definition.scalar_one() is not None
 
 
 @pytest.mark.req("FR-11")
@@ -253,3 +255,35 @@ def test_app_role_can_update_row_version(app_db: Connection) -> None:
         text("SELECT row_version FROM property_definition WHERE key = 'versioned_prop'")
     ).one()
     assert row.row_version == 2
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_binding_fields_on_a_non_code_property_are_rejected(db: Connection) -> None:
+    """The binding CHECKs close only "a code property needs a binding" -
+    this asserts the other direction: a non-`code` property must not carry
+    stray binding data either (`binding_fields_require_target`)."""
+    with pytest.raises(IntegrityError) as exc_info:
+        db.execute(
+            text(
+                "INSERT INTO property_definition "
+                "(key, label, datatype, cardinality, scope, required_for_submission, "
+                "required_for_publication, strength, filterable, origin, display_order) "
+                "VALUES ('stray_binding_prop', 'Stray binding prop', 'string', '0..1', 'both', "
+                "false, false, 'required', false, 'admin', 0)"
+            )
+        )
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-12")
+def test_key_reassignment_after_initial_set_raises_immutable_field_error() -> None:
+    """The Python-level layer `PropertyDefinition.__doc__` advertises
+    alongside the database-level privilege refusal above - not itself a
+    substitute for it, but proven separately since nothing else in this
+    suite exercises `@validates("key")` directly."""
+    definition = PropertyDefinition(key="original_key")
+
+    with pytest.raises(ImmutableFieldError):
+        definition.key = "renamed_key"

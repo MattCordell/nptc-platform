@@ -32,7 +32,12 @@ def _seed(connection: Connection, *, key: str) -> uuid.UUID:
             "INSERT INTO catalogue_entry (business_key, preferred_term) "
             "VALUES (:business_key, 'Sample entry') RETURNING id"
         ),
-        {"business_key": f"NPTC-{uuid.uuid4().int % 900000 + 100000}"},
+        # A 12-digit space drawn from uuid4 rather than the hardcoded
+        # 6-digit NPTC-5xxxxx/NPTC-6xxxxx ranges other tests in this suite
+        # use - low enough collision probability to not be a real flake
+        # against the shared container (business_key ~ '^NPTC-[0-9]{6,}$'
+        # permits any digit count from 6 up).
+        {"business_key": f"NPTC-{uuid.uuid4().int % 10**12:012d}"},
     ).scalar_one()
     connection.execute(
         text(

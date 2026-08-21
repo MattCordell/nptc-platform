@@ -894,10 +894,10 @@ workflow) still build on top of what is described here.
 | `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` (PRD SS6.5) |
 | `required_for_submission` | `BOOLEAN` | `NOT NULL` |
 | `required_for_publication` | `BOOLEAN` | `NOT NULL` |
-| `binding_target` | `TEXT` | Nullable. `value_set` or `local_code_system` (FR-10); `NULL` unless `datatype = 'code'` |
+| `binding_target` | `TEXT` | Nullable. `value_set` or `local_code_system` (FR-10); `NULL` unless `datatype = 'code'`, and a second `CHECK` (`binding_fields_require_target`) closes the reverse direction: `value_set_uri`/`strength`/`edition` must all be `NULL` whenever `binding_target` is |
 | `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
 | `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` (FR-10) |
-| `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no CHECK (ADR-0012 does not fix this vocabulary) |
+| `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no vocabulary CHECK (ADR-0012 does not fix this vocabulary), but still subject to `binding_fields_require_target` above |
 | `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - interior validation is #137's ADR |
 | `filterable` | `BOOLEAN` | `NOT NULL`. Will drive #54's index generation (FR-13) |
 | `origin` | `TEXT` | `NOT NULL`. `system` or `admin` |
@@ -920,7 +920,10 @@ bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); #52 e
 upper bound at validation time. `property_value.entry_id` carries a real FK to
 `catalogue_entry(id)`: ADR-0012 flagged this FK as unavailable when it was written, but #46
 landed first, so migration 0010 adds it directly rather than deferring it to a follow-on
-migration.
+migration. `property_key` also gets its own plain btree index
+(`ix_property_value_property_key`) - it is only the *second* column of the composite PK, so
+without a standalone index both FK-side maintenance on `property_definition` and a "which
+entries use this property" lookup (#55's deprecation workflow) would be a sequential scan.
 
 `nptc_app` gets `UPDATE` at column level on `property_definition`, excluding `key`, `id`,
 `index_seq`, `origin` and `created_at`, and no `DELETE` grant at all (FR-11's unconditional

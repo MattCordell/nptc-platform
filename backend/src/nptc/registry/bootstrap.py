@@ -17,6 +17,19 @@ re-checks `property_definition.key` against the database on every call
 it again after a partial or repeat run only inserts whatever is still
 missing.
 
+**Safe under concurrent callers, not just serial repeat calls.** The
+`SELECT` of existing keys and the following `INSERT`s are not atomic, so
+two processes starting at once (the realistic shape of this seeding
+running from application startup) can both see a key missing and race to
+insert it. Each row's `INSERT` therefore runs inside its own `SAVEPOINT`
+(`Session.begin_nested()`); the loser's `IntegrityError` against
+`uq_property_definition_key` is caught, the savepoint is rolled back, and
+that key is treated as already seeded - the session itself stays usable
+for the remaining rows. This is still `PropertyDefinition`'s own mapped
+`INSERT`, not `ON CONFLICT DO NOTHING`, so the "same write path as an
+admin-defined property" claim below holds for every row, including the
+one that loses the race.
+
 Field values below are fixed against PRD SS6.5/6.6, not invented here:
 
 - **Discipline / Subgroup** (FR-90/FR-91-92): coded, `0..*`, bound to a
@@ -44,6 +57,7 @@ itself.
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.db.models.property_definition import (
@@ -129,10 +143,14 @@ def seed_system_properties(session: Session) -> list[str]:
     """Inserts every built-in property definition not already present
     by `key`, via `PropertyDefinition`'s own mapped `INSERT` - the same
     write path an admin-defined property uses, per this module's own
-    docstring. Returns the keys actually inserted (empty on a repeat call
-    once every row exists); does not commit - the caller controls the
-    transaction boundary, matching every other write path in this
-    codebase."""
+    docstring. Each row's insert runs in its own `SAVEPOINT` so a
+    concurrent caller's race on the same key is caught as a unique
+    violation and skipped, not raised (see the module docstring's
+    "safe under concurrent callers" note). Returns the keys actually
+    inserted (empty on a repeat call once every row exists, and excludes
+    any key a concurrent caller won the race on); does not commit - the
+    caller controls the outer transaction boundary, matching every other
+    write path in this codebase."""
     definitions = _build_system_property_definitions()
     wanted_keys = [definition.key for definition in definitions]
     existing_keys = frozenset(
@@ -145,6 +163,11 @@ def seed_system_properties(session: Session) -> list[str]:
     for definition in definitions:
         if definition.key in existing_keys:
             continue
-        session.add(definition)
+        try:
+            with session.begin_nested():
+                session.add(definition)
+                session.flush()
+        except IntegrityError:
+            continue
         inserted.append(definition.key)
     return inserted
