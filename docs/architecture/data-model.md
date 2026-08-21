@@ -3,8 +3,8 @@
 The database baseline landed with issue #33 (ADR-0011) - Alembic migrations targeting real
 SQLAlchemy metadata, the `pg_trgm`/`unaccent` extensions #138's search depends on, a
 least-privilege role model, and a testcontainers integration harness. Everything below
-describes what exists today; later issues (#35, #36, #42, #46-#48, #51-#55, #138) extend
-it rather than replace it.
+describes what exists today; later issues (#35, #36, #42, #46-#48, #52, #54, #55, #138)
+extend it rather than replace it.
 
 This document owns schema *shape* - columns, types, constraints, indexes - plus reasoning
 that is genuinely architectural (spans multiple tables or issues). *Why* a single
@@ -873,14 +873,13 @@ than ten characters after normalisation is refused. There is no exemption - the
 ADR-0010 seeded-import path supplies `SEED_IMPORT_NOTE`, a real sentence that passes
 validation on its own merits.
 
-## Property registry (design, lands with #51-#55)
+## Property registry (issue #51, FR-09, FR-10, FR-11, FR-12)
 
-**Not implemented yet.** This section describes the shape ADR-0012 fixes for #51
-(`PropertyDefinition`/`PropertyValue`), #52 (JSON Schema validation), #54 (automatic index
-generation) and #55 (deprecation/key immutability) to build against, the same way the tables
-above describe what issue #33 actually shipped. See ADR-0012 for the full reasoning,
-including the rejected alternatives (runtime DDL, classic EAV) and the FR-13 index executor's
-still-open question.
+`property_definition`/`property_value` land with #51, per ADR-0012's design record - see that
+ADR for the full reasoning, including the rejected alternatives (runtime DDL, classic EAV)
+and the FR-13 index executor's still-open question, which stays open until #54. #52 (JSON
+Schema validation), #54 (automatic index generation) and #55 (deprecation/key immutability
+workflow) still build on top of what is described here.
 
 `property_definition` is a conventional relational table, not a document:
 
@@ -890,23 +889,23 @@ still-open question.
 | `index_seq` | `BIGINT` | `NOT NULL`, `GENERATED ALWAYS AS IDENTITY`, used only to build a truncation-proof generated index name (never the property key) |
 | `key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (key ~ '^[a-z][a-z0-9_]{0,62}$')`, immutable (FR-12) |
 | `label` | `TEXT` | `NOT NULL`. Human-facing, changeable |
-| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point; the valid set is `DatatypeRegistry.known_datatypes()`, checked at write time, not a schema-level constraint (ADR-0013) |
+| `datatype` | `TEXT` | `NOT NULL`. No CHECK, no ENUM - FR-77's handler-module extension point; ADR-0013 (#137, merged) fixes the valid set as `DatatypeRegistry.known_datatypes()`, checked at write time by the registry, not this table |
 | `cardinality` | `TEXT` | `NOT NULL`, CHECK against `0..1` / `1..1` / `0..*` / `1..*` |
-| `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` |
+| `scope` | `TEXT` | `NOT NULL`, CHECK against `submission` / `maintenance` / `both` (PRD SS6.5) |
 | `required_for_submission` | `BOOLEAN` | `NOT NULL` |
 | `required_for_publication` | `BOOLEAN` | `NOT NULL` |
-| `binding_target` | `TEXT` | Nullable. `value_set` or `local_code_system`; `NULL` unless `datatype = 'code'` (FR-10) |
+| `binding_target` | `TEXT` | Nullable. `value_set` or `local_code_system` (FR-10); `NULL` unless `datatype = 'code'`, and a second `CHECK` (`binding_fields_require_target`) closes the reverse direction: `value_set_uri`/`strength`/`edition` must all be `NULL` whenever `binding_target` is |
 | `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
-| `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` |
-| `edition` | `TEXT` | Nullable. SNOMED edition the value set resolves against |
-| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters; interior validated by each handler's `constraints_schema()` (ADR-0013) |
-| `filterable` | `BOOLEAN` | `NOT NULL`. Drives #54's index generation (FR-13) |
-| `origin` | `TEXT` | `NOT NULL`. `system` or `admin_defined` |
-| `status` | `TEXT` | `NOT NULL`. `active` or `deprecated` - no delete (FR-11) |
+| `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` (FR-10) |
+| `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no vocabulary CHECK (ADR-0012 does not fix this vocabulary), but still subject to `binding_fields_require_target` above |
+| `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - ADR-0013 (#137, merged) fixes interior validation as each handler's own `constraints_schema()` |
+| `filterable` | `BOOLEAN` | `NOT NULL`. Will drive #54's index generation (FR-13) |
+| `origin` | `TEXT` | `NOT NULL`. `system` or `admin` |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'active'`. `active` or `deprecated` - no delete (FR-11) |
 | `display_order` | `INTEGER` | `NOT NULL` |
 | `deprecated_at` | `TIMESTAMPTZ` | Nullable. `CHECK` ties it to `status = 'deprecated'` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL` |
-| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. Cache key (with `key`) for #52's in-process JSON Schema memoisation - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012) |
+| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. Will be the cache key (with `key`) for #52's in-process JSON Schema memoisation - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012), and covered by `test_sql_parameterisation.py`'s `VERSIONED_TABLE_MODELS` guard alongside `catalogue_entry.row_version` |
 
 `property_value` is one row per value, with **`(entry_id, property_key, ordinal)` as the
 primary key** (not a surrogate id plus a separate `UNIQUE`) - `ordinal` `NOT NULL`,
@@ -918,20 +917,37 @@ exists); the unconditional guarantee for both comes from the column-level privil
 not from this FK - see ADR-0012 for why the two must not be conflated. The PK's own
 uniqueness on `ordinal` closes only the duplicate-ordinal race, not cardinality's upper
 bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); #52 enforces the
-upper bound at validation time. `property_value.entry_id`'s FK to `catalogue_entry` (now
-that the table exists - see #46, above) still cannot be added until `property_value` itself
-lands with #51; that issue tracks the FK as an open follow-on migration, not a silently
-dropped constraint.
+upper bound at validation time. `property_value.entry_id` carries a real FK to
+`catalogue_entry(id)`: ADR-0012 flagged this FK as unavailable when it was written, but #46
+landed first, so migration 0010 adds it directly rather than deferring it to a follow-on
+migration. `property_key` also gets its own plain btree index
+(`ix_property_value_property_key`) - it is only the *second* column of the composite PK, so
+without a standalone index both FK-side maintenance on `property_definition` and a "which
+entries use this property" lookup (#55's deprecation workflow) would be a sequential scan.
 
 `nptc_app` gets `UPDATE` at column level on `property_definition`, excluding `key`, `id`,
 `index_seq`, `origin` and `created_at`, and no `DELETE` grant at all (FR-11's unconditional
 form) - this is FR-12 as a database invariant, not an ORM convention. `property_value` gets
-ordinary `SELECT`/`INSERT`/`UPDATE`/`DELETE`.
+ordinary `SELECT`/`INSERT`/`UPDATE`/`DELETE`, since removing a value is normal editing, not
+the case FR-11 protects against.
+
+The four `origin = 'system'` properties - `discipline`, `subgroup`, `specimen`,
+`usage_guidance` - are seeded by `nptc.db.bootstrap.seed_system_properties`, an idempotent
+application-level function that inserts through `PropertyDefinition`'s own mapped `INSERT`,
+never `op.bulk_insert` (ADR-0012): a data migration would bypass the validation a real write
+goes through. It lives under `nptc.db`, not `nptc.registry`, because ADR-0013 (#137) fixes
+`nptc.registry` as a leaf package that never imports `nptc.db` - this module imports the
+`PropertyDefinition` ORM model directly, which is exactly what that rule keeps out of
+`registry/`. It is safe to call repeatedly, and safe under two concurrent callers racing the
+same key (each row's insert runs in its own `SAVEPOINT`, catching only a genuine unique
+violation) - which is also FR-09's own acceptance test for this issue: adding a property is
+ordinary row data, so nothing about seeding (or an administrator adding a fifth property
+afterwards) requires a migration, a restart, or a deployment.
 
 FR-13's generated indexes (`ix_propval_p{index_seq}_{slot}`, see the truncation caveat above)
-are excluded from Alembic autogenerate and this file's own round-trip fingerprint via an
-`include_object` hook in `env.py` - without it, the first index #54 creates would fail the
-downgrade/upgrade comparison in `test_db_round_trip.py`.
+will be excluded from Alembic autogenerate and this file's own round-trip fingerprint via an
+`include_object` hook in `env.py` when #54 lands - without it, the first index #54 creates
+would fail the downgrade/upgrade comparison in `test_db_round_trip.py`.
 
 ## Extensions
 

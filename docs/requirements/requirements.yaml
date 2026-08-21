@@ -87,26 +87,26 @@
   priority: MUST
   phase: p1
   title: "Adding, deprecating or amending a property definition MUST NOT require a schema migration, application restart, or code deployment"
-  status: planned
-  notes: "ADR-0012 fixes the design (issue #136): PropertyDefinition as a conventional relational table plus row-per-value PropertyValue plus in-process JSON Schema derivation, so a new definition is a plain row insert. Stays planned: this is a design record, not implementation - #51 owes the running application that proves it (ADR-0002's distinction)."
+  status: implemented
+  notes: "Issue #51 (ADR-0012): PropertyDefinition/PropertyValue land as a conventional relational table plus row-per-value storage, so a new definition is a plain row insert. Proven against a running application by backend/tests/test_property_registry_no_migration_required.py, which opens two independent connections off one already-migrated engine and defines/uses a new property with no migration and no restart in between."
 - id: "FR-10"
   priority: MUST
   phase: p1
   title: "A property of datatype code MUST carry a terminology binding, not merely a datatype"
-  status: planned
-  notes: "ADR-0012 fixes the binding as four real columns (binding_target, value_set_uri, strength, edition) with CHECK ((datatype = 'code') = (binding_target IS NOT NULL)), making a code-without-a-binding unrepresentable rather than merely refused by application code (issue #136). Stays planned pending #51/#52."
+  status: implemented
+  notes: "Issue #51 (ADR-0012): the binding is four real columns (binding_target, value_set_uri, strength, edition) with CHECK ((datatype = 'code') = (binding_target IS NOT NULL)) and CHECK (binding_target IS DISTINCT FROM 'value_set' OR value_set_uri IS NOT NULL), making a code-without-a-binding, or a value_set binding without a URI, unrepresentable at the schema level - backend/tests/test_db_property_definition.py asserts both refusals with sqlstate 23514."
 - id: "FR-11"
   priority: MUST
   phase: p1
   title: "A property definition MUST NOT be deletable once any value has been recorded against it or once it has appeared in any published export"
-  status: planned
-  notes: "ADR-0012 (issue #136) implements the stronger, unconditional form: no DELETE grant on property_definition at all, so the PRD's conditional test is never asked. Stays planned pending #55's privilege-refusal tests."
+  status: implemented
+  notes: "Issue #51 implements the stronger, unconditional form ADR-0012 records: no DELETE grant on property_definition at all, so the PRD's conditional test is never asked. backend/tests/test_db_property_definition.py's test_app_role_is_refused_delete/test_app_role_is_refused_truncate assert 42501."
 - id: "FR-12"
   priority: MUST
   phase: p1
   title: "A property key MUST be immutable"
-  status: planned
-  notes: "ADR-0012 (issue #136) fixes this as a column-level UPDATE grant excluding key/id/index_seq/origin/created_at, failing 42501 regardless of ORM or application code. Stays planned pending #55's refusal tests."
+  status: implemented
+  notes: "Issue #51: a column-level UPDATE grant excludes key/id/index_seq/origin/created_at, failing 42501 regardless of ORM or application code, plus a Python-level @validates guard that fails loudly on reassignment. backend/tests/test_db_property_definition.py's six privilege-refusal tests (five asserting 42501, one asserting 428C9 for the GENERATED ALWAYS index_seq column) prove the database-level guarantee; ADR-0012's Consequences section had named these as a #55 deliverable, but they land with #51 instead, matching every other table-creation issue's own precedent (#46-#48 each shipped its own grants and refusal tests with the table, not in a later issue) and because #51's own FR-09 acceptance test and system-property bootstrap already exercise the app role against this table."
 - id: "FR-13"
   priority: SHOULD
   phase: p1
