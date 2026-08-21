@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-from nptc.exports.semantic_tag import NotAServedFSNError, render_display_term
+from nptc.exports.semantic_tag import (
+    EmptyDisplayTermError,
+    NotAServedFSNError,
+    render_display_term,
+)
 
 
 @pytest.mark.req("FR-83")
@@ -48,3 +52,12 @@ def test_a_value_with_no_trailing_group_raises() -> None:
 @pytest.mark.req("FR-83")
 def test_result_is_never_empty() -> None:
     assert render_display_term("Procedure (procedure)") == "Procedure"
+
+
+@pytest.mark.req("FR-83")
+def test_a_value_that_is_only_its_own_tag_raises() -> None:
+    """PRD SS6.4/NFR-38 test 12's second half: stripping `"(procedure)"`
+    would leave nothing at all - the second defensive assertion, exercised
+    on its actual failure path rather than only the happy path above."""
+    with pytest.raises(EmptyDisplayTermError):
+        render_display_term("(procedure)")

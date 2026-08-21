@@ -687,12 +687,19 @@ final parenthesised group is ever removed. It wraps
 seeding-time reconciliation, and deliberately returns its input unchanged rather than
 raising when there is no trailing group) with the two defensive assertions FR-83
 requires of an export that runs unattended: the input must end with a parenthesised
-group, or the value is not a served FSN and the export fails loudly rather than
-publish it; the result must be non-empty. `391483001`'s FSN, `"Microscopy (acid fast
-bacilli) (procedure)"`, is the regression fixture - it renders as `"Microscopy (acid
-fast bacilli)"`, and a second application of the rule to that output is never
-reached on any code path. `backend/tests/test_catalogue_bindings.py` asserts
-structurally that the strip is referenced from no module outside `nptc.exports`.
+group, or the value is not a served FSN and the export fails loudly (`NotAServedFSNError`)
+rather than publish it; the result must be non-empty (`EmptyDisplayTermError`).
+`391483001`'s FSN, `"Microscopy (acid fast bacilli) (procedure)"`, is the regression
+fixture - it renders as `"Microscopy (acid fast bacilli)"`. A second application of
+the rule to *that* output would not raise - `"(acid fast bacilli)"` is itself a
+valid-looking trailing group, so it would silently over-strip to `"Microscopy"` - which
+is exactly why FR-83 makes the no-double-strip guarantee structural (a served,
+never-transformed `fsn` column feeding exactly one call site) rather than something
+`render_display_term` could ever detect from its input alone. `backend/tests/
+test_catalogue_bindings.py` asserts structurally, across `backend/src`, `transform/src`
+and `shared/src`, that the strip is referenced from no module outside `nptc.exports` -
+except the two pre-existing FR-97 seeding-reconciliation sites (ADR-0006) and the
+shared package's own re-export of the functions themselves.
 
 ### Two partial unique indexes
 

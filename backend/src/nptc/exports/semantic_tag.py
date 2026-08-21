@@ -6,7 +6,13 @@ from the moment a served FSN first has anywhere to live at all
 (`nptc.db.models.code_binding`). `backend/tests/test_catalogue_bindings.py`
 asserts structurally that `render_display_term`, and the shared
 `semantic_tag`/`strip_semantic_tag` functions it wraps, are referenced from
-no module outside this package.
+no module outside this package across `backend/src`, `transform/src` and
+`shared/src` combined - except two pre-existing FR-97 seeding-
+reconciliation call sites (ADR-0006) that predate this issue, and the
+shared package's own re-export of the functions. "Exactly one call site"
+is therefore this package's own claim about *itself*, not a claim that
+`strip_semantic_tag`/`semantic_tag` have no other legitimate caller
+anywhere in the monorepo.
 
 **Why this can't just call `nptc_shared.terminology.strip_semantic_tag`
 directly.** That function already exists for a second, narrowly scoped
@@ -25,9 +31,11 @@ than duplicating the strip rule itself, which stays defined exactly once, in
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from nptc_shared.terminology import semantic_tag, strip_semantic_tag
 
-__all__ = ["render_display_term"]
+__all__ = ["EmptyDisplayTermError", "NotAServedFSNError", "render_display_term"]
 
 
 class NotAServedFSNError(ValueError):
@@ -35,6 +43,19 @@ class NotAServedFSNError(ValueError):
     parenthesised group - PRD FR-83's first defensive assertion: the value
     is then not a served FSN (FR-82 guarantees every stored `fsn` is), and
     the export MUST fail loudly rather than publish it."""
+
+    http_status: ClassVar[int] = 422
+
+
+class EmptyDisplayTermError(ValueError):
+    """Raised by `render_display_term` when stripping the semantic tag
+    would leave nothing - PRD FR-83's second defensive assertion. A plain
+    `AssertionError` here would read as a bug in this module rather than a
+    data-validation failure in the input it was given; this carries the
+    same `http_status` convention as `NotAServedFSNError` so a caller can
+    treat both the same way."""
+
+    http_status: ClassVar[int] = 422
 
 
 def render_display_term(fsn: str) -> str:
@@ -46,9 +67,9 @@ def render_display_term(fsn: str) -> str:
     Raises `NotAServedFSNError` if `fsn` carries no trailing parenthesised
     group (PRD FR-83's first defensive assertion) - a stripped or otherwise
     non-served value must never reach this function silently. Raises
-    `AssertionError` if the result is empty (PRD FR-83's second defensive
-    assertion) - both are FR-83's guardrails against a bad input publishing
-    something worse than a loud failure.
+    `EmptyDisplayTermError` if the result is empty (PRD FR-83's second
+    defensive assertion) - both are FR-83's guardrails against a bad input
+    publishing something worse than a loud failure.
 
     `391483001`'s FSN, `"Microscopy (acid fast bacilli) (procedure)"`,
     renders as `"Microscopy (acid fast bacilli)"` - the regression fixture
@@ -64,5 +85,7 @@ def render_display_term(fsn: str) -> str:
         )
     result = strip_semantic_tag(fsn)
     if not result:
-        raise AssertionError(f"stripping the semantic tag from {fsn!r} produced an empty string")
+        raise EmptyDisplayTermError(
+            f"stripping the semantic tag from {fsn!r} produced an empty string"
+        )
     return result

@@ -101,9 +101,10 @@ def test_fsn_round_trips_byte_for_byte_with_the_semantic_tag_intact(db: Connecti
 def test_code_of_18_digits_is_accepted(db: Connection) -> None:
     """FR-07's own boundary case (16/17/18-digit SCTIDs) needs a genuinely
     valid 18-digit code to exist at all in the fixture set this table can
-    accept - `100000000000000106` is `10^17 + 106`, chosen so its Verhoeff
-    checksum reduces to zero (verified against
-    `nptc_shared.sctid.has_valid_check_digit`)."""
+    accept - `111111111111111118` (seventeen `1`s plus a check digit of
+    `8`), chosen so its Verhoeff checksum reduces to zero (verified below
+    against `nptc_shared.sctid.has_valid_check_digit`, not merely
+    asserted)."""
     entry_id = _insert_entry(db)
     eighteen_digit_code = "111111111111111118"
     assert has_valid_format(eighteen_digit_code)
