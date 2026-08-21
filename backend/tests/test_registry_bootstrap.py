@@ -30,8 +30,13 @@ def test_seeds_the_four_built_in_properties(app_session: Session) -> None:
     app_session.commit()
 
     assert set(inserted) == {"discipline", "subgroup", "specimen", "usage_guidance"}
+    # Scoped to the four keys this test itself just inserted, not the whole
+    # table - another test (or a prior seeding call sharing this container)
+    # may have written other rows (issue #190's no-absolute-table-state rule).
     rows = app_session.scalars(
-        select(PropertyDefinition).order_by(PropertyDefinition.display_order)
+        select(PropertyDefinition)
+        .where(PropertyDefinition.key.in_(inserted))
+        .order_by(PropertyDefinition.display_order)
     ).all()
     assert [row.key for row in rows] == ["discipline", "subgroup", "specimen", "usage_guidance"]
     assert all(row.origin == PropertyOrigin.SYSTEM for row in rows)
