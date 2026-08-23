@@ -56,7 +56,9 @@ from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import DesignationAlreadyRetiredError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
+from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 
 _logger = logging.getLogger(__name__)
 
@@ -93,6 +95,20 @@ _DETAIL_TERM_CLEANING = (
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
+_DETAIL_SEARCH_QUERY_EMPTY = "Enter something to search for."
+_DETAIL_SEARCH_CURSOR = (
+    "This page cursor is not one this API issued. Pass a `next_cursor` value back "
+    "unmodified, or start again from the first page."
+)
+#: Deliberately not "an internal error occurred": FR-83's refusal is a
+#: *data* defect on one binding, and the only response that gets it fixed is
+#: one naming the entry so an editor can look at it. It names no internal
+#: identifier and no served label - just the public business key.
+_DETAIL_DISPLAY_TERM = (
+    "This entry has a code binding whose stored Fully Specified Name is not in the "
+    "form the terminology server serves, so its display term cannot be rendered. "
+    "The binding needs to be corrected by an administrator."
+)
 _DETAIL_DESIGNATION_COLLISION = (
     "This term matches another entry's preferred term or synonym, once case, spacing "
     "and punctuation are ignored. Choose a different term, or resolve the conflict on "
@@ -190,6 +206,59 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("entry not found: %s", exc)
         return JSONResponse(
             status_code=EntryNotFoundError.http_status, content={"detail": _DETAIL_NOT_FOUND}
+        )
+
+    @app.exception_handler(EmptySearchQueryError)
+    async def _handle_empty_search_query(
+        _request: Request, exc: EmptySearchQueryError
+    ) -> JSONResponse:
+        # Not logged at all beyond DEBUG-worthiness: a blank search box is
+        # the single most ordinary client mistake there is, and logging it
+        # at INFO on a public, unauthenticated endpoint is an invitation to
+        # fill the log with someone else's traffic.
+        return JSONResponse(
+            status_code=EmptySearchQueryError.http_status,
+            content={"detail": _DETAIL_SEARCH_QUERY_EMPTY},
+        )
+
+    @app.exception_handler(MalformedSearchCursorError)
+    async def _handle_malformed_search_cursor(
+        _request: Request, exc: MalformedSearchCursorError
+    ) -> JSONResponse:
+        # The class only, never `str(exc)`: the message quotes the cursor,
+        # which is caller-supplied text on a public endpoint (NFR-26/
+        # NFR-35), exactly like a changelog note below.
+        _logger.info("search cursor refused: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=MalformedSearchCursorError.http_status,
+            content={"detail": _DETAIL_SEARCH_CURSOR},
+        )
+
+    @app.exception_handler(NotAServedFSNError)
+    async def _handle_not_a_served_fsn(_request: Request, exc: NotAServedFSNError) -> JSONResponse:
+        # WARNING, not INFO - unlike every other refusal in this module,
+        # this one is not a caller mistake at all: FR-82 guarantees every
+        # stored `fsn` came from the terminology server, so reaching here
+        # means that guarantee has been broken for a published entry and
+        # somebody needs to look. Blanking the label instead and serving a
+        # 200 would hide a corrupted binding indefinitely (FR-83).
+        _logger.warning("display term could not be rendered: %s: %s", type(exc).__name__, exc)
+        return JSONResponse(
+            status_code=NotAServedFSNError.http_status, content={"detail": _DETAIL_DISPLAY_TERM}
+        )
+
+    @app.exception_handler(EmptyDisplayTermError)
+    async def _handle_empty_display_term(
+        _request: Request, exc: EmptyDisplayTermError
+    ) -> JSONResponse:
+        # FR-83's second defensive assertion - same reasoning, same level,
+        # same detail string as `NotAServedFSNError` above: from a caller's
+        # point of view these are one fault ("this binding's FSN is not
+        # renderable"), and splitting the message would tell them nothing
+        # they could act on differently.
+        _logger.warning("display term could not be rendered: %s: %s", type(exc).__name__, exc)
+        return JSONResponse(
+            status_code=EmptyDisplayTermError.http_status, content={"detail": _DETAIL_DISPLAY_TERM}
         )
 
     @app.exception_handler(ChangelogNoteError)

@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from nptc.api.errors import register_exception_handlers
-from nptc.api.routers import auth
+from nptc.api.routers import auth, catalogue
 from nptc.settings import ApiSettings
 
 API_PREFIX = "/api/v1"
@@ -47,4 +47,8 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(auth.router, prefix=API_PREFIX)
+    # FR-20 (issue #142): the public read API. Under the same `/api/v1`
+    # prefix as everything else - it is one versioned API with a public
+    # subset, not a second API with its own version line.
+    app.include_router(catalogue.router, prefix=API_PREFIX)
     return app
