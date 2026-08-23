@@ -145,6 +145,28 @@ class CatalogueEntry(Base):
         # itself, so a plain btree (not partial) index is sufficient here,
         # matching `Designation.term_key`'s own treatment.
         Index("ix_catalogue_entry_preferred_term_key", "preferred_term_key"),
+        # FR-14/FR-15, issue #142: the trigram index behind the public
+        # catalogue search, over `nptc.db.functions`'s `nptc_search_text`
+        # normalisation (see migration 0011 for the full reasoning, and
+        # ADR-0024 for the decision). Declared here as well as in the
+        # migration because `compare_metadata` reflects it and would
+        # otherwise propose dropping it on every autogenerate run - the
+        # expression itself is `text(...)`, which alembic compares by
+        # presence only. Deliberately not partial on `status = 'active'`
+        # even though the public API serves only active entries: #149's
+        # maintenance search covers drafts too.
+        Index(
+            "ix_catalogue_entry_preferred_term_trgm",
+            text("nptc_search_text(preferred_term)"),
+            postgresql_using="gin",
+            # `postgresql_ops` rather than appending the operator class to the
+            # expression text: alembic can only compare an expression index
+            # whose operator class is declared separately (it warns and
+            # abandons the comparison otherwise), so this is what keeps
+            # `compare_metadata` actually checking this index rather than
+            # skipping it.
+            postgresql_ops={"nptc_search_text(preferred_term)": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
