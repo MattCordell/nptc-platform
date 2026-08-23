@@ -47,6 +47,7 @@ package is the only place that dispatch is allowed to exist
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -119,6 +120,27 @@ LimitQuery = Annotated[
     Query(ge=1, le=200, description="Maximum entries in this page."),
 ]
 
+#: `/catalogue/entries` pages on `business_key`, so its cursor *is* a
+#: business key and is validated as one. Constrained rather than accepted
+#: freely so a mangled cursor is a 422 here exactly as it is on
+#: `/catalogue/search` - an endpoint that silently serves "the page after
+#: whatever this sorts before" gives a client no way to notice it has been
+#: corrupting its own cursor.
+EntryCursorQuery = Annotated[
+    str | None,
+    Query(
+        pattern=BUSINESS_KEY_PATTERN.pattern,
+        description=(
+            "The `next_cursor` from the previous page. Pass it back unmodified, "
+            "and do not construct one."
+        ),
+    ),
+]
+
+#: `/catalogue/search` pages on `<score>:<business_key>`, which has no single
+#: pattern worth expressing here - `nptc.catalogue.search` parses it and
+#: raises `MalformedSearchCursorError` (also a 422) for anything it did not
+#: mint.
 CursorQuery = Annotated[
     str | None,
     Query(
@@ -148,7 +170,11 @@ class EntrySummary(BaseModel):
     #: different statement from "no specimen property has been recorded" -
     #: the ambiguity this core column exists to destroy.
     specimen_unconstrained: bool
-    updated_at: str
+    #: A real `datetime`, not a pre-formatted string: that is what puts
+    #: `format: date-time` in `docs/api/openapi.json`, so #147's generated
+    #: client parses it as a date rather than handing the caller a string to
+    #: guess at.
+    updated_at: datetime
 
 
 class Designation(BaseModel):
@@ -299,7 +325,7 @@ def _entry_summary_fields(
     length: int,
     status: str,
     specimen_unconstrained: bool,
-    updated_at_iso: str,
+    updated_at: datetime,
 ) -> dict[str, Any]:
     return {
         "business_key": business_key,
@@ -307,7 +333,7 @@ def _entry_summary_fields(
         "length": length,
         "status": status,
         "specimen_unconstrained": specimen_unconstrained,
-        "updated_at": updated_at_iso,
+        "updated_at": updated_at,
     }
 
 
@@ -319,7 +345,7 @@ def _summary(entry: CatalogueEntry) -> EntrySummary:
             entry.length,
             entry.status,
             entry.specimen_unconstrained,
-            entry.updated_at.isoformat(),
+            entry.updated_at,
         )
     )
 
@@ -382,7 +408,7 @@ _BROWSE = Depends(permission_dep(Permission.CATALOGUE_BROWSE))
 def list_entries(
     session: SessionDep,
     limit: LimitQuery = 50,
-    after: CursorQuery = None,
+    after: EntryCursorQuery = None,
 ) -> EntryPage:
     """Keyset paging on `business_key`, ascending. Pass the response's
     `next_cursor` back as `after` for the following page; a `null`
@@ -446,7 +472,7 @@ def search(
                     preferred_term_length(hit.preferred_term),
                     hit.status,
                     hit.specimen_unconstrained,
-                    hit.updated_at.isoformat(),
+                    hit.updated_at,
                 ),
                 score=hit.score,
             )
@@ -476,7 +502,7 @@ def read_entry(
             entry.length,
             entry.status,
             entry.specimen_unconstrained,
-            entry.updated_at.isoformat(),
+            entry.updated_at,
         ),
         designations=[_designation(row) for row in queries.load_designations(session, entry_ids)],
         bindings=[_binding(row) for row in queries.load_bindings(session, entry_ids)],

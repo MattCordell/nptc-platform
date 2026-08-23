@@ -327,3 +327,16 @@ def test_anonymous_callers_are_served_and_bad_credentials_still_refused(
 
     assert anonymous.status_code == 200, anonymous.text
     assert with_garbage.status_code == 401, with_garbage.text
+
+
+@pytest.mark.req("FR-20")
+@pytest.mark.integration
+def test_a_malformed_entries_cursor_is_refused(api: ApiTestApp) -> None:
+    """`/catalogue/entries` pages on `business_key`, so its cursor is one -
+    and a mangled cursor is a 422 rather than "the page after whatever this
+    sorts before". Silently serving a plausible page would give a client no
+    way to notice it has been corrupting its own cursor, which is the same
+    reasoning `/catalogue/search` refuses a cursor it did not mint."""
+    for bogus in ("not-a-key", "NPTC-12345", _seed.a_uuid()):
+        response = api.get("/catalogue/entries", params={"after": bogus})
+        assert response.status_code == 422, f"{bogus!r}: {response.text}"

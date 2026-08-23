@@ -87,16 +87,17 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^NPTC-([0-9]{6,})$"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one.",
+              "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one.",
               "title": "After"
             },
-            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one."
+            "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
           }
         ],
         "responses": {
@@ -682,6 +683,7 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time",
             "title": "Updated At"
           },
           "designations": {
@@ -774,6 +776,7 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time",
             "title": "Updated At"
           }
         },
@@ -893,6 +896,7 @@
           },
           "updated_at": {
             "type": "string",
+            "format": "date-time",
             "title": "Updated At"
           },
           "score": {

@@ -42,7 +42,7 @@ catalogue to answer a question the client asked about one page.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final
 
@@ -344,21 +344,3 @@ def load_property_values(
         )
         for row in rows
     )
-
-
-def group_by_entry_id[RowT: DesignationRow | BindingRow | PropertyValueRow](
-    rows: Sequence[RowT],
-) -> dict[uuid.UUID, list[RowT]]:
-    """Batched rows regrouped per entry, order preserved within each group.
-
-    Written once here rather than three times in the router: the loaders
-    above all return one flat, ordered sequence spanning every requested
-    entry (that is what makes them a fixed number of queries), so every
-    caller assembling a per-entry response needs exactly this regrouping,
-    and each open-coded copy would be another chance to sort or dedupe it
-    subtly differently.
-    """
-    grouped: dict[uuid.UUID, list[RowT]] = {}
-    for row in rows:
-        grouped.setdefault(row.entry_id, []).append(row)
-    return grouped
