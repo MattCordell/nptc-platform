@@ -1,5 +1,5 @@
 """The search normalisation function and its two trigram indexes
-(issue #142, migration 0011, FR-14, FR-15).
+(issue #142, migration 0012, FR-14, FR-15).
 
 **Why an `EXPLAIN` test exists at all.** Every functional search test in
 `test_api_public_search.py` passes identically whether the query uses the

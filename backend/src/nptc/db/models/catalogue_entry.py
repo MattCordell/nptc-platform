@@ -147,7 +147,7 @@ class CatalogueEntry(Base):
         Index("ix_catalogue_entry_preferred_term_key", "preferred_term_key"),
         # FR-14/FR-15, issue #142: the trigram index behind the public
         # catalogue search, over `nptc.db.functions`'s `nptc_search_text`
-        # normalisation (see migration 0011 for the full reasoning, and
+        # normalisation (see migration 0012 for the full reasoning, and
         # ADR-0024 for the decision). Declared here as well as in the
         # migration because `compare_metadata` reflects it and would
         # otherwise propose dropping it on every autogenerate run - the

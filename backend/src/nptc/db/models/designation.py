@@ -172,7 +172,7 @@ class Designation(Base):
         Index("ix_designation_term_key", "term_key"),
         # FR-14/FR-15, issue #142: the synonym half of the public catalogue
         # search - see `CatalogueEntry`'s own trigram index for why this is
-        # declared in the model as well as in migration 0011. Partial on
+        # declared in the model as well as in migration 0012. Partial on
         # `status = 'active'`, unlike the entry-side index: a retired
         # synonym is history, never a way into the catalogue, so search
         # never matches one.

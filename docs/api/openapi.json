@@ -56,10 +56,739 @@
           }
         }
       }
+    },
+    "/api/v1/catalogue/entries": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "One page of published catalogue entries",
+        "description": "Keyset paging on `business_key`, ascending. Pass the response's\n`next_cursor` back as `after` for the following page; a `null`\n`next_cursor` means there is no following page.\n\nThere is no `offset` and no total count, on purpose (ADR-0024): an\noffset re-reads and re-skips every earlier row on every page, and drops\nor repeats rows outright when a concurrent insert shifts the window\nmid-scan.",
+        "operationId": "list_entries_api_v1_catalogue_entries_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Maximum entries in this page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum entries in this page."
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one.",
+              "title": "After"
+            },
+            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/search": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "Search the published catalogue by term",
+        "description": "Best match first, ties broken by `business_key` so the order is\ntotal and paging cannot drop or repeat a row inside a tie.\n\nA query below the similarity threshold returns an empty page rather\nthan a broadened match. That is the intended behaviour: a search that\nquietly matches everything is worse than one that matches nothing,\nbecause the caller cannot tell it from a working search over a catalogue\nthat genuinely has nothing to offer.",
+        "operationId": "search_api_v1_catalogue_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Free text. Matched against each entry's preferred term and its active synonyms, insensitive to case and to diacritics, and tolerant of typographical error (FR-15).",
+              "title": "Q"
+            },
+            "description": "Free text. Matched against each entry's preferred term and its active synonyms, insensitive to case and to diacritics, and tolerant of typographical error (FR-15)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Maximum entries in this page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum entries in this page."
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one.",
+              "title": "After"
+            },
+            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "One published catalogue entry, with everything attached to it",
+        "operationId": "read_entry_api_v1_catalogue_entries__business_key__get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}/designations": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "An entry's active synonyms and non-en-AU preferred variants",
+        "operationId": "read_designations_api_v1_catalogue_entries__business_key__designations_get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesignationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}/bindings": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "An entry's SNOMED CT code bindings, including retired ones",
+        "description": "Retired bindings are included (FR-08): a client holding a code that\nhas been inactivated learns so here, together with the reason and any\nsuccessor code.",
+        "operationId": "read_bindings_api_v1_catalogue_entries__business_key__bindings_get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}/properties": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "An entry's recorded property values",
+        "operationId": "read_properties_api_v1_catalogue_entries__business_key__properties_get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Binding": {
+        "properties": {
+          "system": {
+            "type": "string",
+            "title": "System"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fsn": {
+            "type": "string",
+            "title": "Fsn"
+          },
+          "display_term": {
+            "type": "string",
+            "title": "Display Term"
+          },
+          "au_preferred_term": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Au Preferred Term"
+          },
+          "edition_hint": {
+            "type": "string",
+            "title": "Edition Hint"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "retirement_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retirement Reason"
+          },
+          "replaced_by_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "system",
+          "code",
+          "fsn",
+          "display_term",
+          "au_preferred_term",
+          "edition_hint",
+          "status",
+          "retirement_reason",
+          "replaced_by_code"
+        ],
+        "title": "Binding",
+        "description": "A SNOMED CT code binding, active or retired.\n\n`code` is a string, always (FR-06). `display_term` is `fsn` with its\nsemantic tag removed exactly once, by FR-83's single sanctioned\nrenderer - it is derived here rather than stored, because a stored\nstripped value is indistinguishable from an unstripped one and that\nambiguity is what makes double-stripping possible.\n\nA retired binding carries `retirement_reason` and, where PRD FR-08's\nreplacement case applies, `replaced_by_code` - the successor's *code*,\nwhich is what a client holding the retired one needs in order to move."
+      },
+      "BindingList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Binding"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "BindingList"
+      },
+      "Designation": {
+        "properties": {
+          "term": {
+            "type": "string",
+            "title": "Term"
+          },
+          "use": {
+            "type": "string",
+            "title": "Use"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          }
+        },
+        "type": "object",
+        "required": [
+          "term",
+          "use",
+          "language",
+          "status",
+          "length"
+        ],
+        "title": "Designation",
+        "description": "A catalogue-authored synonym, or a preferred variant in a language\nother than en-AU.\n\nThe catalogue's own en-AU preferred term is **not** here - it is\n`EntrySummary.preferred_term`, and ADR-0022 makes its absence from\n`designation` a database invariant rather than a convention. A client\nbuilding a term list needs both: `preferred_term`, plus these."
+      },
+      "DesignationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Designation"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "DesignationList"
+      },
+      "EntryDetail": {
+        "properties": {
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          },
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "specimen_unconstrained": {
+            "type": "boolean",
+            "title": "Specimen Unconstrained"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "designations": {
+            "items": {
+              "$ref": "#/components/schemas/Designation"
+            },
+            "type": "array",
+            "title": "Designations"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/Binding"
+            },
+            "type": "array",
+            "title": "Bindings"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValue"
+            },
+            "type": "array",
+            "title": "Properties"
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_key",
+          "preferred_term",
+          "length",
+          "status",
+          "specimen_unconstrained",
+          "updated_at",
+          "designations",
+          "bindings",
+          "properties"
+        ],
+        "title": "EntryDetail",
+        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer."
+      },
+      "EntryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "EntryPage",
+        "description": "`next_cursor` is `null` on the last page - which is the *only*\nreliable signal that paging is finished. A client must not infer the end\nfrom a short page: a page can be short and still have a successor."
+      },
+      "EntrySummary": {
+        "properties": {
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          },
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "specimen_unconstrained": {
+            "type": "boolean",
+            "title": "Specimen Unconstrained"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_key",
+          "preferred_term",
+          "length",
+          "status",
+          "specimen_unconstrained",
+          "updated_at"
+        ],
+        "title": "EntrySummary",
+        "description": "An entry as it appears in a list or a search result.\n\n`length` is FR-85's published figure - the character count of the\ncatalogue's own preferred term, computed by `CatalogueEntry.length` and\nnever stored, so it cannot drift from the term it describes."
+      },
       "ErrorResponse": {
         "properties": {
           "detail": {
@@ -73,6 +802,145 @@
         ],
         "title": "ErrorResponse",
         "description": "Every refusal this API makes has this shape - one sentence saying\nwhat to do next, and deliberately nothing else. It never names a role,\na permission or an internal identifier (FR-44, NFR-04)."
+      },
+      "PropertyList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValue"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "PropertyList"
+      },
+      "PropertyValue": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "datatype": {
+            "type": "string",
+            "title": "Datatype"
+          },
+          "cardinality": {
+            "type": "string",
+            "title": "Cardinality"
+          },
+          "ordinal": {
+            "type": "integer",
+            "title": "Ordinal"
+          },
+          "value": {
+            "title": "Value"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "datatype",
+          "cardinality",
+          "ordinal",
+          "value",
+          "justification"
+        ],
+        "title": "PropertyValue",
+        "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based."
+      },
+      "SearchHit": {
+        "properties": {
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          },
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "specimen_unconstrained": {
+            "type": "boolean",
+            "title": "Specimen Unconstrained"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Trigram similarity against `q`, between 0 and 1."
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_key",
+          "preferred_term",
+          "length",
+          "status",
+          "specimen_unconstrained",
+          "updated_at",
+          "score"
+        ],
+        "title": "SearchHit",
+        "description": "A summary plus its relevance score.\n\nThe score is exposed because it is what the ordering is, and a client\nthat cannot see it cannot tell a confident single match from a page of\nweak ones. It is comparable *within* one response only - it is a\ntrigram similarity against this particular query, not a quality rating\nof the entry."
+      },
+      "SearchPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "SearchPage"
       },
       "SessionResponse": {
         "properties": {

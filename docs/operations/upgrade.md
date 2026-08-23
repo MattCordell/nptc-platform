@@ -48,6 +48,9 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0007_designation.py`](../../backend/migrations/versions/0007_designation.py) | `designation` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | None - `downgrade()` drops the table outright |
 | [`0008_code_binding.py`](../../backend/migrations/versions/0008_code_binding.py) | `code_binding` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None - `downgrade()` drops the table outright |
 | [`0009_collision_detection.py`](../../backend/migrations/versions/0009_collision_detection.py) | `designation.term_key`/`catalogue_entry.preferred_term_key`, `designation_collision_acknowledgement`, `ix_code_binding_one_active_entry_per_code` (see [`data-model.md`](../architecture/data-model.md#collision-detection-issue-49-fr-05-fr-08)) | See [below](#0009_collision_detectionpy) - backfills the two key columns from existing rows before adding `NOT NULL` |
+| [`0010_property_definition_and_value.py`](../../backend/migrations/versions/0010_property_definition_and_value.py) | `property_definition`, `property_value` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | None |
+| [`0011_local_code_systems.py`](../../backend/migrations/versions/0011_local_code_systems.py) | `local_code_system`, `local_code`, `local_code_snomed_map`, plus their seed data (see [`data-model.md`](../architecture/data-model.md#local-code-systems-and-the-advisory-snomed-map-issue-56-fr-90-fr-91-fr-92)) | None |
+| [`0012_catalogue_search_indexes.py`](../../backend/migrations/versions/0012_catalogue_search_indexes.py) | `nptc_search_text`, two GIN trigram indexes | See [below](#0012_catalogue_search_indexespy) - a standing `REINDEX` obligation if the `unaccent` dictionary ever changes |
 
 ## Provisioning the app role's login
 
@@ -157,6 +160,40 @@ every pre-existing `designation`/`catalogue_entry` row, the migration computes
 uses) and writes it before the column becomes `NOT NULL` - so a deployment upgrading with
 real catalogue content already in place never has to backfill by hand. Pre-alpha, no seed
 data has ever been loaded, so this backfill has never had a real row to act on in practice.
+
+## `0012_catalogue_search_indexes.py`
+
+Adds the `nptc_search_text` normalisation function and the two GIN trigram indexes the
+public catalogue search matches through (issue #142 - see
+[`data-model.md`](../architecture/data-model.md#search-normalisation-and-the-trigram-indexes-issue-142-fr-14-fr-15)
+and [ADR-0024](../adr/0024-catalogue-search-and-pagination.md)). No table, no column, no
+grant changes, and nothing to backfill: `upgrade head` is all that is required.
+
+**One standing operator obligation.** `nptc_search_text` is declared `IMMUTABLE`, which
+is honest only for a *fixed* `unaccent` dictionary definition. Both trigram indexes
+store values produced by that dictionary, so if its rule file ever changes underneath a
+running database, the stored index entries stop corresponding to what the function now
+returns - and search silently starts missing rows rather than failing. In practice that
+can happen two ways:
+
+- a PostgreSQL major upgrade shipping a revised `unaccent.rules`, or
+- a deployment substituting its own rules (`ALTER TEXT SEARCH DICTIONARY unaccent
+  (RULES = ...)`, or a replaced rules file).
+
+After either, reindex both:
+
+```sql
+REINDEX INDEX CONCURRENTLY ix_catalogue_entry_preferred_term_trgm;
+REINDEX INDEX CONCURRENTLY ix_designation_term_trgm;
+```
+
+`CONCURRENTLY` so search stays available while it runs; drop it if the maintenance
+window allows an exclusive lock. Nothing detects a stale index automatically - which is
+exactly why this obligation is written down here rather than left implicit in the
+`IMMUTABLE` marking.
+
+`downgrade()` drops both indexes and then the function, in that order (the reverse of
+`upgrade()`), since each index expression depends on the function.
 
 ## Testcontainers and Docker
 
