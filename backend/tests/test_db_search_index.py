@@ -80,3 +80,124 @@ def test_both_trigram_indexes_exist_over_the_normalised_expression(db: Connectio
     # Partial: search never matches a retired synonym, so the index covers
     # only the rows a result can come from.
     assert "WHERE (status = 'active'::text)" in designation_def
+
+
+# --- the plan, not just the answer ----------------------------------------
+
+#: Large enough that the trigram indexes are the cheapest way to answer the
+#: predicate, not merely a legal one. Both halves of the query have a rival
+#: plan the planner will otherwise prefer at small scale: `designation` has
+#: `ix_designation_no_duplicate_active_term`, which can serve
+#: `status = 'active'` on its own and leave the trigram match as a `Filter` -
+#: cheaper than a GIN scan over a few hundred rows, and not cheaper at all
+#: over a realistic catalogue. This figure is therefore about making the
+#: fixture resemble a real catalogue's *shape*, not about winning an
+#: arbitrary cost race.
+_ROW_COUNT = 20_000
+
+#: Raw INSERTs rather than the ORM: this test needs volume, not realism, and
+#: individually flushed model instances would dominate its runtime.
+#: `preferred_term_key`/`term_key` have `server_default ''`, so a raw INSERT
+#: that bypasses the `@validates` hooks still satisfies `NOT NULL` - the same
+#: allowance every other `test_db_*.py` constraint test relies on.
+#:
+#: The terms are md5 hex strings, deliberately dissimilar. A family like
+#: 'fixture number 1', 'fixture number 2', ... would have every member
+#: scoring well above the threshold against every other, so *every* row
+#: would genuinely match any query drawn from it - and this test would then
+#: be measuring the fixture rather than the index.
+_BULK_ENTRIES_SQL = text("""
+INSERT INTO catalogue_entry (business_key, preferred_term, status)
+SELECT
+    'NPTC-8' || lpad(g::text, 8, '0'),
+    'assay ' || md5(g::text),
+    'active'
+FROM generate_series(1, :count) AS g
+""")
+
+_BULK_DESIGNATIONS_SQL = text("""
+INSERT INTO designation (entry_id, term, use, language, status)
+SELECT
+    e.id,
+    'synonym ' || md5(e.business_key),
+    'synonym',
+    'en-AU',
+    'active'
+FROM catalogue_entry AS e
+WHERE e.business_key LIKE 'NPTC-8%'
+""")
+
+_ONE_TERM_SQL = text(
+    "SELECT preferred_term FROM catalogue_entry WHERE business_key = 'NPTC-800000123'"
+)
+
+
+def _explain(db: Connection, sql: str, params: dict[str, object]) -> str:
+    # String concatenation into `text()` is confined to this test tree:
+    # `test_sql_parameterisation.py` scans `backend/src` and
+    # `backend/migrations` only, and the statement being explained is
+    # `nptc.catalogue.search`'s own module-level literal, with every value
+    # still bound as a parameter.
+    rows = db.execute(text("EXPLAIN " + sql), params).scalars().all()
+    return chr(10).join(rows)
+
+
+@pytest.mark.req("FR-15")
+@pytest.mark.integration
+def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection) -> None:
+    """`EXPLAIN` on the exact statement `nptc.catalogue.search` runs.
+
+    Imports the module's private `_SEARCH_SQL` on purpose: explaining a
+    hand-copied approximation of the query would be a test of the copy, and
+    the copy is precisely what cannot drift when the real predicate does.
+
+    **Why `enable_seqscan = off`, and why that is not cheating.** What this
+    test needs to establish is that the predicate is *expressed so the index
+    can serve it* - that the trigram indexes are a plan the planner is free
+    to choose. Whether it chooses one on any given day is a cost decision
+    that depends on table size, `random_page_cost` and how many trigrams the
+    query string happens to have, and a test that turned on winning that
+    cost race would be a test of the fixture's row count. Disabling
+    sequential scans removes the cost race without weakening the assertion
+    at all: an unindexable predicate - `similarity(...) >= 0.3` instead of
+    `%`, or `lower(unaccent(term))` instead of `nptc_search_text(term)` -
+    still cannot become an `Index Cond`, because no amount of cost
+    persuasion makes an expression the index does not contain usable. It
+    appears as a `Filter` on a (now expensive) sequential scan, and the
+    assertions below fail exactly as they should.
+    """
+    from nptc.catalogue.search import _SEARCH_SQL, SIMILARITY_THRESHOLD
+
+    db.execute(_BULK_ENTRIES_SQL, {"count": _ROW_COUNT})
+    db.execute(_BULK_DESIGNATIONS_SQL)
+    # Statistics, or the planner is working from defaults that have nothing
+    # to do with the table in front of it. ANALYZE inside a transaction sees
+    # this transaction's own uncommitted rows.
+    db.execute(text("ANALYZE catalogue_entry"))
+    db.execute(text("ANALYZE designation"))
+    db.execute(text("SELECT set_limit(CAST(:threshold AS real))"), {"threshold": 0.3})
+    # LOCAL: reverted with this test's own transaction, so it cannot leak
+    # into another test sharing the session-scoped container.
+    db.execute(text("SET LOCAL enable_seqscan = off"))
+
+    term: str = db.execute(_ONE_TERM_SQL).scalar_one()
+    plan = _explain(
+        db,
+        str(_SEARCH_SQL),
+        {
+            "q": term,
+            "statuses": ["active"],
+            "threshold": SIMILARITY_THRESHOLD,
+            "after_score": None,
+            "after_key": None,
+            "limit": 51,
+        },
+    )
+
+    assert "Bitmap Index Scan on ix_catalogue_entry_preferred_term_trgm" in plan, plan
+    assert "Bitmap Index Scan on ix_designation_term_trgm" in plan, plan
+    # `Index Cond`, not `Filter`: the distinction between the index
+    # answering the predicate and the index merely being read before the
+    # predicate is applied by hand.
+    assert plan.count("Index Cond: (nptc_search_text(") == 2, plan
+    assert "Filter: (nptc_search_text(" not in plan, plan

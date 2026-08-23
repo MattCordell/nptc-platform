@@ -76,7 +76,13 @@ SIMILARITY_THRESHOLD: Final[float] = 0.3
 #: split is unambiguous without escaping.
 _CURSOR_SEPARATOR: Final[str] = ":"
 
-_SET_LIMIT_SQL = text("SELECT set_limit(:threshold)")
+#: The explicit `real` cast is required, not cosmetic: `set_limit` is
+#: declared `set_limit(real)`, a bound Python float arrives as `double
+#: precision`, and PostgreSQL will not implicitly narrow a `double
+#: precision` argument to `real` when resolving a function - so without the
+#: cast this fails at runtime with "function set_limit(double precision)
+#: does not exist".
+_SET_LIMIT_SQL = text("SELECT set_limit(CAST(:threshold AS real))")
 
 #: One statement. Reading it from the inside out: the `UNION ALL` subquery is
 #: two index-supported `%` scans, one per searchable column; the outer
@@ -90,6 +96,13 @@ _SET_LIMIT_SQL = text("SELECT set_limit(:threshold)")
 #: index covers the query. The entry status filter *is* parameterised
 #: (`:statuses`), because `PUBLIC_STATUSES` is a Python constant the tests
 #: import and the entry-side index is not partial on status anyway.
+#:
+#: The `CAST(...)` around the two keyset parameters is required rather than
+#: decorative: on the first page both are `NULL`, and `$n IS NULL` gives
+#: PostgreSQL nothing at all to infer a parameter type from, so the server
+#: refuses the statement outright ("could not determine data type of
+#: parameter"). Naming the type is what makes the same statement serve both
+#: the first page and every page after it, rather than needing two.
 _SEARCH_SQL = text("""
 SELECT
     e.business_key,
@@ -123,9 +136,12 @@ GROUP BY
     e.updated_at
 HAVING MAX(m.score) >= :threshold
    AND (
-        :after_score IS NULL
-        OR MAX(m.score) < :after_score
-        OR (MAX(m.score) = :after_score AND e.business_key > :after_key)
+        CAST(:after_score AS double precision) IS NULL
+        OR MAX(m.score) < CAST(:after_score AS double precision)
+        OR (
+            MAX(m.score) = CAST(:after_score AS double precision)
+            AND e.business_key > CAST(:after_key AS text)
+        )
    )
 ORDER BY MAX(m.score) DESC, e.business_key ASC
 LIMIT :limit
