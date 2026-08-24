@@ -226,9 +226,59 @@ def test_a_cursor_this_api_did_not_issue_is_refused(
     """Refused, not ignored. Silently restarting from page one turns a
     client bug into an infinite paging loop that reads as a slow
     catalogue."""
-    for bogus in ("not-a-cursor", "abc:NPTC-000001", "0.5"):
-        response = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "after": bogus})
-        assert response.status_code == 422, f"{bogus!r}: {response.text}"
+    issued = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "limit": 1}).json()[
+        "next_cursor"
+    ]
+    assert issued is not None
+    score, digest, _key = issued.split(":")
+
+    bogus = (
+        "not-a-cursor",
+        # No digest part at all - the two-part shape this endpoint used to
+        # issue.
+        f"{score}:NPTC-000001",
+        "abc:NPTC-000001",
+        "0.5",
+        # A well-formed score and digest, but a key half that is not a
+        # business key. Accepted as "any non-empty string" this would page
+        # from whatever it happens to sort after, which is how a client
+        # corrupting its own cursor goes unnoticed - `/catalogue/entries`
+        # pattern-validates its `after` for the same reason.
+        f"{score}:{digest}:not-a-business-key",
+        f"{score}:{digest}:NPTC-12345",
+        f"{score}:{digest}:nptc-000001",
+        f"{score}:{digest}:",
+    )
+    for cursor in bogus:
+        response = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "after": cursor})
+        assert response.status_code == 422, f"{cursor!r}: {response.text}"
+
+
+@pytest.mark.req("FR-20")
+@pytest.mark.integration
+def test_a_cursor_replayed_under_a_different_query_is_refused(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The silent-wrong-answer case, which is why the cursor carries a digest
+    of the `q` that minted it.
+
+    A score is only meaningful against the query it was computed for. Unbound,
+    replaying this cursor under a second query would compare the *new* query's
+    scores against the *old* query's boundary and serve a window that is the
+    next page of neither - and it would do so with a 200 and a plausible-
+    looking body, which is precisely the class of failure a client cannot
+    detect. The same cursor under the same `q` must still work, or the binding
+    has broken paging rather than protected it.
+    """
+    first = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "limit": 1})
+    cursor = first.json()["next_cursor"]
+    assert cursor is not None
+
+    replayed = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM, "after": cursor})
+    assert replayed.status_code == 422, replayed.text
+
+    same_query = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "after": cursor})
+    assert same_query.status_code == 200, same_query.text
 
 
 @pytest.mark.req("FR-20")

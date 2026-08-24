@@ -14,6 +14,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from nptc.api.dependencies import get_datatype_registry
 from nptc.api.errors import register_exception_handlers
 from nptc.api.routers import auth, catalogue
 from nptc.settings import ApiSettings
@@ -29,6 +30,19 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
         docs_url=f"{API_PREFIX}/docs",
     )
     api_settings = settings or ApiSettings()
+
+    # Built here, not on the first request that needs it. The construction
+    # itself is cheap and opens no socket, so this is not about warming a
+    # cache - it is about *where the failure lands*.
+    # `TerminologyConfig.from_env` raises `TerminologyConfigError` on a
+    # malformed `NPTC_TX_*` value, and `get_datatype_registry`'s `lru_cache`
+    # does not cache a raised exception, so leaving it lazy turns one
+    # deployment typo into a 500 on every request to a public read endpoint
+    # (FR-20) for as long as nobody notices. Calling it during app
+    # construction makes the same typo a start-up failure instead: loud,
+    # once, and before the process ever takes traffic. The `lru_cache` then
+    # hands every request the instance built here.
+    get_datatype_registry()
 
     # Exactly one origin, never "*": ADR-0021 has the browser hold the
     # access token and send it here, so a permissive CORS policy would let

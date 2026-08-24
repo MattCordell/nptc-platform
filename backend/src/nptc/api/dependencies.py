@@ -69,8 +69,17 @@ def get_datatype_registry() -> DatatypeRegistry:
     Built once for the same reason `get_token_verifier` is: the `code`
     handler wraps an `OntoserverClient`, which owns an HTTP connection pool
     that is only useful if it outlives a request. Construction itself opens
-    no socket and performs no discovery, so this stays safe to build lazily
-    on the first request that needs it.
+    no socket and performs no discovery.
+
+    **Called once by `nptc.api.app.create_app`, deliberately.** Not to warm
+    the cache - construction is cheap - but because
+    `TerminologyConfig.from_env` raises `TerminologyConfigError` on a
+    malformed `NPTC_TX_*` value, and `lru_cache` does not cache a raised
+    exception. Left to the first request, a deployment typo would surface
+    as a 500 on a public read endpoint, per request, indefinitely; called
+    at app construction it is a start-up failure instead. `nptc.api.errors`
+    still maps `TerminologyConfigError` to a 500 for the paths that bypass
+    the factory (a test app, a dependency override).
 
     The registry is what keeps the property-serialisation path free of any
     datatype `switch` (ADR-0013, `backend/tests/test_datatype_dispatch.py`):

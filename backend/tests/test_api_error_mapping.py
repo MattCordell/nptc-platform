@@ -31,6 +31,12 @@ from nptc.auth.errors_authorisation import (
 )
 from nptc.auth.permissions import Permission, Role
 from nptc.auth.principal import Principal
+from nptc.settings import ApiSettings
+from nptc_shared.terminology import TerminologyConfigError
+
+#: A `TerminologyConfig.from_env` numeric variable, named here so the tests
+#: below assert the *value* never reaches a response body (NFR-26).
+_TX_CONFIG_VAR = "NPTC_TX_TIMEOUT_SECONDS"
 
 # Registered in sys.modules before exec_module - see
 # test_authz_negative_http.py for why @dataclass requires it.
@@ -66,6 +72,9 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
                 "manual-link": ManualLinkRequiredError("two candidate accounts matched"),
                 "last-admin": LastAdministratorError("would leave zero administrators"),
                 "closed": AccountClosedError("user is closed and may not act"),
+                "tx-config": TerminologyConfigError(
+                    f"{_TX_CONFIG_VAR}='not-a-number' is not a valid number"
+                ),
             }[error]
 
         yield harness
@@ -191,3 +200,57 @@ def _audit_context() -> object:
     from nptc.audit.writer import AuditContext
 
     return AuditContext.system()
+
+
+@pytest.mark.req("FR-20")
+def test_a_malformed_terminology_config_fails_app_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real fix for a deployment typo: fail at start-up, not per request.
+
+    `get_datatype_registry` builds `TerminologyConfig.from_env()`, which
+    refuses a malformed numeric variable rather than falling back to the
+    default. Left to the first request that needed the registry, that refusal
+    would be an unhandled 500 on a *public* read endpoint - and, because
+    `lru_cache` does not cache a raised exception, a fresh one on every
+    request for as long as nobody noticed. `create_app` therefore builds the
+    registry itself, which turns the same typo into a start-up failure.
+
+    No `integration` mark and no database: this is entirely about where the
+    exception is raised.
+    """
+    from nptc.api.app import create_app
+    from nptc.api.dependencies import get_datatype_registry
+
+    monkeypatch.setenv(_TX_CONFIG_VAR, "not-a-number")
+    # The cache is process-wide, so it is cleared on the way in (another test
+    # may have populated it with a good config) and on the way out (so this
+    # test's bad config does not become everybody's).
+    get_datatype_registry.cache_clear()
+    try:
+        with pytest.raises(TerminologyConfigError):
+            create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
+    finally:
+        get_datatype_registry.cache_clear()
+
+
+@pytest.mark.req("FR-20")
+@pytest.mark.integration
+def test_a_terminology_config_error_reaching_a_request_is_a_handled_500(
+    api: ApiTestApp,
+) -> None:
+    """The safety net behind the start-up check above.
+
+    A path that bypasses `create_app`'s warm-up - a test app, a dependency
+    override, a lazily built client added later - must still produce a
+    deliberate 500 with a logged cause rather than an unhandled traceback.
+    The response names neither the variable nor its value: a configuration
+    fault is not something a caller can act on, and echoing deployment
+    details into a public response body is exactly what NFR-26 forbids.
+    """
+    response = api.client.get(f"{API_PREFIX}/_test/raises/tx-config")
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"]
+    assert _TX_CONFIG_VAR not in response.text
+    assert "not-a-number" not in response.text

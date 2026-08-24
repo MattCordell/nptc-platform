@@ -41,6 +41,7 @@ routes ship, or a routine duplicate-synonym save 500s instead of
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -59,8 +60,37 @@ from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
+from nptc_shared.terminology import TerminologyConfigError
 
 _logger = logging.getLogger(__name__)
+
+
+class StoredFSNNotRenderableError(Exception):
+    """A *read* path found a stored FSN it could not render (FR-83).
+
+    Defined here rather than in `nptc.exports.semantic_tag` because it is
+    an HTTP-status distinction, not a new rule about FSNs.
+    `render_display_term` raises `NotAServedFSNError`/`EmptyDisplayTermError`,
+    both `http_status = 422`, and 422 is the right answer on a write path:
+    there, the caller supplied the FSN and the fault is in the request.
+
+    On a read path it is the wrong answer, and wrong in a way that costs
+    the platform the very outcome the loud failure exists for. `GET
+    /catalogue/entries/{business_key}` is a well-formed request; the fault
+    is entirely in stored data. A vendor's client reading 422 concludes its
+    own request was malformed - it will not retry, and it will log the
+    problem as its own bug - whereas FR-83's whole point is to get an
+    administrator to look at the binding. 5xx is the class that says "this
+    is our fault, escalate it", so a read path wraps both into this and
+    `nptc.api.routers.catalogue` raises it.
+
+    The 422 handlers for the two underlying errors are kept below, unused
+    today: #149/#150's write surface is where they become reachable, and
+    deleting them would leave that surface 500ing on a caller mistake.
+    """
+
+    http_status: ClassVar[int] = 500
+
 
 #: RFC 9470 step-up challenge - pre-specified in
 #: docs/architecture/permissions.md. `acr_values` names the LoA the realm's
@@ -101,13 +131,21 @@ _DETAIL_SEARCH_CURSOR = (
     "unmodified, or start again from the first page."
 )
 #: Deliberately not "an internal error occurred": FR-83's refusal is a
-#: *data* defect on one binding, and the only response that gets it fixed is
-#: one naming the entry so an editor can look at it. It names no internal
-#: identifier and no served label - just the public business key.
+#: *data* defect on one binding, and a caller who is told which kind of
+#: defect it is can report something an administrator can act on. It names
+#: no internal identifier, no served label and no stored value - the
+#: business key the caller already sent is enough to identify the entry.
 _DETAIL_DISPLAY_TERM = (
     "This entry has a code binding whose stored Fully Specified Name is not in the "
     "form the terminology server serves, so its display term cannot be rendered. "
     "The binding needs to be corrected by an administrator."
+)
+#: A configuration fault, so it names nothing a caller could act on and
+#: nothing about the deployment (NFR-26): the variable and its bad value go
+#: to the log, never to the response.
+_DETAIL_SERVER_MISCONFIGURED = (
+    "This service is not correctly configured and cannot serve this request. "
+    "The problem has been logged for an administrator."
 )
 _DETAIL_DESIGNATION_COLLISION = (
     "This term matches another entry's preferred term or synonym, once case, spacing "
@@ -234,8 +272,47 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={"detail": _DETAIL_SEARCH_CURSOR},
         )
 
+    @app.exception_handler(StoredFSNNotRenderableError)
+    async def _handle_stored_fsn_not_renderable(
+        _request: Request, exc: StoredFSNNotRenderableError
+    ) -> JSONResponse:
+        # The read-path counterpart of the two 422 handlers below, and a
+        # 500 rather than a 422 for the reason this exception's own
+        # docstring gives: the request was well-formed and the fault is in
+        # stored data, so the status has to be the one that tells a vendor's
+        # client "not your bug, escalate this".
+        #
+        # ERROR, not WARNING: FR-82 guarantees every stored `fsn` came from
+        # the terminology server, so reaching here means that guarantee has
+        # been broken for a *published* entry, and the endpoint is now
+        # failing for every caller who asks for it until somebody looks.
+        # Blanking the label and serving a 200 instead would hide a
+        # corrupted binding indefinitely (FR-83).
+        _logger.error("display term could not be rendered: %s", exc)
+        return JSONResponse(
+            status_code=StoredFSNNotRenderableError.http_status,
+            content={"detail": _DETAIL_DISPLAY_TERM},
+        )
+
+    @app.exception_handler(TerminologyConfigError)
+    async def _handle_terminology_config_error(
+        _request: Request, exc: TerminologyConfigError
+    ) -> JSONResponse:
+        # A safety net, not the fix. `nptc.api.app.create_app` builds the
+        # datatype registry eagerly precisely so a malformed `NPTC_TX_*`
+        # value fails start-up rather than a request; this handler exists
+        # for the paths that bypass the factory's warm-up (a test app, a
+        # dependency override) so the failure is still a deliberate 500
+        # with a logged cause rather than an unhandled traceback.
+        _logger.error("terminology configuration refused: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
+
     @app.exception_handler(NotAServedFSNError)
     async def _handle_not_a_served_fsn(_request: Request, exc: NotAServedFSNError) -> JSONResponse:
+        # Reachable only from a *write* path (#149/#150), where the caller
+        # supplied the FSN and 422 is correct. The read path wraps both of
+        # these in `StoredFSNNotRenderableError` above; see its docstring.
+        #
         # WARNING, not INFO - unlike every other refusal in this module,
         # this one is not a caller mistake at all: FR-82 guarantees every
         # stored `fsn` came from the terminology server, so reaching here

@@ -87,6 +87,11 @@ do not construct a cursor: `/catalogue/search` refuses one it did not issue with
 rather than silently restarting from the first page, which would turn a client bug into
 an endless paging loop.
 
+**A search cursor belongs to the `q` it was issued for.** Send it back with the same `q`.
+Sending it with a different one is a 422: a relevance score is only meaningful against
+the query that produced it, so the alternative would be a page that is the next page of
+neither query - wrong in a way no client could detect.
+
 `limit` above 200 or below 1 is a 422, not a silent clamp: a clamped limit makes the
 response a lie about what was asked for, and a client that pages by "did I receive
 `limit` items?" then stops early.
@@ -95,7 +100,8 @@ response a lie about what was asked for, and a client that pages by "did I recei
   `UNIQUE`, the ordering is total, so no entry can be skipped or served twice across a
   page boundary even while the catalogue is being edited.
 - `/catalogue/search` orders by relevance descending, `business_key` ascending within a
-  tie, and its cursor is `<score>:<business_key>`.
+  tie, and its cursor is `<score>:<query digest>:<business_key>`. The digest is what binds
+  it to `q`; it is not a signature, and the cursor is not a credential.
 
 ## Search
 
@@ -129,15 +135,27 @@ user-supplied text (FR-44, NFR-04, NFR-26).
 | Status | When |
 |---|---|
 | 401 | A credential was presented and could not be verified. Sending none is not an error. |
-| 404 | No published entry has this business key - including one that exists but is not published. |
-| 422 | A malformed `business_key`, a blank `q`, a cursor this API did not issue, or a `limit` out of range. Also a stored FSN that is not renderable (below). |
+| 404 | No published entry has this business key - including one that exists but is not published. Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
+| 422 | A malformed `business_key`, a blank `q`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
+| 500 | A published code binding's stored FSN is not renderable (below). Only `/catalogue/entries/{business_key}` and its `/bindings` sub-resource can produce it. |
 
-The last 422 is worth calling out because it is a *data* defect rather than a caller
-mistake. `display_term` is derived from the stored FSN by FR-83's single sanctioned
+Every status each endpoint can produce is declared in `docs/api/openapi.json`, and only
+the ones it can actually produce - so a generated client (#147) has no branch for a
+response that never arrives.
+
+The 500 is worth calling out, because it is the one error here that is not a caller
+mistake at all. `display_term` is derived from the stored FSN by FR-83's single sanctioned
 strip, which refuses a value carrying no semantic tag - by FR-82 every stored `fsn` came
 from the terminology server, and a served FSN always has one. The API fails loudly for
 that entry rather than blanking the label, because a blanked label hides a corrupted
-binding indefinitely. It is logged at `WARNING`, unlike every other refusal here.
+binding indefinitely.
+
+It is deliberately a 5xx and not a 422 even though the underlying check is a validation
+refusal: the request was well-formed and the fault is entirely in the platform's own
+stored data. A 422 would tell a vendor's client that *it* sent something wrong, so the
+client would neither retry nor escalate - and getting an administrator to look at the
+binding is the entire purpose of failing loudly. Retrying will not clear it. It is logged
+at `ERROR`, unlike every other refusal here.
 
 ## Rate limiting and caching
 

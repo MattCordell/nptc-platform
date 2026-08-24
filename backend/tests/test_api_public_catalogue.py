@@ -267,6 +267,46 @@ def test_display_term_has_its_semantic_tag_stripped_exactly_once(
     assert active["display_term"] != "Microscopy"
 
 
+@pytest.mark.req("FR-83")
+@pytest.mark.integration
+def test_an_unrenderable_stored_fsn_is_a_500_not_a_422(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """An FSN that is not a served FSN is a *server-side data* fault, and the
+    status has to say so.
+
+    The underlying refusal (`NotAServedFSNError`) is a validation error
+    carrying `http_status = 422`, which is right on a write path where the
+    caller supplied the FSN. Serving that same 422 here would be actively
+    counterproductive: the request is a well-formed `GET` on a valid business
+    key, so a vendor's client reads 422 as "I sent something wrong", does not
+    retry, and files the problem against itself - while FR-83's entire reason
+    for failing loudly is to get an administrator to look at the binding. So
+    the read path reports 5xx.
+
+    Both routes that render a `display_term` are asserted, because the strip
+    happens in one shared helper and covering only the detail route would let
+    the sub-resource regress unnoticed. The body still carries the fixed
+    client-facing sentence and, per this module's no-leak rules, no internal
+    identifier.
+    """
+    _seed.corrupt_stored_fsn(api.session, seeded.canonical)
+
+    for path in (
+        f"/catalogue/entries/{seeded.canonical}",
+        f"/catalogue/entries/{seeded.canonical}/bindings",
+    ):
+        response = api.get(path)
+        assert response.status_code == 500, f"{path}: {response.status_code} {response.text}"
+        assert response.json()["detail"]
+        assert _seed.CORRUPT_FSN not in response.text
+
+    # And the sub-resources that do not render a display term are unaffected -
+    # one corrupted binding must not take the whole entry's API down.
+    assert api.get(f"/catalogue/entries/{seeded.canonical}/designations").status_code == 200
+    assert api.get(f"/catalogue/entries/{seeded.canonical}/properties").status_code == 200
+
+
 @pytest.mark.req("FR-77")
 @pytest.mark.integration
 def test_property_values_are_rendered_through_the_datatype_registry(

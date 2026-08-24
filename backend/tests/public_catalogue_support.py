@@ -41,6 +41,7 @@ import random
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
@@ -333,6 +334,37 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
     session.flush()
 
     return seeded
+
+
+#: A stored FSN with no trailing parenthesised group, so `render_display_term`
+#: refuses it (FR-83's first defensive assertion). Not blank - `fsn` has a
+#: `length(btrim(fsn)) > 0` CHECK - and deliberately a value that looks
+#: entirely plausible, because that is what a real corrupted row looks like:
+#: an already-stripped display term written back into the column.
+CORRUPT_FSN = "Microscopy"
+
+
+def corrupt_stored_fsn(session: Session, business_key: str) -> None:
+    """Replaces the entry's active binding FSN with one that is not a served
+    FSN (FR-82's guarantee broken), for the read-path failure case.
+
+    Written with a Core `UPDATE` rather than by loading the model, because
+    `code_binding` carries no `@validates` hook on `fsn` (it is stored exactly
+    as served) and there is therefore nothing to bypass - the point is only to
+    produce the row a corrupted catalogue would have.
+    """
+    entry_id = session.execute(
+        select(CatalogueEntry.id).where(CatalogueEntry.business_key == business_key)
+    ).scalar_one()
+    session.execute(
+        update(CodeBinding)
+        .where(
+            CodeBinding.entry_id == entry_id,
+            CodeBinding.status == CodeBindingStatus.ACTIVE.value,
+        )
+        .values(fsn=CORRUPT_FSN)
+    )
+    session.flush()
 
 
 def unused_business_key() -> str:

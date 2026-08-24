@@ -121,18 +121,8 @@
               }
             }
           },
-          "404": {
-            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
             "content": {
               "application/json": {
                 "schema": {
@@ -192,10 +182,10 @@
                   "type": "null"
                 }
               ],
-              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one.",
+              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` it was issued for - sending it with a different `q` is a 422, not a meaningless page.",
               "title": "After"
             },
-            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one."
+            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` it was issued for - sending it with a different `q` is a 422, not a meaningless page."
           }
         ],
         "responses": {
@@ -219,18 +209,8 @@
               }
             }
           },
-          "404": {
-            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
             "content": {
               "application/json": {
                 "schema": {
@@ -298,7 +278,17 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -366,7 +356,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
             "content": {
               "application/json": {
                 "schema": {
@@ -435,7 +425,17 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -503,7 +503,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue, or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
             "content": {
               "application/json": {
                 "schema": {
