@@ -46,11 +46,24 @@ term and its active designations - and aggregates per entry with
 result scored by its best match, not five results.
 
 The similarity threshold is `pg_trgm`'s own default, `0.3`, kept rather than invented.
-It is stated **twice**: `set_limit()` sets it for the `%` operator, and the statement's
-own `HAVING` re-asserts `MAX(score) >= :threshold` directly. `set_limit` is
-connection-scoped, connections come from a pool and outlive a request, so the `HAVING`
-is what makes the result set correct independently of session state; the `set_limit`
-call is then only an index-selectivity hint.
+It is stated **twice**: the GUC is set for the `%` operator, and the statement's own
+`HAVING` re-asserts `MAX(score) >= :threshold` directly.
+
+The GUC is set with `set_config('pg_trgm.similarity_threshold', ..., true)` - the
+`is_local => true` matters. `set_limit()` sets it at *session* scope, and since
+connections come from a pool and outlive a request, that would leave the threshold in
+force for the next caller handed that connection. `set_config` with `is_local` reverts on
+commit. It is used rather than the more direct `SET LOCAL` only because `SET` accepts no
+bound parameter and NFR-22 forbids interpolating the value into the statement text.
+
+The `HAVING` is then a genuine but *partial* second line of defence, and the distinction
+is worth recording because the loose claim ("correct independently of session state") is
+false. `HAVING` can only discard rows the inner `%` scans already returned. So it
+protects against a threshold left **lower** than this module's - the extra weak matches
+are filtered back out - and cannot protect against one left **higher**, which narrows the
+index scans themselves so that no `HAVING` can recover a row that was never scanned. The
+transaction scoping is what keeps the second case from arising; the `HAVING` is what stops
+a future code path setting the GUC lower from silently broadening this query.
 
 **`nptc_search_text` is not the stored business logic PRD §14.1 bans**, and it is not
 even the narrow exception ADR-0023 argued for. It encodes no catalogue rule: it
@@ -76,14 +89,31 @@ expression.
 
 `GET /catalogue/entries` orders by `business_key` and takes `?limit=&after=<business_key>`.
 `GET /catalogue/search` orders by `(score DESC, business_key ASC)` and takes
-`?after=<score>:<business_key>`. Both return `{items, next_cursor}`, with `next_cursor`
-`null` exactly on the last page - decided by fetching `limit + 1` rows and discarding
-the extra, never by a `COUNT(*)`.
+`?after=<score>:<query digest>:<business_key>`. Both return `{items, next_cursor}`, with
+`next_cursor` `null` exactly on the last page - decided by fetching `limit + 1` rows and
+discarding the extra, never by a `COUNT(*)`.
 
 The cursor is derived from values the client has just been served. It carries no
 internal id, no row offset and no encoded server state, so it needs no signing, no
 expiry and no server-side storage, and a client can inspect it and see nothing it did
 not already know.
+
+Both cursors' key half is validated against `BUSINESS_KEY_PATTERN` before it reaches a
+query - the search cursor in `_parse_cursor`, the entries cursor by the query parameter's
+own `pattern`. A malformed cursor is a 422, not a page starting from "whatever this sorts
+after", because the latter leaves a client corrupting its own cursor with no way to
+notice.
+
+**The search cursor is bound to `q`.** Its middle part is a 64-bit BLAKE2s digest of the
+query that minted it, and a mismatch is a 422. This is not a signature and is not keyed:
+a cursor grants nothing a caller could not ask for with `?q=` directly, so there is
+nothing to authenticate and no secret to manage. It detects a client bug. Without it,
+replaying a cursor under a different `q` compares the new query's scores against the old
+query's boundary and serves a window that is the next page of neither - silently, and in a
+shape (a short or empty page) a client cannot tell from a real result. Documenting the
+hazard in `public-api.md` instead was considered and rejected: the codebase refuses
+malformed cursors, blank queries and out-of-range limits rather than guessing, and a
+silently wrong result set is a worse outcome than any of those.
 
 `business_key` is the tie-break on the search ordering, and that is load-bearing rather
 than tidy: trigram scores are floats over a catalogue with many similar terms and tie

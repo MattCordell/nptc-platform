@@ -117,7 +117,7 @@ $$;
 DROP_SCTID_VALIDATION_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_sctid_is_valid(text);"
 
 #: FR-14/FR-15/FR-20 (issue #142): the search normalisation primitive the two
-#: trigram indexes in migration ``0011`` are built over, and the one every
+#: trigram indexes in migration ``0012`` are built over, and the one every
 #: search predicate must apply to its own input so index and query agree.
 #:
 #: **Not the stored logic PRD 14.1 warns against.** Unlike

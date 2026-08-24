@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.orm import Session
 
 _NORMALISE_SQL = text("SELECT nptc_search_text(:value)")
 
@@ -175,7 +176,13 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     # this transaction's own uncommitted rows.
     db.execute(text("ANALYZE catalogue_entry"))
     db.execute(text("ANALYZE designation"))
-    db.execute(text("SELECT set_limit(CAST(:threshold AS real))"), {"threshold": 0.3})
+    # `is_local => true`, matching what `nptc.catalogue.search` itself does:
+    # a session-scoped `set_limit()` here would survive this test's rollback
+    # and change the threshold for every later test handed this connection.
+    db.execute(
+        text("SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"),
+        {"threshold": 0.3},
+    )
     # LOCAL: reverted with this test's own transaction, so it cannot leak
     # into another test sharing the session-scoped container.
     db.execute(text("SET LOCAL enable_seqscan = off"))
@@ -201,3 +208,57 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     # predicate is applied by hand.
     assert plan.count("Index Cond: (nptc_search_text(") == 2, plan
     assert "Filter: (nptc_search_text(" not in plan, plan
+
+
+#: Deliberately not `nptc.catalogue.search.SIMILARITY_THRESHOLD`. It stands
+#: in for "whatever the previous user of this pooled connection left behind",
+#: and it has to differ from the module's own threshold for the assertion
+#: below to be able to fail: a leak of 0.3 onto a connection whose threshold
+#: was already `pg_trgm`'s 0.3 default is invisible.
+_FOREIGN_THRESHOLD = "0.91"
+
+
+@pytest.mark.req("FR-20")
+@pytest.mark.integration
+def test_the_similarity_threshold_reverts_when_the_transaction_ends(
+    app_engine: Engine,
+) -> None:
+    """`pg_trgm.similarity_threshold` must be set at *transaction* scope, not
+    session scope.
+
+    This is why `nptc.catalogue.search` uses `set_config(..., is_local =>
+    true)` rather than `set_limit()`. `set_limit` sets the GUC for the
+    session, so the value survives the commit and follows the connection back
+    into the pool - and the next, unrelated request handed that connection
+    then runs its own `%` scans against a threshold it never asked for.
+
+    Written against a connection of its own with real commits, because that
+    is the only place the distinction is observable: inside the shared
+    `app_db` transaction nothing ever commits, so a session-scoped and a
+    transaction-scoped setting behave identically. The connection is
+    invalidated rather than returned to the pool, so this test's own sentinel
+    cannot become the leak it is testing for.
+    """
+    connection = app_engine.connect()
+    try:
+        # Session scope on purpose - the state a leak would look like.
+        connection.execute(text(f"SET pg_trgm.similarity_threshold = {_FOREIGN_THRESHOLD}"))
+        connection.commit()
+
+        with Session(bind=connection) as session:
+            from nptc.catalogue.search import search_entries
+
+            search_entries(session, q="a query that need not match anything", limit=1)
+            session.commit()
+
+        after = connection.execute(
+            text("SELECT current_setting('pg_trgm.similarity_threshold')")
+        ).scalar_one()
+    finally:
+        connection.invalidate()
+        connection.close()
+
+    assert after == _FOREIGN_THRESHOLD, (
+        "the search threshold outlived its transaction - it is being set at session "
+        f"scope, and every later request on this connection now sees {after}"
+    )

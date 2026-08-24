@@ -124,7 +124,7 @@
   phase: p1
   title: "Search MUST tolerate typographical error and word-order variation"
   status: in-progress
-  notes: "Issue #142 (ADR-0024): trigram similarity, so a transposition or a dropped letter still scores - the case a tsvector search cannot serve at all, since a misspelling stems to a different lexeme and scores exactly zero. Threshold 0.3 (pg_trgm's own default), re-asserted in the statement's HAVING because set_limit is connection-scoped and connections are pooled. Word-order variation is served incidentally: a trigram set is unordered. Stays in-progress alongside FR-14, whose remaining searchable fields it inherits."
+  notes: "Issue #142 (ADR-0024): trigram similarity, so a transposition or a dropped letter still scores - the case a tsvector search cannot serve at all, since a misspelling stems to a different lexeme and scores exactly zero. Threshold 0.3 (pg_trgm's own default), set at transaction scope via set_config(..., is_local => true) so it cannot follow a pooled connection to the next caller, and re-asserted in the statement's HAVING - which guards against a threshold left lower than this module's, but cannot recover rows a raised one kept the index scans from ever returning. Word-order variation is served incidentally: a trigram set is unordered. Stays in-progress alongside FR-14, whose remaining searchable fields it inherits."
 - id: "FR-16"
   priority: MUST
   phase: p1
