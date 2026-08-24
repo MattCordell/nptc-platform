@@ -1,7 +1,7 @@
 # The public catalogue API (FR-20)
 
-The read-only, unauthenticated JSON API over the approved catalogue, landed with issue
-#142. Its audience is LIS and PMS vendors, not this platform's own SPA - so this
+The read-only, unauthenticated JSON API over the approved catalogue, landed with issue #142.
+Its audience is LIS and PMS vendors, not this platform's own SPA - so this
 document is the contract, and `docs/api/openapi.json` (generated from the app and
 committed, drift-tested by `backend/tests/test_openapi_document.py`) is the machine-
 readable form of it.
@@ -114,7 +114,7 @@ active designations, and returns one result per entry scored by its best match.
   catalogue.
 
 `score` is a trigram similarity between 0 and 1. It is comparable *within* one response
-- it is what the ordering is - and is not a quality rating of the entry.
+(it is what the ordering is), and is not a quality rating of the entry.
 
 **Not searched here:** the FSN, the AU preferred term, and the SNOMED code itself.
 Exact-code lookup is FR-17's own endpoint, owned by #140; faceted filtering over
