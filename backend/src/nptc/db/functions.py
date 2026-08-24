@@ -1,5 +1,12 @@
-"""The database's Verhoeff check-digit function for SNOMED CT identifiers
-(FR-06, issue #48).
+"""The repository's versioned database functions.
+
+Two, with quite different justifications: ``nptc_sctid_is_valid`` (FR-06,
+issue #48) below, and ``nptc_search_text`` (FR-14/FR-20, issue #142) at the
+foot of this module - each carries its own argument for why it exists in the
+database at all, and neither is a licence for the next one.
+
+**``nptc_sctid_is_valid`` - the Verhoeff check-digit function for SNOMED CT
+identifiers (FR-06, issue #48).**
 
 PRD 14.1 bans business logic living in database triggers/functions because it
 is invisible to the test suite and to code review. This function is a
@@ -108,3 +115,57 @@ $$;
 """
 
 DROP_SCTID_VALIDATION_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_sctid_is_valid(text);"
+
+#: FR-14/FR-15/FR-20 (issue #142): the search normalisation primitive the two
+#: trigram indexes in migration ``0012`` are built over, and the one every
+#: search predicate must apply to its own input so index and query agree.
+#:
+#: **Not the stored logic PRD 14.1 warns against.** Unlike
+#: ``nptc_sctid_is_valid`` above - a validity *decision*, argued for
+#: individually in ADR-0023 - this encodes no catalogue rule at all: it
+#: lowercases and strips diacritics, nothing more. Nothing reads it but the
+#: expression indexes and the matching predicate in
+#: ``nptc.catalogue.search``, and ``docs/adr/0024-catalogue-search-and-
+#: pagination.md`` records the decision. It has to exist as a function
+#: because an expression index's expression must be ``IMMUTABLE``.
+#:
+#: **Why the dictionary is pinned.** ``unaccent(text)``, the one-argument
+#: form, is only ``STABLE``: it resolves the dictionary through the current
+#: ``search_path``, so its result depends on session state and Postgres
+#: rightly refuses it in an index expression. The two-argument form takes an
+#: explicit ``regdictionary`` and, with the dictionary named as a constant
+#: here, the composition genuinely is immutable for a fixed dictionary
+#: definition. That "for a fixed definition" caveat is the whole cost of the
+#: marking: if the ``unaccent`` dictionary's rule file is ever changed
+#: underneath a running database, both indexes must be ``REINDEX``ed - see
+#: ``docs/operations/upgrade.md``. ``STRICT`` so a NULL input is NULL rather
+#: than folding to the empty string, which would make every NULL-termed row
+#: a trigram match for every short query.
+#:
+#: **Both the function and the dictionary are schema-qualified ``public.``,
+#: and that is load-bearing, not tidiness.** While building or maintaining
+#: an expression index, PostgreSQL evaluates the expression with a secure
+#: ``search_path`` of ``pg_catalog, pg_temp`` - an attack-surface measure
+#: that also means an unqualified ``unaccent(...)`` or
+#: ``'unaccent'::regdictionary`` inside an inlined index expression resolves
+#: against neither ``public`` nor the caller's path, and
+#: ``CREATE INDEX`` fails outright with "text search dictionary
+#: \"unaccent\" does not exist". ``0001_extensions_and_app_role.py`` creates
+#: the extension with no ``SCHEMA`` clause, so both objects are in
+#: ``public``; qualifying them here is what makes the function usable from
+#: an index expression at all. Qualification is preferred over a
+#: ``SET search_path`` clause on the function, which would make it
+#: non-inlinable and so unusable as an indexed expression for the planner.
+CREATE_SEARCH_TEXT_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION nptc_search_text(value text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+SELECT lower(public.unaccent('public.unaccent'::regdictionary, value))
+$$;
+"""
+
+DROP_SEARCH_TEXT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_search_text(text);"

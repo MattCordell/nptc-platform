@@ -26,7 +26,7 @@ CONTRIBUTING.md's "A schema change's prose has one home each".
 | `backend/src/nptc/db/models/catalogue_entry.py` | The `catalogue_entry` table (issue #46) |
 | `backend/src/nptc/db/models/designation.py` | The `designation` table (issue #47) |
 | `backend/src/nptc/db/models/code_binding.py` | The `code_binding` table (issue #48) |
-| `backend/src/nptc/db/functions.py` | `nptc_sctid_is_valid`, the database-level Verhoeff check (issue #48, ADR-0023) |
+| `backend/src/nptc/db/functions.py` | `nptc_sctid_is_valid`, the database-level Verhoeff check (issue #48, ADR-0023); `nptc_search_text`, the search normalisation primitive (issue #142, ADR-0024) |
 | `backend/src/nptc/db/models/local_code_system.py` | The `local_code_system` table (issue #56) |
 | `backend/src/nptc/db/models/local_code.py` | The `local_code` table (issue #56) |
 | `backend/src/nptc/db/models/local_code_snomed_map.py` | The `local_code_snomed_map` table (issue #56) |
@@ -952,6 +952,55 @@ will be excluded from Alembic autogenerate and this file's own round-trip finger
 `include_object` hook in `env.py` when #54 lands - without it, the first index #54 creates
 would fail the downgrade/upgrade comparison in `test_db_round_trip.py`.
 
+## Search normalisation and the trigram indexes (issue #142, FR-14, FR-15)
+
+Migration `0012_catalogue_search_indexes.py` adds no table and no column - only the
+function the public catalogue search matches through, and the two indexes built over it.
+See [ADR-0024](../adr/0024-catalogue-search-and-pagination.md) for the decision record
+and [`public-api.md`](public-api.md) for the endpoint behaviour.
+
+`nptc_search_text(value text) RETURNS text` is
+`lower(public.unaccent('public.unaccent'::regdictionary, value))`, declared `LANGUAGE sql
+IMMUTABLE STRICT PARALLEL SAFE`. It is the *second* database function in the schema, and
+unlike `nptc_sctid_is_valid` it decides nothing - it lowercases and strips diacritics, so
+it is a normalisation primitive rather than the stored business logic PRD 14.1 warns
+about. It exists as a function only because an expression index's expression must be
+`IMMUTABLE`.
+
+Three details in that definition are load-bearing, and each has a failure mode if
+dropped:
+
+- **`IMMUTABLE` requires the two-argument `unaccent`.** The one-argument form is only
+  `STABLE` (it resolves its dictionary through `search_path`), and Postgres rightly
+  refuses a `STABLE` function in an index expression.
+- **Both the function and the dictionary are `public.`-qualified.** While building or
+  maintaining an expression index, Postgres evaluates the expression under a secure
+  `search_path` of `pg_catalog, pg_temp`. An unqualified `unaccent(...)` or
+  `'unaccent'::regdictionary` therefore resolves against nothing and `CREATE INDEX` fails
+  outright with `text search dictionary "unaccent" does not exist`. Qualification is used
+  in preference to a `SET search_path` clause on the function, which would make it
+  non-inlinable and so useless to the planner as an indexed expression.
+- **`STRICT`**, so a `NULL` input is `NULL` rather than the empty string - otherwise every
+  `NULL`-termed row would share a trigram set with every other.
+
+| Index | Table | Expression | Partial |
+|---|---|---|---|
+| `ix_catalogue_entry_preferred_term_trgm` | `catalogue_entry` | `nptc_search_text(preferred_term) gin_trgm_ops` | No - #149's maintenance search covers drafts too |
+| `ix_designation_term_trgm` | `designation` | `nptc_search_text(term) gin_trgm_ops` | `WHERE status = 'active'` - search never matches a retired synonym |
+
+Both are declared in the models' `__table_args__` **as well as** in the migration, with
+the operator class supplied via `postgresql_ops` rather than appended to the expression
+text. Both halves of that matter: without the model declaration, `compare_metadata`
+reflects the indexes and proposes dropping them on every autogenerate run
+(`test_db_migrations.py::test_upgrade_head_matches_models` fails); with the operator class
+inside the expression string, alembic warns that it cannot compare the expression and
+skips the comparison entirely, which is a silently weaker check rather than a failure.
+
+The query predicate must apply `nptc_search_text(...)` to the column exactly as the index
+expression does, and must match with the `%` operator - a GIN trigram index cannot
+accelerate a comparison against a `similarity()` result. Both spellings return identical
+answers, so `backend/tests/test_db_search_index.py` `EXPLAIN`s the real statement and
+asserts an `Index Cond` on each trigram index; nothing else in the suite would notice.
 **`discipline`/`subgroup` name the local code systems #56 lands below.** `nptc.db.bootstrap`'s
 `key="discipline"`/`key="subgroup"` rows set `binding_target = BindingTarget.LOCAL_CODE_SYSTEM`
 with no `value_set_uri` - deliberately FK-less, so this property metadata was representable
@@ -1098,10 +1147,11 @@ left to a follow-up rather than edited here, alongside #53's own already-merged 
 
 ## Extensions
 
-`pg_trgm` and `unaccent` are created in `0001_extensions_and_app_role.py` - #138's search
-depends on both. Both require Postgres superuser (or a role with `CREATEDB`/appropriate
-grant) to install; see [`upgrade.md`](../operations/upgrade.md) for the operator-facing
-note.
+`pg_trgm` and `unaccent` are created in `0001_extensions_and_app_role.py` - the public
+catalogue search (issue #142) depends on both, as does #138's UI. Both require Postgres
+superuser (or a role with `CREATEDB`/appropriate grant) to install; see
+[`upgrade.md`](../operations/upgrade.md) for the operator-facing note, including the
+`REINDEX` obligation if the `unaccent` dictionary ever changes.
 
 ## Test harness
 

@@ -170,6 +170,19 @@ class Designation(Base):
         # in the query itself, so a plain btree (not partial) index is
         # sufficient here.
         Index("ix_designation_term_key", "term_key"),
+        # FR-14/FR-15, issue #142: the synonym half of the public catalogue
+        # search - see `CatalogueEntry`'s own trigram index for why this is
+        # declared in the model as well as in migration 0012. Partial on
+        # `status = 'active'`, unlike the entry-side index: a retired
+        # synonym is history, never a way into the catalogue, so search
+        # never matches one.
+        Index(
+            "ix_designation_term_trgm",
+            text("nptc_search_text(term)"),
+            postgresql_using="gin",
+            postgresql_ops={"nptc_search_text(term)": "gin_trgm_ops"},
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

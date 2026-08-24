@@ -117,20 +117,20 @@
   priority: MUST
   phase: p1
   title: "Anonymous and authenticated users can search the approved catalogue across preferred terms, synonyms, the FSN, the AU preferred term and the SNOMED code in one query field"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #142 (ADR-0024): pg_trgm trigram search over an IMMUTABLE unaccent wrapper (nptc_search_text, migration 0012), matching an entry's own preferred term and its active designations in one query field, insensitive to case and diacritics, with one result per entry scored by its best match. Stays in-progress rather than implemented: FR-14 names five searchable fields and this covers two. The FSN and the AU preferred term are not yet in the union (two more % scans and two more indexes), and the SNOMED code itself is FR-17's exact-code lookup, owned by #140 - ADR-0024's Consequences records the deferral and why."
 - id: "FR-15"
   priority: MUST
   phase: p1
   title: "Search MUST tolerate typographical error and word-order variation"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #142 (ADR-0024): trigram similarity, so a transposition or a dropped letter still scores - the case a tsvector search cannot serve at all, since a misspelling stems to a different lexeme and scores exactly zero. Threshold 0.3 (pg_trgm's own default), set at transaction scope via set_config(..., is_local => true) so it cannot follow a pooled connection to the next caller, and re-asserted in the statement's HAVING - which guards against a threshold left lower than this module's, but cannot recover rows a raised one kept the index scans from ever returning. Word-order variation is served incidentally: a trigram set is unordered. Stays in-progress alongside FR-14, whose remaining searchable fields it inherits."
 - id: "FR-16"
   priority: MUST
   phase: p1
   title: "Results can be filtered by any property marked filterable, presented as faceted filters with result counts"
   status: planned
-  notes: ""
+  notes: "Untouched by issue #142, which serves property values on an entry but offers no filtering and no facets: /catalogue/entries takes only limit and after, and /catalogue/search only q. The registry half FR-16 depends on now exists (property_definition.filterable, #51; the datatype handlers' supported_filter_ops/filter_clause, #53), so what is missing is the query surface and the facet counts, owned by #138. Stays planned."
 - id: "FR-17"
   priority: MUST
   phase: p1
@@ -153,8 +153,8 @@
   priority: MUST
   phase: p1
   title: "A documented, versioned, read-only JSON API over the approved catalogue, available without authentication, with the same content as the public UI"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #142 (ADR-0024): six GET routes under /api/v1/catalogue, served to an anonymous caller with no credential - entries (keyset-paged), entry detail, designations, bindings, properties, and search. Documented in docs/architecture/public-api.md and in docs/api/openapi.json, which is generated from the app and drift-tested. Only 'active' entries are visible anywhere (nptc.catalogue.queries.PUBLIC_STATUSES); draft/deprecated/withdrawn are absent from list and search and 404 identically to a never-minted key, so the response cannot confirm an unpublished entry exists. The two no-leak criteria are asserted whole-body against raw response text for every route under the prefix, with positive controls for both regexes (backend/tests/test_api_public_response_hygiene.py): no internal UUID in any body (NFR-04), and no SNOMED code serialised as a JSON number (FR-06). Rate limiting and caching (FR-22) are deliberately out of scope and not implemented."
 - id: "FR-21"
   priority: SHOULD
   phase: p1
@@ -759,7 +759,7 @@
   phase: p1
   title: "Every request authorised server-side against the internal user record"
   status: in-progress
-  notes: "Issue #44 (ADR-0019): nptc.auth.principal.principal_for derives every Principal's permissions from user_role grants read via the session (never from a token claim - the realm declares no roles, ADR-0014), and nptc.auth.authorisation.require_permission/may_act_on are the only sanctioned checks (backend/tests/test_authorisation_guard.py's AST guard). 'Every request' is not yet fully true: backend/src/nptc/api/ has zero routes, so there is no request pipeline yet to wire this into - that lands with #142/#143. The check API, Principal derivation (including suspended/closed/manual-link), and the negative-authorisation harness are all proven now and ready for that wiring."
+  notes: "Issue #44 (ADR-0019): nptc.auth.principal.principal_for derives every Principal's permissions from user_role grants read via the session (never from a token claim - the realm declares no roles, ADR-0014), and nptc.auth.authorisation.require_permission/may_act_on are the only sanctioned checks (backend/tests/test_authorisation_guard.py's AST guard). Issue #142 wires this into a real request pipeline for the first time: all seven routes now served (GET /auth/me plus six under /catalogue) resolve a Principal server-side and, for the catalogue routes, check permission_dep(Permission.CATALOGUE_BROWSE) - a permission, never a role name (FR-44). Stays in-progress: every route that exists is authorised server-side, but the authenticated and write surfaces (#143, #149/#150) have not landed, so 'every request' is a claim about a surface that is still mostly unbuilt."
 - id: "NFR-21"
   priority: MUST
   phase: p5
@@ -771,7 +771,7 @@
   phase: p1
   title: "Parameterised queries throughout"
   status: in-progress
-  notes: "backend/tests/test_sql_parameterisation.py (issue #33, ADR-0011) statically enforces that no SQL text reaching text()/.execute()/.exec_driver_sql()/op.execute() is built from an f-string, %/+ concatenation, or .format(), and that no migration ever grants ALL on the audit_event table - with its own positive control proving the walker actually matches something rather than silently rotting into a check that always passes. Stays in-progress: the guard is real and enforced from here on, but the half of NFR-22 carrying the actual risk (FR-13's JSONB filtering against registry-validated keys) has no code yet, no registry (#51) and no search (#138)."
+  notes: "backend/tests/test_sql_parameterisation.py (issue #33, ADR-0011) statically enforces that no SQL text reaching text()/.execute()/.exec_driver_sql()/op.execute() is built from an f-string, %/+ concatenation, or .format(), and that no migration ever grants ALL on the audit_event table - with its own positive control proving the walker actually matches something rather than silently rotting into a check that always passes. Issue #142 adds the first raw statement in the codebase written for the planner rather than the ORM (nptc.catalogue.search._SEARCH_SQL, the trigram search): a module-level literal with every value bound, so it satisfies the guard by construction. Stays in-progress: the half of NFR-22 carrying the real risk is FR-13's JSONB filtering against registry-validated keys, and the registry now exists (#51/#53) while the filter surface (#138) does not."
 - id: "NFR-23"
   priority: MUST
   phase: p5

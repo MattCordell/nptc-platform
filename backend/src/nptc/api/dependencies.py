@@ -36,7 +36,10 @@ from nptc.auth.permissions import Permission
 from nptc.auth.principal import ANONYMOUS, Principal, principal_for
 from nptc.auth.tokens import TokenVerifier
 from nptc.db.session import session_scope
+from nptc.registry.datatypes import build_builtin_handlers
+from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.settings import ApiSettings, AuthSettings
+from nptc_shared.terminology import OntoserverClient, TerminologyConfig
 
 _BEARER_PREFIX = "bearer "
 
@@ -57,6 +60,46 @@ def get_token_verifier() -> TokenVerifier:
     perform OIDC discovery (an outbound HTTP call), and the `SigningKeys`
     cache it wraps is only useful if it outlives a single request."""
     return TokenVerifier.from_settings(get_auth_settings())
+
+
+@lru_cache(maxsize=1)
+def get_datatype_registry() -> DatatypeRegistry:
+    """The FR-77 datatype handler registry, built once per process.
+
+    Built once for the same reason `get_token_verifier` is: the `code`
+    handler wraps an `OntoserverClient`, which owns an HTTP connection pool
+    that is only useful if it outlives a request. Construction itself opens
+    no socket and performs no discovery.
+
+    **Called once by `nptc.api.app.create_app`, deliberately.** Not to warm
+    the cache - construction is cheap - but because
+    `TerminologyConfig.from_env` raises `TerminologyConfigError` on a
+    malformed `NPTC_TX_*` value, and `lru_cache` does not cache a raised
+    exception. Left to the first request, a deployment typo would surface
+    as a 500 on a public read endpoint, per request, indefinitely; called
+    at app construction it is a start-up failure instead. `nptc.api.errors`
+    still maps `TerminologyConfigError` to a 500 for the paths that bypass
+    the factory (a test app, a dependency override).
+
+    The registry is what keeps the property-serialisation path free of any
+    datatype `switch` (ADR-0013, `backend/tests/test_datatype_dispatch.py`):
+    a caller resolves a handler by datatype and calls it, and the only code
+    that knows what the datatypes *are* is the handler package's own
+    manifest.
+    """
+    return DatatypeRegistry(
+        build_builtin_handlers(
+            HandlerDeps(
+                terminology_client=OntoserverClient(TerminologyConfig.from_env()),
+                # FR-90/#56: no `LocalCodeLookup` implementation exists yet,
+                # and `CodeHandler` raises `UnsupportedBindingError` rather
+                # than silently passing a local-code binding it cannot check.
+                # A loud refusal is the documented behaviour (ADR-0013 open
+                # question 1), not a gap introduced here.
+                local_code_lookup=None,
+            )
+        )
+    )
 
 
 def get_session() -> Iterator[Session]:
