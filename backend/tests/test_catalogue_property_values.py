@@ -14,12 +14,13 @@ import uuid
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import ChangelogNoteError
-from nptc.catalogue.entries import create_entry
+from nptc.catalogue.entries import allocate_business_key, create_entry
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
     PropertyDefinitionNotFoundError,
@@ -157,6 +158,40 @@ def test_save_property_values_inserts_rows_and_emits_one_audit_event(
         select(AuditEvent).order_by(AuditEvent.sequence.desc()).limit(1)
     ).scalar_one()
     assert event.action == "property_value.set"
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_save_property_values_flushes_an_unflushed_entry_first(app_session: Session) -> None:
+    """A transient `entry` (added to the session, never flushed) has no
+    identity yet - `entry.id` is read into every query and insert this
+    service issues, so without flushing first the delete/insert would
+    either match zero existing rows or try to write `entry_id=NULL`.
+    Mirrors `test_create_binding_flushes_an_unflushed_entry_before_
+    binding_it`'s identical hazard for the same "create the entry and its
+    dependent row in one transaction" call pattern. `_new_entry` (used by
+    every other test here) goes through `create_entry`, which always
+    flushes internally as part of its own audit write, so this is the one
+    test that builds `entry` directly to exercise the transient case."""
+    entry = CatalogueEntry(
+        business_key=allocate_business_key(app_session), preferred_term="Unflushed entry"
+    )
+    app_session.add(entry)
+    assert sa_inspect(entry).identity is None
+    prop = _new_string_property(app_session, key="an_unflushed_entry_prop", cardinality="0..*")
+
+    rows = save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        property_key=prop.key,
+        values=_inputs("x"),
+        reason="Writing a property against a not-yet-flushed entry",
+        registry=_registry(app_session),
+    )
+
+    assert entry.id is not None
+    assert rows[0].entry_id == entry.id
 
 
 @pytest.mark.req("FR-09")

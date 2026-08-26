@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from sqlalchemy import delete, select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -292,6 +293,16 @@ def save_property_values(
     Returns the newly inserted rows, ordered by ordinal.
     """
     validated_reason = validate_changelog_note(reason)
+
+    # `entry.id` is read into every query/insert below - a brand-new,
+    # not-yet-flushed `entry` has no identity yet, which would either match
+    # zero existing rows on a query that should have found some, or try to
+    # insert PropertyValue rows with a NULL entry_id. Flushing first, only
+    # when needed, closes that gap - mirrors `nptc.catalogue.bindings.
+    # create_binding`'s identical guard for the same "create the entry and
+    # its dependent row in one transaction" call pattern.
+    if not sa_inspect(entry).identity:
+        session.flush()
 
     definition = session.execute(
         select(PropertyDefinition).where(PropertyDefinition.key == property_key)
