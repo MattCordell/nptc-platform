@@ -18,11 +18,16 @@ export function useAnnounce(initialPoliteness: Politeness = "polite") {
     if (nextPoliteness) {
       setPoliteness(nextPoliteness);
     }
-    // Force a change even if the same text is announced twice in a row:
-    // some screen readers only announce on a text *change*, so an identical
-    // message with no reset would be silently swallowed the second time.
+    // Force a DOM text change even if the same message is announced twice
+    // in a row: some screen readers only announce on a text *change*, so
+    // setting the identical string again would otherwise be silently
+    // swallowed. Clearing via a plain `setMessage("")` and re-setting in a
+    // microtask does not reliably work - React's automatic batching can
+    // commit both updates together, in which case the DOM text never
+    // actually changes. A macrotask (`setTimeout`) runs strictly after the
+    // current commit has flushed, guaranteeing the "" render lands first.
     setMessage("");
-    queueMicrotask(() => setMessage(next));
+    window.setTimeout(() => setMessage(next), 0);
   }, []);
 
   return { message, politeness, announce };

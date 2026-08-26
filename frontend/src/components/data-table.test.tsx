@@ -70,6 +70,37 @@ describe("DataTable", () => {
     expect(within(row!).getByText("Full blood count")).toBeInTheDocument();
   });
 
+  it("treats only the first isRowHeader column as the row header when a caller declares two", () => {
+    const columnsWithTwoRowHeaders = [
+      { key: "id", header: "Code", isRowHeader: true, render: (row: Entry) => row.id },
+      {
+        key: "term",
+        header: "Requesting term",
+        isRowHeader: true,
+        render: (row: Entry) => row.term,
+      },
+      { key: "status", header: "Status", render: (row: Entry) => row.status },
+    ];
+
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={columnsWithTwoRowHeaders}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    // Exactly one <th scope="row"> per row - "term" degrades to a plain
+    // data cell rather than also becoming a row header.
+    expect(screen.getAllByRole("rowheader")).toHaveLength(ENTRIES.length);
+    expect(screen.getByRole("rowheader", { name: "NPTC-1" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("rowheader", { name: "Full blood count" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the empty state, not a headers-only table, when there are no rows", () => {
     render(
       <DataTable

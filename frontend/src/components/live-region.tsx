@@ -9,6 +9,12 @@ import type { Politeness } from "./use-announce.ts";
  *
  * Pairs with `useAnnounce` (`use-announce.ts`), which owns the message and
  * politeness state a screen sets when an async result arrives.
+ *
+ * Politeness is expressed via `role` alone (`status` -> implicit
+ * `aria-live="polite"`, `alert` -> implicit `aria-live="assertive"`), not
+ * an explicit `aria-live` attribute alongside it: pairing a live-region
+ * role with a conflicting explicit `aria-live` value is resolved
+ * inconsistently across screen readers.
  */
 export function LiveRegion({
   message,
@@ -19,8 +25,7 @@ export function LiveRegion({
 }) {
   return (
     <div
-      role="status"
-      aria-live={politeness}
+      role={politeness === "assertive" ? "alert" : "status"}
       aria-atomic="true"
       className="visually-hidden"
     >

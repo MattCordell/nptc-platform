@@ -38,10 +38,13 @@ describe("Field", () => {
     );
 
     const input = screen.getByLabelText("Requesting term");
-    const error = screen.getByRole("alert");
-    expect(error).toHaveTextContent("This field is required");
+    const error = screen.getByText("This field is required");
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAttribute("aria-describedby", error.id);
+    // Not role="alert" - the description is already reachable via
+    // aria-describedby, and an alert role on top of that double-announces
+    // it. A submit-time validation summary announces via LiveRegion instead.
+    expect(error).not.toHaveAttribute("role", "alert");
   });
 
   it("describes the control by both hint and error when both are present", () => {
@@ -57,7 +60,7 @@ describe("Field", () => {
 
     const input = screen.getByLabelText("Requesting term");
     const hint = screen.getByText("As it appears on the request form");
-    const error = screen.getByRole("alert");
+    const error = screen.getByText("Required");
     expect(input.getAttribute("aria-describedby")).toBe(`${hint.id} ${error.id}`);
   });
 

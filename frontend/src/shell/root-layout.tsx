@@ -39,9 +39,8 @@ function useFocusMainOnNavigation(mainRef: RefObject<HTMLElement | null>) {
  * main landmark, footer. Deliberately no `<h1>` here - each page owns its
  * own, so heading order stays sane as screens are added.
  *
- * Styling is out of scope for this issue (#148 owns the component baseline);
- * `shell.css` supplies only what the landmarks and skip link need to be
- * usable.
+ * Styling comes from `src/styles/app.css` (issue #148, ADR-0025) - see
+ * `docs/architecture/components.md` for the component baseline built on it.
  */
 export function RootLayout() {
   const mainRef = useRef<HTMLElement>(null);

@@ -37,6 +37,14 @@ export function DataTable<Row>({
   getRowKey,
   emptyState,
 }: DataTableProps<Row>) {
+  // Only the first `isRowHeader` column, if any, is actually treated as the
+  // row header - a caller declaring two would otherwise produce two
+  // <th scope="row"> per row, breaking the single-row-header association
+  // this component exists to guarantee. Deterministic rather than thrown:
+  // a rendering component degrading to "first one wins" is preferable to
+  // crashing a screen over a caller mistake in a column list.
+  const rowHeaderKey = columns.find((column) => column.isRowHeader)?.key;
+
   return (
     <table className="w-full border-collapse text-sm">
       <caption className="mb-2 text-left font-medium text-[var(--color-text)]">
@@ -66,7 +74,7 @@ export function DataTable<Row>({
           rows.map((row) => (
             <tr key={getRowKey(row)}>
               {columns.map((column) =>
-                column.isRowHeader ? (
+                column.key === rowHeaderKey ? (
                   <th
                     key={column.key}
                     scope="row"

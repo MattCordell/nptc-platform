@@ -10,7 +10,10 @@ type FieldProps = {
   hint?: ReactNode;
   /** Validation message. When present, the field is rendered in its error
    * state: `aria-invalid="true"` on the control, and the message linked via
-   * `aria-describedby` alongside any hint. */
+   * `aria-describedby` alongside any hint. Not `role="alert"` - a control
+   * with a screen reader's focus already visits its `aria-describedby`
+   * text, so an alert role on top of that announces it twice. A submit-time
+   * validation summary should announce through `LiveRegion` instead. */
   error?: ReactNode;
   /** The control to render inside the field - typically an `<input>`,
    * `<textarea>`, or `<select>`. Receives `id`, `aria-describedby`, and
@@ -56,7 +59,7 @@ export function Field({ label, hint, error, children, className, ...rest }: Fiel
         "aria-invalid": error ? true : undefined,
       })}
       {error ? (
-        <p id={errorId} role="alert" className="text-sm text-[var(--color-danger)]">
+        <p id={errorId} className="text-sm text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

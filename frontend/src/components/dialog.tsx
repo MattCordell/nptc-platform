@@ -26,44 +26,21 @@ function getFocusable(dialog: HTMLDialogElement): HTMLElement[] {
  * browser release), so focus-in, `Tab`-trap, and focus-restore are all
  * handled explicitly here. That keeps the contract testable and consistent
  * regardless of what the platform does on top of it.
+ *
+ * Setup and its matching teardown live in one effect precisely so a single
+ * `return` covers both ways a dialog stops being open: `open` flipping to
+ * `false`, and the component unmounting outright while still open (e.g. a
+ * parent that renders `{isOpen && <Dialog .../>}`, or a route change) -
+ * both need the same close()/focus-restore behaviour, and a `return`
+ * cleanup is the one place both paths run.
  */
 export function Dialog({ open, onClose, title, children }: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const triggerRef = useRef<Element | null>(null);
   const titleId = useId();
-
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-
-    if (open) {
-      triggerRef.current = document.activeElement;
-      if (typeof dialog.showModal === "function") {
-        try {
-          dialog.showModal();
-        } catch {
-          // jsdom declares showModal but throws "not implemented" - fall
-          // through to the plain `open` attribute below either way.
-        }
-      }
-      dialog.setAttribute("open", "");
-      getFocusable(dialog)[0]?.focus();
-    } else {
-      if (typeof dialog.close === "function") {
-        try {
-          dialog.close();
-        } catch {
-          // Same jsdom gap as showModal above.
-        }
-      }
-      dialog.removeAttribute("open");
-      if (triggerRef.current instanceof HTMLElement) {
-        triggerRef.current.focus();
-      }
-    }
-  }, [open]);
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -71,10 +48,40 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       return;
     }
 
+    const trigger = document.activeElement;
+
+    // `showModal()` throws `InvalidStateError` if the `open` attribute is
+    // already present, so the manual attribute below is only ever set when
+    // showModal() did *not* run - never alongside it.
+    let usedNativeModal = false;
+    if (typeof dialog.showModal === "function") {
+      try {
+        dialog.showModal();
+        usedNativeModal = true;
+      } catch {
+        // jsdom declares showModal but throws "not implemented" - fall
+        // through to the plain `open` attribute below.
+      }
+    }
+    if (!usedNativeModal) {
+      dialog.setAttribute("open", "");
+    }
+
+    // Focus the first focusable descendant, or the dialog itself when it
+    // has none - a content-only dialog (no button, no link) would
+    // otherwise leave focus on <body>, unreachable by either Escape or Tab
+    // once the listeners below are scoped to "inside the dialog".
+    (getFocusable(dialog)[0] ?? dialog).focus();
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
+        // When showModal() is in effect, the browser's own `cancel` event
+        // (handled below) already calls onClose - handling Escape here too
+        // would fire it twice.
+        if (!usedNativeModal) {
+          event.preventDefault();
+          onCloseRef.current();
+        }
         return;
       }
 
@@ -101,25 +108,41 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       }
     };
 
-    // Also handle the browser's own `cancel` event (fired by a native
-    // `showModal()` on Escape) so a real browser's trap and this one agree
-    // on the same `onClose`, rather than only one of them firing.
+    // Bound to `document`, not the dialog itself: focus can legitimately
+    // sit on the dialog element or even <body> (the no-focusable-content
+    // case above), and a listener on the dialog would never see a keydown
+    // that starts outside of it.
+    document.addEventListener("keydown", handleKeyDown);
+
     const handleCancel = (event: Event) => {
       event.preventDefault();
-      onClose();
+      onCloseRef.current();
     };
-
-    dialog.addEventListener("keydown", handleKeyDown);
     dialog.addEventListener("cancel", handleCancel);
+
     return () => {
-      dialog.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
       dialog.removeEventListener("cancel", handleCancel);
+
+      if (typeof dialog.close === "function") {
+        try {
+          dialog.close();
+        } catch {
+          // Same jsdom gap as showModal above.
+        }
+      }
+      dialog.removeAttribute("open");
+
+      if (trigger instanceof HTMLElement) {
+        trigger.focus();
+      }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   return (
     <dialog
       ref={dialogRef}
+      tabIndex={-1}
       aria-labelledby={titleId}
       className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-6 backdrop:bg-black/50"
     >
