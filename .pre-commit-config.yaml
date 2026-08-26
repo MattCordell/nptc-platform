@@ -52,6 +52,13 @@ repos:
         language: system
         files: ^backend/migrations/versions/.*\.py$
 
+      - id: openapi-document-is-current
+        name: docs/api/openapi.json is up to date (uv run)
+        entry: uv run python scripts/generate_openapi.py --check
+        language: system
+        files: ^(backend/src/nptc/api/.*\.py|docs/api/openapi\.json)$
+        pass_filenames: false
+
       - id: frontend-lint
         name: eslint (frontend)
         entry: bash -c 'cd frontend && corepack pnpm exec eslint .'
