@@ -12,6 +12,13 @@
 interface ImportMetaEnv {
   readonly VITE_OIDC_ISSUER?: string;
   readonly VITE_OIDC_CLIENT_ID?: string;
+  /**
+   * Base URL for the backend API (issue #147). Defaults to same origin
+   * (`window.location.origin`), since Caddy fronts both frontend and
+   * backend in every deployed environment (ADR-0001). Only needed to point
+   * at a different origin (e.g. local dev without the Caddy proxy).
+   */
+  readonly VITE_API_BASE_URL?: string;
 }
 
 interface ImportMeta {
