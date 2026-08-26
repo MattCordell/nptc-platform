@@ -26,6 +26,7 @@ on:
       - "shared/src/**"
       - "docs/api/openapi.json"
       - "scripts/generate_openapi.py"
+      - "scripts/openapi_breaking_check.py"
       - "pyproject.toml"
       - "uv.lock"
 
@@ -60,6 +61,7 @@ jobs:
               - "shared/src/**"
               - "docs/api/openapi.json"
               - "scripts/generate_openapi.py"
+              - "scripts/openapi_breaking_check.py"
               - "pyproject.toml"
               - "uv.lock"
 
@@ -111,34 +113,54 @@ jobs:
   breaking:
     name: No unapproved breaking change
     needs: changes
-    if: needs.changes.outputs.api == 'true' && github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
     steps:
+      # Not behind `if: needs.changes.outputs.api == 'true'` at job level, unlike
+      # `openapi` above: a PR that carried a breaking change and then reverted it
+      # (so the API paths are back to byte-identical with base) needs this job to
+      # still run and clear a `breaking-change` label applied by an earlier commit
+      # - a job-level skip would leave that label stranded with nothing left able
+      # to remove it (seen in review on this PR's own throwaway verification).
+      - name: No API changes - clear a stale breaking-change label
+        if: needs.changes.outputs.api != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr edit "$PR_URL" --remove-label breaking-change \
+            || echo "::warning::could not remove breaking-change label (fork PR token is read-only, or the label was not present)"
+
       - name: Checkout
+        if: needs.changes.outputs.api == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Fetch base ref
+        if: needs.changes.outputs.api == 'true'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: git fetch --no-tags --prune origin "$BASE_REF"
 
       - name: Install uv
+        if: needs.changes.outputs.api == 'true'
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
       - name: Install workspace
+        if: needs.changes.outputs.api == 'true'
         run: uv sync --all-packages --locked
 
       - name: Extract base docs/api/openapi.json
         id: base
+        if: needs.changes.outputs.api == 'true'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
