@@ -35,11 +35,12 @@ from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Permission
 from nptc.auth.principal import ANONYMOUS, Principal, principal_for
 from nptc.auth.tokens import TokenVerifier
+from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.db.session import session_scope
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.settings import ApiSettings, AuthSettings
-from nptc_shared.terminology import OntoserverClient, TerminologyConfig
+from nptc_shared.terminology import OntoserverClient, TerminologyClient, TerminologyConfig
 
 _BEARER_PREFIX = "bearer "
 
@@ -63,12 +64,11 @@ def get_token_verifier() -> TokenVerifier:
 
 
 @lru_cache(maxsize=1)
-def get_datatype_registry() -> DatatypeRegistry:
-    """The FR-77 datatype handler registry, built once per process.
+def get_terminology_client() -> TerminologyClient:
+    """The `OntoserverClient`, built once per process.
 
-    Built once for the same reason `get_token_verifier` is: the `code`
-    handler wraps an `OntoserverClient`, which owns an HTTP connection pool
-    that is only useful if it outlives a request. Construction itself opens
+    Built once, not per request: it owns an HTTP connection pool that is
+    only useful if it outlives a single request. Construction itself opens
     no socket and performs no discovery.
 
     **Called once by `nptc.api.app.create_app`, deliberately.** Not to warm
@@ -81,6 +81,37 @@ def get_datatype_registry() -> DatatypeRegistry:
     still maps `TerminologyConfigError` to a 500 for the paths that bypass
     the factory (a test app, a dependency override).
 
+    Split out of what was previously `get_datatype_registry` itself
+    (issue #52): once `DatabaseLocalCodeLookup` (below) needs a `Session`,
+    the registry that wraps it can no longer be a single `lru_cache`d
+    instance for the process's lifetime - a `Session` is request-scoped.
+    The terminology client has no such constraint and keeps the original
+    once-per-process treatment.
+    """
+    return OntoserverClient(TerminologyConfig.from_env())
+
+
+def get_session() -> Iterator[Session]:
+    yield from session_scope()
+
+
+def get_datatype_registry(
+    session: Annotated[Session, Depends(get_session)],
+    terminology_client: Annotated[TerminologyClient, Depends(get_terminology_client)],
+) -> DatatypeRegistry:
+    """The FR-77 datatype handler registry, built fresh per request.
+
+    Request-scoped, not `lru_cache`d like `get_terminology_client` above:
+    `CodeHandler`'s `local_code_system` binding check (FR-10, #56) needs a
+    `DatabaseLocalCodeLookup`, which holds a `Session` - and a `Session` is
+    itself request-scoped (`get_session`), so a process-lifetime registry
+    would either pin one request's `Session` for the life of the process
+    (wrong) or need its own invalidation machinery to swap it out (needless
+    complexity for something this cheap to rebuild). Construction here
+    opens no socket and performs no discovery - only `OntoserverClient`
+    construction did that, and it stays behind `get_terminology_client`'s
+    own `lru_cache`.
+
     The registry is what keeps the property-serialisation path free of any
     datatype `switch` (ADR-0013, `backend/tests/test_datatype_dispatch.py`):
     a caller resolves a handler by datatype and calls it, and the only code
@@ -90,20 +121,11 @@ def get_datatype_registry() -> DatatypeRegistry:
     return DatatypeRegistry(
         build_builtin_handlers(
             HandlerDeps(
-                terminology_client=OntoserverClient(TerminologyConfig.from_env()),
-                # FR-90/#56: no `LocalCodeLookup` implementation exists yet,
-                # and `CodeHandler` raises `UnsupportedBindingError` rather
-                # than silently passing a local-code binding it cannot check.
-                # A loud refusal is the documented behaviour (ADR-0013 open
-                # question 1), not a gap introduced here.
-                local_code_lookup=None,
+                terminology_client=terminology_client,
+                local_code_lookup=DatabaseLocalCodeLookup(session),
             )
         )
     )
-
-
-def get_session() -> Iterator[Session]:
-    yield from session_scope()
 
 
 def bearer_token(request: Request) -> str | None:

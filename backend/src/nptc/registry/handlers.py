@@ -38,6 +38,10 @@ class BindingSpec:
     value_set_uri: str | None
     strength: str  # "required" | "extensible" | "example"
     edition: str
+    #: Populated only when binding_target == "local_code_system" (issue
+    #: #52, FR-10/FR-90) - names the LocalCodeSystem.key a LocalCodeLookup
+    #: resolves against. None for a value_set binding.
+    local_code_system_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,12 +207,11 @@ class UnsupportedFilterOpError(ValueError):
 class UnsupportedBindingError(ValueError):
     """Raised by CodeHandler.validate() when binding_target =
     'local_code_system' and the handler was constructed with
-    local_code_lookup=None - a loud refusal, never a silent pass
-    (ADR-0013 open question 1). #56 has now supplied LocalCodeLookup's
-    real shape below; CodeHandler._validate_binding still returns []
-    unconditionally for a supplied lookup rather than calling resolve()
-    - wiring that call through is left to a follow-up rather than edited
-    here, alongside #53's own merged module."""
+    local_code_lookup=None, or when local_code_system_key is None on the
+    binding itself - a loud refusal, never a silent pass (ADR-0013 open
+    question 1). #56 supplied LocalCodeLookup's real shape; #52 wires
+    CodeHandler._validate_binding's local_code_system branch to actually
+    call resolve() against it."""
 
 
 # --- the registry and its construction ------------------------------------

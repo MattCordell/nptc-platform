@@ -192,6 +192,17 @@ GRANT_PROPERTY_DEFINITION_SQL = "GRANT SELECT, INSERT ON TABLE property_definiti
 #: `row_version` MUST be included - SQLAlchemy's `version_id_col` machinery
 #: issues `UPDATE ... SET row_version = ...` as part of every mapped
 #: update, matching `GRANT_CATALOGUE_ENTRY_UPDATE_SQL`'s own precedent.
+#:
+#: **Frozen as migration 0010 first wrote it - do not edit for a later
+#: column.** Migration 0010 calls `op.execute(GRANT_PROPERTY_DEFINITION_
+#: UPDATE_SQL)` and replays that exact statement on every fresh migrate from
+#: empty; widening this constant in place would silently rewrite 0010's own
+#: history and grant a not-yet-existent column the moment a later migration
+#: (whichever one adds it) runs *after* 0010 but *before* the column exists.
+#: A later column's grant is a new, separate constant executed by the
+#: migration that adds that column - see
+#: `GRANT_PROPERTY_DEFINITION_LOCAL_CODE_SYSTEM_KEY_UPDATE_SQL` below for
+#: issue #52's own case.
 GRANT_PROPERTY_DEFINITION_UPDATE_SQL = (
     "GRANT UPDATE (label, datatype, cardinality, scope, required_for_submission, "
     "required_for_publication, binding_target, value_set_uri, strength, edition, "
@@ -203,6 +214,13 @@ GRANT_PROPERTY_DEFINITION_UPDATE_SQL = (
 #: never asked, so it can never be got wrong.
 REVOKE_PROPERTY_DEFINITION_DELETE_SQL = (
     "REVOKE DELETE, TRUNCATE ON TABLE property_definition FROM nptc_app;"
+)
+#: issue #52 (FR-10): the one column migration 0013 adds, granted on its
+#: own rather than by widening `GRANT_PROPERTY_DEFINITION_UPDATE_SQL` in
+#: place - see that constant's own comment for why 0010 must keep replaying
+#: its original, narrower column list forever.
+GRANT_PROPERTY_DEFINITION_LOCAL_CODE_SYSTEM_KEY_UPDATE_SQL = (
+    "GRANT UPDATE (local_code_system_key) ON TABLE property_definition TO nptc_app;"
 )
 
 #: issue #51 (FR-09/FR-10), per ADR-0012: SELECT+INSERT+UPDATE+DELETE - a

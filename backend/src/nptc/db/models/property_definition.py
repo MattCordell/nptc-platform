@@ -55,6 +55,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKeyConstraint,
     Identity,
     Integer,
     Text,
@@ -140,9 +141,18 @@ _VALUE_SET_URI_REQUIRED_CHECK_SQL = (
 #: property no handler will ever read. Closes the other direction: every
 #: binding field is `NULL` whenever there is no `binding_target`.
 _BINDING_FIELDS_REQUIRE_TARGET_CHECK_SQL = (
-    "binding_target IS NOT NULL OR (value_set_uri IS NULL AND strength IS NULL AND edition IS NULL)"
+    "binding_target IS NOT NULL OR (value_set_uri IS NULL AND strength IS NULL "
+    "AND edition IS NULL AND local_code_system_key IS NULL)"
 )
 _DEPRECATED_AT_CHECK_SQL = "(status = 'deprecated') = (deprecated_at IS NOT NULL)"
+#: Mirrors `_VALUE_SET_URI_REQUIRED_CHECK_SQL`'s own `IS DISTINCT FROM`
+#: shape (issue #52, FR-10) - names *which* governed `local_code_system`
+#: a `binding_target = 'local_code_system'` property is bound to, the gap
+#: #51/ADR-0012 left open (`CodeHandler._validate_binding` could not
+#: previously resolve a local-code binding to any system at all).
+_LOCAL_CODE_SYSTEM_KEY_REQUIRED_CHECK_SQL = (
+    "binding_target IS DISTINCT FROM 'local_code_system' OR local_code_system_key IS NOT NULL"
+)
 
 
 class PropertyDefinition(Base):
@@ -162,6 +172,7 @@ class PropertyDefinition(Base):
             "value_set_uri",
             "strength",
             "edition",
+            "local_code_system_key",
             "filterable",
             "origin",
             "status",
@@ -190,9 +201,17 @@ class PropertyDefinition(Base):
         CheckConstraint(_BINDING_REQUIRED_CHECK_SQL, name="binding_required_for_code"),
         CheckConstraint(_VALUE_SET_URI_REQUIRED_CHECK_SQL, name="value_set_uri_required"),
         CheckConstraint(
+            _LOCAL_CODE_SYSTEM_KEY_REQUIRED_CHECK_SQL, name="local_code_system_key_required"
+        ),
+        CheckConstraint(
             _BINDING_FIELDS_REQUIRE_TARGET_CHECK_SQL, name="binding_fields_require_target"
         ),
         CheckConstraint(_DEPRECATED_AT_CHECK_SQL, name="deprecated_at_required"),
+        ForeignKeyConstraint(
+            ["local_code_system_key"],
+            ["local_code_system.key"],
+            name="local_code_system_key_local_code_system",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -221,6 +240,14 @@ class PropertyDefinition(Base):
     value_set_uri: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     strength: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     edition: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
+    # issue #52 (FR-10): names the governed `local_code_system` a
+    # `binding_target = 'local_code_system'` property is bound to. FK-less
+    # against `local_code_system` was #51's deliberate stopgap (that table
+    # did not exist yet); it has since landed (#56), so this column can be
+    # a real FK from the start rather than repeating that stopgap.
+    local_code_system_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, active_history=True
+    )
     filterable: Mapped[bool] = mapped_column(Boolean, nullable=False, active_history=True)
     origin: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
     status: Mapped[str] = mapped_column(
