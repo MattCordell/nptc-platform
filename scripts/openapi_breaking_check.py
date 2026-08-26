@@ -12,8 +12,18 @@ Detection is direction-aware: the same schema edit is breaking on the request si
 (narrowing what a client may send) or the response side (removing what a client may
 read), never both. A request parameter/schema is anything under an operation's
 `parameters` or `requestBody`; everything under `responses` is a response schema.
-`$ref`s into `#/components/schemas/*` are resolved before comparison, with a cycle
-guard so a self-referential schema does not recurse forever.
+`$ref`s into `#/components/schemas/*` are resolved **against their own document** -
+a base `$ref` against base's component map, a head `$ref` against head's - since a
+`$ref` string is normally unchanged across an edit and the edit lives inside the
+referenced component, not in the ref itself. Resolution has a cycle guard so a
+self-referential schema does not recurse forever.
+
+Traversal descends into object `properties` and array `items`, and pairwise into
+`allOf` branches (by position, on the reasonable assumption that a schema's `allOf`
+list is not reordered independently of a semantic change). `anyOf`/`oneOf` branches
+are walked only for the null-branch check in `_diff_scalar_schema` - comparing
+arbitrary reorderable union branches pairwise would misattribute edits to the wrong
+branch, so that is intentionally out of scope here.
 
 Additive changes - a new path, a new optional parameter, a new response property, a
 relaxed request constraint, or any description/summary/title edit - are not findings.
@@ -41,6 +51,8 @@ _TIGHTENS_WHEN_LOWERED = ("maximum", "maxLength", "maxItems")
 _TIGHTENS_WHEN_RAISED = ("minimum", "minLength", "minItems")
 
 _2XX_PREFIX = "2"
+
+_REF_PREFIX = "#/components/schemas/"
 
 
 class Finding:
@@ -72,15 +84,17 @@ def _resolve(schema: Any, components: dict[str, Any], seen: frozenset[str] = fro
     if not isinstance(schema, dict):
         return schema
     ref = schema.get("$ref")
-    if not isinstance(ref, str):
+    if not isinstance(ref, str) or not ref.startswith(_REF_PREFIX):
         return schema
-    prefix = "#/components/schemas/"
-    if not ref.startswith(prefix):
-        return schema
-    name = ref[len(prefix) :]
+    name = ref[len(_REF_PREFIX) :]
     if name in seen or name not in components:
         return schema
     return _resolve(components[name], components, seen | {name})
+
+
+def _ref_name(schema: Any) -> str | None:
+    ref = schema.get("$ref") if isinstance(schema, dict) else None
+    return ref if isinstance(ref, str) else None
 
 
 def _scalar_type(schema: Any) -> Any:
@@ -90,6 +104,10 @@ def _scalar_type(schema: Any) -> Any:
 def _enum(schema: Any) -> list[Any] | None:
     value = schema.get("enum") if isinstance(schema, dict) else None
     return value if isinstance(value, list) else None
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _has_null_branch(schema: Any) -> bool:
@@ -104,19 +122,21 @@ def _has_null_branch(schema: Any) -> bool:
 def _diff_scalar_schema(
     base: Any,
     head: Any,
-    components: dict[str, Any],
+    base_components: dict[str, Any],
+    head_components: dict[str, Any],
     path: str,
     *,
     narrowing_direction: str,
 ) -> list[Finding]:
-    """Compare two (already `$ref`-resolved) schemas for `narrowing_direction`.
+    """Compare two schemas - each resolved against its *own* document's components -
+    for `narrowing_direction`.
 
     `narrowing_direction` is `"request"` (a finding is a narrowing of what a client
     may send) or `"response"` (a finding is a removal of what a client may read).
     """
     findings: list[Finding] = []
-    base = _resolve(base, components)
-    head = _resolve(head, components)
+    base = _resolve(base, base_components)
+    head = _resolve(head, head_components)
     if not isinstance(base, dict) or not isinstance(head, dict):
         return findings
 
@@ -160,15 +180,11 @@ def _diff_scalar_schema(
     return findings
 
 
-def _ref_name(schema: Any) -> str | None:
-    ref = schema.get("$ref") if isinstance(schema, dict) else None
-    return ref if isinstance(ref, str) else None
-
-
 def _diff_object_schema(
     base: Any,
     head: Any,
-    components: dict[str, Any],
+    base_components: dict[str, Any],
+    head_components: dict[str, Any],
     path: str,
     *,
     narrowing_direction: str,
@@ -183,13 +199,20 @@ def _diff_object_schema(
     seen = seen | {ref_pair}
 
     findings: list[Finding] = []
-    base = _resolve(base, components)
-    head = _resolve(head, components)
+    base = _resolve(base, base_components)
+    head = _resolve(head, head_components)
     if not isinstance(base, dict) or not isinstance(head, dict):
         return findings
 
     findings.extend(
-        _diff_scalar_schema(base, head, components, path, narrowing_direction=narrowing_direction)
+        _diff_scalar_schema(
+            base,
+            head,
+            base_components,
+            head_components,
+            path,
+            narrowing_direction=narrowing_direction,
+        )
     )
 
     base_required = set(base.get("required", []) if isinstance(base.get("required"), list) else [])
@@ -201,17 +224,6 @@ def _diff_object_schema(
         newly_required = head_required - base_required
         if newly_required:
             findings.append(Finding(path, f"properties became required: {sorted(newly_required)}"))
-        for name in sorted(base_props.keys() & head_props.keys()):
-            findings.extend(
-                _diff_object_schema(
-                    base_props[name],
-                    head_props[name],
-                    components,
-                    f"{path}.{name}",
-                    narrowing_direction=narrowing_direction,
-                    seen=seen,
-                )
-            )
     else:
         removed_props = base_props.keys() - head_props.keys()
         if removed_props:
@@ -227,23 +239,58 @@ def _diff_object_schema(
                     f"properties demoted from required to optional: {sorted(removed_required)}",
                 )
             )
-        for name in sorted(base_props.keys() & head_props.keys()):
-            findings.extend(
-                _diff_object_schema(
-                    base_props[name],
-                    head_props[name],
-                    components,
-                    f"{path}.{name}",
-                    narrowing_direction=narrowing_direction,
-                    seen=seen,
-                )
+
+    for name in sorted(base_props.keys() & head_props.keys()):
+        findings.extend(
+            _diff_object_schema(
+                base_props[name],
+                head_props[name],
+                base_components,
+                head_components,
+                f"{path}.{name}",
+                narrowing_direction=narrowing_direction,
+                seen=seen,
             )
+        )
+
+    base_items, head_items = base.get("items"), head.get("items")
+    if base_items is not None and head_items is not None:
+        findings.extend(
+            _diff_object_schema(
+                base_items,
+                head_items,
+                base_components,
+                head_components,
+                f"{path}[]",
+                narrowing_direction=narrowing_direction,
+                seen=seen,
+            )
+        )
+
+    base_all_of = _as_list(base.get("allOf"))
+    head_all_of = _as_list(head.get("allOf"))
+    for index, (base_branch, head_branch) in enumerate(zip(base_all_of, head_all_of, strict=False)):
+        findings.extend(
+            _diff_object_schema(
+                base_branch,
+                head_branch,
+                base_components,
+                head_components,
+                f"{path}.allOf[{index}]",
+                narrowing_direction=narrowing_direction,
+                seen=seen,
+            )
+        )
 
     return findings
 
 
 def _diff_parameters(
-    base_op: Schema, head_op: Schema, components: dict[str, Any], path: str
+    base_op: Schema,
+    head_op: Schema,
+    base_components: dict[str, Any],
+    head_components: dict[str, Any],
+    path: str,
 ) -> list[Finding]:
     findings: list[Finding] = []
     base_params = {p["name"]: p for p in base_op.get("parameters", []) if "name" in p}
@@ -264,7 +311,8 @@ def _diff_parameters(
             _diff_object_schema(
                 base_p.get("schema", {}),
                 head_p.get("schema", {}),
-                components,
+                base_components,
+                head_components,
                 f"{path}.parameters.{name}",
                 narrowing_direction="request",
             )
@@ -293,11 +341,15 @@ def _response_schema(op: Schema, status: str) -> Any:
 
 
 def _diff_operation(
-    base_op: Schema, head_op: Schema, components: dict[str, Any], path: str
+    base_op: Schema,
+    head_op: Schema,
+    base_components: dict[str, Any],
+    head_components: dict[str, Any],
+    path: str,
 ) -> list[Finding]:
     findings: list[Finding] = []
 
-    findings.extend(_diff_parameters(base_op, head_op, components, path))
+    findings.extend(_diff_parameters(base_op, head_op, base_components, head_components, path))
 
     base_body = _request_body_schema(base_op)
     head_body = _request_body_schema(head_op)
@@ -306,7 +358,8 @@ def _diff_operation(
             _diff_object_schema(
                 base_body,
                 head_body,
-                components,
+                base_components,
+                head_components,
                 f"{path}.requestBody",
                 narrowing_direction="request",
             )
@@ -325,7 +378,8 @@ def _diff_operation(
                 _diff_object_schema(
                     base_resp,
                     head_resp,
-                    components,
+                    base_components,
+                    head_components,
                     f"{path}.responses.{status}",
                     narrowing_direction="response",
                 )
@@ -337,7 +391,8 @@ def _diff_operation(
 def find_breaking_changes(base: Document, head: Document) -> list[Finding]:
     """Return every breaking change in `head` relative to `base`, order-stable."""
     findings: list[Finding] = []
-    components = base.get("components", {}).get("schemas", {})
+    base_components = base.get("components", {}).get("schemas", {})
+    head_components = head.get("components", {}).get("schemas", {})
     base_paths = base.get("paths", {}) if isinstance(base.get("paths"), dict) else {}
     head_paths = head.get("paths", {}) if isinstance(head.get("paths"), dict) else {}
 
@@ -360,7 +415,8 @@ def find_breaking_changes(base: Document, head: Document) -> list[Finding]:
                 _diff_operation(
                     base_path_item[method],
                     head_path_item[method],
-                    components,
+                    base_components,
+                    head_components,
                     f"{path_name} {method.upper()}",
                 )
             )

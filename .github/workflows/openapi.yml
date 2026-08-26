@@ -124,7 +124,9 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch base ref
-        run: git fetch --no-tags --prune origin "${{ github.event.pull_request.base.ref }}"
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags --prune origin "$BASE_REF"
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -137,26 +139,39 @@ jobs:
 
       - name: Extract base docs/api/openapi.json
         id: base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          base_ref="origin/${{ github.event.pull_request.base.ref }}"
-          if git show "$base_ref:docs/api/openapi.json" > /tmp/base-openapi.json 2>/dev/null; then
+          if git show "origin/$BASE_REF:docs/api/openapi.json" > /tmp/base-openapi.json 2>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Exit 1 (breaking changes found) and exit 2 (the base or head document
+      # could not be read/parsed) are deliberately distinct in the script - a
+      # malformed document must fail this step as a read failure, not be
+      # mistaken for "breaking changes found" and mislabelled/misreported as
+      # a contract narrowing.
       - name: Check for breaking changes
         id: check
         if: steps.base.outputs.exists == 'true'
         run: |
-          if ! uv run python scripts/openapi_breaking_check.py \
-              --base /tmp/base-openapi.json \
-              --head docs/api/openapi.json \
-              --format github; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
+          set +e
+          uv run python scripts/openapi_breaking_check.py \
+            --base /tmp/base-openapi.json \
+            --head docs/api/openapi.json \
+            --format github
+          exit_code=$?
+          set -e
+          case "$exit_code" in
+            0) echo "found=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "found=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::openapi_breaking_check could not compare the documents (exit $exit_code)."
+              exit "$exit_code"
+              ;;
+          esac
 
       - name: Apply or remove the breaking-change label
         if: steps.base.outputs.exists == 'true'
@@ -181,7 +196,7 @@ jobs:
         env:
           LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
-          if echo "$LABELS" | grep -q "breaking-change-approved"; then
+          if echo "$LABELS" | jq -e 'any(. == "breaking-change-approved")' > /dev/null; then
             echo "Breaking change detected but approved via the breaking-change-approved label."
           else
             echo "::error::Breaking change(s) detected in docs/api/openapi.json. Add breaking-change-approved if this is intended."

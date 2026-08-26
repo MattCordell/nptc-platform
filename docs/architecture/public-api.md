@@ -175,8 +175,8 @@ no request budget. Clients should page politely and not poll tighter than they n
 
 `.github/workflows/openapi.yml`'s `breaking` job (issue #206) diffs a PR's
 `docs/api/openapi.json` against the same file on the base branch and blocks the PR if the
-diff narrows something a consumer - concretely, issue #147's generated TypeScript client
-- could depend on:
+diff narrows something a consumer (concretely, issue #147's generated TypeScript client)
+could depend on:
 
 - a removed path or operation, or a removed `2xx` response status
 - a request narrowed: a parameter removed or made required, a new required parameter, a

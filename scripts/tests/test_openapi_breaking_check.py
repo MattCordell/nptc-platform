@@ -287,20 +287,141 @@ def test_request_property_became_optional_is_not_breaking() -> None:
     assert obc.find_breaking_changes(base, head) == []
 
 
+def test_request_constraint_tightened_via_ref_is_breaking() -> None:
+    """The principal failure mode for $ref resolution: the same named component
+    exists in both documents (the normal case for an edit to a shared schema),
+    and the edit lives inside the component, not in the $ref string itself."""
+    base_components = {
+        "Widget": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 50}}}
+    }
+    base = _doc(
+        {"/a": {"post": _op(request_schema={"$ref": "#/components/schemas/Widget"})}},
+        base_components,
+    )
+    head_components = {
+        "Widget": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 5}}}
+    }
+    head = _doc(
+        {"/a": {"post": _op(request_schema={"$ref": "#/components/schemas/Widget"})}},
+        head_components,
+    )
+    findings = obc.find_breaking_changes(base, head)
+    assert any("'maximum' lowered" in m for m in _messages(findings))
+
+
 def test_request_constraint_relaxed_via_ref_is_not_breaking() -> None:
-    components = {
+    base_components = {
         "Widget": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 5}}}
     }
     base = _doc(
-        {"/a": {"post": _op(request_schema={"$ref": "#/components/schemas/Widget"})}}, components
+        {"/a": {"post": _op(request_schema={"$ref": "#/components/schemas/Widget"})}},
+        base_components,
     )
-    widened_components = {
+    head_components = {
         "Widget": {"type": "object", "properties": {"n": {"type": "integer", "maximum": 50}}}
     }
     head = _doc(
         {"/a": {"post": _op(request_schema={"$ref": "#/components/schemas/Widget"})}},
-        widened_components,
+        head_components,
     )
+    assert obc.find_breaking_changes(base, head) == []
+
+
+def test_response_property_removed_via_ref_is_breaking() -> None:
+    """Verifies the reviewer-reported bug: response schemas in the real document
+    are top-level $refs (EntryPage, EntryDetail, ...), and deleting a field from the
+    referenced component must be caught."""
+    base_components = {
+        "Widget": {
+            "type": "object",
+            "properties": {"x": {"type": "string"}, "y": {"type": "string"}},
+        }
+    }
+    base = _doc(
+        {"/a": {"get": _op(response_schema={"$ref": "#/components/schemas/Widget"})}},
+        base_components,
+    )
+    head_components = {"Widget": {"type": "object", "properties": {"x": {"type": "string"}}}}
+    head = _doc(
+        {"/a": {"get": _op(response_schema={"$ref": "#/components/schemas/Widget"})}},
+        head_components,
+    )
+    findings = obc.find_breaking_changes(base, head)
+    assert any("properties removed" in m for m in _messages(findings))
+
+
+def test_response_type_changed_via_ref_is_breaking() -> None:
+    base_components = {"Widget": {"type": "object", "properties": {"n": {"type": "string"}}}}
+    base = _doc(
+        {"/a": {"get": _op(response_schema={"$ref": "#/components/schemas/Widget"})}},
+        base_components,
+    )
+    head_components = {"Widget": {"type": "object", "properties": {"n": {"type": "integer"}}}}
+    head = _doc(
+        {"/a": {"get": _op(response_schema={"$ref": "#/components/schemas/Widget"})}},
+        head_components,
+    )
+    findings = obc.find_breaking_changes(base, head)
+    assert any("type changed" in m for m in _messages(findings))
+
+
+# --- array items and allOf branches ------------------------------------------
+
+
+def test_response_array_item_property_removed_is_breaking() -> None:
+    schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"x": {"type": "string"}, "y": {"type": "string"}},
+        },
+    }
+    narrowed = {
+        "type": "array",
+        "items": {"type": "object", "properties": {"x": {"type": "string"}}},
+    }
+    base = _doc({"/a": {"get": _op(response_schema=schema)}})
+    head = _doc({"/a": {"get": _op(response_schema=narrowed)}})
+    findings = obc.find_breaking_changes(base, head)
+    assert any("properties removed" in m for m in _messages(findings))
+
+
+def test_response_array_item_property_added_is_not_breaking() -> None:
+    schema = {"type": "array", "items": {"type": "object", "properties": {"x": {"type": "string"}}}}
+    widened = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"x": {"type": "string"}, "y": {"type": "string"}},
+        },
+    }
+    base = _doc({"/a": {"get": _op(response_schema=schema)}})
+    head = _doc({"/a": {"get": _op(response_schema=widened)}})
+    assert obc.find_breaking_changes(base, head) == []
+
+
+def test_response_all_of_branch_property_removed_is_breaking() -> None:
+    schema = {
+        "allOf": [
+            {"type": "object", "properties": {"x": {"type": "string"}, "y": {"type": "string"}}}
+        ]
+    }
+    narrowed = {"allOf": [{"type": "object", "properties": {"x": {"type": "string"}}}]}
+    base = _doc({"/a": {"get": _op(response_schema=schema)}})
+    head = _doc({"/a": {"get": _op(response_schema=narrowed)}})
+    findings = obc.find_breaking_changes(base, head)
+    assert any("properties removed" in m for m in _messages(findings))
+
+
+def test_response_all_of_branch_property_added_is_not_breaking() -> None:
+    schema = {"allOf": [{"type": "object", "properties": {"x": {"type": "string"}}}]}
+    widened = {
+        "allOf": [
+            {"type": "object", "properties": {"x": {"type": "string"}, "y": {"type": "string"}}}
+        ]
+    }
+    base = _doc({"/a": {"get": _op(response_schema=schema)}})
+    head = _doc({"/a": {"get": _op(response_schema=widened)}})
     assert obc.find_breaking_changes(base, head) == []
 
 
@@ -386,11 +507,27 @@ def test_ref_cycle_does_not_recurse_forever() -> None:
 
 @pytest.mark.req("FR-20")
 def test_real_committed_document_self_diff_is_clean() -> None:
-    """The actual contract, compared to itself, must yield zero findings - a guard
-    against a rule that fires on shapes present in the real document (e.g. the
-    `after` cursor parameter's `anyOf: [string, null]` pattern)."""
+    """The actual contract, compared to an unmodified copy of itself, must yield zero
+    findings - a guard against a rule that fires on shapes present in the real
+    document (e.g. the `after` cursor parameter's `anyOf: [string, null]` pattern)."""
     doc = json.loads((ROOT / "docs" / "api" / "openapi.json").read_text(encoding="utf-8"))
-    assert obc.find_breaking_changes(doc, doc) == []
+    head = json.loads(json.dumps(doc))
+    assert obc.find_breaking_changes(doc, head) == []
+
+
+@pytest.mark.req("FR-20")
+def test_real_committed_document_catches_a_removed_response_field() -> None:
+    """A targeted mutation of the real contract must be caught - unlike an identical
+    self-diff, this exercises the actual traversal (every 2xx response schema in the
+    real document is a top-level $ref into components/schemas, e.g. EntryPage,
+    EntryDetail, SearchPage) rather than only proving the comparison is reflexive."""
+    doc = json.loads((ROOT / "docs" / "api" / "openapi.json").read_text(encoding="utf-8"))
+    head = json.loads(json.dumps(doc))
+    entry_summary = head["components"]["schemas"]["EntrySummary"]
+    removed_property = next(iter(entry_summary["properties"]))
+    del entry_summary["properties"][removed_property]
+    findings = obc.find_breaking_changes(doc, head)
+    assert any(removed_property in m for m in _messages(findings))
 
 
 def test_cli_exits_2_on_missing_base_file(
