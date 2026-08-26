@@ -224,6 +224,9 @@ class EntrySummary(BaseModel):
     #: client parses it as a date rather than handing the caller a string to
     #: guess at.
     updated_at: datetime
+    #: THROWAWAY - issue #143 acceptance criterion 1 proof. Reverted in the
+    #: next commit; not regenerating docs/api/openapi.json is the point.
+    proof_of_gate_field: str | None = None
 
 
 class Designation(BaseModel):
