@@ -167,8 +167,8 @@ After a client-side navigation there is no full page load to reset focus, so
 links into the authenticated and admin sections — see "Authentication is structural"
 below for why that's fine.
 
-The shell's landmarks and skip link are now styled from `src/styles/app.css` (issue
-#148's Tailwind adoption, [ADR-0025](../adr/0025-frontend-styling.md)) — see
+The shell's landmarks and skip link are now styled from `src/styles/app.css` (issue #148's
+Tailwind adoption, [ADR-0025](../adr/0025-frontend-styling.md)) — see
 [components.md](components.md) for the styling strategy and the component baseline built
 on it.
 

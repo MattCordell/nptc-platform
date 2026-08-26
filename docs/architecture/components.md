@@ -10,8 +10,7 @@ NFR-31 requires WCAG 2.2 Level AA, "verified by automated testing in CI plus a m
 keyboard and screen-reader pass in P5." This issue lands the automated half and the five
 components later screens are expected to compose: a form field, a button, a modal dialog,
 a data table, and a live region for async announcements. The manual keyboard and
-screen-reader audit itself is [P1-SEQUENCING.md](../../P1-SEQUENCING.md)'s later P5 work,
-not this issue.
+screen-reader audit itself is later P5 work, not this issue.
 
 (The issue body cites NFR-19, the data-breach-response procedure — unrelated. The
 requirement this baseline implements is NFR-31.)
