@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -30,8 +31,22 @@ def rendered_document() -> str:
     return render(build_document())
 
 
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if docs/api/openapi.json would change, instead of writing it",
+    )
+    return parser.parse_args(argv)
+
+
 def main(argv: list[str]) -> int:
-    check_only = "--check" in argv
+    # An unrecognised flag - a typo like --chek - must not silently fall
+    # through to write mode: that would rewrite the committed document and
+    # exit 0 in a CI/pre-commit invocation whose entire job is to fail on
+    # drift. argparse.parse_args exits 2 on its own for that case.
+    check_only = _parse_args(argv).check
     current = rendered_document()
 
     if check_only:

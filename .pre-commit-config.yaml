@@ -56,7 +56,11 @@ repos:
         name: docs/api/openapi.json is up to date (uv run)
         entry: uv run python scripts/generate_openapi.py --check
         language: system
-        files: ^(backend/src/nptc/api/.*\.py|docs/api/openapi\.json)$
+        # Matches openapi.yml's CI filter, not just nptc.api: a response
+        # model can reference a type from anywhere in backend/src (e.g.
+        # catalogue/, registry/) or from nptc_shared, and a narrower scope
+        # here would let such a change pass pre-commit and only fail in CI.
+        files: ^(backend/src/.*\.py|shared/src/.*\.py|docs/api/openapi\.json)$
         pass_filenames: false
 
       - id: frontend-lint

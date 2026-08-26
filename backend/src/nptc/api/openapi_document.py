@@ -24,12 +24,15 @@ from nptc.settings import ApiSettings
 #: Not a real deployment target - `create_app` requires *some* origin to configure
 #: CORS, and that origin never appears in the OpenAPI document itself. Fixed here so
 #: `build_document()` gives the same result regardless of the caller's environment.
-_GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
+#: Exported (not `_`-prefixed) so a caller that needs its own `create_app()` for the
+#: same build - `backend/tests/test_openapi_document.py`'s served-vs-committed test -
+#: references this constant rather than a second copy of the literal.
+GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
 
 
 def build_document() -> dict[str, Any]:
     """The OpenAPI document `create_app()` serves, as a plain JSON-able dict."""
-    app = create_app(settings=ApiSettings(frontend_base_url=_GENERATION_FRONTEND_BASE_URL))
+    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
     return dict(app.openapi())
 
 

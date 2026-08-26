@@ -18,8 +18,10 @@ package rather than fetching it.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +31,7 @@ from openapi_spec_validator import validate
 from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 
 from nptc.api.app import create_app
-from nptc.api.openapi_document import build_document, render
+from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL, build_document, render
 from nptc.settings import ApiSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,46 +135,81 @@ def test_meta_schema_validation_actually_rejects_an_invalid_document() -> None:
         validate({"openapi": "3.1.0", "info": {"title": "incomplete"}, "paths": {}})
 
 
-#: A property named exactly "code", or ending "_code" - `Binding.code` and
-#: `Binding.replaced_by_code` today, and whatever a future SNOMED-carrying
-#: field is called tomorrow. Matched by name in the document itself, not
-#: hand-listed, so a new code field is covered the day it is added.
+#: A property or parameter named exactly "code", or ending "_code" -
+#: `Binding.code` and `Binding.replaced_by_code` today, and whatever a future
+#: SNOMED-carrying field or path/query parameter is called tomorrow. Matched
+#: by name in the document itself, not hand-listed, so a new one is covered
+#: the day it is added.
 _CODE_PROPERTY_PATTERN = re.compile(r"(?:^code$)|(?:_code$)")
 
 
-def _is_string_or_nullable_string(property_schema: dict[str, Any]) -> bool:
-    if property_schema.get("type") == "string":
+def _is_string_or_nullable_string(schema: dict[str, Any]) -> bool:
+    declared_type = schema.get("type")
+    if declared_type == "string":
         return True
-    branches = property_schema.get("anyOf")
+    # Legal OpenAPI 3.1 (JSON Schema 2020-12) also allows a nullable string as
+    # a `type` array - Pydantic v2 emits `anyOf` today, but a schema written
+    # or generated the other legal way must not silently read as "not a
+    # string".
+    if isinstance(declared_type, list):
+        return set(declared_type) <= {"string", "null"} and "string" in declared_type
+
+    branches = schema.get("anyOf")
     if not branches:
         return False
     types = {branch.get("type") for branch in branches}
     return "string" in types and types <= {"string", "null"}
 
 
+def _code_schema_properties(schemas: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """`(label, schema)` for every component schema property matching
+    `_CODE_PROPERTY_PATTERN` - e.g. `Binding.code`."""
+    for schema_name, schema in schemas.items():
+        for property_name, property_schema in schema.get("properties", {}).items():
+            if _CODE_PROPERTY_PATTERN.search(property_name):
+                yield f"{schema_name}.{property_name}", property_schema
+
+
+def _code_operation_parameters(paths: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """`(label, schema)` for every operation parameter matching
+    `_CODE_PROPERTY_PATTERN` - e.g. a hypothetical `GET
+    /catalogue/bindings/{code}`. A parameter is inline `{name, schema}` on
+    every route in this API (no `$ref`), which is what makes reading
+    `parameter["schema"]` directly correct here."""
+    for path, path_item in paths.items():
+        for method, operation in path_item.items():
+            if method == "parameters" or not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters", []):
+                name = parameter.get("name", "")
+                if _CODE_PROPERTY_PATTERN.search(name):
+                    yield f"{method.upper()} {path} :: {name}", parameter.get("schema", {})
+
+
 @pytest.mark.req("FR-06")
 def test_every_snomed_code_field_is_declared_a_json_string() -> None:
     """FR-06: a SNOMED CT identifier must never be serialisable as a JSON
     number - the schema-level counterpart to the response-body regex scan in
-    `test_api_public_response_hygiene.py`. This one catches a field that is
-    declared but never populated in any test fixture, too."""
+    `test_api_public_response_hygiene.py`. This one catches a field or
+    parameter that is declared but never populated/exercised in any test
+    fixture, too."""
     spec = _current_spec()
     schemas: dict[str, Any] = spec["components"]["schemas"]  # type: ignore[index,assignment]
+    paths: dict[str, Any] = spec["paths"]  # type: ignore[assignment]
 
     checked = 0
     offenders: list[str] = []
-    for schema_name, schema in schemas.items():
-        for property_name, property_schema in schema.get("properties", {}).items():
-            if not _CODE_PROPERTY_PATTERN.search(property_name):
-                continue
-            checked += 1
-            if not _is_string_or_nullable_string(property_schema):
-                offenders.append(f"{schema_name}.{property_name}")
+    for label, schema in itertools.chain(
+        _code_schema_properties(schemas), _code_operation_parameters(paths)
+    ):
+        checked += 1
+        if not _is_string_or_nullable_string(schema):
+            offenders.append(label)
 
     # A positive control for the pattern itself: if this hits zero, the
     # regex (or the schema it's matched against) has drifted and the
     # assertion below would be vacuously true.
-    assert checked > 0, "expected at least one *_code property in the document"
+    assert checked > 0, "expected at least one *_code property or parameter in the document"
     assert not offenders, f"SNOMED code field(s) not typed as a JSON string (FR-06): {offenders}"
 
 
@@ -181,7 +218,7 @@ def test_served_document_matches_the_committed_document() -> None:
     """The served copy and the committed copy must be the same build - not
     merely equal as parsed JSON, but byte-identical once rendered the same way
     (issue #143's acceptance criterion 4)."""
-    app = create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
+    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
     with TestClient(app) as client:
         served = client.get("/api/v1/openapi.json").json()
 

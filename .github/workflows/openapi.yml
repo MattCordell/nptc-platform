@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "backend/src/**"
+      - "shared/src/**"
       - "docs/api/openapi.json"
       - "scripts/generate_openapi.py"
       - "pyproject.toml"
@@ -51,6 +52,7 @@ jobs:
           filters: |
             api:
               - "backend/src/**"
+              - "shared/src/**"
               - "docs/api/openapi.json"
               - "scripts/generate_openapi.py"
               - "pyproject.toml"

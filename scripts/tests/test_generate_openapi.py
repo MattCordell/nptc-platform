@@ -64,3 +64,16 @@ def test_rendered_document_ends_in_exactly_one_lf_newline() -> None:
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
     assert "\r" not in text
+
+
+def test_an_unrecognised_flag_is_rejected_rather_than_treated_as_write_mode() -> None:
+    """A typo like --chek must not silently fall through to write mode - that
+    would rewrite the committed document and exit 0 in a gate whose entire job
+    is to fail on drift (review feedback on PR #205)."""
+    go.OPENAPI_PATH.write_text('{"openapi": "3.1.0", "stale": true}\n', encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        go.main(["--chek"])
+
+    assert excinfo.value.code == 2
+    assert go.OPENAPI_PATH.read_text(encoding="utf-8") == '{"openapi": "3.1.0", "stale": true}\n'
