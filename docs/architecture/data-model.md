@@ -901,6 +901,7 @@ workflow) still build on top of what is described here.
 | `value_set_uri` | `TEXT` | Nullable. `CHECK` requires it when `binding_target = 'value_set'` |
 | `strength` | `TEXT` | Nullable. `required` / `extensible` / `example` (FR-10) |
 | `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no vocabulary CHECK (ADR-0012 does not fix this vocabulary), but still subject to `binding_fields_require_target` above |
+| `local_code_system_key` | `TEXT` | Nullable. FK to `local_code_system(key)` (issue #52, migration 0013); `CHECK` (`local_code_system_key_required`) requires it when `binding_target = 'local_code_system'`, mirroring `value_set_uri_required`'s own shape - `#51` left this column out entirely rather than FK-less, since `local_code_system` did not exist yet |
 | `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - ADR-0013 (#137, merged) fixes interior validation as each handler's own `constraints_schema()` |
 | `filterable` | `BOOLEAN` | `NOT NULL`. Will drive #54's index generation (FR-13) |
 | `origin` | `TEXT` | `NOT NULL`. `system` or `admin` |
@@ -908,7 +909,7 @@ workflow) still build on top of what is described here.
 | `display_order` | `INTEGER` | `NOT NULL` |
 | `deprecated_at` | `TIMESTAMPTZ` | Nullable. `CHECK` ties it to `status = 'deprecated'` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL` |
-| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. Will be the cache key (with `key`) for #52's in-process JSON Schema memoisation - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012), and covered by `test_sql_parameterisation.py`'s `VERSIONED_TABLE_MODELS` guard alongside `catalogue_entry.row_version` |
+| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. The cache key (with `key`) for `nptc.registry.schema.property_schema`'s in-process JSON Schema memoisation (issue #52) - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012), and covered by `test_sql_parameterisation.py`'s `VERSIONED_TABLE_MODELS` guard alongside `catalogue_entry.row_version` |
 
 `property_value` is one row per value, with **`(entry_id, property_key, ordinal)` as the
 primary key** (not a surrogate id plus a separate `UNIQUE`) - `ordinal` `NOT NULL`,
@@ -919,8 +920,10 @@ FR-11/FR-12 (it blocks deleting or renaming a definition only while a dependent 
 exists); the unconditional guarantee for both comes from the column-level privilege below,
 not from this FK - see ADR-0012 for why the two must not be conflated. The PK's own
 uniqueness on `ordinal` closes only the duplicate-ordinal race, not cardinality's upper
-bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); #52 enforces the
-upper bound at validation time. `property_value.entry_id` carries a real FK to
+bound (a `0..1` property can still race two inserts at `ordinal` 0 and 1); issue #52's
+`nptc.registry.schema.validate_values` enforces the upper (and lower) bound at validation
+time, called from `nptc.catalogue.property_values.save_property_values` before any row is
+touched. `property_value.entry_id` carries a real FK to
 `catalogue_entry(id)`: ADR-0012 flagged this FK as unavailable when it was written, but #46
 landed first, so migration 0010 adds it directly rather than deferring it to a follow-on
 migration. `property_key` also gets its own plain btree index
@@ -1003,13 +1006,11 @@ answers, so `backend/tests/test_db_search_index.py` `EXPLAIN`s the real statemen
 asserts an `Index Cond` on each trigram index; nothing else in the suite would notice.
 **`discipline`/`subgroup` name the local code systems #56 lands below.** `nptc.db.bootstrap`'s
 `key="discipline"`/`key="subgroup"` rows set `binding_target = BindingTarget.LOCAL_CODE_SYSTEM`
-with no `value_set_uri` - deliberately FK-less, so this property metadata was representable
-before `local_code_system` existed, and stays representable now without either table needing
-to reference the other's primary key. The two `key`s match `local_code_system.key`'s own
-seeded values (migration `0011`, below) by convention, not by constraint: nothing in the
-schema enforces that a `code`-datatype property's binding actually names a real
-`local_code_system.key`, since #53 has not yet wired `CodeHandler` to look one up (see
-`LocalCodeLookup` below).
+with `local_code_system_key` set to `"discipline"`/`"subgroup"` respectively - #51 left this
+FK-less (`local_code_system` did not exist yet); issue #52 adds `local_code_system_key` as a
+real FK once it does (migration 0013), so this is now schema-enforced, not merely
+by-convention: a `code`-datatype property's `local_code_system_key` must name a real
+`local_code_system.key` row (see `LocalCodeLookup` below).
 
 ## Local code systems and the advisory SNOMED map (issue #56, FR-90, FR-91, FR-92)
 
@@ -1139,11 +1140,13 @@ leaf-safe (stdlib only) per that PR's own module-boundary rule (ADR-0013 SS2).
 implementation, built on that module's own `find_local_code_with_system_status` - it
 lives in `nptc.catalogue`, not `nptc.registry`, precisely because it needs a live
 `Session` and the write path it is built on, which the leaf rule forbids `nptc.registry`
-itself from depending on. #53 still owns adopting it into `CodeHandler` (constructing
-`HandlerDeps` with it) and lifting ADR-0013's `UnsupportedBindingError` for
-`binding_target = 'local_code_system'` - `CodeHandler._validate_binding` currently
-returns `[]` unconditionally rather than calling `resolve()`; wiring that call through is
-left to a follow-up rather than edited here, alongside #53's own already-merged module.
+itself from depending on. Issue #52 wires it into `CodeHandler`:
+`nptc.api.dependencies.get_datatype_registry` constructs `HandlerDeps` with a
+`DatabaseLocalCodeLookup(session)` built from the request's own `Session` (request-scoped,
+not the process-lifetime `lru_cache` the registry used before this needed a `Session`), and
+`CodeHandler._validate_binding`'s `local_code_system` branch now calls `resolve()` for real
+- three outcomes (absent, code deprecated, owning system deprecated independently of the
+code's own status) each map to a distinct `ValidationIssue` code.
 
 ## Extensions
 

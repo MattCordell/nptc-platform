@@ -561,14 +561,14 @@
   priority: MUST
   phase: p1
   title: "Specimen MUST be a coded property with cardinality 0..*, bound to a value set rooted at 123038009, replacing the semicolon-delimited string"
-  status: planned
-  notes: "The transform's seeding-time treatment (P0-9/#31): a Specimen cell is split on ';' into 0..* provisional values; each is coded only on an exact match against nptc_transform.specimen_table.SPECIMEN_TABLE's surface forms (SPECIMEN_VALUE_UNMAPPED, informational, otherwise) - the migrate-verbatim-as-provisional-codes precedent FR-92 also follows. The governed value set itself, and its enforcement, belong to the backend registry (P1) and remain planned."
+  status: implemented
+  notes: "The transform's seeding-time treatment (P0-9/#31): a Specimen cell is split on ';' into 0..* provisional values; each is coded only on an exact match against nptc_transform.specimen_table.SPECIMEN_TABLE's surface forms (SPECIMEN_VALUE_UNMAPPED, informational, otherwise) - the migrate-verbatim-as-provisional-codes precedent FR-92 also follows. Issue #51 seeds the governed backend registry property (nptc.db.bootstrap: coded, 0..*, bound to <123038009); issue #52 enforces it - nptc.catalogue.property_values.save_property_values validates the whole set via nptc.registry.schema.validate_values before any row is touched, proven against the sample's own seven-specimen entry (backend/tests/test_catalogue_property_values.py::test_specimen_accepts_the_samples_seven_specimen_case)."
 - id: "FR-89"
   priority: MUST
   phase: p1
   title: "The value 'Any' MUST NOT be represented as a specimen code"
-  status: planned
-  notes: "The transform's seeding-time treatment (P0-9/#31): 'Any' resolves to specimen_unconstrained: true and zero specimen values in import-dataset.json, never a specimen code (SPECIMEN_UNCONSTRAINED_RESOLVED, auto-correctable). Enforcing this at the backend registry level (P1) remains planned."
+  status: implemented
+  notes: "The transform's seeding-time treatment (P0-9/#31): 'Any' resolves to specimen_unconstrained: true and zero specimen values in import-dataset.json, never a specimen code (SPECIMEN_UNCONSTRAINED_RESOLVED, auto-correctable). Issue #52 enforces this at the backend registry level: nptc.db.bootstrap seeds specimen's constraints as {\"forbidden_codes\": [\"Any\"]}, CodeHandler.validate() rejects a case-insensitive match against it (backend/tests/test_datatype_handlers.py::test_code_rejects_a_forbidden_code), and nptc.catalogue.property_values.save_property_values additionally refuses to combine specimen_unconstrained = true with a recorded specimen value (the cross-field half of this requirement PRD S6.2 describes) - backend/tests/test_catalogue_property_values.py::test_specimen_value_is_rejected_when_the_entry_is_marked_unconstrained."
 - id: "FR-90"
   priority: MUST
   phase: p1
