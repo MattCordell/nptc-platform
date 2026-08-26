@@ -8,7 +8,10 @@ rejected alternatives; this document is the implementation reference.
 Lands with #146: the route table, the layout shell (header, primary navigation, `<main>`
 landmark, footer, skip link), router-level not-found and error surfaces, and a structural
 `RequireAuth` seam for authenticated and admin routes. Deliberately absent, and left to
-their own issues: data loading and the generated API client (#147), the accessible
+their own issues: a page that actually loads catalogue data through the generated API
+client (#147's infrastructure - `QueryClientProvider`, the typed client, TanStack Query
+hooks - is wired into `main.tsx`, but no route consumes it yet, see
+[public-api.md](public-api.md#generated-typescript-client-issue-147)), the accessible
 component/styling baseline (#148 — `shell.css` is a placeholder it should replace), and
 real sign-in (#41 — see "Authentication is structural" below). No route is code-split yet
 (see ADR-0020's consequences).

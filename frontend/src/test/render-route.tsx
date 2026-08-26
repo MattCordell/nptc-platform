@@ -1,7 +1,9 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
 import { StrictMode } from "react";
 
+import { createQueryClient } from "../api/query-client.ts";
 import { AuthContext, type AuthContextValue } from "../auth/session.ts";
 import { createAppRouter } from "../router/router.tsx";
 
@@ -55,11 +57,19 @@ export async function renderRoute(
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
   const auth: AuthContextValue = { ...DEFAULT_AUTH, ...options.auth };
+  // A fresh QueryClient per render, matching main.tsx's provider tree but
+  // never shared across renders: a shared client would leak cached query
+  // state between tests, and its `retry: false` default keeps a route that
+  // hits a stubbed-failure query from retrying under StrictMode's
+  // double-mount.
+  const queryClient = createQueryClient();
   const result = render(
     <StrictMode>
-      <AuthContext.Provider value={auth}>
-        <RouterProvider router={router} />
-      </AuthContext.Provider>
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={auth}>
+          <RouterProvider router={router} />
+        </AuthContext.Provider>
+      </QueryClientProvider>
     </StrictMode>,
   );
   await router.load(); // settle the initial match before assertions run

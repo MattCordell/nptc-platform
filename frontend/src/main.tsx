@@ -1,7 +1,9 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { createQueryClient } from "./api/query-client.ts";
 import { AuthProvider } from "./auth/auth-context.tsx";
 import { createAppRouter } from "./router/router.tsx";
 import "./shell/shell.css";
@@ -12,16 +14,21 @@ if (!container) {
 }
 
 const router = createAppRouter();
+const queryClient = createQueryClient();
 
 createRoot(container).render(
   <StrictMode>
     {/*
       AuthProvider wraps the router, not a route: the session must exist
       before the first route renders, since `RequireAuth` reads it while
-      deciding whether to redirect.
+      deciding whether to redirect. QueryClientProvider wraps both: a query
+      hook may itself read `useAuth()` (issue #147's `useApiClient`), so the
+      auth context must already exist wherever a query can run.
     */}
-    <AuthProvider>
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <RouterProvider router={router} />
+      </AuthProvider>
+    </QueryClientProvider>
   </StrictMode>,
 );
