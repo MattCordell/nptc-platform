@@ -35,7 +35,13 @@ module unchanged: every remaining constraint needs either its own typed
 exception raised before the flush (matching the precedent the typed
 handlers below already set) or an explicit handler here, before those
 routes ship, or a routine duplicate-synonym save 500s instead of
-409/422ing.
+409/422ing. Issue #52's `PropertyValidationError`/
+`PropertyDefinitionNotFoundError` handlers below are the same situation in
+reverse: the write path (`nptc.catalogue.property_values.
+save_property_values`) and its typed errors exist and are handled here
+already, ahead of the HTTP route that will call it (a follow-up issue,
+consumed by #151) - so that route inherits a working 422/404 from day one
+rather than repeating this module's own cautionary tale.
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import DesignationAlreadyRetiredError
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
@@ -152,6 +159,11 @@ _DETAIL_DESIGNATION_COLLISION = (
     "and punctuation are ignored. Choose a different term, or resolve the conflict on "
     "the other entry first."
 )
+_DETAIL_PROPERTY_VALIDATION = (
+    "One or more of the values you entered could not be saved. Review the listed "
+    "fields and correct them before saving again."
+)
+_DETAIL_PROPERTY_DEFINITION_NOT_FOUND = "No property definition was found for the given key."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -381,6 +393,49 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("retire refused, already retired: %s", exc)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_ALREADY_RETIRED}
+        )
+
+    @app.exception_handler(PropertyValidationError)
+    async def _handle_property_validation_error(
+        _request: Request, exc: PropertyValidationError
+    ) -> JSONResponse:
+        # issue #52: a routine, expected refusal on a normal edit, not an
+        # anomaly - INFO, not WARNING, matching every other field-level
+        # validation refusal in this module. `issue.message` may echo a
+        # submitted value back (e.g. "'Any' is not a valid value for
+        # Specimen"), which is caller-supplied content the caller already
+        # has - unlike a changelog note or search term, it is never
+        # free-text the caller typed for someone else to read, so it is
+        # safe to both log and return in full.
+        _logger.info(
+            "property value write refused: %s",
+            [(issue.property_key, issue.code) for issue in exc.issues],
+        )
+        return JSONResponse(
+            status_code=PropertyValidationError.http_status,
+            content={
+                "detail": _DETAIL_PROPERTY_VALIDATION,
+                "issues": [
+                    {
+                        "property_key": issue.property_key,
+                        "label": issue.label,
+                        "code": issue.code,
+                        "message": issue.message,
+                        "ordinal": issue.ordinal,
+                    }
+                    for issue in exc.issues
+                ],
+            },
+        )
+
+    @app.exception_handler(PropertyDefinitionNotFoundError)
+    async def _handle_property_definition_not_found(
+        _request: Request, exc: PropertyDefinitionNotFoundError
+    ) -> JSONResponse:
+        _logger.info("property definition not found: %s", exc)
+        return JSONResponse(
+            status_code=PropertyDefinitionNotFoundError.http_status,
+            content={"detail": _DETAIL_PROPERTY_DEFINITION_NOT_FOUND},
         )
 
     @app.exception_handler(DesignationCollisionError)
