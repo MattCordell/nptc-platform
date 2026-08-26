@@ -1,3 +1,16 @@
+/** A failed API response, carrying the status code and parsed error body. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(status: number, body: unknown) {
+    super(`API request failed with status ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 /**
  * Turns an `openapi-fetch` result into data-or-throw, gated on the response
  * status rather than the parsed `error` value (issue #147 review).
@@ -11,21 +24,11 @@
  * resolves `isSuccess` and the UI shows an empty list instead of an error.
  * Gating on `response.ok` instead catches every non-2xx regardless of body.
  */
-export class ApiError extends Error {
-  readonly status: number;
-  readonly body: unknown;
-
-  constructor(status: number, body: unknown) {
-    super(`API request failed with status ${status}`);
-    this.name = "ApiError";
-    this.status = status;
-    this.body = body;
-  }
-}
-
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
   if (!result.response.ok) {
-    throw new ApiError(result.response.status, result.error ?? result.data);
+    // openapi-fetch never populates `data` for a non-ok response, so
+    // `result.error` alone is what ApiError.body can hold here.
+    throw new ApiError(result.response.status, result.error);
   }
   return result.data as T;
 }
