@@ -20,6 +20,8 @@ a11y                      Accessibility
 api                       Backend HTTP API
 audit                     Audit logging
 auth                      Authentication and identity
+breaking-change           Changes docs/api/openapi.json in a way a consumer could break on
+breaking-change-approved  The breaking API change on this PR is intended and reviewed
 bug                       Something isn't working                    (GitHub default)
 ci                        GitHub Actions workflows
 db                        Database schema and migrations
@@ -47,6 +49,15 @@ wontfix                   This will not be worked on                 (GitHub def
 ```
 
 `dependencies` is applied by all four ecosystems in `.github/dependabot.yml`.
+`breaking-change` and `breaking-change-approved` are applied by
+`.github/workflows/openapi.yml`'s `breaking` job (issue #206, FR-20); see
+`docs/architecture/public-api.md`'s "Compatibility and breaking changes" section for
+what triggers them. Created by hand:
+
+```powershell
+gh label create "breaking-change" --repo MattCordell/nptc-platform --color "b60205" --description "Changes docs/api/openapi.json in a way a consumer could break on"
+gh label create "breaking-change-approved" --repo MattCordell/nptc-platform --color "0e8a16" --description "The breaking API change on this PR is intended and reviewed"
+```
 
 **Two GitHub default labels are kept on the repo but deliberately unused**, so their
 presence in `gh label list` is not drift: `documentation` (the project labels docs work

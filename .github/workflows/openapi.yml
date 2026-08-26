@@ -12,8 +12,13 @@ name: OpenAPI
 # reasoning as docs.yml: a trigger-level filter would make GitHub wait
 # forever for a required check that never fires on an unrelated PR. Job-level
 # filtering below gets the cost saving without that deadlock.
+#
+# `labeled`/`unlabeled` (issue #206) let a maintainer applying
+# `breaking-change-approved` re-run the `breaking` job below without an empty
+# commit - same reasoning as pr-hygiene.yml's trigger list.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
     paths:
@@ -21,6 +26,7 @@ on:
       - "shared/src/**"
       - "docs/api/openapi.json"
       - "scripts/generate_openapi.py"
+      - "scripts/openapi_breaking_check.py"
       - "pyproject.toml"
       - "uv.lock"
 
@@ -55,6 +61,7 @@ jobs:
               - "shared/src/**"
               - "docs/api/openapi.json"
               - "scripts/generate_openapi.py"
+              - "scripts/openapi_breaking_check.py"
               - "pyproject.toml"
               - "uv.lock"
 
@@ -96,12 +103,134 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+  # Breaking-change detection (issue #206, FR-20): #143 proved the document is
+  # accurate; this proves a *change* to it doesn't narrow something a consumer
+  # (concretely, #147's generated TypeScript client) could depend on. Blocks
+  # unless the PR carries `breaking-change-approved` - the maintainer's
+  # explicit sign-off that the break is intended. Labelling is best-effort:
+  # a fork PR's GITHUB_TOKEN is read-only, so a failed label call warns
+  # rather than failing a job whose real purpose is the detection itself.
+  breaking:
+    name: No unapproved breaking change
+    needs: changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Not behind `if: needs.changes.outputs.api == 'true'` at job level, unlike
+      # `openapi` above: a PR that carried a breaking change and then reverted it
+      # (so the API paths are back to byte-identical with base) needs this job to
+      # still run and clear a `breaking-change` label applied by an earlier commit
+      # - a job-level skip would leave that label stranded with nothing left able
+      # to remove it (seen in review on this PR's own throwaway verification).
+      - name: No API changes - clear a stale breaking-change label
+        if: needs.changes.outputs.api != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr edit "$PR_URL" --remove-label breaking-change \
+            || echo "::warning::could not remove breaking-change label (fork PR token is read-only, or the label was not present)"
+
+      - name: Checkout
+        if: needs.changes.outputs.api == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        if: needs.changes.outputs.api == 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags --prune origin "$BASE_REF"
+
+      - name: Install uv
+        if: needs.changes.outputs.api == 'true'
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install workspace
+        if: needs.changes.outputs.api == 'true'
+        run: uv sync --all-packages --locked
+
+      - name: Extract base docs/api/openapi.json
+        id: base
+        if: needs.changes.outputs.api == 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if git show "origin/$BASE_REF:docs/api/openapi.json" > /tmp/base-openapi.json 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Exit 1 (breaking changes found) and exit 2 (the base or head document
+      # could not be read/parsed) are deliberately distinct in the script - a
+      # malformed document must fail this step as a read failure, not be
+      # mistaken for "breaking changes found" and mislabelled/misreported as
+      # a contract narrowing.
+      - name: Check for breaking changes
+        id: check
+        if: steps.base.outputs.exists == 'true'
+        run: |
+          set +e
+          uv run python scripts/openapi_breaking_check.py \
+            --base /tmp/base-openapi.json \
+            --head docs/api/openapi.json \
+            --format github
+          exit_code=$?
+          set -e
+          case "$exit_code" in
+            0) echo "found=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "found=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::openapi_breaking_check could not compare the documents (exit $exit_code)."
+              exit "$exit_code"
+              ;;
+          esac
+
+      - name: Apply or remove the breaking-change label
+        if: steps.base.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          FOUND: ${{ steps.check.outputs.found }}
+        run: |
+          if [ "$FOUND" = "true" ]; then
+            gh pr edit "$PR_URL" --add-label breaking-change \
+              || echo "::warning::could not apply breaking-change label (fork PR token is read-only)"
+          else
+            gh pr edit "$PR_URL" --remove-label breaking-change \
+              || echo "::warning::could not remove breaking-change label (fork PR token is read-only)"
+          fi
+
+      # The override: a maintainer who has reviewed and intends the break adds
+      # this label, and the job passes on the next `labeled` re-run without
+      # reverting the detection above - `breaking-change` stays as the record.
+      - name: Fail unless the breaking change is approved
+        if: steps.base.outputs.exists == 'true' && steps.check.outputs.found == 'true'
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          if echo "$LABELS" | jq -e 'any(. == "breaking-change-approved")' > /dev/null; then
+            echo "Breaking change detected but approved via the breaking-change-approved label."
+          else
+            echo "::error::Breaking change(s) detected in docs/api/openapi.json. Add breaking-change-approved if this is intended."
+            exit 1
+          fi
+
   # Branch ruleset (F-7, deferred) will require this job once applied - see
   # the matching job in ci.yml and docs.yml.
   required:
     name: Required (OpenAPI)
     if: always()
-    needs: [changes, openapi]
+    needs: [changes, openapi, breaking]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -109,7 +238,8 @@ jobs:
         run: |
           for result in \
             "${{ needs.changes.result }}" \
-            "${{ needs.openapi.result }}"; do
+            "${{ needs.openapi.result }}" \
+            "${{ needs.breaking.result }}"; do
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "::error::A required job did not succeed (result: $result)"
               exit 1

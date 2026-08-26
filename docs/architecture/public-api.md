@@ -170,3 +170,27 @@ at `ERROR`, unlike every other refusal here.
 
 Neither is implemented yet (FR-22). There are no `Cache-Control` or `ETag` headers, and
 no request budget. Clients should page politely and not poll tighter than they need to.
+
+## Compatibility and breaking changes
+
+`.github/workflows/openapi.yml`'s `breaking` job (issue #206) diffs a PR's
+`docs/api/openapi.json` against the same file on the base branch and blocks the PR if the
+diff narrows something a consumer (concretely, issue #147's generated TypeScript client)
+could depend on:
+
+- a removed path or operation, or a removed `2xx` response status
+- a request narrowed: a parameter removed or made required, a new required parameter, a
+  request-body property newly required, a tightened `enum`/`maximum`/`minimum`/`maxLength`/
+  `minLength`/`pattern`, or a schema that no longer accepts `null`
+- a response narrowed: a property removed, a property demoted from required to optional,
+  a scalar `type` changed, or a value added to a response `enum` (a client switching
+  exhaustively on it now has an unhandled case)
+
+Everything else - a new path, a new optional parameter, a new response property, a
+relaxed request constraint, or any description/summary/title edit - is not flagged.
+
+A maintainer who intends the break adds the `breaking-change-approved` label to the PR;
+the check re-runs and passes, but `breaking-change` stays applied as the record of what
+happened. `scripts/openapi_breaking_check.py` implements the rules and can be run
+directly: `uv run python scripts/openapi_breaking_check.py --base <old.json> --head
+<new.json>`.
