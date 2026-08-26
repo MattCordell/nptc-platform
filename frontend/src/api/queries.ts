@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
 
 /**
@@ -21,16 +22,13 @@ export function useEntriesList(params: EntriesListParams = {}) {
   const client = useApiClient();
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/entries", params],
-    queryFn: async ({ signal }) => {
-      const { data, error } = await client.GET("/api/v1/catalogue/entries", {
-        params: { query: params },
-        signal,
-      });
-      if (error) {
-        throw error;
-      }
-      return data;
-    },
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries", {
+          params: { query: params },
+          signal,
+        }),
+      ),
   });
 }
 
@@ -38,19 +36,13 @@ export function useEntryDetail(businessKey: string) {
   const client = useApiClient();
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/entries/{business_key}", businessKey],
-    queryFn: async ({ signal }) => {
-      const { data, error } = await client.GET(
-        "/api/v1/catalogue/entries/{business_key}",
-        {
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries/{business_key}", {
           params: { path: { business_key: businessKey } },
           signal,
-        },
-      );
-      if (error) {
-        throw error;
-      }
-      return data;
-    },
+        }),
+      ),
     // A blank business key can't resolve to a real entry - don't fire the
     // request only to fail with a 422.
     enabled: businessKey.length > 0,

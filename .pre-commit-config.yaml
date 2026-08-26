@@ -65,13 +65,25 @@ repos:
 
       - id: generated-api-client-is-current
         name: frontend/src/api/schema.ts is up to date (pnpm)
-        # Regenerates into a temp file rather than in place, so the hook never
-        # mutates a file the commit didn't touch out from under the author.
-        entry: >-
-          bash -c 'cd frontend
-          && corepack pnpm exec openapi-typescript ../docs/api/openapi.json -o /tmp/schema.ts
-          && diff -q /tmp/schema.ts src/api/schema.ts
-          || (echo "frontend/src/api/schema.ts is stale - regenerate it with: pnpm --filter nptc-frontend generate:api" >&2; exit 1)'
+        # Regenerates into a `mktemp` file rather than in place or a fixed
+        # `/tmp` path, so the hook never mutates a file the commit didn't
+        # touch, and two concurrent runs (two clones, a parallel
+        # `pre-commit run`) don't race on the same path. `set -e` plus a
+        # separate generate step keeps a genuine failure there (a missing
+        # corepack, a malformed openapi.json) from being swallowed into the
+        # "stale" message below - that message fires only for an actual
+        # diff. `diff` (no `-q`) so the author sees what differs, not just
+        # that something does.
+        entry: |-
+          bash -c 'set -e
+          cd frontend
+          tmp=$(mktemp)
+          trap '\''rm -f "$tmp"'\'' EXIT
+          corepack pnpm exec openapi-typescript ../docs/api/openapi.json -o "$tmp"
+          if ! diff "$tmp" src/api/schema.ts; then
+            echo "frontend/src/api/schema.ts is stale - regenerate it with: pnpm --filter nptc-frontend generate:api" >&2
+            exit 1
+          fi'
         language: system
         files: ^(docs/api/openapi\.json|frontend/src/api/.*)$
         pass_filenames: false

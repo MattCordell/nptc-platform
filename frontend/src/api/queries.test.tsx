@@ -48,6 +48,19 @@ function stubFetch(status: number, body: unknown) {
   return fetchMock;
 }
 
+// A response with no body at all - distinct from stubFetch's JSON body.
+// openapi-fetch parses `error: undefined` for this shape (dist/index.mjs),
+// which is exactly the case unwrap() (frontend/src/api/unwrap.ts) exists to
+// still treat as a failure.
+function stubFetchEmptyBody(status: number) {
+  const fetchMock = vi.fn<(request: Request) => Promise<Response>>((request) => {
+    void request;
+    return Promise.resolve(new Response(null, { status }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -73,6 +86,19 @@ describe("useEntriesList", () => {
     const { result } = renderHook(() => useEntriesList(), { wrapper });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  // Principal failure mode (issue #147 review): a failed response with an
+  // empty body parses as `error: undefined` in openapi-fetch, so a hook
+  // that branched on the parsed error alone would resolve this as a
+  // *successful* empty result instead of an error.
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => useEntriesList(), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
   });
 });
 
