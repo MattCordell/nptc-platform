@@ -63,6 +63,19 @@ repos:
         files: ^(backend/src/.*\.py|shared/src/.*\.py|docs/api/openapi\.json)$
         pass_filenames: false
 
+      - id: generated-api-client-is-current
+        name: frontend/src/api/schema.ts is up to date (pnpm)
+        # Regenerates into a temp file rather than in place, so the hook never
+        # mutates a file the commit didn't touch out from under the author.
+        entry: >-
+          bash -c 'cd frontend
+          && corepack pnpm exec openapi-typescript ../docs/api/openapi.json -o /tmp/schema.ts
+          && diff -q /tmp/schema.ts src/api/schema.ts
+          || (echo "frontend/src/api/schema.ts is stale - regenerate it with: pnpm --filter nptc-frontend generate:api" >&2; exit 1)'
+        language: system
+        files: ^(docs/api/openapi\.json|frontend/src/api/.*)$
+        pass_filenames: false
+
       - id: frontend-lint
         name: eslint (frontend)
         entry: bash -c 'cd frontend && corepack pnpm exec eslint .'

@@ -29,6 +29,9 @@ on:
       - "scripts/openapi_breaking_check.py"
       - "pyproject.toml"
       - "uv.lock"
+      - "frontend/src/api/**"
+      - "frontend/package.json"
+      - "pnpm-lock.yaml"
 
 concurrency:
   group: openapi-${{ github.workflow }}-${{ github.ref }}
@@ -47,6 +50,7 @@ jobs:
       pull-requests: read
     outputs:
       api: ${{ steps.filter.outputs.api }}
+      client: ${{ steps.filter.outputs.client }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,6 +68,11 @@ jobs:
               - "scripts/openapi_breaking_check.py"
               - "pyproject.toml"
               - "uv.lock"
+            client:
+              - "docs/api/openapi.json"
+              - "frontend/src/api/**"
+              - "frontend/package.json"
+              - "pnpm-lock.yaml"
 
   openapi:
     name: Document is generated and valid
@@ -102,6 +111,46 @@ jobs:
           path: docs/api/openapi.json
           retention-days: 30
           if-no-files-found: ignore
+
+  # Generated TypeScript client staleness gate (issue #147, FR-20): #143 gates
+  # docs/api/openapi.json itself; this gates frontend/src/api/schema.ts, the
+  # openapi-typescript output committed from it, so the two can never drift
+  # apart silently. Regenerates and diffs, mirroring the `openapi` job above
+  # and the local `generated-api-client-is-current` pre-commit hook.
+  client:
+    name: Generated client is up to date
+    needs: changes
+    if: needs.changes.outputs.client == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The actual regenerate-and-diff gate: fails if
+      # frontend/src/api/schema.ts is not exactly what openapi-typescript
+      # would generate from the currently committed docs/api/openapi.json.
+      - name: frontend/src/api/schema.ts is up to date
+        working-directory: frontend
+        run: |
+          pnpm generate:api
+          if ! git diff --exit-code -- src/api/schema.ts; then
+            echo "::error::frontend/src/api/schema.ts is stale. Regenerate it with 'pnpm --filter nptc-frontend generate:api' and commit the result."
+            exit 1
+          fi
 
   # Breaking-change detection (issue #206, FR-20): #143 proved the document is
   # accurate; this proves a *change* to it doesn't narrow something a consumer
@@ -230,7 +279,7 @@ jobs:
   required:
     name: Required (OpenAPI)
     if: always()
-    needs: [changes, openapi, breaking]
+    needs: [changes, openapi, client, breaking]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -239,6 +288,7 @@ jobs:
           for result in \
             "${{ needs.changes.result }}" \
             "${{ needs.openapi.result }}" \
+            "${{ needs.client.result }}" \
             "${{ needs.breaking.result }}"; do
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               echo "::error::A required job did not succeed (result: $result)"
