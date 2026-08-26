@@ -194,3 +194,32 @@ the check re-runs and passes, but `breaking-change` stays applied as the record 
 happened. `scripts/openapi_breaking_check.py` implements the rules and can be run
 directly: `uv run python scripts/openapi_breaking_check.py --base <old.json> --head
 <new.json>`.
+
+## Generated TypeScript client (issue #147)
+
+`frontend/src/api/schema.ts` is generated from this document by
+[openapi-typescript](https://openapi-ts.dev/) - it is not hand-authored, and no
+request/response interface should ever be hand-written alongside it. Regenerate it with:
+
+```powershell
+pnpm --filter nptc-frontend generate:api
+```
+
+Run this whenever `docs/api/openapi.json` changes (i.e. after regenerating it per
+`docs/api/README.md`) and commit the result. `.github/workflows/openapi.yml`'s `client`
+job and the local `generated-api-client-is-current` pre-commit hook both regenerate and
+diff the file, so a stale commit fails CI the same way a stale `openapi.json` does.
+
+Generation is a script, not a `pnpm build` step - `openapi-typescript` reads a file on
+disk and needs no network access, but wiring it into the build would make the build's
+output depend on regeneration order and put codegen on the offline clean-clone path that
+`pnpm build` otherwise stays off of.
+
+`frontend/src/api/client.ts` wraps the generated `paths` type in
+[openapi-fetch](https://openapi-ts.dev/openapi-fetch/), attaching a bearer token from
+the auth context's `getAccessToken()` on every request (never cached - a renewal may be
+pending). `frontend/src/api/queries.ts` wraps that in TanStack Query hooks.
+`frontend/src/api/fr-06.ts` is a compile-time guard: type-only assertions that every
+SNOMED CT identifier field in the generated schema is `string`, never `number` (FR-06) -
+if a future backend change ever typed one as a number, `pnpm typecheck` fails on this
+file rather than the defect reaching the frontend silently.
