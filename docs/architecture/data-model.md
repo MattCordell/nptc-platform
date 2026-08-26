@@ -1144,9 +1144,9 @@ itself from depending on. Issue #52 wires it into `CodeHandler`:
 `nptc.api.dependencies.get_datatype_registry` constructs `HandlerDeps` with a
 `DatabaseLocalCodeLookup(session)` built from the request's own `Session` (request-scoped,
 not the process-lifetime `lru_cache` the registry used before this needed a `Session`), and
-`CodeHandler._validate_binding`'s `local_code_system` branch now calls `resolve()` for real
-- three outcomes (absent, code deprecated, owning system deprecated independently of the
-code's own status) each map to a distinct `ValidationIssue` code.
+`CodeHandler._validate_binding`'s `local_code_system` branch now calls `resolve()` for real,
+mapping three outcomes (absent, code deprecated, owning system deprecated independently of
+the code's own status) to a distinct `ValidationIssue` code each.
 
 ## Extensions
 
