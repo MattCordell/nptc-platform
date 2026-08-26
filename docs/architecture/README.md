@@ -18,8 +18,12 @@
   shell (issue #146): the route table as the single source of URL shapes, the FR-17 URL
   contract, why search values stay raw strings, the not-found/error surfaces, and the
   structural (not access-control) authentication seam for issue #41.
+- [components.md](components.md) — the accessible component baseline (issue #148): the
+  five components screens are expected to compose, the automated `axe-core` check and its
+  known limits (`color-contrast` under jsdom), and the Tailwind styling strategy
+  ([ADR-0025](../adr/0025-frontend-styling.md)).
 
-Still owed: the component and deployment topology (PRD §14.3 is the starting point).
+Still owed: the deployment topology (PRD §14.3 is the starting point).
 
 Populated incrementally as the corresponding backlog items land — see the
 documentation-impact table in [CONTRIBUTING.md](../../CONTRIBUTING.md) for which

@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { createQueryClient } from "./api/query-client.ts";
 import { AuthProvider } from "./auth/auth-context.tsx";
 import { createAppRouter } from "./router/router.tsx";
-import "./shell/shell.css";
+import "./styles/app.css";
 
 const container = document.getElementById("root");
 if (!container) {

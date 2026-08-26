@@ -12,7 +12,7 @@ their own issues: a page that actually loads catalogue data through the generate
 client (#147's infrastructure - `QueryClientProvider`, the typed client, TanStack Query
 hooks - is wired into `main.tsx`, but no route consumes it yet, see
 [public-api.md](public-api.md#generated-typescript-client-issue-147)), the accessible
-component/styling baseline (#148 — `shell.css` is a placeholder it should replace), and
+component/styling baseline (landed with #148 — see [components.md](components.md)), and
 real sign-in (#41 — see "Authentication is structural" below). No route is code-split yet
 (see ADR-0020's consequences).
 
@@ -167,9 +167,10 @@ After a client-side navigation there is no full page load to reset focus, so
 links into the authenticated and admin sections — see "Authentication is structural"
 below for why that's fine.
 
-`shell/shell.css` is a placeholder: just enough for the landmarks and skip link to be
-usable. Issue #148 owns the platform's real styling strategy and should replace it, not
-build on top of it.
+The shell's landmarks and skip link are now styled from `src/styles/app.css` (issue #148's
+Tailwind adoption, [ADR-0025](../adr/0025-frontend-styling.md)) — see
+[components.md](components.md) for the styling strategy and the component baseline built
+on it.
 
 ## Not-found and error surfaces
 
