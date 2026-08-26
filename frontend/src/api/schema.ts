@@ -180,7 +180,7 @@ export interface components {
             /** System */
             system: string;
             /** Code */
-            code: string; // deliberately stale for issue #147 CI verification
+            code: string;
             /** Fsn */
             fsn: string;
             /** Display Term */
