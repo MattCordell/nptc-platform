@@ -1,0 +1,98 @@
+/*
+ * The platform's styling strategy (issue #148): Tailwind v4, CSS-first
+ * configuration (there is no tailwind.config.js in v4 - theme tokens are
+ * declared below with `@theme`). This file replaces `shell.css`, which was
+ * a deliberately temporary placeholder - see docs/adr/0025-frontend-styling.md
+ * for why Tailwind was chosen over plain CSS with custom properties or CSS
+ * Modules, and docs/architecture/components.md for the component baseline
+ * that builds on these tokens.
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* A single accent colour, reused for links, primary actions, and the
+     focus ring, so "what colour means interactive" stays consistent. */
+  --color-accent: #1a5cff;
+  --color-accent-contrast: #ffffff;
+
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f4f5f7;
+  --color-border: #d0d5dd;
+
+  --color-text: #101828;
+  --color-text-muted: #475467;
+
+  --color-danger: #b42318;
+  --color-danger-surface: #fef3f2;
+
+  /* Width/offset of the focus ring components must render at every focus
+     stop (NFR-31) - kept as tokens so no component can drift to a fainter
+     value under its own styling. */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+}
+
+/*
+ * Global focus-visible ring. Declared once here, at the root, specifically
+ * so a component's own styling (background, border, hover state) cannot
+ * suppress it - see the "visible focus indicator that survives the
+ * component's own styling" acceptance criterion on issue #148.
+ */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/*
+ * Utility carried over from shell.css: visually hides content from sighted
+ * users while keeping it in the accessibility tree (e.g. a live region's
+ * label, or text meant only for screen readers). The clip-rect technique,
+ * not `display: none`/`visibility: hidden`, is what keeps it announced.
+ */
+@utility visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Utility carried over from shell.css: the skip link sits off-screen until
+ * focused, then must be visible enough to read and click (NFR-31, #146).
+ */
+@utility skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+
+  &:focus {
+    top: 0;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+header,
+footer {
+  padding: 1rem;
+}
+
+main {
+  padding: 1rem;
+  min-height: 60vh;
+}
