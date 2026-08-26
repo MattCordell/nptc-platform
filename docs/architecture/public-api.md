@@ -77,6 +77,15 @@ from the app's own OpenAPI document, so a route added later is covered on the da
 added, and both regexes ship with positive controls so neither can rot into a pattern
 that matches nothing.
 
+FR-06 is also checked at the schema level, not just against live response bodies:
+`backend/tests/test_openapi_document.py` derives every `code`/`*_code` property from
+`docs/api/openapi.json` itself and asserts each is `type: string` (or nullable string),
+so a code field that is declared but never populated in a test fixture is still caught.
+The same test module validates the document against the OpenAPI 3.1 meta-schema and
+checks the running app serves exactly the committed bytes -
+[`docs/api/README.md`](../api/README.md) has the regeneration command and the CI gate
+(issue #143).
+
 ## Pagination
 
 Keyset, with no offsets. Send `limit`; read `next_cursor` from the response; send it

@@ -1,0 +1,118 @@
+name: OpenAPI
+
+# Dedicated staleness gate for docs/api/openapi.json (issue #143, FR-20).
+# `ci.yml`'s full pytest run already exercises
+# backend/tests/test_openapi_document.py on every code PR, but that gate is
+# one assertion buried inside an 80%-coverage run - #143's acceptance
+# criterion wants a check that is visibly, specifically about the published
+# contract, the way `traceability` in docs.yml is visibly about
+# requirements.yaml rather than just "some pytest module somewhere".
+#
+# Deliberately triggers on every PR (no `paths:` on pull_request), same
+# reasoning as docs.yml: a trigger-level filter would make GitHub wait
+# forever for a required check that never fires on an unrelated PR. Job-level
+# filtering below gets the cost saving without that deadlock.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "backend/src/**"
+      - "shared/src/**"
+      - "docs/api/openapi.json"
+      - "scripts/generate_openapi.py"
+      - "pyproject.toml"
+      - "uv.lock"
+
+concurrency:
+  group: openapi-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            api:
+              - "backend/src/**"
+              - "shared/src/**"
+              - "docs/api/openapi.json"
+              - "scripts/generate_openapi.py"
+              - "pyproject.toml"
+              - "uv.lock"
+
+  openapi:
+    name: Document is generated and valid
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install workspace
+        run: uv sync --all-packages --locked
+
+      # The actual regenerate-and-diff gate: fails if docs/api/openapi.json
+      # is not exactly what create_app() would serve right now.
+      - name: docs/api/openapi.json is up to date
+        run: uv run python scripts/generate_openapi.py --check
+
+      # Meta-schema validation, FR-06 code typing, and served-vs-committed
+      # identity - see backend/tests/test_openapi_document.py.
+      - name: OpenAPI document tests
+        run: uv run pytest backend/tests/test_openapi_document.py
+
+      - name: Upload docs/api/openapi.json
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openapi-document
+          path: docs/api/openapi.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+  # Branch ruleset (F-7, deferred) will require this job once applied - see
+  # the matching job in ci.yml and docs.yml.
+  required:
+    name: Required (OpenAPI)
+    if: always()
+    needs: [changes, openapi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail if a required job failed
+        run: |
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.openapi.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::A required job did not succeed (result: $result)"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed or were correctly skipped."
