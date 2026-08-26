@@ -16,6 +16,10 @@ dev = [
     "pyyaml>=6.0",
     "types-pyyaml>=6.0.12.20260815",
     "types-openpyxl>=3.1.5.20260807",
+    # nptc.registry.schema (issue #52, FR-09) is the first *production*
+    # (non-test) importer of jsonschema - backend/pyproject.toml's own
+    # dependency comment.
+    "types-jsonschema>=4.23",
     "testcontainers[postgres]>=4.15.0",
     "pytest-xdist>=3.8.0",
     # OpenAPI 3.1 meta-schema validation for docs/api/openapi.json (issue #143,
