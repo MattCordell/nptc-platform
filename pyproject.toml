@@ -18,6 +18,11 @@ dev = [
     "types-openpyxl>=3.1.5.20260807",
     "testcontainers[postgres]>=4.15.0",
     "pytest-xdist>=3.8.0",
+    # OpenAPI 3.1 meta-schema validation for docs/api/openapi.json (issue #143,
+    # FR-20). Bundles the meta-schema in the package, so the check in
+    # backend/tests/test_openapi_document.py needs no network access (NFR-37's
+    # egress block covers backend/tests too - see ci.yml's backend-integration job).
+    "openapi-spec-validator>=0.7.1",
 ]
 
 # --- uv workspace -----------------------------------------------------------

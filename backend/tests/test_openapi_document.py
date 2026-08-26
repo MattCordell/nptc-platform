@@ -1,43 +1,45 @@
-"""`docs/api/openapi.json` is the API's committed contract (issue #41).
+"""`docs/api/openapi.json` is the API's committed contract (issue #41, #143).
 
 CONTRIBUTING.md's documentation-impact table routes "an API endpoint or
 schema" to this file. A committed document nobody checks drifts within two
 PRs, so this asserts it still matches what `create_app()` actually serves -
-and the failure message says exactly how to regenerate it.
+and the failure message says exactly how to regenerate it. Issue #143 adds
+three more checks external consumers rely on: the document is a *legal*
+OpenAPI 3.1 document (not just JSON FastAPI happened to produce), every
+SNOMED CT code field is declared `type: string` at the schema level (FR-06 -
+belt-and-braces alongside the whole-body regex scan in
+`test_api_public_response_hygiene.py`), and the running app serves exactly
+what is committed.
 
 No container and no network: `app.openapi()` is a pure function of the route
-table.
+table, and `openapi_spec_validator` bundles the OpenAPI meta-schema in the
+package rather than fetching it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
+from openapi_spec_validator import validate
+from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 
 from nptc.api.app import create_app
+from nptc.api.openapi_document import build_document, render
 from nptc.settings import ApiSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_PATH = REPO_ROOT / "docs" / "api" / "openapi.json"
 
-REGENERATE = (
-    "Regenerate it with:\n"
-    '  uv run python -c "import json,pathlib;'
-    "from nptc.api.app import create_app;"
-    "from nptc.settings import ApiSettings;"
-    "pathlib.Path('docs/api/openapi.json').write_text("
-    "json.dumps(create_app(settings=ApiSettings("
-    "frontend_base_url='http://localhost:5173')).openapi(), indent=2, "
-    "ensure_ascii=False) + chr(10), encoding='utf-8', newline=chr(10))\""
-)
+REGENERATE = "Regenerate it with:\n  uv run python scripts/generate_openapi.py"
 
 
-def _current_spec() -> dict[str, object]:
-    app = create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
-    return dict(app.openapi())
+def _current_spec() -> dict[str, Any]:
+    return build_document()
 
 
 @pytest.mark.req("NFR-01")
@@ -114,3 +116,75 @@ def test_no_public_catalogue_schema_exposes_an_internal_identifier() -> None:
                 offenders.append(f"{name}.{property_name}")
 
     assert not offenders, f"internal identifier(s) exposed in the public API schema: {offenders}"
+
+
+@pytest.mark.req("FR-20")
+def test_document_validates_against_the_openapi_31_meta_schema() -> None:
+    """A generated client can only be built off a document that is itself legal
+    OpenAPI 3.1 - not merely JSON that FastAPI happened to produce."""
+    validate(_current_spec())
+
+
+@pytest.mark.req("FR-20")
+def test_meta_schema_validation_actually_rejects_an_invalid_document() -> None:
+    """Positive control: without this, a validator call that silently no-ops
+    (wrong function, wrong version, swallowed exception) would pass forever."""
+    with pytest.raises(OpenAPIValidationError):
+        validate({"openapi": "3.1.0", "info": {"title": "incomplete"}, "paths": {}})
+
+
+#: A property named exactly "code", or ending "_code" - `Binding.code` and
+#: `Binding.replaced_by_code` today, and whatever a future SNOMED-carrying
+#: field is called tomorrow. Matched by name in the document itself, not
+#: hand-listed, so a new code field is covered the day it is added.
+_CODE_PROPERTY_PATTERN = re.compile(r"(?:^code$)|(?:_code$)")
+
+
+def _is_string_or_nullable_string(property_schema: dict[str, Any]) -> bool:
+    if property_schema.get("type") == "string":
+        return True
+    branches = property_schema.get("anyOf")
+    if not branches:
+        return False
+    types = {branch.get("type") for branch in branches}
+    return "string" in types and types <= {"string", "null"}
+
+
+@pytest.mark.req("FR-06")
+def test_every_snomed_code_field_is_declared_a_json_string() -> None:
+    """FR-06: a SNOMED CT identifier must never be serialisable as a JSON
+    number - the schema-level counterpart to the response-body regex scan in
+    `test_api_public_response_hygiene.py`. This one catches a field that is
+    declared but never populated in any test fixture, too."""
+    spec = _current_spec()
+    schemas: dict[str, Any] = spec["components"]["schemas"]  # type: ignore[index,assignment]
+
+    checked = 0
+    offenders: list[str] = []
+    for schema_name, schema in schemas.items():
+        for property_name, property_schema in schema.get("properties", {}).items():
+            if not _CODE_PROPERTY_PATTERN.search(property_name):
+                continue
+            checked += 1
+            if not _is_string_or_nullable_string(property_schema):
+                offenders.append(f"{schema_name}.{property_name}")
+
+    # A positive control for the pattern itself: if this hits zero, the
+    # regex (or the schema it's matched against) has drifted and the
+    # assertion below would be vacuously true.
+    assert checked > 0, "expected at least one *_code property in the document"
+    assert not offenders, f"SNOMED code field(s) not typed as a JSON string (FR-06): {offenders}"
+
+
+@pytest.mark.req("FR-20")
+def test_served_document_matches_the_committed_document() -> None:
+    """The served copy and the committed copy must be the same build - not
+    merely equal as parsed JSON, but byte-identical once rendered the same way
+    (issue #143's acceptance criterion 4)."""
+    app = create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
+    with TestClient(app) as client:
+        served = client.get("/api/v1/openapi.json").json()
+
+    committed_text = OPENAPI_PATH.read_text(encoding="utf-8")
+    assert served == json.loads(committed_text)
+    assert render(served) == committed_text
