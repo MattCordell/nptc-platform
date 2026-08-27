@@ -180,6 +180,16 @@ class ReconciliationReport:
     #: wrong. Never carries the exception's own message text (NFR-26) -
     #: only its type name, matching the CLI's existing posture.
     failed: tuple[tuple[str, str], ...] = ()
+    #: Property keys (not index names) of a *filterable* `property_
+    #: definition` row whose `datatype` has no handler registered in this
+    #: build (issue #54 review, fourth pass) - `registry.get()` raising
+    #: `UnknownDatatypeError` for one row must not abort the whole run the
+    #: way an unhandled exception used to, and the row's existing index (if
+    #: any) must not be swept up as an orphan just because this run cannot
+    #: compute what it should look like. See `nptc.db.property_indexes.
+    #: UnknownDatatypeProperty`'s own docstring for why this is reachable
+    #: rather than theoretical.
+    skipped_unknown_datatype: tuple[str, ...] = ()
     skipped_locked: bool = False
 
     @property
@@ -203,12 +213,15 @@ class ReconciliationReport:
     @property
     def converged(self) -> bool:
         """True when nothing failed to converge this run - independent of
-        whether anything needed to change. False exactly when `failed` is
-        non-empty (issue #54 review, third pass): the caller #55/#138 will
-        add (a background task dispatched right after a `property_
-        definition` write commits) needs this question answered directly,
-        not reconstructed from `changed`."""
-        return not self.failed
+        whether anything needed to change. False when `failed` is
+        non-empty (issue #54 review, third pass) or when a filterable
+        property's `datatype` had no registered handler at all (fourth
+        pass, `skipped_unknown_datatype`): both are cases this run could
+        not actually resolve, and the caller #55/#138 will add (a
+        background task dispatched right after a `property_definition`
+        write commits) needs this question answered directly, not
+        reconstructed from `changed`."""
+        return not self.failed and not self.skipped_unknown_datatype
 
 
 @lru_cache(maxsize=1)
@@ -310,7 +323,15 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
     # rather than opening a second pooled connection.
     with Session(bind=connection) as session:
         definitions = list(session.execute(select(PropertyDefinition)).scalars().all())
-    desired = _desired_by_name(desired_indexes(definitions, _registry()))
+    desired_list, unknown_datatype = desired_indexes(definitions, _registry())
+    desired = _desired_by_name(desired_list)
+    # Names to hold back from the orphan-drop sweep below even though they
+    # are not in `desired` (issue #54 review, fourth pass) - a filterable
+    # property whose `datatype` this build cannot look up at all is not
+    # "un-flagged"; its existing index (if any) must be left alone, not
+    # dropped under CONCURRENTLY just because nothing computed a desired
+    # shape for it this run.
+    protected_names = {row.name for row in unknown_datatype}
 
     actual = {
         row.name: (row.is_valid, row.comment, row.indexdef)
@@ -401,7 +422,7 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
                     # at all, and the next run picks them up normally.
                     break
 
-        orphaned = [name for name in actual if name not in desired]
+        orphaned = [name for name in actual if name not in desired and name not in protected_names]
         for name in orphaned:
             if raw.closed:
                 break
@@ -420,4 +441,5 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
         rebuilt_stale_definition=tuple(rebuilt_stale_definition),
         repaired_comment=tuple(repaired_comment),
         failed=tuple(failed),
+        skipped_unknown_datatype=tuple(row.property_key for row in unknown_datatype),
     )

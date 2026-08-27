@@ -979,7 +979,13 @@ depth, though it is not actually mutable in practice, FR-12): the diff also comp
 (`nptc.db.property_indexes.matches_indexdef`), not just the index's name and validity, and
 rebuilds rather than merely re-commenting on a mismatch. One index failing to converge does
 not abort the run - every other desired/orphaned index still gets a chance, and the failure
-is collected into the report rather than raised. Runs on its own `AUTOCOMMIT` connection
+is collected into the report rather than raised. The same holds for a filterable property
+whose `datatype` has no handler registered in the running build (`datatype` is plain `TEXT`
+with no `CHECK`/`ENUM`, FR-77's own extension point, and mutable - reachable via a rollback,
+an early seed, or a raw-SQL amendment): it is reported separately
+(`ReconciliationReport.skipped_unknown_datatype`) and its existing index, if any, is held
+back from the orphan-drop sweep rather than being dropped just because nothing could compute
+a desired shape for it this run. Runs on its own `AUTOCOMMIT` connection
 (`NPTC_INDEXER_DATABASE_URL` - see [`configuration.md`](../operations/configuration.md)),
 since `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block; guarded by a
 `pg_try_advisory_lock` so two concurrent runs converging on the same state is a no-op, not a

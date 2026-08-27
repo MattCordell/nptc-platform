@@ -27,6 +27,7 @@ from nptc.db.models.property_definition import (
 from nptc.db.property_indexes import (
     GENERATED_INDEX_NAME_RE,
     DesiredIndex,
+    UnknownDatatypeProperty,
     comment_statement,
     create_statement,
     desired_indexes,
@@ -125,7 +126,10 @@ def test_desired_indexes_excludes_non_filterable_property() -> None:
         _definition(key="usage_guidance", index_seq=1, datatype="string", filterable=False)
     ]
 
-    assert desired_indexes(definitions, _registry()) == []
+    desired, unknown = desired_indexes(definitions, _registry())
+
+    assert desired == []
+    assert unknown == []
 
 
 def test_desired_indexes_includes_filterable_code_property_as_gin() -> None:
@@ -140,7 +144,7 @@ def test_desired_indexes_includes_filterable_code_property_as_gin() -> None:
         )
     ]
 
-    desired = desired_indexes(definitions, _registry())
+    desired, unknown = desired_indexes(definitions, _registry())
 
     assert desired == [
         DesiredIndex(
@@ -151,12 +155,13 @@ def test_desired_indexes_includes_filterable_code_property_as_gin() -> None:
         )
     ]
     assert desired[0].name == "ix_propval_p7_1"
+    assert unknown == []
 
 
 def test_desired_indexes_includes_filterable_string_property_as_expression_btree() -> None:
     definitions = [_definition(key="admin_text", index_seq=99, datatype="string", filterable=True)]
 
-    desired = desired_indexes(definitions, _registry())
+    desired, unknown = desired_indexes(definitions, _registry())
 
     assert desired == [
         DesiredIndex(
@@ -166,6 +171,7 @@ def test_desired_indexes_includes_filterable_string_property_as_expression_btree
             expression=ValueExpression.TEXT_SCALAR,
         )
     ]
+    assert unknown == []
 
 
 def test_desired_indexes_includes_filterable_decimal_property_as_expression_btree() -> None:
@@ -173,7 +179,7 @@ def test_desired_indexes_includes_filterable_decimal_property_as_expression_btre
         _definition(key="admin_number", index_seq=100, datatype="decimal", filterable=True)
     ]
 
-    desired = desired_indexes(definitions, _registry())
+    desired, unknown = desired_indexes(definitions, _registry())
 
     assert desired == [
         DesiredIndex(
@@ -183,10 +189,42 @@ def test_desired_indexes_includes_filterable_decimal_property_as_expression_btre
             expression=ValueExpression.NUMERIC_SCALAR,
         )
     ]
+    assert unknown == []
 
 
 def test_desired_indexes_is_empty_for_no_definitions() -> None:
-    assert desired_indexes([], _registry()) == []
+    assert desired_indexes([], _registry()) == ([], [])
+
+
+def test_desired_indexes_reports_an_unknown_datatype_separately_when_filterable() -> None:
+    """Regression (issue #54 review, fourth pass): a filterable property
+    whose `datatype` has no registered handler must not simply vanish from
+    `desired` - that would look identical to "un-flagged" to the orphan
+    sweep and get a working index dropped. It is reported via `unknown`
+    instead, carrying enough (`index_seq`) to compute the index name the
+    reconciler must protect from that sweep."""
+    definitions = [
+        _definition(key="a_quantity", index_seq=42, datatype="quantity", filterable=True)
+    ]
+
+    desired, unknown = desired_indexes(definitions, _registry())
+
+    assert desired == []
+    assert unknown == [UnknownDatatypeProperty(property_key="a_quantity", index_seq=42)]
+    assert unknown[0].name == "ix_propval_p42_1"
+
+
+def test_desired_indexes_silently_skips_a_non_filterable_unknown_datatype() -> None:
+    """A non-filterable property needs no index either way, known datatype
+    or not - reported in neither list."""
+    definitions = [
+        _definition(key="a_quantity", index_seq=42, datatype="quantity", filterable=False)
+    ]
+
+    desired, unknown = desired_indexes(definitions, _registry())
+
+    assert desired == []
+    assert unknown == []
 
 
 def test_create_statement_renders_property_key_as_a_literal_not_a_placeholder() -> None:
@@ -915,3 +953,69 @@ def test_a_rebuild_whose_create_fails_after_a_successful_drop_is_reported_as_dro
             text("SELECT 1 FROM pg_indexes WHERE indexname = :name"), {"name": expected_name}
         ).first()
     assert exists is None  # the old index is gone; no replacement was built
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_reports_an_unknown_datatype_without_aborting_the_run(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """Issue #54 review, fourth pass: `registry.get()` raising
+    `UnknownDatatypeError` for one row must not escape
+    `reconcile_property_indexes()` and abort the whole run - every other
+    property still converges, and the unknown one is named in the report
+    rather than surfacing as a bare, unhandled exception."""
+    unknown_key = "test_reconciler_unknown_datatype_property"
+    unknown_index_seq = _insert_property(
+        owner_engine, key=unknown_key, datatype="quantity", filterable=True
+    )
+    try:
+        report = reconcile_property_indexes()
+
+        expected_name = index_name(_admin_property["index_seq"], 1)  # type: ignore[arg-type]
+        assert expected_name in report.created  # the known-datatype property still converged
+        assert report.skipped_unknown_datatype == (unknown_key,)
+        assert report.converged is False
+        assert report.failed == ()  # this is not a DDL failure - nothing was even attempted
+    finally:
+        _delete_property(owner_engine, unknown_key)
+        _drop_generated_index_if_exists(owner_engine, index_name(unknown_index_seq, 1))
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_does_not_orphan_drop_an_existing_index_for_an_unknown_datatype(
+    owner_engine: Engine, _indexer_configured: None
+) -> None:
+    """The other half of the fourth-pass finding: a property that *already
+    has* a working index must keep it when its `datatype` is later amended
+    to something this build has no handler for - the row is no longer in
+    `desired`, but it must not therefore look "un-flagged" to the
+    orphan-drop sweep."""
+    key = "test_reconciler_amended_to_unknown_datatype"
+    index_seq = _insert_property(owner_engine, key=key, datatype="string", filterable=True)
+    expected_name = index_name(index_seq, 1)
+    try:
+        first_report = reconcile_property_indexes()
+        assert expected_name in first_report.created
+
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text("UPDATE property_definition SET datatype = 'quantity' WHERE key = :key"),
+                {"key": key},
+            )
+            connection.commit()
+
+        report = reconcile_property_indexes()
+
+        assert report.skipped_unknown_datatype == (key,)
+        assert expected_name not in report.dropped
+        assert report.converged is False
+        with owner_engine.connect() as connection:
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_indexes WHERE indexname = :name"), {"name": expected_name}
+            ).first()
+        assert exists is not None  # the existing index was left alone, not orphan-dropped
+    finally:
+        _delete_property(owner_engine, key)
+        _drop_generated_index_if_exists(owner_engine, expected_name)

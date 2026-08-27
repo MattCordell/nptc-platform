@@ -432,6 +432,35 @@ things worth deciding before merge:
   glance. Rewritten as a `try` scoped to just the `CREATE`, appending to `dropped` only in its
   `except` before re-raising - same behaviour, no add-then-undo.
 
+**Update (2026-08-28, issue #54 review, fourth pass).** A fourth review confirmed all four
+third-pass items, including empirically re-running the new bound-parameter `PREFIX` case and
+the drop-succeeded/create-failed case against a real Postgres, and found one new problem: an
+unknown `datatype` on a single `property_definition` row aborted the entire run.
+
+- **`desired_indexes` called `registry.get(definition.datatype)` per row, unguarded, before
+  the per-index `try`/`except` loop this issue's own earlier rounds built.** `registry.get`
+  raises `UnknownDatatypeError` for anything unregistered, so that exception escaped
+  `reconcile_property_indexes` entirely: no index anywhere converged, `ReconciliationReport`
+  was never constructed, and the CLI reported only `error: could not reconcile property
+  indexes (UnknownDatatypeError)`, naming no property. Reachable, not theoretical:
+  `property_definition.datatype` is plain `TEXT` with no `CHECK`/`ENUM` - deliberately, FR-77's
+  extension point ("admitting a new datatype never touches this table") - and it is mutable,
+  so a database carrying a row for a datatype whose handler is not in the *running* build is a
+  normal consequence of that design (an app rollback across a datatype addition, a seed
+  applied ahead of the code, or a raw-SQL amendment).
+- **Skipping the row outright was rejected**: if `desired_indexes` simply excluded it from the
+  desired set, the property's existing index (if any) would no longer be in `desired` either,
+  and the orphan sweep would drop it - destroying a working index under `CONCURRENTLY` (the
+  expensive direction to rebuild) merely because a handler is temporarily absent. Fixed by
+  having `desired_indexes` return a second list, `UnknownDatatypeProperty` rows (`property_key`
+  plus `index_seq`, enough to compute the index name without ever consulting a handler), which
+  the reconciler both (a) reports as `ReconciliationReport.skipped_unknown_datatype` and (b)
+  excludes from the orphan-drop sweep by name. `converged` now also considers this list, so a
+  library caller sees `converged is False` rather than a falsely-clean report, and the CLI
+  names the property directly (`SKIPPED (unknown datatype): <key>`) instead of a bare exception
+  type. A `filterable=False` row with an unknown datatype needs no index either way (same as a
+  known one) and is skipped from both lists silently - there is nothing to protect or report.
+
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
 not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every

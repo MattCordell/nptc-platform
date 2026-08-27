@@ -48,7 +48,7 @@ report `SKIPPED` rather than racing or erroring.
 | `0` | Converged - either there was nothing to do, or (a real, non-`--dry-run` run) drift was found and fixed. "Found and fixed" is success here, not a failure code, since fixing it is the whole point of running the command. Also returned when another reconciliation was already in progress (`SKIPPED`). |
 | `1` | `--dry-run` only: drift was found and reported, but nothing was executed. Never returned by a real run. |
 | `2` | Usage error: no DSN resolvable from `--database-url`/`NPTC_INDEXER_DATABASE_URL`, or an explicitly-empty `--database-url ""`. |
-| `3` | Could not complete: the database was unreachable, the credential lacked the privilege to `CREATE`/`DROP INDEX`, the connection dropped mid-run, any other environment problem, or (a real, non-`--dry-run` run only) one or more individual indexes failed to converge - see the `FAILED` lines. Not a finding about drift on the indexes that *did* converge; those are still reported and left in their new state. The message names only the exception's type, never its full text, since that can carry connection details (NFR-26/NFR-35). |
+| `3` | Could not complete: the database was unreachable, the credential lacked the privilege to `CREATE`/`DROP INDEX`, the connection dropped mid-run, any other environment problem, or (a real, non-`--dry-run` run only) one or more individual indexes failed to converge, or a filterable property's `datatype` has no registered handler at all - see the `FAILED` / `SKIPPED (unknown datatype)` lines. Not a finding about drift on the indexes that *did* converge; those are still reported and left in their new state. The message names only the exception's type, never its full text, since that can carry connection details (NFR-26/NFR-35). |
 
 These codes are stable and safe to depend on from a scheduled check.
 
@@ -61,6 +61,7 @@ REBUILT (was invalid): ix_propval_p9_1
 REBUILT (definition changed): ix_propval_p14_1
 REPAIRED COMMENT: ix_propval_p9_1
 FAILED: ix_propval_p20_1 (LockNotAvailable)
+SKIPPED (unknown datatype): some_quantity_property
 OK: no drift - every filterable property's index is already converged
 ```
 
@@ -87,8 +88,14 @@ OK: no drift - every filterable property's index is already converged
   run) with any `FAILED` lines exits `3`, even though it also converged everything else -
   re-run afterwards to retry just the failed ones. Only the exception's type is named
   (NFR-26): check the database's own logs for the underlying cause.
-- `SKIPPED` - another reconciliation was already holding the advisory lock. Nothing was
-  attempted; re-run later if needed.
+- `SKIPPED (unknown datatype)` - this filterable property's `datatype` has no handler
+  registered in the running build (an app rollback across a datatype addition, a seed
+  applied ahead of the code, or a raw-SQL amendment can all produce this - `datatype` is
+  plain `TEXT` with no `CHECK`/`ENUM`, FR-77's own extension point). Nothing was attempted
+  for this one property; any index it already has is left exactly as it was, not
+  orphan-dropped. Re-run once the running build has a handler for it.
+- `SKIPPED` (no parenthetical) - another reconciliation was already holding the advisory
+  lock. Nothing was attempted; re-run later if needed.
 - `--dry-run` prefixes each line with `WOULD` (`WOULD CREATE`, `WOULD DROP`, ...) and
   executes nothing; a `FAILED` line under `--dry-run` means computing the diff itself raised
   for that index, and still contributes to exit `1` (drift found), not `3`.

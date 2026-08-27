@@ -54,6 +54,7 @@ from nptc.db.property_specs import spec_for
 from nptc.registry.handlers import (
     INDEX_KIND_BY_EXPRESSION,
     IndexKind,
+    UnknownDatatypeError,
     ValueExpression,
 )
 
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 __all__ = [
     "GENERATED_INDEX_NAME_RE",
     "DesiredIndex",
+    "UnknownDatatypeProperty",
     "comment_statement",
     "create_statement",
     "desired_indexes",
@@ -120,19 +122,63 @@ class DesiredIndex:
         return index_name(self.index_seq, _SLOT_PRIMARY)
 
 
+@dataclass(frozen=True, slots=True)
+class UnknownDatatypeProperty:
+    """One filterable `property_definition` row whose `datatype` has no
+    handler registered in the *running* build (issue #54 review, fourth
+    pass) - reachable, not theoretical: `datatype` is plain `TEXT` with no
+    `CHECK`/`ENUM` (FR-77's own extension point - "admitting a new datatype
+    never touches this table") and is mutable, so an app rollback across a
+    datatype addition, a seed applied ahead of the code, or a raw-SQL
+    amendment can all leave a row like this on record. `desired_indexes`
+    reports these separately rather than silently skipping past them: doing
+    that would make the row indistinguishable from "un-flagged" to the
+    orphan-drop sweep, destroying a working index under `CONCURRENTLY`
+    (the expensive direction to rebuild) merely because a handler is
+    temporarily unavailable."""
+
+    property_key: str
+    index_seq: int
+
+    @property
+    def name(self) -> str:
+        return index_name(self.index_seq, _SLOT_PRIMARY)
+
+
 def desired_indexes(
     definitions: Sequence[PropertyDefinition], registry: DatatypeRegistry
-) -> list[DesiredIndex]:
+) -> tuple[list[DesiredIndex], list[UnknownDatatypeProperty]]:
     """The full desired index set, derived from every `property_definition`
     row's own handler - never a second, independent list of "which
-    properties are filterable". A `filterable=False` property (e.g. the
-    seeded `usage_guidance`) or a handler that returns `None` from
-    `index_shape()` (indexing meaningless for that datatype) contributes
-    nothing here, which is what makes "un-flagging removes the index" true
-    without any special-case code in the reconciler itself."""
+    properties are filterable" - paired with the rows this build cannot
+    even ask a handler about at all.
+
+    A `filterable=False` property (e.g. the seeded `usage_guidance`) or a
+    handler that returns `None` from `index_shape()` (indexing meaningless
+    for that datatype) contributes nothing to either list, which is what
+    makes "un-flagging removes the index" true without any special-case
+    code in the reconciler itself.
+
+    A `filterable=True` property whose `datatype` has no registered handler
+    (`registry.get` raises `UnknownDatatypeError`) goes into the second list
+    instead of being silently dropped from the first - see
+    `UnknownDatatypeProperty`'s own docstring for why the reconciler must
+    protect, not orphan-sweep, whatever index that property already has. A
+    `filterable=False` property with an unknown datatype needs no index
+    either way and is skipped entirely, same as a known one."""
     desired: list[DesiredIndex] = []
+    unknown: list[UnknownDatatypeProperty] = []
     for definition in definitions:
-        handler = registry.get(definition.datatype)
+        try:
+            handler = registry.get(definition.datatype)
+        except UnknownDatatypeError:
+            if definition.filterable:
+                unknown.append(
+                    UnknownDatatypeProperty(
+                        property_key=definition.key, index_seq=definition.index_seq
+                    )
+                )
+            continue
         shape = handler.index_shape(spec_for(definition))
         if shape is None:
             continue
@@ -144,7 +190,7 @@ def desired_indexes(
                 expression=shape.expression,
             )
         )
-    return desired
+    return desired, unknown
 
 
 def create_statement(desired: DesiredIndex) -> sql.Composed:

@@ -33,9 +33,11 @@ import sys
 #: drift to report (nothing was executed); 2 = usage error (bad arguments,
 #: no DSN configured); 3 = could not complete (connection/import failure, or
 #: - on a real, non-dry-run run - one or more individual indexes failed to
-#: converge; see the FAILED lines). A real run that converges everything it
-#: attempted always returns 0 - "drift was found and fixed" is success, not
-#: a failure code, since fixing it is exactly what the run is for.
+#: converge, or a filterable property's datatype has no registered handler
+#: at all; see the FAILED / SKIPPED (unknown datatype) lines). A real run
+#: that converges everything it attempted always returns 0 - "drift was
+#: found and fixed" is success, not a failure code, since fixing it is
+#: exactly what the run is for.
 EXIT_OK = 0
 EXIT_DRIFT_REMAINS = 1
 EXIT_USAGE_ERROR = 2
@@ -147,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{verb}: {name}")
     for name, exception_type in report.failed:
         print(f"FAILED: {name} ({exception_type})")
+    for key in report.skipped_unknown_datatype:
+        print(f"SKIPPED (unknown datatype): {key}")
 
     if not report.changed and report.converged:
         print("OK: no drift - every filterable property's index is already converged")
