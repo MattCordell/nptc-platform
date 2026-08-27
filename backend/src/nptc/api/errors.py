@@ -72,6 +72,7 @@ from nptc.catalogue.bindings import (
     CodeBindingNotFoundError,
     CodeBindingNotRetiredError,
     CodeBindingSelfSupersessionError,
+    CodeBindingWriteNotFoundError,
     InvalidCodeBindingEditionHintError,
     InvalidCodeBindingSystemError,
 )
@@ -195,6 +196,11 @@ _DETAIL_BINDING_SELF_SUPERSESSION = "A code binding cannot replace itself."
 _DETAIL_INVALID_EDITION_HINT = "This is not a recognised edition hint."
 _DETAIL_INVALID_SYSTEM = "The code system cannot be blank."
 _DETAIL_BINDING_NOT_FOUND = "No active code binding was found for the given code."
+#: NFR-04/NFR-26: names nothing about what actually happened - this is a
+#: platform invariant failure (see `CodeBindingWriteNotFoundError`'s own
+#: docstring), not a caller mistake, so there is nothing for a caller to
+#: act on differently.
+_DETAIL_BINDING_WRITE_NOT_FOUND = "This request could not be completed. Try again."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -591,3 +597,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         _logger.info("code system refused: %s", exc)
         return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_INVALID_SYSTEM})
+
+    @app.exception_handler(CodeBindingWriteNotFoundError)
+    async def _handle_code_binding_write_not_found(
+        _request: Request, exc: CodeBindingWriteNotFoundError
+    ) -> JSONResponse:
+        # ERROR, not INFO: unlike every other handler in this module, this
+        # one is never a caller mistake - see the exception's own
+        # docstring. Reaching here means a route's own re-read-after-write
+        # invariant broke, which is worth paging on, not just tracing.
+        _logger.error("code binding write could not be verified: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_WRITE_NOT_FOUND}
+        )

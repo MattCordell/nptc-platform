@@ -459,17 +459,21 @@ _ALLOWED_REFERENCES = frozenset(
         REPO_ROOT / "shared" / "src" / "nptc_shared" / "terminology" / "__init__.py",
         REPO_ROOT / "shared" / "src" / "nptc_shared" / "terminology" / "sweep.py",
         REPO_ROOT / "transform" / "src" / "nptc_transform" / "designation_check.py",
-        # Issue #142, FR-20/FR-83: the public API's binding response calls
-        # `render_display_term` - which is a *consumer* of the sanctioned
-        # renderer, not a second implementation of the strip. The rule FR-83
-        # actually needs is that `strip_semantic_tag`/`semantic_tag` are
-        # reached only through `nptc.exports.semantic_tag`, and this call
-        # site honours that: it never touches either. It is listed here
-        # (rather than the guard being loosened to permit
-        # `render_display_term` everywhere) so each consumer stays a
-        # deliberate, reviewed entry rather than an open category - the
-        # double-strip hazard is precisely a second caller stripping again.
-        REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue.py",
+        # Issue #142/#219, FR-20/FR-83: the `Binding` response model's
+        # `display_term` is built by calling `render_display_term` - a
+        # *consumer* of the sanctioned renderer, not a second implementation
+        # of the strip. The rule FR-83 actually needs is that
+        # `strip_semantic_tag`/`semantic_tag` are reached only through
+        # `nptc.exports.semantic_tag`, and this call site honours that: it
+        # never touches either. It is listed here (rather than the guard
+        # being loosened to permit `render_display_term` everywhere) so each
+        # consumer stays a deliberate, reviewed entry rather than an open
+        # category - the double-strip hazard is precisely a second caller
+        # stripping again. Lives in `catalogue_shared.py`, not
+        # `catalogue.py`, since issue #219 moved `Binding`/`_binding` there
+        # so the write router could reuse them without importing the read
+        # router's internals.
+        REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py",
     }
 )
 

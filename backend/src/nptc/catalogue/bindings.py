@@ -42,6 +42,7 @@ from typing import ClassVar
 
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -64,6 +65,7 @@ __all__ = [
     "CodeBindingNotFoundError",
     "CodeBindingNotRetiredError",
     "CodeBindingSelfSupersessionError",
+    "CodeBindingWriteNotFoundError",
     "InvalidCodeBindingEditionHintError",
     "InvalidCodeBindingSystemError",
     "create_binding",
@@ -71,6 +73,19 @@ __all__ = [
     "load_active_binding",
     "retire_binding",
 ]
+
+#: `IntegrityError.orig.diag.constraint_name` for the two partial unique
+#: indexes `create_binding` below pre-checks before insert. Read-then-write
+#: pre-checks narrow the race but cannot close it (issue #219 review): two
+#: concurrent inserts can both pass the pre-check and only one wins at
+#: flush. Named here so the flush-time fallback maps the same constraint to
+#: the same domain error the pre-check already raises, rather than letting
+#: the loser surface as a raw `IntegrityError` (`nptc.auth.identity.
+#: _is_username_collision` is the precedent for this constraint-name-based
+#: recovery).
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
+_ONE_ACTIVE_PER_ENTRY_CONSTRAINT = "ix_code_binding_one_active_per_entry"
+_ONE_ACTIVE_PER_CODE_CONSTRAINT = "ix_code_binding_one_active_entry_per_code"
 
 
 class CodeBindingAlreadyRetiredError(ValueError):
@@ -144,6 +159,20 @@ class CodeBindingNotFoundError(LookupError):
     identifier one level up."""
 
     http_status: ClassVar[int] = 404
+
+
+class CodeBindingWriteNotFoundError(LookupError):
+    """Raised when a route re-reads a binding it just wrote (by `id`,
+    through `nptc.catalogue.queries.load_bindings`) and the row is not
+    there. Distinct from `CodeBindingNotFoundError`: that one reports a
+    caller's own path parameter not resolving; this one reports the write
+    path's own invariant - "the row this function just flushed exists" -
+    failing, which is a platform bug, not a caller mistake. 500, and mapped
+    through `nptc.api.errors` like every other handled exception rather
+    than surfacing as an unhandled `AssertionError`, so it is logged with
+    the same discipline as every other refusal."""
+
+    http_status: ClassVar[int] = 500
 
 
 class InvalidCodeBindingSystemError(ValueError):
@@ -268,14 +297,38 @@ def create_binding(
         edition_hint=validated_edition_hint,
     )
     session.add(binding)
-    record_change(
-        session,
-        ctx,
-        action="code_binding.created",
-        instance=binding,
-        kind=ChangeKind.CREATED,
-        reason=validated_reason,
-    )
+    # The two pre-checks above narrow the race but cannot close it: two
+    # concurrent binds both pass them and only one wins at insert.
+    # `record_change(kind=CREATED)` flushes the session itself (see its own
+    # docstring) - that flush is what actually hits the database and is
+    # where the loser's `IntegrityError` surfaces, so it is what this
+    # translates, rather than reaching the caller raw.
+    try:
+        record_change(
+            session,
+            ctx,
+            action="code_binding.created",
+            instance=binding,
+            kind=ChangeKind.CREATED,
+            reason=validated_reason,
+        )
+    except IntegrityError as exc:
+        orig = exc.orig
+        sqlstate = getattr(orig, "sqlstate", None)
+        diag = getattr(orig, "diag", None)
+        constraint_name = getattr(diag, "constraint_name", None)
+        if sqlstate != _UNIQUE_VIOLATION_SQLSTATE:
+            raise
+        if constraint_name == _ONE_ACTIVE_PER_ENTRY_CONSTRAINT:
+            raise CodeBindingAlreadyActiveError(
+                f"entry {entry.id} already has an active code binding"
+            ) from exc
+        if constraint_name == _ONE_ACTIVE_PER_CODE_CONSTRAINT:
+            raise CodeBindingCodeAlreadyBoundError(
+                f"code {validated_code!r} on {validated_system!r} is already actively bound "
+                "to another entry"
+            ) from exc
+        raise
     return binding
 
 

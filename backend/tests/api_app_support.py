@@ -11,6 +11,20 @@ at the local `StubIdp` - but the verifier, the identity resolution and
 the permission derivation are all the production ones. A test that passes
 here has exercised `TokenVerifier.verify` -> `resolve_user_for_claims` ->
 `principal_for` for real.
+
+**Each request runs inside its own `SAVEPOINT`, mirroring
+`nptc.db.session.session_scope`'s commit-on-success/rollback-on-exception
+contract without touching the outer transaction the fixture rolls back at
+teardown** (issue #219 review) - `_scoped_session` below is the override,
+not a bare `lambda: session`. Before this, every request in a test shared
+one open transaction with no per-request boundary at all, so a route that
+raised partway through a multi-write sequence left its partial writes
+flushed and visible to the rest of that same test - `session_scope` never
+actually ran in a test, only in production, and a test asserting "this
+failed request wrote nothing" could not tell a real rollback from an
+artifact of never having tried to roll back. `Session.begin_nested()` is
+the same SAVEPOINT precedent `nptc.auth.identity._create_user` already
+uses for a bounded retry.
 """
 
 from __future__ import annotations
@@ -118,8 +132,16 @@ def build_api_test_app(
         )
         session = Session(bind=connection)
 
+        def _scoped_session() -> Iterator[Session]:
+            """Per-request `SAVEPOINT` - see the module docstring. Deliberately
+            not `session_scope()` itself: that opens its own `Session` on its
+            own connection, which would step outside this fixture's shared,
+            rolled-back-at-teardown transaction entirely."""
+            with session.begin_nested():
+                yield session
+
         app = create_app(settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN))
-        app.dependency_overrides[get_session] = lambda: session
+        app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings
 

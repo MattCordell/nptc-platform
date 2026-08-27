@@ -34,14 +34,20 @@ retiring or replacing a binding therefore addresses it by the SNOMED CT code it 
 bound with, not a row id it was never given.
 
 `nptc.catalogue.bindings.load_active_binding(session, entry_id=..., code=...)` resolves
-this: `ix_code_binding_one_active_entry_per_code` guarantees at most one **active**
-binding can match `code` on a given entry, so the lookup is unambiguous. A code that has
-already been retired, or was never bound, is a `404` (`CodeBindingNotFoundError`) - not
-a `409` - because it is simply not addressable this way any more, not a conflicting
-state. One consequence worth stating plainly: retiring an already-retired code is a
-`404`, not the `409` `CodeBindingAlreadyRetiredError` the service layer itself raises for
-an already-loaded binding - this router never reaches that branch, because it only ever
-loads a binding that is still active.
+this: `ix_code_binding_one_active_per_entry` guarantees at most one **active** binding
+exists per entry, so scoping the lookup to `(entry_id, code, status='active')` returns at
+most one row. A code that has already been retired, or was never bound, is a `404`
+(`CodeBindingNotFoundError`) - not a `409` - because it is simply not addressable this way
+any more, not a conflicting state. One consequence worth stating plainly: retiring an
+already-retired code is a `404`, not the `409` `CodeBindingAlreadyRetiredError` the
+service layer itself raises for an already-loaded binding - this router never reaches
+that branch, because it only ever loads a binding that is still active.
+
+Re-reading a binding this router just wrote (to build the response) is *not* done by
+`code`, for the same reason: `(entry_id, code)` is unique only among active rows, so a
+code bound, retired, and bound again would leave two retired rows sharing that code, and
+a code-keyed re-read could resolve to either. `_row_to_binding` keys on the just-written
+row's own `id` instead - an internal detail that never itself reaches a response.
 
 `system` is not exposed on the wire at all. Every route defaults to `SNOMED_CT_SYSTEM`,
 the only system in use today; the model and the unique index already key on
@@ -65,6 +71,12 @@ One `reason` covers all three steps: a caller explaining *why* a code is being r
 is explaining one editorial decision, not three, and `retire_binding`/`create_binding`/
 `link_replacement` each validate the same note independently regardless.
 
+A successor naming the same code it is meant to replace is refused up front (`409`,
+`CodeBindingSelfSupersessionError`) rather than attempted: `link_replacement`'s own
+self-supersession check compares row *identity*, not code, so a same-code replacement
+would otherwise retire and re-bind one code in a single request and leave the response
+unable to tell the two rows apart by code.
+
 ## Authorisation
 
 Every route requires `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44) - held only by
@@ -81,8 +93,20 @@ the same as any other MFA-gated permission - see
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry with this `business_key`, or no *active* code binding for this `code`. |
-| 409 | A second active binding on this entry (FR-08), or this code already actively bound to a different entry (issue #49's blocking severity). |
-| 422 | A malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that fails FR-37's validation. |
+| 409 | A second active binding on this entry (FR-08), this code already actively bound to a different entry (issue #49's blocking severity) - including two concurrent requests racing for the same entry or code, see below - or `/replacement`'s successor naming the same code it is meant to replace. |
+| 422 | A malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that fails FR-37's validation. |
+| 500 | A platform-side invariant failed - not a caller mistake, and not produced by anything a well-formed request can trigger on its own. |
+
+**Concurrency.** `create_binding`'s active-binding checks are read-then-write, so two
+concurrent binds racing for the same entry or the same code both pass the pre-check and
+only one wins at insert - `ix_code_binding_one_active_per_entry`/
+`ix_code_binding_one_active_entry_per_code` are what actually decide. The loser's
+`IntegrityError` is translated to the same `409` domain error the pre-check would have
+raised (`nptc.auth.identity._is_username_collision` is the precedent for this
+constraint-name-based translation), so a lost race still reads as a normal conflict, not
+a 500. `load_entry_for_update` takes no row lock, so this is optimistic, not pessimistic,
+concurrency control - acceptable here because the loser gets a clean, actionable 409
+rather than corrupting state.
 
 Every `CodeBinding*` exception from `nptc.catalogue.bindings` is mapped in
 `nptc.api.errors` by the same convention every other handler in that module follows:
@@ -98,7 +122,11 @@ for a routine, expected refusal.
   body).
 - Entry-level `PATCH` and FR-38 optimistic locking on the wire. A code binding is a child
   row with no `row_version` of its own; an entry-level write will need one, and the
-  public `EntryDetail`/`EntrySummary` models deliberately omit `row_version` today.
+  public `EntryDetail`/`EntrySummary` models deliberately omit `row_version` today. Two
+  administrators editing one entry's bindings concurrently is the routine case this
+  leaves genuinely unguarded against - the "Concurrency" note above only prevents *data
+  corruption* (two active bindings, a code bound twice), not one admin's edit silently
+  overwriting context the other was working from with no version check at all.
 - The remaining unhandled designation `IntegrityError` constraints `nptc.api.errors`'
   own module docstring names (malformed `use`, a duplicate active term, a second active
   preferred designation in one language) - #149's obligation, not made any worse here.

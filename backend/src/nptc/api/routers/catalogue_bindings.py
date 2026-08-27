@@ -47,16 +47,22 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Body, Depends, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue import Binding, BindingList, BusinessKeyPath, _binding
+from nptc.api.routers.catalogue_shared import Binding, BindingList, BusinessKeyPath, _binding
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
-from nptc.catalogue.bindings import create_binding, link_replacement, load_active_binding
+from nptc.catalogue.bindings import (
+    CodeBindingSelfSupersessionError,
+    CodeBindingWriteNotFoundError,
+    create_binding,
+    link_replacement,
+    load_active_binding,
+)
 from nptc.catalogue.bindings import retire_binding as _retire_binding
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.db.models.code_binding import CodeBindingEditionHint
@@ -86,11 +92,13 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "The request is well-formed but conflicts with the current state of the "
-        "system - a second active binding on this entry, or a successor code "
-        "already actively bound elsewhere. A code already retired, or with no "
-        "binding at all, is a 404 here rather than a 409: every route below "
-        "addresses a binding by its currently-*active* code, so a retired one is "
-        "simply not addressable this way any more, not a conflicting state."
+        "system - a second active binding on this entry, a successor code already "
+        "actively bound elsewhere (including two concurrent requests racing for "
+        "the same entry or code), or `/replacement`'s successor naming the same "
+        "code it is meant to replace. A code already retired, or with no binding "
+        "at all, is a 404 here rather than a 409: every route below addresses a "
+        "binding by its currently-*active* code, so a retired one is simply not "
+        "addressable this way any more, not a conflicting state."
     ),
 }
 
@@ -98,7 +106,18 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "A field failed validation - a malformed or Verhoeff-failing SCTID, an "
-        "unrecognised edition hint, or a changelog note that does not meet FR-37."
+        "unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a "
+        "changelog note that does not meet FR-37."
+    ),
+}
+
+_RESPONSE_500: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "A platform-side invariant failed, not a caller mistake - e.g. re-reading "
+        "a binding this same request just wrote could not find it. Not produced "
+        "by anything a well-formed request can trigger on its own; retrying will "
+        "not clear it."
     ),
 }
 
@@ -108,7 +127,21 @@ BINDING_WRITE_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     404: _RESPONSE_404,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500,
 }
+
+
+def _reject_blank(value: str | None) -> str | None:
+    """Shared by every `fsn`/`au_preferred_term` field below. `min_length=1`
+    alone lets a whitespace-only string through (`" "` has length 1) and
+    `ck_code_binding_fsn_not_blank`/`ck_code_binding_au_preferred_term_not_blank`
+    check `btrim(...)`, not raw length - so a caller sending one would 500
+    on an unmapped `IntegrityError` rather than a 422 (issue #219 review).
+    Rejects, never strips: FR-82 forbids cleaning these values, so a value
+    that would need stripping is refused, not silently trimmed."""
+    if value is not None and not value.strip():
+        raise ValueError("must not be blank")
+    return value
 
 
 class BindCodeRequest(BaseModel):
@@ -124,10 +157,13 @@ class BindCodeRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     code: str
-    fsn: str
-    au_preferred_term: str | None = None
-    edition_hint: str = str(CodeBindingEditionHint.UNKNOWN)
+    fsn: str = Field(min_length=1)
+    au_preferred_term: str | None = Field(default=None, min_length=1)
+    edition_hint: CodeBindingEditionHint = CodeBindingEditionHint.UNKNOWN
     reason: str
+
+    _reject_blank_fsn = field_validator("fsn")(_reject_blank)
+    _reject_blank_au_preferred_term = field_validator("au_preferred_term")(_reject_blank)
 
 
 class RetireBindingRequest(BaseModel):
@@ -140,9 +176,12 @@ class ReplacementSuccessor(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     code: str
-    fsn: str
-    au_preferred_term: str | None = None
-    edition_hint: str = str(CodeBindingEditionHint.UNKNOWN)
+    fsn: str = Field(min_length=1)
+    au_preferred_term: str | None = Field(default=None, min_length=1)
+    edition_hint: CodeBindingEditionHint = CodeBindingEditionHint.UNKNOWN
+
+    _reject_blank_fsn = field_validator("fsn")(_reject_blank)
+    _reject_blank_au_preferred_term = field_validator("au_preferred_term")(_reject_blank)
 
 
 class ReplaceBindingRequest(BaseModel):
@@ -170,6 +209,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 def bind_code(
     session: SessionDep,
     ctx: AuditContextDep,
+    response: Response,
     business_key: BusinessKeyPath,
     body: Annotated[BindCodeRequest, Body()],
 ) -> Binding:
@@ -185,7 +225,8 @@ def bind_code(
         reason=body.reason,
     )
     session.flush()
-    return _row_to_binding(session, entry_id=entry.id, code=binding.code)
+    response.headers["Location"] = f"{router.prefix}/entries/{business_key}/bindings/{binding.code}"
+    return _row_to_binding(session, entry_id=entry.id, binding_id=binding.id)
 
 
 @router.post(
@@ -205,7 +246,7 @@ def retire_binding(
     binding = load_active_binding(session, entry_id=entry.id, code=code)
     _retire_binding(session, ctx, binding=binding, reason=body.reason)
     session.flush()
-    return _row_to_binding(session, entry_id=entry.id, code=code)
+    return _row_to_binding(session, entry_id=entry.id, binding_id=binding.id)
 
 
 @router.post(
@@ -225,6 +266,16 @@ def replace_binding(
     that order, inside this request's one transaction (see the module
     docstring) - `code`/`fsn`/etc. of the successor are the caller's own,
     exactly like `bind_code` above."""
+    if body.successor.code == code:
+        # `link_replacement`'s own self-supersession check compares row
+        # *identity* (`successor is superseded`), which a same-code
+        # replacement never trips: `create_binding` would insert a second,
+        # distinct row with the same code, retire and active would end up
+        # sharing one code, and both `_row_to_binding` lookups below would
+        # then resolve to the active row - reporting the successor twice
+        # and never surfacing the retirement the caller just asked for
+        # (issue #219 review). Refused before either write runs.
+        raise CodeBindingSelfSupersessionError(f"code {code!r} cannot be replaced by itself")
     entry = load_entry_for_update(session, business_key)
     superseded = load_active_binding(session, entry_id=entry.id, code=code)
     _retire_binding(session, ctx, binding=superseded, reason=body.reason)
@@ -242,21 +293,28 @@ def replace_binding(
     session.flush()
     return BindingList(
         items=[
-            _row_to_binding(session, entry_id=entry.id, code=superseded.code),
-            _row_to_binding(session, entry_id=entry.id, code=successor.code),
+            _row_to_binding(session, entry_id=entry.id, binding_id=superseded.id),
+            _row_to_binding(session, entry_id=entry.id, binding_id=successor.id),
         ]
     )
 
 
-def _row_to_binding(session: Session, *, entry_id: uuid.UUID, code: str) -> Binding:
+def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.UUID) -> Binding:
     """Re-reads the just-written row through `nptc.catalogue.queries.
     load_bindings` rather than building a `Binding` from the ORM instance
     directly - that is what resolves `replaced_by_binding_id` to the
-    successor's *code* (`catalogue.py`'s own rule: no internal id ever
-    reaches a response model) and computes `display_term` via `_binding`,
-    the same function the read routes use, so a bound code renders
-    identically whether it was just written or freshly read."""
+    successor's *code* (`catalogue_shared.py`'s own rule: no internal id
+    ever reaches a response model) and computes `display_term` via
+    `_binding`, the same function the read routes use, so a bound code
+    renders identically whether it was just written or freshly read.
+
+    Keyed on `binding_id`, not `code`: `(entry_id, code)` is unique only
+    among *active* bindings (the partial indexes exempt retired ones), so a
+    code bound, retired, and bound again would make a code-keyed lookup
+    ambiguous between two retired rows (issue #219 review)."""
     for row in queries.load_bindings(session, (entry_id,)):
-        if row.code == code:
+        if row.id == binding_id:
             return _binding(row)
-    raise AssertionError(f"just-written code binding {code!r} not found on re-read")
+    raise CodeBindingWriteNotFoundError(
+        f"just-written code binding {binding_id} not found on re-read"
+    )

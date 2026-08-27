@@ -220,11 +220,8 @@ export interface components {
             fsn: string;
             /** Au Preferred Term */
             au_preferred_term?: string | null;
-            /**
-             * Edition Hint
-             * @default unknown
-             */
-            edition_hint: string;
+            /** @default unknown */
+            edition_hint: components["schemas"]["CodeBindingEditionHint"];
             /** Reason */
             reason: string;
         };
@@ -267,6 +264,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["Binding"][];
         };
+        /**
+         * CodeBindingEditionHint
+         * @enum {string}
+         */
+        CodeBindingEditionHint: "au" | "int" | "unknown";
         /**
          * Designation
          * @description A catalogue-authored synonym, or a preferred variant in a language
@@ -423,11 +425,8 @@ export interface components {
             fsn: string;
             /** Au Preferred Term */
             au_preferred_term?: string | null;
-            /**
-             * Edition Hint
-             * @default unknown
-             */
-            edition_hint: string;
+            /** @default unknown */
+            edition_hint: components["schemas"]["CodeBindingEditionHint"];
         };
         /** RetireBindingRequest */
         RetireBindingRequest: {
@@ -881,7 +880,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -890,8 +889,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37. */
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1004,7 +1012,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1013,8 +1021,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37. */
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1077,7 +1094,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1086,8 +1103,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37. */
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

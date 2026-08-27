@@ -521,7 +521,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -531,7 +531,17 @@
             }
           },
           "422": {
-            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37.",
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -696,7 +706,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -706,7 +716,17 @@
             }
           },
           "422": {
-            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37.",
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -804,7 +824,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, or a successor code already actively bound elsewhere. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -814,7 +834,17 @@
             }
           },
           "422": {
-            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, or a changelog note that does not meet FR-37.",
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -837,12 +867,14 @@
           },
           "fsn": {
             "type": "string",
+            "minLength": 1,
             "title": "Fsn"
           },
           "au_preferred_term": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -851,8 +883,7 @@
             "title": "Au Preferred Term"
           },
           "edition_hint": {
-            "type": "string",
-            "title": "Edition Hint",
+            "$ref": "#/components/schemas/CodeBindingEditionHint",
             "default": "unknown"
           },
           "reason": {
@@ -959,6 +990,15 @@
           "items"
         ],
         "title": "BindingList"
+      },
+      "CodeBindingEditionHint": {
+        "type": "string",
+        "enum": [
+          "au",
+          "int",
+          "unknown"
+        ],
+        "title": "CodeBindingEditionHint"
       },
       "Designation": {
         "properties": {
@@ -1249,12 +1289,14 @@
           },
           "fsn": {
             "type": "string",
+            "minLength": 1,
             "title": "Fsn"
           },
           "au_preferred_term": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -1263,8 +1305,7 @@
             "title": "Au Preferred Term"
           },
           "edition_hint": {
-            "type": "string",
-            "title": "Edition Hint",
+            "$ref": "#/components/schemas/CodeBindingEditionHint",
             "default": "unknown"
           }
         },
