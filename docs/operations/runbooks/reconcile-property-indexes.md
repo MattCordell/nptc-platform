@@ -54,7 +54,7 @@ These codes are stable and safe to depend on from a scheduled check.
 
 ## What the output lines mean
 
-```
+```text
 CREATED: ix_propval_p7_1
 DROPPED: ix_propval_p12_1
 REBUILT (was invalid): ix_propval_p9_1
