@@ -5,6 +5,12 @@ type FieldProps = {
   /** The visible label text. Required - a field with no label is the exact
    * defect this component exists to make impossible (issue #148). */
   label: string;
+  /** A caller-supplied id for the *control* (not the wrapper element). Left
+   * off, the id is generated with `useId` as before. Supply one when
+   * something outside the field needs to address the control by id - an
+   * `ErrorSummary` item links to `#id` to move focus to the field it names
+   * (issue #210), which it cannot do for an id only this component knows. */
+  id?: string;
   /** Optional supporting text, rendered below the label and linked via
    * `aria-describedby` so it is announced with the field, not just visible. */
   hint?: ReactNode;
@@ -24,7 +30,7 @@ type FieldProps = {
     "aria-describedby": string | undefined;
     "aria-invalid": boolean | undefined;
   }) => ReactNode;
-} & Omit<ComponentPropsWithoutRef<"div">, "children">;
+} & Omit<ComponentPropsWithoutRef<"div">, "children" | "id">;
 
 /**
  * A form field with a programmatically associated label (issue #148's first
@@ -37,8 +43,21 @@ type FieldProps = {
  * (text, select, textarea, ...) without this component needing to know
  * about all of them.
  */
-export function Field({ label, hint, error, children, className, ...rest }: FieldProps) {
-  const id = useId();
+export function Field({
+  id: providedId,
+  label,
+  hint,
+  error,
+  children,
+  className,
+  ...rest
+}: FieldProps) {
+  // `id` is deliberately Omit-ed from the wrapper's props above rather than
+  // left to land on the <div> via `...rest`: an id on the container would
+  // silently do nothing for the summary link that needs it, and having the
+  // same prop name mean two different elements is worse than picking one.
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
