@@ -6,7 +6,7 @@ never touches a database. Reports every violation with ``file:line``
 (mirroring ``scripts/traceability_check.py``'s "print the whole list"
 convention) rather than stopping at the first one.
 
-Three rules:
+Five rules:
 
 1. Argument 0 of a ``text(...)``, ``.execute(...)`` or
    ``.exec_driver_sql(...)`` call must not be built from runtime data: an
@@ -38,7 +38,7 @@ Three rules:
    request-scoped or otherwise runtime data - the actual concern rules 1-2
    exist for. If a future ``CheckConstraint``/``Index`` f-string ever
    interpolates genuine runtime data, this guard will not catch it; that
-   would need a rule 5 walking ``CheckConstraint``/``Index`` call
+   would need a further rule walking ``CheckConstraint``/``Index`` call
    arguments the same way rule 1 walks ``text()``/``.execute()`` ones.
 3. Any string literal combining "GRANT ALL" with the ``audit_event`` table
    name fails outright (NFR-09 riding along on NFR-22's own machinery) -
@@ -55,6 +55,27 @@ Three rules:
    silently defeated by a future bulk-write path (e.g. #63's reclassify)
    reaching for ``session.execute(update(CatalogueEntry)...)`` instead of
    ``nptc.catalogue.entries.save_entries``.
+5. ADR-0012 (issue #54, FR-13) permits exactly one module,
+   ``nptc.db.property_indexes``, to compose DDL via ``psycopg.sql`` -
+   composing an index name and a property key safely is unavoidable there,
+   since the generated index name is never a compile-time literal. Note
+   that module never itself calls ``text()``/``.execute()``/
+   ``.exec_driver_sql()`` - it only builds and returns ``Composed``
+   statements, which ``nptc.db.property_reconciler`` executes as a bare
+   variable, a shape rule 1 already treats as safe - so this rule is
+   independent of rules 1-4, not a relaxation of any of them. Two sides,
+   both walking ``.format()`` calls:
+
+   - Anywhere **outside** that module, a call to ``sql.SQL(...)`` at all is
+     ``psycopg-sql-outside-executor`` - narrower than a ``# noqa``, since
+     the next call site cannot copy the pattern without either moving into
+     the executor module or arguing to widen this rule.
+   - **Inside** that module, a ``.format()`` call is safe only when called
+     directly on a ``sql.SQL(<string literal>)`` receiver (never a variable
+     referencing one - that would let an unsafe composition hide behind an
+     innocent-looking ``Name``) and every argument is itself a call to
+     ``sql.SQL``/``sql.Identifier``/``sql.Literal``. Anything else inside
+     the module is ``unsafe-sql-composition``.
 
 Ships with its own positive control
 (``test_guard_flags_known_violations``) run over an inline source string,
@@ -125,6 +146,56 @@ _VERSIONED_RAW_SQL_RE = re.compile(
     r"^\s*(update|delete\s+from)\s+(" + "|".join(sorted(_VERSIONED_TABLE_NAMES)) + r")\b",
     re.IGNORECASE,
 )
+
+#: Rule 5. The one module ADR-0012 (issue #54) permits to compose DDL via
+#: ``psycopg.sql`` - see that module's own docstring. A path typo here would
+#: silently switch rule 5's strict in-module check off everywhere rather
+#: than fail anywhere visible, which is exactly what
+#: ``test_ddl_executor_module_exists`` below guards against.
+DDL_EXECUTOR_MODULE = REPO_ROOT / "backend" / "src" / "nptc" / "db" / "property_indexes.py"
+
+#: Names recognised as ``sql.<name>(...)`` - matches this codebase's one
+#: import convention, ``from psycopg import sql`` (never ``from psycopg.sql
+#: import SQL`` or similar), which is what every call site in
+#: ``property_indexes.py`` and this rule's own positive controls use.
+_SQL_COMPOSITION_CALLS = frozenset({"SQL", "Identifier", "Literal"})
+
+
+def _sql_module_call_name(node: ast.expr) -> str | None:
+    """If `node` is a call shaped `sql.<Name>(...)`, returns `<Name>` (e.g.
+    "SQL", "Identifier", "Literal"). `None` for anything else."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "sql"
+    ):
+        return node.func.attr
+    return None
+
+
+def _is_safe_sql_composition(node: ast.Call) -> bool:
+    """`node` is a `.format()` call directly on a `sql.SQL(<string
+    literal>)` receiver, with every argument itself a
+    `sql.SQL`/`sql.Identifier`/`sql.Literal` call. The receiver must be the
+    call expression itself, not a `Name` referencing one defined
+    elsewhere - a stored template later filled in from a variable is
+    exactly the indirection this rule exists to close off, matching rule
+    1's own treatment of a bare `Name` at a `text()`/`.execute()` call
+    site."""
+    assert isinstance(node.func, ast.Attribute) and node.func.attr == "format"
+    receiver = node.func.value
+    if _sql_module_call_name(receiver) != "SQL":
+        return False
+    receiver_args = receiver.args if isinstance(receiver, ast.Call) else []
+    if not receiver_args or not (
+        isinstance(receiver_args[0], ast.Constant) and isinstance(receiver_args[0].value, str)
+    ):
+        return False
+    call_args = [*node.args, *(keyword.value for keyword in node.keywords)]
+    return bool(call_args) and all(
+        _sql_module_call_name(arg) in _SQL_COMPOSITION_CALLS for arg in call_args
+    )
 
 
 @dataclass(frozen=True)
@@ -213,7 +284,11 @@ def _query_bulk_statement_target(node: ast.Call) -> str | None:
 
 
 def _check_source(
-    source: str, display_path: str, *, enforce_versioned_table_rule: bool = True
+    source: str,
+    display_path: str,
+    *,
+    enforce_versioned_table_rule: bool = True,
+    ddl_executor: bool = False,
 ) -> list[Violation]:
     violations: list[Violation] = []
     tree = ast.parse(source)
@@ -291,27 +366,61 @@ def _check_source(
                     )
                 )
 
+        if not ddl_executor and _sql_module_call_name(node) == "SQL":
+            violations.append(
+                Violation(
+                    display_path,
+                    node.lineno,
+                    "psycopg-sql-outside-executor",
+                    "sql.SQL(...) composition is permitted only inside "
+                    f"{_display(DDL_EXECUTOR_MODULE)} (ADR-0012, issue #54)",
+                )
+            )
+
+        if (
+            ddl_executor
+            and isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and not _is_safe_sql_composition(node)
+        ):
+            violations.append(
+                Violation(
+                    display_path,
+                    node.lineno,
+                    "unsafe-sql-composition",
+                    ".format() call is not a sql.SQL(<literal>) receiver with only "
+                    "sql.SQL/Identifier/Literal arguments",
+                )
+            )
+
     return violations
 
 
-def _check_file(path: Path, *, enforce_versioned_table_rule: bool = True) -> list[Violation]:
+def _check_file(
+    path: Path, *, enforce_versioned_table_rule: bool = True, ddl_executor: bool = False
+) -> list[Violation]:
     return _check_source(
         path.read_text(encoding="utf-8"),
         _display(path),
         enforce_versioned_table_rule=enforce_versioned_table_rule,
+        ddl_executor=ddl_executor,
     )
 
 
-def _iter_source_files() -> list[tuple[Path, bool]]:
+def _iter_source_files() -> list[tuple[Path, bool, bool]]:
     """Each file paired with whether rule 4 (versioned-table bulk
     statements) applies to it - `backend/migrations` is excluded, since a
     migration's own one-off backfill is a legitimate bulk statement, unlike
-    a domain write path reaching for one."""
-    files: list[tuple[Path, bool]] = []
+    a domain write path reaching for one - and whether it is rule 5's one
+    permitted DDL executor module."""
+    files: list[tuple[Path, bool, bool]] = []
     for base in SCAN_DIRS:
         if base.is_dir():
             enforce = base.name == "src"
-            files.extend((path, enforce) for path in sorted(base.rglob("*.py")))
+            files.extend(
+                (path, enforce, path == DDL_EXECUTOR_MODULE) for path in sorted(base.rglob("*.py"))
+            )
     return files
 
 
@@ -319,8 +428,8 @@ def _iter_source_files() -> list[tuple[Path, bool]]:
 def test_no_dynamic_sql_or_grant_all_in_backend_source() -> None:
     violations = [
         v
-        for path, enforce in _iter_source_files()
-        for v in _check_file(path, enforce_versioned_table_rule=enforce)
+        for path, enforce, ddl_executor in _iter_source_files()
+        for v in _check_file(path, enforce_versioned_table_rule=enforce, ddl_executor=ddl_executor)
     ]
 
     assert not violations, "NFR-22 violation(s) found:\n" + "\n".join(str(v) for v in violations)
@@ -408,22 +517,70 @@ def raw_sql_versioned_table():
 
 def query_update_versioned_table():
     session.query(CatalogueEntry).filter_by(status="draft").update({"status": "withdrawn"})
+
+
+def psycopg_composition_outside_executor():
+    cursor.execute(sql.SQL("CREATE INDEX {n} ON t (x)").format(n=sql.Identifier(name)))
 """
     violations = _check_source(bad_source, "<positive-control>")
     rule_counts = Counter(v.rule for v in violations)
 
-    # dynamic-sql-arg: direct_fstring, direct_concat, direct_format (3) -
-    # built_above's call site sees only a bare Name and is rule 2's job.
-    # sql-fstring: direct_fstring's and built_above's f-strings both start
-    # with a SQL keyword (2). grant-all-audit: grant_all_on_audit (1).
-    # versioned-table-bulk-statement: bulk_update_versioned_table,
-    # bulk_delete_versioned_table, raw_sql_versioned_table,
-    # query_update_versioned_table (4) - rule 4.
+    # dynamic-sql-arg: direct_fstring, direct_concat, direct_format,
+    # psycopg_composition_outside_executor's .format() call at execute()'s
+    # arg 0 (4) - built_above's call site sees only a bare Name and is rule
+    # 2's job. sql-fstring: direct_fstring's and built_above's f-strings
+    # both start with a SQL keyword (2). grant-all-audit:
+    # grant_all_on_audit (1). versioned-table-bulk-statement:
+    # bulk_update_versioned_table, bulk_delete_versioned_table,
+    # raw_sql_versioned_table, query_update_versioned_table (4) - rule 4.
+    # psycopg-sql-outside-executor: psycopg_composition_outside_executor's
+    # sql.SQL(...) call, checked with ddl_executor=False (the default) since
+    # "<positive-control>" is not the real DDL_EXECUTOR_MODULE path (1) -
+    # rule 5.
     assert rule_counts == Counter(
         {
-            "dynamic-sql-arg": 3,
+            "dynamic-sql-arg": 4,
             "sql-fstring": 2,
             "grant-all-audit": 1,
             "versioned-table-bulk-statement": 4,
+            "psycopg-sql-outside-executor": 1,
         }
     )
+
+
+def test_guard_flags_unsafe_composition_inside_the_ddl_executor() -> None:
+    """Rule 5's in-module half, checked with `ddl_executor=True` as if this
+    inline source were `nptc.db.property_indexes` itself. Three cases: a
+    non-composition argument, a non-literal `sql.SQL` receiver, and one
+    genuinely safe statement - proving the allowance is not blanket (the
+    first two still fail) and that the safe shape actually passes (the
+    third contributes nothing)."""
+    executor_source = """
+def non_composition_argument():
+    return sql.SQL("CREATE INDEX {n} ON t (x)").format(n=name)
+
+
+def non_literal_receiver():
+    template = sql.SQL(statement_text)
+    return template.format(n=sql.Identifier(name))
+
+
+def safe_composition():
+    return sql.SQL("CREATE INDEX {n} ON t (x) WHERE k = {k}").format(
+        n=sql.Identifier(name), k=sql.Literal(key)
+    )
+"""
+    violations = _check_source(executor_source, "<positive-control>", ddl_executor=True)
+    rule_counts = Counter(v.rule for v in violations)
+
+    assert rule_counts == Counter({"unsafe-sql-composition": 2})
+
+
+def test_ddl_executor_module_exists() -> None:
+    """A typo in `DDL_EXECUTOR_MODULE` would silently disable rule 5's
+    strict in-module check everywhere (every real file would be treated as
+    "outside the executor", and the actual executor module would never be
+    checked at all) rather than fail anywhere visible - mirrors
+    `test_versioned_table_names_are_derived_from_real_tables`'s own
+    argument for rule 4."""
+    assert DDL_EXECUTOR_MODULE.is_file()

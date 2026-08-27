@@ -41,6 +41,8 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine, make_url
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.db.property_indexes import GENERATED_INDEX_NAME_RE
+
 _support_spec = importlib.util.spec_from_file_location(
     "_test_db_round_trip_audit_privilege_support",
     Path(__file__).parent / "audit_privilege_support.py",
@@ -105,7 +107,21 @@ def _fingerprint(engine: Engine) -> dict[str, Any]:
             "foreign_keys": _sorted_by_json(inspector.get_foreign_keys(table_name)),
             "unique_constraints": _sorted_by_json(inspector.get_unique_constraints(table_name)),
             "check_constraints": _sorted_by_json(inspector.get_check_constraints(table_name)),
-            "indexes": _sorted_by_json(inspector.get_indexes(table_name)),
+            # #54's generated ix_propval_p* indexes are reconciler-managed
+            # runtime state, not schema history (ADR-0012) - excluded here
+            # for the same reason env.py's include_object excludes them
+            # from autogenerate. Not strictly load-bearing today (this
+            # dedicated nptc_roundtrip database is dropped and recreated,
+            # and nothing reconciles against it), but ADR-0012 mandates the
+            # filter so the first test or CLI run that ever does touch it
+            # doesn't produce a confusing round-trip failure.
+            "indexes": _sorted_by_json(
+                [
+                    index
+                    for index in inspector.get_indexes(table_name)
+                    if not GENERATED_INDEX_NAME_RE.match(index["name"] or "")
+                ]
+            ),
         }
 
     with engine.connect() as connection:
