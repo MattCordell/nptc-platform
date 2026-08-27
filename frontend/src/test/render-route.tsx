@@ -72,16 +72,9 @@ export async function renderRoute(
       </QueryClientProvider>
     </StrictMode>,
   );
-  // `router.load()` resolves the initial match asynchronously, then pushes
-  // it into React's store. In the act environment React defers that update
-  // to the act queue instead of its normal scheduler, so without this
-  // wrapper `renderRoute` can return before the not-found/error/real page
-  // has actually committed - a race a caller's `findByRole` sometimes wins
-  // (fast machine, empty queue) and sometimes loses (loaded machine,
-  // `pnpm test:coverage` competing with 27 other files), timing out on a
-  // component that was never actually mismatched, just not yet on screen
-  // (#215). Wrapping in `act` flushes that deferred update before this
-  // helper resolves, so callers always assert against a committed DOM.
+  // Load-bearing, not decorative: without the `act` wrapper this can return
+  // before the resolved match has actually committed, racing a caller's
+  // `findByRole` (#215 - see PR discussion for why).
   await act(async () => {
     await router.load();
   });
