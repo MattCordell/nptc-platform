@@ -82,6 +82,22 @@ function pendingRenewal() {
   return vi.fn(() => new Promise<URLSearchParams>(() => {}));
 }
 
+/**
+ * A probe that stays pending until the test releases it, so a race against
+ * `completeCallback` can be driven deterministically rather than relying on
+ * incidental timing (issue #216).
+ */
+function releasableRenewal() {
+  let reject: (error: unknown) => void = () => {};
+  const promise = new Promise<URLSearchParams>((_, rej) => {
+    reject = rej;
+  });
+  return {
+    silentAuthorize: vi.fn(() => promise) as SilentAuthorize,
+    refuse: () => reject(new InteractionRequiredError("login_required")),
+  };
+}
+
 function renderProvider(silentAuthorize: SilentAuthorize = noSession()) {
   return render(
     <AuthProvider config={CONFIG} silentAuthorize={silentAuthorize} navigate={navigate}>
@@ -430,5 +446,81 @@ describe("completeCallback", () => {
     });
 
     expect(destination).toBe("/");
+  });
+});
+
+describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
+  it("does not clear a session completeCallback established while the probe is still in flight", async () => {
+    const { silentAuthorize, refuse } = releasableRenewal();
+    // The cold-load probe starts on mount and is now in flight, pending on
+    // `silentAuthorize` until `refuse()` below.
+    renderProvider(silentAuthorize);
+
+    await act(async () => {
+      await api().signIn({ redirect: "/submissions" });
+    });
+    const state = new URL(assigned[0]).searchParams.get("state") ?? "";
+
+    let destination: string | null = null;
+    await act(async () => {
+      destination = await api().completeCallback(
+        new URLSearchParams({ code: "the-code", state }),
+      );
+    });
+
+    expect(destination).toBe("/submissions");
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+
+    // The probe's late answer: an ordinary "no SSO session" refusal, the
+    // path that used to clear the session `completeCallback` just
+    // established.
+    await act(async () => {
+      refuse();
+      await Promise.resolve().then(() => Promise.resolve());
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+  });
+
+  it("still clears stale tokens when a renewal refusal is not racing anything", async () => {
+    // The negative case: guarding the clear must not turn into never
+    // clearing. An ordinary post-logout-shaped renewal (no concurrent
+    // sign-in) still signs the user out.
+    const renewal = vi.fn(() =>
+      Promise.reject(new InteractionRequiredError("login_required")),
+    );
+    renderProvider(renewal);
+
+    await act(async () => {
+      await api().restore();
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+  });
+
+  it("falls back to the ref so a caller mid-race still gets the session completeCallback established", async () => {
+    const { silentAuthorize, refuse } = releasableRenewal();
+    renderProvider(silentAuthorize);
+
+    await act(async () => {
+      await api().signIn({ redirect: "/submissions" });
+    });
+    const state = new URL(assigned[0]).searchParams.get("state") ?? "";
+
+    await act(async () => {
+      await api().completeCallback(new URLSearchParams({ code: "the-code", state }));
+    });
+
+    // A caller that asks for a token while the probe is still refusing must
+    // not be told "signed out" - `renew()`'s own resolved value is a stale
+    // `null`, but the ref reflects the session that actually won the race.
+    let token: string | null = "unset";
+    await act(async () => {
+      const pending = api().getAccessToken();
+      refuse();
+      token = await pending;
+    });
+
+    expect(token).toBe("access-token");
   });
 });
