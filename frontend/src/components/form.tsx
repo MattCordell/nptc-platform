@@ -94,7 +94,10 @@ export function Form({
   // still listening, so an error appearing later with no further submit does
   // take focus. That is the better way round - after a submit, an error is
   // far more likely to be its answer than not - and an error that follows no
-  // submit at all still never moves focus.
+  // submit at all still never moves focus. It does mean these primitives
+  // assume validate-on-submit: a screen validating on *change* would pull
+  // focus out of the input on every keystroke that produced an error. Issue
+  // #214 tracks disarming on a settled `onSubmit` promise instead.
   useEffect(() => {
     if (!awaitingResultRef.current || !hasErrors) {
       return;
@@ -142,12 +145,10 @@ export function Form({
             announced to explain it. The re-entry guard in `onSubmit` above
             is what actually refuses the second submit, so the button only
             needs to *say* it is unavailable - and an aria-disabled control
-            stays focusable and stays announced. */}
-        <Button
-          type="submit"
-          aria-disabled={pending || undefined}
-          className={pending ? "opacity-50" : undefined}
-        >
+            stays focusable and stays announced. `Button` styles
+            aria-disabled the same way it styles disabled, so there is
+            nothing to reproduce here. */}
+        <Button type="submit" aria-disabled={pending || undefined}>
           {pending && pendingLabel ? pendingLabel : submitLabel}
         </Button>
         {secondaryActions}

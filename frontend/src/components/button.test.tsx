@@ -43,6 +43,28 @@ describe("Button", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it("styles an aria-disabled button as unavailable, while keeping it focusable", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <Button type="submit" aria-disabled onClick={onClick}>
+        Saving
+      </Button>,
+    );
+
+    const button = screen.getByRole("button", { name: "Saving" });
+    expect(button.className).toContain("opacity-50");
+    expect(button.className).toContain("cursor-not-allowed");
+    expect(button.className).not.toContain("cursor-pointer");
+
+    // The point of aria-disabled over disabled: still in the tab order, so
+    // a keyboard user is not stranded when it turns unavailable under them.
+    // Refusing the action is the caller's job, not the styling's.
+    await user.tab();
+    expect(button).toHaveFocus();
+    expect(button).not.toBeDisabled();
+  });
+
   it.each(["primary", "secondary", "danger"] as const)(
     "has no automated accessibility violations for the %s variant",
     async (variant) => {

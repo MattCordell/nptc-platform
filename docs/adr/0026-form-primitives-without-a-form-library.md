@@ -98,9 +98,16 @@ an OpenAPI change first.
 - `Form` keeps listening for a submit's answer until an error arrives, rather than
   treating the first render where `pending` is false as the answer. A caller that never
   sets `pending`, or sets it a tick later, therefore still gets its refusal announced —
-  the majority case. The cost is the other direction: after a successful submit the form
-  is still listening, so an error appearing later with no further submit does take focus.
-  An error that follows no submit at all still never moves focus.
+  the majority case. An error that follows no submit at all still never moves focus.
+
+  The cost runs the other way, and is sharper than "a stale flag": after a *successful*
+  submit the form stays armed indefinitely. For a validate-on-submit screen that is
+  benign. For a screen that also validates on change it is not — the next keystroke that
+  produces an error would pull focus out of the input the user is typing in, once per
+  keystroke. **These primitives therefore assume validate-on-submit.** Issue #214 tracks
+  the clean fix: widen `onSubmit` to `() => void | Promise<void>` and disarm when the
+  returned promise settles, so arming stays unconditional for the sync case and the bug
+  that motivated the always-armed flag does not come back.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.

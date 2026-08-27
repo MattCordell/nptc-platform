@@ -128,6 +128,11 @@ submit's answer until an error actually arrives, however many renders later, and
 require the caller to set `pending` for that to work — `pending` drives the button and
 `aria-busy` only.
 
+**`Form` assumes validate-on-submit.** Because it stays armed until an error arrives, a
+screen that also validated on *change* would have the next keystroke that produces an
+error pull focus out of the input being typed in — a recurring surprise, not a one-off.
+Validate on submit; issue #214 tracks removing the restriction.
+
 ## Known limits of the automated check
 
 - **`axe-core` cannot evaluate `color-contrast` under jsdom** — the rule needs real layout
@@ -137,6 +142,13 @@ require the caller to set `pending` for that to work — `pending` drives the bu
   `@theme` block, and is confirmed in the P5 manual pass — CI passing does not mean
   contrast has been verified, and this document is where that limit is written down rather
   than implied by a green check.
+- **A group's hint and error are announced once per option.** Wiring them to each
+  `<input>` is what makes them announced at all — a `group` role's description is
+  inconsistently supported — but the consequence is that a user tabbing through a
+  six-option group hears the full hint and error six times. If that grates in the P5
+  manual pass, the usual refinement is to describe only the *first* option by the hint
+  while keeping the error on all of them. That is a change to make with a real screen
+  reader in front of you, not on this reasoning alone.
 - **jsdom does not implement native radio behaviour** — neither the roving tabindex nor
   arrow-key traversal. `RadioGroup` therefore implements both itself and calls
   `preventDefault()` on the keys it handles, so a real browser's identical native
