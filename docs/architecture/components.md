@@ -7,10 +7,12 @@ itself.
 ## Scope
 
 NFR-31 requires WCAG 2.2 Level AA, "verified by automated testing in CI plus a manual
-keyboard and screen-reader pass in P5." This issue lands the automated half and the five
+keyboard and screen-reader pass in P5." Issue #148 landed the automated half and five
 components later screens are expected to compose: a form field, a button, a modal dialog,
-a data table, and a live region for async announcements. The manual keyboard and
-screen-reader audit itself is later P5 work, not this issue.
+a data table, and a live region for async announcements. Issue #210 completes the set the
+entry-edit screens need — a select, the choice controls, a form wrapper and an error
+summary. The manual keyboard and screen-reader audit itself is later P5 work, not either
+issue.
 
 (The issue body cites NFR-19, the data-breach-response procedure — unrelated. The
 requirement this baseline implements is NFR-31.)
@@ -30,7 +32,7 @@ raw-element mistakes (a missing label association, a non-interactive element wit
 handler, a positive `tabindex`) even where a screen does reach for a raw element for a
 genuine one-off. Review is still what catches "this should have been `<Button>`."
 
-## The five components
+## The baseline components
 
 All in `frontend/src/components/`, each with a co-located `*.test.tsx` that asserts both
 its behavioural contract and `expectNoA11yViolations` (`frontend/src/test/a11y.ts`, a thin
@@ -61,6 +63,58 @@ over rule configuration).
   same tick it is populated. `useAnnounce` owns the message/politeness state; a screen
   calls `announce()` when an async result (a save, a search) arrives.
 
+## The form primitives
+
+Issue #210. Same rules as above: co-located test, `expectNoA11yViolations`, no raw
+element where a primitive exists. [ADR-0026](../adr/0026-form-primitives-without-a-form-library.md)
+records why there is no form library behind these and what was rejected.
+
+- **`select.tsx` — `Select`.** A native `<select>` composed over `Field`, not a custom
+  `role="listbox"`: the browser's own control already carries keyboard operation,
+  type-ahead and the platform's mobile picker. Its optional `placeholder` is an empty
+  first option that is deliberately *not* disabled — the HTML selectedness algorithm
+  skips disabled options when picking a default, so a disabled placeholder is passed
+  over and the first real option silently becomes the answer.
+- **`checkbox.tsx` — `Checkbox`.** A single labelled box. The one primitive that does not
+  compose `Field`, because a checkbox's label belongs after the box and `Field` renders
+  the label first by construction; it repeats `Field`'s id scheme and `aria-describedby`
+  ordering exactly so the two cannot drift.
+- **`checkbox-group.tsx` — `CheckboxGroup`** and **`radio-group.tsx` — `RadioGroup`.**
+  Both labelled by a `<fieldset>`/`<legend>` — a screen reader announces a legend on
+  entering the group and ignores a nearby paragraph, so adjacent text is not a group
+  label. They share `ChoiceOption` (`choice-option.ts`) so the two cannot take subtly
+  different option shapes for the same job. `CheckboxGroup` keeps a tab stop per box
+  (each is an independent yes/no answer); `RadioGroup` rovers, so a five-option group is
+  one `Tab` stop rather than five, with the arrow keys traversing it.
+- **`error-summary.tsx` — `ErrorSummary`.** One list of everything that failed, at the top
+  of the form, each item a link to the control it names. Focusable (`tabIndex={-1}`) but
+  not `role="alert"`: a form moves focus here on a failed submit, which announces the
+  region once — an alert role on top announces it twice.
+- **`form.tsx` — `Form`.** Owns the `<form>`, renders its own submit button, guards a
+  double submit, and moves focus to the summary when a submit is answered with errors.
+  It renders the submit button rather than accepting one as a child so that "one submit
+  path" and "submitting is disabled while a save is in flight" are structural rather than
+  conventions a screen has to remember; `secondaryActions` is the escape hatch for Cancel
+  and friends.
+
+### Composing a form
+
+Two conventions a screen author needs, neither obvious from the call site:
+
+- **Give every control an `id` you chose.** `Field`, `Select`, `Checkbox`,
+  `CheckboxGroup` and `RadioGroup` all generate one with `useId` when you do not — but an
+  `ErrorSummary` item links to `#id`, and it cannot link to an id only the component
+  knows. The same id goes in the `FormError.fieldId` the summary is given.
+- **A group's `id` lands on its first option's `<input>`, not on the `<fieldset>`.** A
+  summary link has to send focus somewhere that announces something useful: focusing a
+  fieldset announces nothing, whereas focusing the first radio announces the legend as
+  the group it belongs to, then the option. Remaining options derive `${id}-1`,
+  `${id}-2`, and so on.
+
+A rejected save goes in `Form`'s `formError`, not on a control: the API's error shape is
+`ErrorResponse { detail: string }` with no per-field `loc` (deliberately — FR-44,
+NFR-04), so a server refusal has no field to attach to.
+
 ## Known limits of the automated check
 
 - **`axe-core` cannot evaluate `color-contrast` under jsdom** — the rule needs real layout
@@ -70,6 +124,12 @@ over rule configuration).
   `@theme` block, and is confirmed in the P5 manual pass — CI passing does not mean
   contrast has been verified, and this document is where that limit is written down rather
   than implied by a green check.
+- **jsdom does not implement native radio behaviour** — neither the roving tabindex nor
+  arrow-key traversal. `RadioGroup` therefore implements both itself and calls
+  `preventDefault()` on the keys it handles, so a real browser's identical native
+  behaviour cannot fire alongside it. This is the same call `dialog.tsx` makes about
+  `showModal()` and the `Tab` trap: a contract the runtime supplies invisibly is a
+  contract CI cannot assert, so the component owns it explicitly instead.
 - The automated check runs component-by-component, in isolation. It catches what is wrong
   with a component's own markup; it cannot catch a whole-screen defect (heading order
   across several components, a focus order that only breaks once components are combined).

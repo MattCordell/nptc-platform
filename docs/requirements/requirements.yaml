@@ -826,7 +826,7 @@
   phase: p5
   title: "WCAG 2.2 Level AA"
   status: in-progress
-  notes: "Issue #148: the accessible component baseline (field, button, dialog, data table, live region under frontend/src/components/) plus an axe-core check asserted in every component test - the automated-testing-in-CI half of this requirement's own wording. Stays in-progress: axe-core cannot evaluate color-contrast under jsdom (docs/architecture/components.md), and the manual keyboard and screen-reader pass this requirement also calls for remains P5, unstarted."
+  notes: "Issue #148: the accessible component baseline (field, button, dialog, data table, live region under frontend/src/components/) plus an axe-core check asserted in every component test - the automated-testing-in-CI half of this requirement's own wording. Issue #210 completes the set with the form primitives (select, checkbox, checkbox group, radio group, form wrapper, error summary), each carrying the same axe assertion plus its keyboard contract: a radio group as one tab stop traversed by the arrow keys, and a failed submit that moves focus to a summary whose items focus the field they name. Stays in-progress: axe-core cannot evaluate color-contrast under jsdom (docs/architecture/components.md), and the manual keyboard and screen-reader pass this requirement also calls for remains P5, unstarted."
 - id: "NFR-32"
   priority: SHOULD
   phase: p1
