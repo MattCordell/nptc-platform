@@ -17,6 +17,7 @@ values (NFR-26).
 | `NPTC_DATABASE_URL` | `nptc.settings.DatabaseSettings` (backend) | *(no default - required)* | Yes | A DSN for the app runtime role (`nptc_app` membership) |
 | `NPTC_MIGRATION_DATABASE_URL` | `nptc.settings.MigrationSettings` (backend), Alembic (`backend/migrations/env.py`) | *(no default - required)* | Yes | A DSN for the owning role - typically `POSTGRES_USER` in this local stack |
 | `NPTC_AUDIT_VERIFY_DATABASE_URL` | `nptc.settings.AuditVerifySettings` (backend, issue #38) | *(empty - falls back to `NPTC_DATABASE_URL`)* | Yes, when set | Optional DSN for `scripts/verify_audit_chain.py` - point this at a read-only replica or a restored backup, since `verify_chain` only ever issues `SELECT`s. See [the runbook](runbooks/verify-audit-chain.md) |
+| `NPTC_INDEXER_DATABASE_URL` | `nptc.settings.IndexerSettings` (backend, issue #54, FR-13) | *(empty - reconciliation disabled)* | Yes, when set | Optional DSN for a role that can `CREATE`/`DROP INDEX` on `property_value` (never `nptc_app`, which cannot do DDL, or the migration owner, which can do far more than this needs) - see [the runbook](runbooks/reconcile-property-indexes.md) and [the provisioning steps](../operations/upgrade.md#provisioning-the-index-reconcilers-login-issue-54-fr-13) |
 | `NPTC_TRUSTED_ISSUERS` | `nptc.settings.AuthSettings` (backend) | *(empty - no issuer trusted)* | No | Comma-separated list of OIDC issuer URLs allowed to auto-link (NFR-05). Leave empty while federation is off (NFR-02) |
 | `NPTC_OIDC_ISSUER` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - no verifier can be constructed)* | No | The realm's issuer URL, e.g. `http://localhost:8080/realms/nptc`. Empty is fail-closed: `TokenVerifier.from_settings` refuses to construct rather than accept a token whose issuer was never checked |
 | `NPTC_OIDC_AUDIENCE` | `nptc.settings.AuthSettings` (backend, NFR-07) | `nptc-api` | No | Fixed by the committed realm's `nptc-api-audience` mapper (ADR-0014) - only change this alongside the realm |
@@ -48,6 +49,14 @@ migration connection from when nothing hands it a live connection directly (see
 [`upgrade.md`](upgrade.md)). Both are required with no default: a missing, empty, or
 whitespace-only value raises naming the variable, never silently falling back to a
 placeholder a misconfigured deployment could run against for a while (NFR-26).
+`NPTC_INDEXER_DATABASE_URL` is deliberately not a third fallback in that same chain -
+`nptc.db.property_reconciler.get_indexer_engine()` reads it alone, with **empty as its own
+valid, fail-closed default** (unlike the two DSNs above): "index reconciliation is not
+configured" is a safe deployment posture, so construction never raises the way
+`MigrationSettings` does on a missing value. Never falls back to `NPTC_MIGRATION_DATABASE_URL`
+(that role can `CREATE ROLE`/`DROP TABLE` - far more than a reconciler needs) or to
+`NPTC_DATABASE_URL` (the app role provably cannot do DDL at all, so falling back to it would
+only trade a clear refusal for a permission error deep inside a reconciliation run).
 The `NPTC_TX_*` variables are the first read by Python code —
 `nptc_shared.terminology.TerminologyConfig.from_env()` (FR-53), used identically by the
 backend and the transform (see [ADR-0003](../adr/0003-terminology-client-in-shared.md)

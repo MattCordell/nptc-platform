@@ -237,6 +237,81 @@ Fix:
   datatype amendment (`string` -> `decimal`) is ever permitted on a property already
   carrying values.
 
+**Update (2026-08-27, issue #54).** The open questions above are resolved.
+
+- **Executor topology: an in-process reconciler, callable as a library, plus a CLI - not a
+  separate deployable.** The separate-process candidate would have to learn that
+  `filterable` changed by polling `property_definition`, which is the P3 `nptc.jobs` SKIP
+  LOCKED queue in a different hat - the very thing this ADR's own alternatives-rejected
+  table already forbids pulling forward for this issue. `nptc.db.property_reconciler.
+  reconcile_property_indexes()` runs on its own `NPTC_INDEXER_DATABASE_URL` credential
+  (`nptc.settings.IndexerSettings`, empty-default fail-closed, deliberately not a fallback
+  to `NPTC_MIGRATION_DATABASE_URL` or `NPTC_DATABASE_URL`), on an `AUTOCOMMIT` connection -
+  verified directly against `postgres:18.6` that `CREATE INDEX CONCURRENTLY` raises `25001`
+  otherwise. `scripts/reconcile_property_indexes.py` is the operator/scheduled-check path.
+  Not wired into `create_app()`: that would make the API require a DDL credential at boot
+  and run DDL on every test app construction. The write-path dispatch (a
+  `starlette.background` task calling `reconcile_property_indexes()` right after a
+  `property_definition` write commits) is left to #55/#138 - the first issue at which such
+  a write path exists at all; `reconcile_property_indexes()` is deliberately argument-free
+  and public so that dispatch needs no new interface when it lands.
+- **A desired-state reconciler, not an event handler - stronger than either open candidate
+  implied.** Reading every `property_definition` row and diffing against actual `pg_index`
+  state (joining `pg_index`/`pg_class`/`pg_namespace`, **not** `pg_indexes`, which exposes
+  no `indisvalid`) means a `CREATE INDEX CONCURRENTLY` that failed partway - leaving an
+  index that exists by name but is never used by the planner - is noticed and rebuilt on
+  the next run, not just created once and forgotten. This is also what makes "un-flagging
+  removes the index" (this issue's own acceptance criterion) fall out for free, with no
+  special-case code. The reconciler also keeps the `COMMENT ON INDEX` (below) in sync,
+  repairing a missing or stale one in place without a rebuild.
+- **Slot 2 (the composite `(property_key, <expr>)` btree fallback) is not built.** The
+  claim this ADR flagged as needing proof - that rendering `property_key` as a literal is
+  what makes the partial index usable under a generic plan - is proven in
+  `test_db_property_index_plan.py`: a positive case (the literal-rendered query names the
+  generated index in `EXPLAIN`) paired with a negative control (the identical predicate
+  shape via `PREPARE`/`EXPLAIN EXECUTE` under `plan_cache_mode = force_generic_plan` does
+  not), with no `enable_seqscan = off` touched. The literal proved usable on its own, so
+  slot 2 stays reserved (the `{slot}` name component, the `[12]` in
+  `GENERATED_INDEX_NAME_RE`, the `include_object` hook already accommodate it) rather than
+  built - a second index per filterable property would double write amplification on
+  `property_value` for a fallback the proof found unnecessary.
+- **The numeric expression is made cast-safe, not gated on the P3 conformance sweep.**
+  `nptc_numeric_or_null(text) RETURNS numeric` (`nptc.db.functions`, migration 0014,
+  [ADR-0027](0027-cast-safe-numeric-index-expression.md)) turns a non-castable retained
+  value into `NULL` rather than failing `CREATE INDEX` outright - verified directly that a
+  bare `CAST(value AS NUMERIC)` raises "cannot cast jsonb string to type numeric" against
+  exactly the retained-JSONB-string scenario this ADR named. Gating on the sweep instead was
+  rejected: the sweep is P3 and unbuilt, so gating on it would have shipped this ADR's third
+  index shape dead and untested indefinitely. `IndexShape.requires_conformance_sweep`
+  is not made redundant by this - it stops being an index-generation precondition and
+  becomes a signal to the future sweep that this datatype can carry syntactically-present,
+  semantically-non-numeric values on record.
+- **Correction to this ADR's own Decision text, in the same voice as #52's correction
+  above.** The three index expressions this section specifies did not match any handler's
+  `filter_clause()` as #51/#53 shipped it: `CodeHandler` rendered `->>'code' = ...`
+  equality, which a `jsonb_path_ops` GIN cannot serve at all (it serves only
+  `@>`/`@?`/`@@`); `StringHandler`/`UrlHandler` rendered `CAST(value AS VARCHAR)`, which
+  stays JSON-quoted (`'"abc"'`, never `abc`) and so could never match an unquoted filter
+  value - a latent correctness bug independent of indexing; `DecimalHandler`/
+  `PositiveIntHandler` rendered `CAST(value AS NUMERIC)`, exactly the cast-unsafe shape
+  this ADR itself warned against. #54 realigned all five handlers' `filter_clause()` (via a
+  new shared `nptc.registry.handlers.jsonb_root_as_text()` for the `TEXT_SCALAR`/
+  `NUMERIC_SCALAR` shapes, and `@>` containment - an `OR` of containments for `IN`, since
+  `@> ANY(array)` is not GIN-indexable - for `CodeHandler`), bound to the index expressions
+  by a parity test (`test_datatype_handlers.py`) so the two representations cannot silently
+  drift apart again.
+- **`COMMENT ON INDEX <name> IS '<property key>'`**, composed and reconciled the same way
+  the index itself is - resolving this file's own "the key isn't in the name" traceability
+  note for an operator staring at `pg_indexes`.
+- **NFR-22's guard gained a fifth rule, not a fourth** - `test_sql_parameterisation.py` had
+  already grown a fourth (`versioned-table-bulk-statement`, issue #46) since this ADR's
+  original text, without its docstring's "Three rules" header being updated to match. Rule
+  5 scopes `psycopg.sql` composition to exactly one module,
+  `nptc.db.property_indexes` - a call to `sql.SQL(...)` anywhere else fails outright, and
+  inside that module a `.format()` call is safe only when it is a `sql.SQL(<string
+  literal>)` receiver called directly (never a variable reference) with every argument
+  itself a `sql.SQL`/`sql.Identifier`/`sql.Literal` call.
+
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
 not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every

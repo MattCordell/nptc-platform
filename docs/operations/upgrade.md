@@ -52,6 +52,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0011_local_code_systems.py`](../../backend/migrations/versions/0011_local_code_systems.py) | `local_code_system`, `local_code`, `local_code_snomed_map`, plus their seed data (see [`data-model.md`](../architecture/data-model.md#local-code-systems-and-the-advisory-snomed-map-issue-56-fr-90-fr-91-fr-92)) | None |
 | [`0012_catalogue_search_indexes.py`](../../backend/migrations/versions/0012_catalogue_search_indexes.py) | `nptc_search_text`, two GIN trigram indexes | See [below](#0012_catalogue_search_indexespy) - a standing `REINDEX` obligation if the `unaccent` dictionary ever changes |
 | [`0013_property_definition_local_code_system_key.py`](../../backend/migrations/versions/0013_property_definition_local_code_system_key.py) | `property_definition.local_code_system_key` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | See [below](#0013_property_definition_local_code_system_keypy) - backfills the new column on any database that already ran `seed_system_properties` before adding the `NOT NULL`-when-bound `CHECK` |
+| [`0014_numeric_or_null_function.py`](../../backend/migrations/versions/0014_numeric_or_null_function.py) | `nptc_numeric_or_null` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0014_numeric_or_null_functionpy) - downgrading past it requires no reconciler-built numeric-shaped index to still exist |
 
 ## Provisioning the app role's login
 
@@ -69,6 +70,35 @@ GRANT nptc_app TO nptc_app_login;
 `nptc_app_login`. `backend/tests/conftest.py` reproduces exactly this two-step sequence
 inside the disposable test container, with an obviously-synthetic local-only password -
 never real credentials, and never anything committed.
+
+## Provisioning the index reconciler's login (issue #54, FR-13)
+
+Filterable-property index generation (`nptc.db.property_reconciler.
+reconcile_property_indexes`, `scripts/reconcile_property_indexes.py`) needs its own DDL-
+capable role, distinct from both `nptc_app_login` above (which cannot do DDL at all) and
+the migration owner (which can `CREATE ROLE`/`DROP TABLE` - too broad a credential to hand
+to a runtime reconciliation path). Provision a role scoped to exactly the one privilege it
+needs:
+
+```sql
+CREATE ROLE nptc_indexer LOGIN PASSWORD '<a real, generated secret>';
+GRANT CREATE ON TABLE property_value TO nptc_indexer;
+```
+
+(Postgres has no narrower "create index" grant than table-level `CREATE` - see
+[ADR-0012](../adr/0012-property-registry-storage-and-validation.md)'s note that this is
+exactly why the reconciler's role is never `nptc_app`'s ownership, which would additionally
+confer `DROP`/`ALTER`/`TRUNCATE`.)
+
+Set `NPTC_INDEXER_DATABASE_URL` to this role's DSN wherever the reconciliation path runs -
+see [`configuration.md`](configuration.md). Leaving it unset is a valid, safe posture
+(`IndexerSettings`'s own fail-closed default): reconciliation simply does not run until an
+operator configures it, and `filterable` flags on `property_definition` accumulate no
+consequence until then. `backend/tests/conftest.py` does not provision this role - the
+integration tests that need it (`test_db_property_indexes.py`,
+`test_db_property_index_plan.py`) point `NPTC_INDEXER_DATABASE_URL` at the container's own
+bootstrap superuser instead, since a real deployment's narrower role has no equivalent
+already sitting in the fixture graph.
 
 ## The asymmetric downgrade
 
@@ -210,6 +240,23 @@ already seeded, so it never revisits them on a later run). The migration sets
 own key. A database whose `discipline`/`subgroup` definition was hand-edited to bind some
 other `local_code_system` is not something this backfill can recover automatically; correct
 it manually before upgrading, or accept that it will be backfilled to the standard value.
+
+## `0014_numeric_or_null_function.py`
+
+Adds `nptc_numeric_or_null` (issue #54, FR-13 - see
+[`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)
+and [ADR-0027](../adr/0027-cast-safe-numeric-index-expression.md)). No table, no column, no
+grant changes, and nothing to backfill: `upgrade head` is all that is required. Creates no
+index itself - the reconciler builds a property's index at runtime, once it is flagged
+filterable, referencing this function.
+
+**Downgrade obligation, the mirror of the trigram indexes' obligation above.** Postgres
+tracks a dependency from a generated expression index to this function, so `downgrade()`
+(`DROP FUNCTION`) fails if a reconciler-built `decimal`/`positiveInt` index still exists.
+Unlike `0012`'s own indexes, these are not migration-managed, so this migration cannot drop
+them itself before dropping the function. Before downgrading past `0014`, reconcile every
+numeric-shaped filterable property back to `filterable = false` (or drop the generated
+index by hand) first.
 
 ## Testcontainers and Docker
 
