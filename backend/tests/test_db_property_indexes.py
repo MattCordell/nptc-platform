@@ -384,14 +384,24 @@ def test_matches_indexdef_false_for_a_text_scalar_index_built_before_the_opclass
     assert matches_indexdef(desired, indexdef) is False
 
 
-def test_reconciliation_report_changed_is_true_when_only_failed_is_populated() -> None:
-    """Regression (issue #54 review, second pass): a library caller
-    (#55/#138's future post-commit dispatch) that only branches on
-    `changed` before logging must not see a falsy report while an index
-    failed to converge."""
+def test_reconciliation_report_converged_is_false_when_only_failed_is_populated() -> None:
+    """Regression (issue #54 review, third pass): a library caller
+    (#55/#138's future post-commit dispatch) needs a direct answer to
+    "did everything converge" - `converged`, not `changed`, since a name
+    that only ever failed was never actually changed either."""
     report = ReconciliationReport(failed=(("ix_propval_p1_1", "LockNotAvailable"),))
 
+    assert report.converged is False
+    assert report.changed is False
+
+
+def test_reconciliation_report_changed_includes_repaired_comment() -> None:
+    """A repaired comment is a real change this run made, even though it
+    is neither a create/drop/rebuild - `changed` must say so."""
+    report = ReconciliationReport(repaired_comment=("ix_propval_p1_1",))
+
     assert report.changed is True
+    assert report.converged is True
 
 
 def test_include_object_excludes_a_generated_index() -> None:

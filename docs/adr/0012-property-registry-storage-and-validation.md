@@ -397,6 +397,41 @@ the drift-detection marker itself was under-specified, plus five smaller gaps:
   that code path at all), but the earlier wording calling it "an ordinary mutable, audited
   column" was wrong and is corrected here.
 
+**Update (2026-08-28, issue #54 review, third pass).** A third review confirmed the
+second-pass marker fix is exclusive in both directions, and found one new problem plus two
+things worth deciding before merge:
+
+- **The `public.` qualification on the function reference was one-sided.** `create_statement`
+  was fixed to call `public.nptc_numeric_or_null(...)`, but `nptc.db.functions.
+  CREATE_NUMERIC_OR_NULL_FUNCTION_SQL` still created the function unqualified - so migration
+  0014 puts it in whatever schema the *migration* role's `search_path` names first, while the
+  reconciler, on a different role's connection, now insists on `public`. Unlike the table
+  reference, a mismatch here is not silently wrong but a permanent failure (`function
+  public.nptc_numeric_or_null(text) does not exist`) retried forever. Fixed by qualifying both
+  the `CREATE` and the `DROP` in `functions.py`. `nptc_sctid_is_valid`/`nptc_search_text` do
+  not have this problem and were not touched: they are only ever referenced by other
+  migration-created objects under the same role, so they are self-consistent either way - this
+  function is the first one referenced from a genuinely different connection, which is what
+  makes its schema an interface rather than an implementation detail.
+- **The `PREFIX` `EXPLAIN` case the second pass added proved the opclass *can* serve `PREFIX`,
+  but only under `literal_binds=True`** - a rendering `filter_clause` never actually produces.
+  The real predicate is `LIKE $1 || '%' ESCAPE '/'`, a bound parameter, not a folded constant.
+  Added a second case executing that exact shape through `_Explain` (real bind processors, no
+  `literal_binds`): a single ad hoc execution gets Postgres's own per-execution custom plan,
+  which substitutes the bound value before planning - the same benefit the literal case gets,
+  confirmed empirically rather than inferred. The existing `force_generic_plan` negative
+  control is what would catch the *other* case (a plan reused across many distinct values).
+- **`ReconciliationReport.changed` was overloaded** after the second pass folded `failed` into
+  it: `changed` then meant neither "did this run alter anything" nor "did everything converge",
+  and the CLI had to compensate by checking `repaired_comment` separately. Split into two
+  properties - `changed` (created/dropped/repaired_invalid/rebuilt_stale_definition/
+  repaired_comment; excludes `failed`) and `converged` (`not failed`) - so #55/#138's future
+  caller can ask either question directly.
+- **Minor, code-clarity only**: the `dropped.append(name)` / `dropped.remove(name)` pair around
+  a rebuild's `CREATE` (added in the second pass) is correct but reads as a mistake at a
+  glance. Rewritten as a `try` scoped to just the `CREATE`, appending to `dropped` only in its
+  `except` before re-raising - same behaviour, no add-then-undo.
+
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
 not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every

@@ -184,19 +184,31 @@ class ReconciliationReport:
 
     @property
     def changed(self) -> bool:
-        """Whether this run changed anything *or* left something
-        unconverged - a library caller (the future #55/#138 background-task
-        dispatch) that only checks `changed` before deciding whether to log
-        must not see a falsy report while `failed` is non-empty (issue #54
-        review): a failure is exactly the kind of outcome such a caller
-        needs to notice, not silently pass over."""
+        """Whether this run did anything - created, dropped, rebuilt, or
+        repaired a comment. Deliberately excludes `failed` (issue #54
+        review, third pass): a name that only ever failed was never
+        actually changed, so folding `failed` in here made `changed` answer
+        neither "did this run alter anything" nor "did everything
+        converge". Use `converged` for the latter question - a caller that
+        cares whether it is safe to treat this run as fully successful
+        should check `converged`, not infer it from `changed`."""
         return bool(
             self.created
             or self.dropped
             or self.repaired_invalid
             or self.rebuilt_stale_definition
-            or self.failed
+            or self.repaired_comment
         )
+
+    @property
+    def converged(self) -> bool:
+        """True when nothing failed to converge this run - independent of
+        whether anything needed to change. False exactly when `failed` is
+        non-empty (issue #54 review, third pass): the caller #55/#138 will
+        add (a background task dispatched right after a `property_
+        definition` write commits) needs this question answered directly,
+        not reconstructed from `changed`."""
+        return not self.failed
 
 
 @lru_cache(maxsize=1)
@@ -339,17 +351,21 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
                 is_valid, comment, indexdef = actual[name]
                 if not is_valid:
                     _execute(cursor, drop_statement(name))
-                    # Recorded as dropped as soon as the DROP succeeds, same
-                    # reasoning as `created` above (issue #54 review, second
-                    # pass): if the following CREATE then raises, the index
-                    # is genuinely gone, and the report must say so rather
-                    # than only naming it under `failed` - an operator
-                    # reading `failed` alone cannot tell whether the
-                    # property still has *an* index, just a stale one, or
-                    # none at all.
-                    dropped.append(name)
-                    _execute(cursor, create_statement(index))
-                    dropped.remove(name)
+                    try:
+                        _execute(cursor, create_statement(index))
+                    except Exception:
+                        # The DROP already succeeded - the index is
+                        # genuinely gone now, not merely "something went
+                        # wrong" (issue #54 review, third pass). Recorded
+                        # here, scoped to just the CREATE, rather than an
+                        # append-then-undo around both statements: an
+                        # operator reading `failed` alone cannot tell
+                        # whether the property still has *an* index, just a
+                        # stale one, or none at all, so `dropped` must say
+                        # so before the exception propagates to the outer
+                        # handler that records `failed`.
+                        dropped.append(name)
+                        raise
                     repaired_invalid.append(name)
                     _execute(cursor, comment_statement(name, index.property_key))
                     continue
@@ -363,9 +379,11 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
                     # defence in depth, though it is not actually mutable in
                     # practice - see `matches_indexdef`'s own docstring).
                     _execute(cursor, drop_statement(name))
-                    dropped.append(name)  # see the repaired_invalid branch above
-                    _execute(cursor, create_statement(index))
-                    dropped.remove(name)
+                    try:
+                        _execute(cursor, create_statement(index))
+                    except Exception:
+                        dropped.append(name)  # see the repaired_invalid branch above
+                        raise
                     rebuilt_stale_definition.append(name)
                     _execute(cursor, comment_statement(name, index.property_key))
                     continue

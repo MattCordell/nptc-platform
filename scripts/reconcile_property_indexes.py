@@ -148,11 +148,11 @@ def main(argv: list[str] | None = None) -> int:
     for name, exception_type in report.failed:
         print(f"FAILED: {name} ({exception_type})")
 
-    if not report.changed and not report.repaired_comment:
+    if not report.changed and report.converged:
         print("OK: no drift - every filterable property's index is already converged")
         return EXIT_OK
 
-    if report.failed and not args.dry_run:
+    if not report.converged and not args.dry_run:
         return EXIT_COULD_NOT_COMPLETE
 
     return EXIT_DRIFT_REMAINS if args.dry_run else EXIT_OK

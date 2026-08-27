@@ -199,8 +199,22 @@ DROP_SEARCH_TEXT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_search_text(text);
 #: an `EXCEPTION WHEN others THEN RETURN NULL` block - rejected here only
 #: because it opens a subtransaction per row on every index build and every
 #: insert, a cost this `pg_input_is_valid`-based version avoids entirely.
+#: `public.nptc_numeric_or_null`, schema-qualified on both the `CREATE` and
+#: the `DROP` (issue #54 review, third pass) - unlike `nptc_sctid_is_valid`/
+#: `nptc_search_text` above, which are only ever referenced by other
+#: migration-created objects under the migration role's own `search_path`
+#: and so are self-consistent either way, this function is also referenced
+#: from `nptc.db.property_indexes.create_statement`'s `CREATE INDEX`, which
+#: runs on a *different* role's connection (`NPTC_INDEXER_DATABASE_URL`).
+#: Leaving this bare would let the migration role's `search_path` decide
+#: which schema the function actually lands in, independently of whatever
+#: `create_statement` assumes - and unlike the table-reference case, a
+#: mismatch here is not just silently wrong, it is a permanent failure
+#: (`function public.nptc_numeric_or_null(text) does not exist`) that the
+#: reconciler would retry forever. Qualifying the schema on both sides removes
+#: the assumption instead of narrowing it.
 CREATE_NUMERIC_OR_NULL_FUNCTION_SQL = """
-CREATE OR REPLACE FUNCTION nptc_numeric_or_null(v text)
+CREATE OR REPLACE FUNCTION public.nptc_numeric_or_null(v text)
 RETURNS numeric
 LANGUAGE sql
 IMMUTABLE
@@ -211,4 +225,4 @@ SELECT CASE WHEN pg_input_is_valid(v, 'numeric') THEN v::numeric END
 $$;
 """
 
-DROP_NUMERIC_OR_NULL_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_numeric_or_null(text);"
+DROP_NUMERIC_OR_NULL_FUNCTION_SQL = "DROP FUNCTION IF EXISTS public.nptc_numeric_or_null(text);"

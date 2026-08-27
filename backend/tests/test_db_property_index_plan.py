@@ -265,6 +265,30 @@ def _run_partial_index_plan_proof(owner_engine: Engine, key_a: str, index_name_a
         assert index_name_a in prefix_plan, prefix_plan
         assert "Seq Scan on property_value" not in prefix_plan, prefix_plan
 
+        # --- the shape production actually sends (issue #54 review, third
+        # pass): `filter_clause` never renders `literal_binds=True` in real
+        # code - the compiled statement above proves the index is usable in
+        # principle, but the real predicate production emits is
+        # `LIKE $1 || '%' ESCAPE '/'`, a bound parameter concatenated with a
+        # literal, not one folded constant. `_Explain`, not `text()` +
+        # `literal_binds`, executes this exactly as a real caller would:
+        # through SQLAlchemy's normal bind-parameter path. A single ad hoc
+        # execution like this - no `PREPARE`, no repeated execution - gets
+        # Postgres's own per-execution "custom plan", which substitutes the
+        # bound value before planning, same as the literal case; the
+        # `force_generic_plan` negative control below is what demonstrates
+        # the *other* case (a plan reused across many distinct parameter
+        # values), which is what would defeat this.
+        realistic_prefix_stmt = select(PropertyValue.entry_id).where(
+            PropertyValue.property_key == key_a,
+            handler.filter_clause(FilterOp.PREFIX, "val ", PropertyValue.value),
+        )
+        realistic_prefix_plan = "\n".join(
+            connection.execute(_Explain(realistic_prefix_stmt)).scalars().all()
+        )
+        assert index_name_a in realistic_prefix_plan, realistic_prefix_plan
+        assert "Seq Scan on property_value" not in realistic_prefix_plan, realistic_prefix_plan
+
         # --- negative control: the identical predicate shape, but with
         # property_key bound as a parameter under a forced generic plan,
         # cannot use the partial index at all - proving the literal above
