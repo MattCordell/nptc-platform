@@ -10,17 +10,20 @@ from nptc.settings import (
     ApiSettings,
     AuthSettings,
     DatabaseSettings,
+    IndexerSettings,
     MigrationSettings,
 )
 
 _APP_DSN = "postgresql+psycopg://nptc_app_login:pw@localhost/nptc"
 _MIGRATION_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
+_INDEXER_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
 
 
 @pytest.fixture(autouse=True)
 def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPTC_DATABASE_URL", raising=False)
     monkeypatch.delenv("NPTC_MIGRATION_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NPTC_INDEXER_DATABASE_URL", raising=False)
 
 
 def test_database_settings_reads_dsn_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,6 +81,27 @@ def test_migration_settings_rejects_blank_url(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(ValidationError, match="migration_database_url"):
         MigrationSettings()
+
+
+@pytest.mark.req("FR-13")
+def test_indexer_settings_defaults_to_empty_reconciliation_disabled() -> None:
+    """Fail-closed default (issue #54): "no indexer credential configured"
+    is a valid, safe posture - unlike `MigrationSettings`, construction
+    must not raise just because nothing is set."""
+    assert IndexerSettings().indexer_database_url == ""
+
+
+def test_indexer_settings_reads_dsn_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPTC_INDEXER_DATABASE_URL", _INDEXER_DSN)
+
+    assert IndexerSettings().indexer_database_url == _INDEXER_DSN
+
+
+def test_indexer_settings_does_not_require_database_url_or_migration_url() -> None:
+    """The bug this guards against: a deployment that doesn't want runtime
+    index reconciliation must not be forced to set NPTC_DATABASE_URL or
+    NPTC_MIGRATION_DATABASE_URL just to construct this settings class."""
+    IndexerSettings()  # must not raise
 
 
 @pytest.mark.req("NFR-05")

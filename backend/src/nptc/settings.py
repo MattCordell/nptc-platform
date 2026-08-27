@@ -198,3 +198,33 @@ class MigrationSettings(BaseSettings):
     @classmethod
     def _not_blank(cls, value: str) -> str:
         return _require_non_blank(value, "migration_database_url")
+
+
+class IndexerSettings(BaseSettings):
+    """The DSN `nptc.db.property_reconciler` runs its DDL as (issue #54,
+    FR-13) - see that module and `scripts/reconcile_property_indexes.py`.
+
+    Empty default, not required, unlike `MigrationSettings` - "runtime
+    index reconciliation is not configured" is a valid, safe posture
+    (fail-closed: `reconcile_property_indexes()` refuses to run rather than
+    falling back to a different credential), not a misconfiguration to
+    reject at settings-construction time, matching `AuditVerifySettings`'s
+    own empty-default posture for the same reason.
+
+    **Deliberately its own variable, never a fallback to
+    `NPTC_MIGRATION_DATABASE_URL`.** The migration role can `CREATE ROLE`/
+    `CREATE EXTENSION`/`DROP TABLE`; handing that credential to a
+    long-lived, request-serving API process for one narrow DDL operation
+    (building/dropping a `property_value` expression index) would widen
+    the API's blast radius permanently. A deployment that wants runtime
+    reconciliation points this at a role scoped to exactly that - see
+    `docs/operations/configuration.md`. Equally no fallback to
+    `NPTC_DATABASE_URL`: the app role provably cannot do DDL at all
+    (ADR-0012's rejected-alternatives table), so falling back to it would
+    only replace one failure (refuses to run) with a less legible one
+    (`CREATE INDEX` fails with a permission error deep inside a
+    reconciliation run)."""
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    indexer_database_url: str = ""

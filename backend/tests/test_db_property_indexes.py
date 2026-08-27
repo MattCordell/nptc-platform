@@ -1,9 +1,21 @@
-"""Naming and desired-state tests for issue #54 (FR-13) - no container, no
-DDL. See `test_db_property_index_plan.py` for the `EXPLAIN` proof and
+"""Naming, desired-state, and reconciler tests for issue #54 (FR-13).
+
+The first section (naming/desired-state/statement builders) needs no
+container. The second (`reconcile_property_indexes`) does - see
+`test_db_property_index_plan.py` for the `EXPLAIN` proof and
 `test_db_numeric_or_null_function.py` for the cast-safe numeric expression.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
+
+import psycopg
+import pytest
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+from testcontainers.community.postgres import PostgresContainer
 
 from nptc.db.models.property_definition import (
     BindingTarget,
@@ -21,6 +33,12 @@ from nptc.db.property_indexes import (
     drop_statement,
     include_object,
     index_name,
+)
+from nptc.db.property_reconciler import (
+    RECONCILE_LOCK_KEY,
+    IndexerNotConfiguredError,
+    get_indexer_engine,
+    reconcile_property_indexes,
 )
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps, IndexKind, ValueExpression
@@ -243,3 +261,320 @@ def test_include_object_includes_non_index_objects_regardless_of_name() -> None:
 
 def test_include_object_includes_an_index_with_no_name() -> None:
     assert include_object(object(), None, "index", False, None) is True
+
+
+# --- reconciler (issue #54, FR-13) -----------------------------------------
+#
+# `postgres_container`'s own `nptc_owner` role is the container's bootstrap
+# superuser, so `NPTC_INDEXER_DATABASE_URL` points at the same DSN `db`/
+# `owner_engine` already use - a real deployment would scope this to a
+# narrower DDL-capable role instead (see `IndexerSettings`'s own docstring),
+# but reusing the fixture graph's existing owner credential here needs no
+# second role provisioned just for this test module.
+
+
+@pytest.fixture
+def _indexer_configured(
+    postgres_container: PostgresContainer,
+    monkeypatch: pytest.MonkeyPatch,
+    migrated: None,
+) -> Iterator[None]:
+    """Points the module-level `get_indexer_engine()` cache at the running
+    container for the duration of one test, then clears it - the cache is
+    `@lru_cache(maxsize=1)`, process-wide by design (mirrors `nptc.db.
+    session.get_engine`), so a test-scoped override has to reach in and
+    clear it explicitly rather than relying on a fresh import."""
+    monkeypatch.setenv("NPTC_INDEXER_DATABASE_URL", postgres_container.get_connection_url())
+    get_indexer_engine.cache_clear()
+    yield
+    get_indexer_engine.cache_clear()
+
+
+def _insert_property(
+    owner_engine: Engine,
+    *,
+    key: str,
+    datatype: str,
+    filterable: bool,
+    cardinality: str = PropertyCardinality.ZERO_OR_MANY,
+    binding_target: str | None = None,
+    value_set_uri: str | None = None,
+) -> int:
+    """Inserts one `property_definition` row directly via `owner_engine`
+    (bypassing the registry write path, which doesn't exist yet - #51/#55)
+    and returns its `index_seq`."""
+    with Session(bind=owner_engine) as session:
+        definition = PropertyDefinition(
+            key=key,
+            label=key.title(),
+            datatype=datatype,
+            cardinality=cardinality,
+            scope=PropertyScope.BOTH,
+            required_for_submission=False,
+            required_for_publication=False,
+            binding_target=binding_target,
+            value_set_uri=value_set_uri,
+            strength="required" if binding_target is not None else None,
+            edition="au" if binding_target is not None else None,
+            filterable=filterable,
+            origin=PropertyOrigin.ADMIN,
+            display_order=0,
+            constraints={},
+        )
+        session.add(definition)
+        session.commit()
+        return definition.index_seq
+
+
+def _delete_property(owner_engine: Engine, key: str) -> None:
+    with owner_engine.connect() as connection:
+        connection.execute(text("DELETE FROM property_definition WHERE key = :key"), {"key": key})
+        connection.commit()
+
+
+def _drop_generated_index_if_exists(owner_engine: Engine, name: str) -> None:
+    """`DROP INDEX CONCURRENTLY` cannot run inside a transaction block, so
+    cleanup needs its own `AUTOCOMMIT`-execution connection - the same
+    reason `get_indexer_engine()` itself is built that way."""
+    with owner_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"'))
+
+
+@pytest.fixture
+def _admin_property(owner_engine: Engine) -> Iterator[dict[str, object]]:
+    """One throwaway `admin`, `filterable`, `string` property, cleaned up
+    (row + any index the test built) even if the test raises - issue #190's
+    rule that reconciler DDL, being non-transactional, cannot rely on a
+    rolled-back fixture the way `db`/`app_db` do."""
+    key = "test_reconciler_string_property"
+    index_seq = _insert_property(owner_engine, key=key, datatype="string", filterable=True)
+    try:
+        yield {"key": key, "index_seq": index_seq}
+    finally:
+        _delete_property(owner_engine, key)
+        _drop_generated_index_if_exists(owner_engine, index_name(index_seq, 1))
+
+
+@pytest.mark.integration
+def test_get_indexer_engine_raises_when_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPTC_INDEXER_DATABASE_URL", raising=False)
+    get_indexer_engine.cache_clear()
+
+    with pytest.raises(IndexerNotConfiguredError):
+        get_indexer_engine()
+
+    get_indexer_engine.cache_clear()
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_creates_index_without_a_restart(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """AC 1: flipping `filterable` (here, simply inserting a filterable
+    property - #51/#55's write path doesn't exist yet) and reconciling
+    creates the index, using an engine (`get_indexer_engine()`) that was
+    already cached before this test's property was inserted - proving
+    nothing about the reconciler depends on a fresh process."""
+    key = _admin_property["key"]
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.created
+    with owner_engine.connect() as connection:
+        indexdef = connection.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = :name"),
+            {"name": expected_name},
+        ).scalar_one()
+        comment = connection.execute(
+            text("SELECT obj_description((:name)::regclass, 'pg_class')"),
+            {"name": expected_name},
+        ).scalar_one()
+    assert "USING btree" in indexdef
+    assert "value #>> '{}'::text[]" in indexdef
+    assert f"WHERE (property_key = '{key}'::text)" in indexdef
+    assert comment == key
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_is_idempotent(
+    _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    reconcile_property_indexes()
+
+    second = reconcile_property_indexes()
+
+    assert second.created == ()
+    assert second.dropped == ()
+    assert second.repaired_invalid == ()
+    assert second.repaired_comment == ()
+    assert not second.changed
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_drops_index_when_unflagged(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """The other half of AC 1/AC 3: un-flagging removes the index rather
+    than leaving it orphaned."""
+    key = _admin_property["key"]
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+
+    with owner_engine.connect() as connection:
+        connection.execute(
+            text("UPDATE property_definition SET filterable = false WHERE key = :key"),
+            {"key": key},
+        )
+        connection.commit()
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.dropped
+    with owner_engine.connect() as connection:
+        exists = connection.execute(
+            text("SELECT 1 FROM pg_indexes WHERE indexname = :name"), {"name": expected_name}
+        ).first()
+    assert exists is None
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_rebuilds_an_invalid_index(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """A `CREATE INDEX CONCURRENTLY` that failed partway leaves an index
+    that exists by name but is never used by the planner
+    (`indisvalid = false`) - `pg_index`, not `pg_indexes` (which is blind to
+    this), is what lets the reconciler notice and rebuild it."""
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+    with owner_engine.connect() as connection:
+        connection.execute(
+            text("UPDATE pg_index SET indisvalid = false WHERE indexrelid = (:name)::regclass"),
+            {"name": expected_name},
+        )
+        connection.commit()
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.repaired_invalid
+    with owner_engine.connect() as connection:
+        is_valid = connection.execute(
+            text("SELECT indisvalid FROM pg_index WHERE indexrelid = (:name)::regclass"),
+            {"name": expected_name},
+        ).scalar_one()
+    assert is_valid is True
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_repairs_a_stale_comment_without_rebuilding(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    key = _admin_property["key"]
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+    with owner_engine.connect() as connection:
+        connection.execute(text(f"COMMENT ON INDEX \"{expected_name}\" IS 'wrong'"))
+        oid_before = connection.execute(
+            text("SELECT (:name)::regclass::oid"), {"name": expected_name}
+        ).scalar_one()
+        connection.commit()
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.repaired_comment
+    assert expected_name not in report.repaired_invalid
+    with owner_engine.connect() as connection:
+        comment = connection.execute(
+            text("SELECT obj_description((:name)::regclass, 'pg_class')"),
+            {"name": expected_name},
+        ).scalar_one()
+        oid_after = connection.execute(
+            text("SELECT (:name)::regclass::oid"), {"name": expected_name}
+        ).scalar_one()
+    assert comment == key
+    assert oid_after == oid_before  # repaired in place, not rebuilt
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_creates_a_gin_index_for_a_multi_valued_coded_property(
+    owner_engine: Engine, _indexer_configured: None
+) -> None:
+    """AC 3: a multi-valued (`0..*`) coded property gets a GIN index."""
+    key = "test_reconciler_code_property"
+    index_seq = _insert_property(
+        owner_engine,
+        key=key,
+        datatype="code",
+        filterable=True,
+        cardinality=PropertyCardinality.ZERO_OR_MANY,
+        binding_target=BindingTarget.VALUE_SET,
+        value_set_uri="http://example.org/vs",
+    )
+    expected_name = index_name(index_seq, 1)
+    try:
+        report = reconcile_property_indexes()
+
+        assert expected_name in report.created
+        with owner_engine.connect() as connection:
+            indexdef = connection.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE indexname = :name"),
+                {"name": expected_name},
+            ).scalar_one()
+        assert "USING gin" in indexdef
+        assert "jsonb_path_ops" in indexdef
+    finally:
+        _delete_property(owner_engine, key)
+        _drop_generated_index_if_exists(owner_engine, expected_name)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_creating_a_generated_index_without_autocommit_fails_loudly(owner_engine: Engine) -> None:
+    """`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block -
+    proof that `get_indexer_engine()`'s `isolation_level="AUTOCOMMIT"` is
+    load-bearing, not cosmetic, and that a non-autocommit connection fails
+    loudly (`25001`) rather than silently downgrading to a
+    read-blocking, non-concurrent build."""
+    desired = DesiredIndex(
+        property_key="does_not_matter",
+        index_seq=999999,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.TEXT_SCALAR,
+    )
+    with owner_engine.connect() as connection:
+        raw = connection.connection.driver_connection
+        assert raw is not None
+        with pytest.raises(psycopg.errors.ActiveSqlTransaction) as excinfo, raw.cursor() as cursor:
+            cursor.execute(create_statement(desired))
+
+    assert excinfo.value.sqlstate == "25001"
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_concurrent_reconciliation_is_skipped_not_raced(
+    owner_engine: Engine, _indexer_configured: None
+) -> None:
+    """Two reconciliations converging on the same desired state is a
+    no-op, not a race - the loser reports `skipped_locked=True` rather than
+    blocking or erroring."""
+    with owner_engine.connect() as holder:
+        holder.execute(text("SELECT pg_advisory_lock(:key)"), {"key": RECONCILE_LOCK_KEY})
+        holder.commit()
+        try:
+            report = reconcile_property_indexes()
+            assert report.skipped_locked is True
+        finally:
+            holder.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": RECONCILE_LOCK_KEY})
+            holder.commit()
