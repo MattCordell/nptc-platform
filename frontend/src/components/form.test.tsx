@@ -110,6 +110,24 @@ function ExternallyErroringForm() {
   );
 }
 
+/**
+ * A form whose `errors` array never changes identity, the way a memoised or
+ * module-level one would not.
+ */
+const STABLE_ERRORS = [
+  { fieldId: "requesting-term", message: "Enter a requesting term" },
+];
+
+function StableErrorsForm({ onSubmit }: { onSubmit: () => void }) {
+  return (
+    <Form submitLabel="Save entry" errors={STABLE_ERRORS} onSubmit={onSubmit}>
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
 function summaryElement() {
   return screen.getByRole("heading", { name: "There is a problem" }).closest("div");
 }
@@ -323,6 +341,26 @@ describe("Form", () => {
     await user.click(screen.getByRole("button", { name: "Set an error" }));
 
     expect(screen.getByRole("button", { name: "Set an error" })).toHaveFocus();
+  });
+
+  it("announces again on a resubmit that fails the same way", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<StableErrorsForm onSubmit={onSubmit} />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    expect(summaryElement()).toHaveFocus();
+
+    // Move away, then submit again. The errors are the same array, so
+    // nothing about them changed - but the user asked a second time and is
+    // owed the answer a second time.
+    await user.click(screen.getByLabelText("Requesting term"));
+    expect(summaryElement()).not.toHaveFocus();
+
+    await user.keyboard("{Enter}");
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(summaryElement()).toHaveFocus();
   });
 
   it("has no automated accessibility violations, with the summary showing", async () => {

@@ -58,8 +58,11 @@ export function ErrorSummary({ errors, formError, title, ref }: ErrorSummaryProp
       {formError ? <p className="text-sm text-[var(--color-text)]">{formError}</p> : null}
       {errors.length > 0 ? (
         <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
-          {errors.map((error) => (
-            <li key={error.fieldId}>
+          {errors.map((error, index) => (
+            // Keyed by position as well as field: a single control can fail
+            // two ways at once ("too long", "invalid characters"), and
+            // keying on the field id alone would collide.
+            <li key={`${error.fieldId}-${index}`}>
               <a
                 href={`#${error.fieldId}`}
                 className="text-[var(--color-danger)] underline"

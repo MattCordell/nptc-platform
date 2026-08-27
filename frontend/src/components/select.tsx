@@ -54,6 +54,10 @@ export function Select({
     <Field label={label} id={id} hint={hint} error={error}>
       {(controlProps) => (
         <select
+          // `rest` first, then the field's wiring: a caller passing
+          // `aria-describedby` or `aria-invalid` by hand must not be able to
+          // silently unpick the association `Field` just made.
+          {...rest}
           {...controlProps}
           className={[
             "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]",
@@ -62,7 +66,6 @@ export function Select({
           ]
             .filter(Boolean)
             .join(" ")}
-          {...rest}
         >
           {placeholder ? <option value="">{placeholder}</option> : null}
           {options.map((option) => (

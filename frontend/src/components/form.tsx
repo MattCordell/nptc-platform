@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 import { Button } from "./button.tsx";
@@ -57,6 +57,12 @@ export function Form({
 }: FormProps) {
   const summaryRef = useRef<HTMLDivElement>(null);
   const awaitingResultRef = useRef(false);
+  // Counts submits purely to give the effect below something that always
+  // changes. Without it the effect is keyed on the error props alone, and a
+  // caller holding a stable `errors` array - a memoised or module-level one -
+  // would submit an invalid form a second time and get no announcement at
+  // all, because nothing React can see changed between the two attempts.
+  const [submitCount, setSubmitCount] = useState(0);
   const fieldErrors = errors ?? [];
   const hasErrors = fieldErrors.length > 0 || Boolean(formError);
 
@@ -79,7 +85,7 @@ export function Form({
     if (hasErrors) {
       summaryRef.current?.focus();
     }
-  }, [errors, formError, hasErrors, pending]);
+  }, [submitCount, errors, formError, hasErrors, pending]);
 
   return (
     <form
@@ -91,6 +97,7 @@ export function Form({
           return;
         }
         awaitingResultRef.current = true;
+        setSubmitCount((count) => count + 1);
         onSubmit();
       }}
       className={["flex flex-col gap-4", className ?? ""].filter(Boolean).join(" ")}

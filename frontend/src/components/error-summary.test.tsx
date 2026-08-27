@@ -78,6 +78,19 @@ describe("ErrorSummary", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists a control that failed two ways as two items", () => {
+    render(
+      <ErrorSummary
+        errors={[
+          { fieldId: "requesting-term", message: "Enter a requesting term" },
+          { fieldId: "requesting-term", message: "Use fewer than 255 characters" },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
   it("has no automated accessibility violations", async () => {
     const { container } = render(
       <ErrorSummary errors={ERRORS} formError="The catalogue rejected this entry." />,

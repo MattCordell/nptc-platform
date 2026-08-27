@@ -183,6 +183,30 @@ describe("RadioGroup", () => {
     expect(secondDraft).toBeChecked();
   });
 
+  it("is not a tab stop at all when every option is disabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <RadioGroup
+          legend="Status"
+          options={[
+            { value: "draft", label: "Draft", disabled: true },
+            { value: "published", label: "Published", disabled: true },
+          ]}
+          value={undefined}
+          onChange={vi.fn()}
+        />
+        <button type="button">After the group</button>
+      </>,
+    );
+
+    await user.tab();
+
+    // A group with nothing selectable in it is a dead stop, not a stop that
+    // looks reachable and then refuses every key.
+    expect(screen.getByRole("button", { name: "After the group" })).toHaveFocus();
+  });
+
   it("has no automated accessibility violations", async () => {
     const { container } = render(
       <RadioGroup
