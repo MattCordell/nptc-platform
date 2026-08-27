@@ -27,21 +27,27 @@ enforced only at the database layer today (`IntegrityError`, unmapped
 here) - a malformed `language`, an already-retired designation, and
 (issue #49) a collision are the exceptions, given typed handlers below
 (`DesignationLanguageError`, `DesignationAlreadyRetiredError`,
-`DesignationCollisionError`) alongside `TermCleaningError`. There is no
-HTTP surface for catalogue writes yet (#149/#150), so an unhandled
-`IntegrityError` falls through to FastAPI's default 500 with no
-caller-visible impact today - but #149/#150 must not simply reuse this
-module unchanged: every remaining constraint needs either its own typed
-exception raised before the flush (matching the precedent the typed
-handlers below already set) or an explicit handler here, before those
-routes ship, or a routine duplicate-synonym save 500s instead of
-409/422ing. Issue #52's `PropertyValidationError`/
-`PropertyDefinitionNotFoundError` handlers below are the same situation in
-reverse: the write path (`nptc.catalogue.property_values.
-save_property_values`) and its typed errors exist and are handled here
-already, ahead of the HTTP route that will call it (a follow-up issue,
-consumed by #151) - so that route inherits a working 422/404 from day one
-rather than repeating this module's own cautionary tale.
+`DesignationCollisionError`) alongside `TermCleaningError`. Issue #219 gave
+catalogue writes their first HTTP surface (code bindings only); #149 must
+not simply reuse this module unchanged for designations - every remaining
+constraint needs either its own typed exception raised before the flush
+(matching the precedent the typed handlers below already set) or an
+explicit handler here, before that route ships, or a routine
+duplicate-synonym save 500s instead of 409/422ing. Issue #52's
+`PropertyValidationError`/`PropertyDefinitionNotFoundError` handlers below
+are the same situation in reverse: the write path (`nptc.catalogue.
+property_values.save_property_values`) and its typed errors exist and are
+handled here already, ahead of the HTTP route that will call it (a
+follow-up issue, consumed by #151) - so that route inherits a working
+422/404 from day one rather than repeating this module's own cautionary
+tale.
+
+**Issue #219's code-binding handlers follow the same rule.** Every
+`CodeBinding*` exception in `nptc.catalogue.bindings` carries its own
+`http_status` and is mapped below exactly like the designation/property
+exceptions above - none of them is a raw `IntegrityError` fallthrough, and
+none of them was reachable before #219 gave `nptc.api.routers.
+catalogue_bindings` a route to raise them from.
 """
 
 from __future__ import annotations
@@ -59,6 +65,16 @@ from nptc.auth.errors_authorisation import (
     ManualLinkRequiredError,
     MfaRequiredError,
 )
+from nptc.catalogue.bindings import (
+    CodeBindingAlreadyActiveError,
+    CodeBindingAlreadyRetiredError,
+    CodeBindingCodeAlreadyBoundError,
+    CodeBindingNotFoundError,
+    CodeBindingNotRetiredError,
+    CodeBindingSelfSupersessionError,
+    InvalidCodeBindingEditionHintError,
+    InvalidCodeBindingSystemError,
+)
 from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import DesignationAlreadyRetiredError
@@ -67,6 +83,7 @@ from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, Prop
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
+from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
 
 _logger = logging.getLogger(__name__)
@@ -164,6 +181,20 @@ _DETAIL_PROPERTY_VALIDATION = (
     "fields and correct them before saving again."
 )
 _DETAIL_PROPERTY_DEFINITION_NOT_FOUND = "No property definition was found for the given key."
+_DETAIL_INVALID_SCTID = (
+    "This is not a valid SNOMED CT identifier. It must be 6 to 18 digits and pass the "
+    "check-digit calculation."
+)
+_DETAIL_BINDING_ALREADY_RETIRED = "This code binding has already been retired."
+_DETAIL_BINDING_ALREADY_ACTIVE = "This entry already has an active code binding."
+_DETAIL_BINDING_CODE_ALREADY_BOUND = (
+    "This code is already actively bound to another catalogue entry."
+)
+_DETAIL_BINDING_NOT_RETIRED = "This code binding must be retired before it can be replaced."
+_DETAIL_BINDING_SELF_SUPERSESSION = "A code binding cannot replace itself."
+_DETAIL_INVALID_EDITION_HINT = "This is not a recognised edition hint."
+_DETAIL_INVALID_SYSTEM = "The code system cannot be blank."
+_DETAIL_BINDING_NOT_FOUND = "No active code binding was found for the given code."
 
 
 def _unauthenticated(detail: str) -> JSONResponse:
@@ -465,3 +496,98 @@ def register_exception_handlers(app: FastAPI) -> None:
                 ],
             },
         )
+
+    @app.exception_handler(InvalidSCTIDError)
+    async def _handle_invalid_sctid(_request: Request, exc: InvalidSCTIDError) -> JSONResponse:
+        # issue #219: `nptc.catalogue.bindings.create_binding` calls
+        # `SCTID(code)` before ever adding a row - a malformed or
+        # Verhoeff-failing `code` is a routine, expected refusal on a
+        # normal edit, not an anomaly. `nptc_shared.sctid.InvalidSCTIDError`
+        # has no `http_status` ClassVar (it is a shared, non-API module),
+        # so 422 is hardcoded here rather than read off the exception,
+        # matching `TerminologyConfigError`'s handler above.
+        _logger.info("SCTID refused: %s", type(exc).__name__)
+        return JSONResponse(status_code=422, content={"detail": _DETAIL_INVALID_SCTID})
+
+    @app.exception_handler(CodeBindingNotFoundError)
+    async def _handle_code_binding_not_found(
+        _request: Request, exc: CodeBindingNotFoundError
+    ) -> JSONResponse:
+        # Logged at INFO, matching `_handle_entry_not_found` above: a
+        # caller addressing a code that has since been retired or never
+        # bound is an ordinary event on an editing surface, not an anomaly.
+        _logger.info("code binding not found: %s", exc)
+        return JSONResponse(
+            status_code=CodeBindingNotFoundError.http_status,
+            content={"detail": _DETAIL_BINDING_NOT_FOUND},
+        )
+
+    @app.exception_handler(CodeBindingAlreadyRetiredError)
+    async def _handle_code_binding_already_retired(
+        _request: Request, exc: CodeBindingAlreadyRetiredError
+    ) -> JSONResponse:
+        _logger.info("retire refused, binding already retired: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_ALREADY_RETIRED}
+        )
+
+    @app.exception_handler(CodeBindingAlreadyActiveError)
+    async def _handle_code_binding_already_active(
+        _request: Request, exc: CodeBindingAlreadyActiveError
+    ) -> JSONResponse:
+        # FR-08: the entry side of "at most one active binding" - see
+        # `CodeBindingCodeAlreadyBoundError`'s handler below for the code
+        # side. Logged at INFO: a routine, expected refusal on a normal
+        # edit, not an anomaly.
+        _logger.info("bind refused, entry already has an active binding: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_ALREADY_ACTIVE}
+        )
+
+    @app.exception_handler(CodeBindingCodeAlreadyBoundError)
+    async def _handle_code_binding_code_already_bound(
+        _request: Request, exc: CodeBindingCodeAlreadyBoundError
+    ) -> JSONResponse:
+        # issue #49's blocking severity, the code side of FR-08's "one
+        # active binding" - see `CodeBindingAlreadyActiveError`'s handler
+        # above. The exception message names the other entry's internal
+        # id; the response body never does (NFR-04), matching this
+        # module's own detail-string convention.
+        _logger.info("bind refused, code already actively bound elsewhere: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_CODE_ALREADY_BOUND}
+        )
+
+    @app.exception_handler(CodeBindingNotRetiredError)
+    async def _handle_code_binding_not_retired(
+        _request: Request, exc: CodeBindingNotRetiredError
+    ) -> JSONResponse:
+        _logger.info("replace refused, superseded binding is not retired: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_NOT_RETIRED}
+        )
+
+    @app.exception_handler(CodeBindingSelfSupersessionError)
+    async def _handle_code_binding_self_supersession(
+        _request: Request, exc: CodeBindingSelfSupersessionError
+    ) -> JSONResponse:
+        _logger.info("replace refused, self-supersession: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_SELF_SUPERSESSION}
+        )
+
+    @app.exception_handler(InvalidCodeBindingEditionHintError)
+    async def _handle_invalid_code_binding_edition_hint(
+        _request: Request, exc: InvalidCodeBindingEditionHintError
+    ) -> JSONResponse:
+        _logger.info("edition hint refused: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_INVALID_EDITION_HINT}
+        )
+
+    @app.exception_handler(InvalidCodeBindingSystemError)
+    async def _handle_invalid_code_binding_system(
+        _request: Request, exc: InvalidCodeBindingSystemError
+    ) -> JSONResponse:
+        _logger.info("code system refused: %s", exc)
+        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_INVALID_SYSTEM})

@@ -37,6 +37,7 @@ this has no acknowledgement path: a code is either free or it isn't.
 
 from __future__ import annotations
 
+import uuid
 from typing import ClassVar
 
 from sqlalchemy import inspect as sa_inspect
@@ -60,12 +61,14 @@ __all__ = [
     "CodeBindingAlreadyActiveError",
     "CodeBindingAlreadyRetiredError",
     "CodeBindingCodeAlreadyBoundError",
+    "CodeBindingNotFoundError",
     "CodeBindingNotRetiredError",
     "CodeBindingSelfSupersessionError",
     "InvalidCodeBindingEditionHintError",
     "InvalidCodeBindingSystemError",
     "create_binding",
     "link_replacement",
+    "load_active_binding",
     "retire_binding",
 ]
 
@@ -129,6 +132,20 @@ class InvalidCodeBindingEditionHintError(ValueError):
     http_status: ClassVar[int] = 422
 
 
+class CodeBindingNotFoundError(LookupError):
+    """Raised by `load_active_binding` when `entry` has no *active* binding
+    for `code` - the addressing scheme issue #219's write routes use, since
+    the public `Binding` model (deliberately) carries no id a client could
+    retire or replace by. A retired binding is not addressable this way: a
+    caller retiring or replacing a binding by its code means the one that
+    is currently in force, and `ix_code_binding_one_active_entry_per_code`
+    guarantees at most one row can match. 404, matching
+    `nptc.catalogue.errors.EntryNotFoundError`'s own reasoning for the
+    identifier one level up."""
+
+    http_status: ClassVar[int] = 404
+
+
 class InvalidCodeBindingSystemError(ValueError):
     """Raised by `create_binding` when `system` is blank -
     `ck_code_binding_system_not_blank` is the actual database invariant;
@@ -152,6 +169,29 @@ def _validate_system(system: str) -> str:
     if not system.strip():
         raise InvalidCodeBindingSystemError("system cannot be blank")
     return system
+
+
+def load_active_binding(session: Session, *, entry_id: uuid.UUID, code: str) -> CodeBinding:
+    """The entry's *active* binding for `code`, or `CodeBindingNotFoundError`.
+
+    The one lookup issue #219's write routes need and none of the module's
+    existing functions provide: they all take an already-loaded
+    `CodeBinding`/`CatalogueEntry`, because the service layer has never
+    before had an HTTP caller needing to resolve one from a path parameter.
+    Scoped to `status == 'active'` deliberately - see the exception's own
+    docstring for why a retired binding is not a valid target here."""
+    binding = session.execute(
+        select(CodeBinding).where(
+            CodeBinding.entry_id == entry_id,
+            CodeBinding.code == code,
+            CodeBinding.status == str(CodeBindingStatus.ACTIVE),
+        )
+    ).scalar_one_or_none()
+    if binding is None:
+        raise CodeBindingNotFoundError(
+            f"entry {entry_id} has no active code binding for code {code!r}"
+        )
+    return binding
 
 
 def create_binding(

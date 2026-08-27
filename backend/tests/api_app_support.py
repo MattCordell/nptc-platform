@@ -73,11 +73,19 @@ class ApiTestApp:
         kwargs.setdefault("audience", AUDIENCE)
         return str(mint_token(self.key, kid=KID, **kwargs))
 
-    def get(self, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
+    def request(self, method: str, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
+        """The general form `get`/`post` below are thin wrappers over -
+        issue #219 is the first caller needing a verb other than GET."""
         headers = dict(kwargs.pop("headers", {}))
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
-        return self.client.get(f"{API_PREFIX}{path}", headers=headers, **kwargs)
+        return self.client.request(method, f"{API_PREFIX}{path}", headers=headers, **kwargs)
+
+    def get(self, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
+        return self.request("GET", path, token=token, **kwargs)
+
+    def post(self, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
+        return self.request("POST", path, token=token, **kwargs)
 
 
 def build_api_test_app(

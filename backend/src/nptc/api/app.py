@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nptc.api.dependencies import get_terminology_client
 from nptc.api.errors import register_exception_handlers
-from nptc.api.routers import auth, catalogue
+from nptc.api.routers import auth, catalogue, catalogue_bindings
 from nptc.settings import ApiSettings
 
 API_PREFIX = "/api/v1"
@@ -72,4 +72,8 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # prefix as everything else - it is one versioned API with a public
     # subset, not a second API with its own version line.
     app.include_router(catalogue.router, prefix=API_PREFIX)
+    # issue #219: the first state-changing catalogue routes - code binding
+    # create/retire/replace. A separate router from `catalogue.py` on
+    # purpose; see `catalogue_bindings`'s own module docstring.
+    app.include_router(catalogue_bindings.router, prefix=API_PREFIX)
     return app

@@ -14,6 +14,10 @@
 - [public-api.md](public-api.md) — the FR-20 public read API (issue #142): the endpoint
   table, the active-only visibility rule, the keyset paging contract, the search
   behaviour, and which test enforces each no-leak invariant.
+- [catalogue-write-api.md](catalogue-write-api.md) — the catalogue write API's first
+  slice, code bindings (issue #219): the endpoint table, addressing a binding by code
+  rather than an internal id, why replacement is one request rather than three, and the
+  authorisation/error mapping.
 - [frontend-routing.md](frontend-routing.md) — the frontend routing skeleton and layout
   shell (issue #146): the route table as the single source of URL shapes, the FR-17 URL
   contract, why search values stay raw strings, the not-found/error surfaces, and the

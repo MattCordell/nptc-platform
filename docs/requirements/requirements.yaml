@@ -82,7 +82,7 @@
   phase: p1
   title: "An entry SHOULD permit at most one active code binding"
   status: implemented
-  notes: "Issue #48: ix_code_binding_one_active_per_entry (UNIQUE (entry_id) WHERE status = 'active') enforces at most one active binding per entry at the database layer. Retirement is a status transition (nptc.catalogue.bindings.retire_binding), never a DELETE (REVOKE_CODE_BINDING_DELETE_SQL); ck_code_binding_retirement_reason makes retirement_reason mandatory exactly when status='retired', and replaced_by_binding_id (nullable, populated only in the replacement case PRD FR-08 describes) may only be set on a binding that is itself retired (ck_code_binding_replaced_by_requires_retired) and never on itself (ck_code_binding_no_self_supersession). See backend/tests/test_db_code_binding.py. Issue #49 closes the other half - ix_code_binding_one_active_entry_per_code (UNIQUE (system, code) WHERE status = 'active') blocks the same code being bound active on two different entries, with CodeBindingCodeAlreadyBoundError as the pre-insert domain error. See backend/tests/test_catalogue_bindings.py."
+  notes: "Issue #48: ix_code_binding_one_active_per_entry (UNIQUE (entry_id) WHERE status = 'active') enforces at most one active binding per entry at the database layer. Retirement is a status transition (nptc.catalogue.bindings.retire_binding), never a DELETE (REVOKE_CODE_BINDING_DELETE_SQL); ck_code_binding_retirement_reason makes retirement_reason mandatory exactly when status='retired', and replaced_by_binding_id (nullable, populated only in the replacement case PRD FR-08 describes) may only be set on a binding that is itself retired (ck_code_binding_replaced_by_requires_retired) and never on itself (ck_code_binding_no_self_supersession). See backend/tests/test_db_code_binding.py. Issue #49 closes the other half - ix_code_binding_one_active_entry_per_code (UNIQUE (system, code) WHERE status = 'active') blocks the same code being bound active on two different entries, with CodeBindingCodeAlreadyBoundError as the pre-insert domain error. See backend/tests/test_catalogue_bindings.py. Issue #219 makes both conflicts reachable over HTTP for the first time - POST /catalogue/entries/{business_key}/bindings maps both CodeBindingAlreadyActiveError and CodeBindingCodeAlreadyBoundError to 409. See backend/tests/test_api_catalogue_bindings.py."
 - id: "FR-09"
   priority: MUST
   phase: p1
@@ -249,8 +249,8 @@
   priority: MUST
   phase: p1
   title: "Administrators can create, amend and deprecate catalogue entries directly, including codings, designations, preferred term, and all registry properties"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #219 delivers the first slice - HTTP write routes over code bindings only (bind/retire/replace, gated on Permission.CATALOGUE_EDIT_PUBLISHED), the first state-changing routes this API has. See backend/src/nptc/api/routers/catalogue_bindings.py and backend/tests/test_api_catalogue_bindings.py. Designations, preferred term and registry properties remain planned (#149, #151)."
 - id: "FR-37"
   priority: MUST
   phase: p1
