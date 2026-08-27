@@ -1,9 +1,10 @@
 """The repository's versioned database functions.
 
-Two, with quite different justifications: ``nptc_sctid_is_valid`` (FR-06,
-issue #48) below, and ``nptc_search_text`` (FR-14/FR-20, issue #142) at the
-foot of this module - each carries its own argument for why it exists in the
-database at all, and neither is a licence for the next one.
+Three, with quite different justifications: ``nptc_sctid_is_valid`` (FR-06,
+issue #48) below, ``nptc_search_text`` (FR-14/FR-20, issue #142), and
+``nptc_numeric_or_null`` (FR-13, issue #54) at the foot of this module - each
+carries its own argument for why it exists in the database at all, and none
+is a licence for the next one.
 
 **``nptc_sctid_is_valid`` - the Verhoeff check-digit function for SNOMED CT
 identifiers (FR-06, issue #48).**
@@ -169,3 +170,45 @@ $$;
 """
 
 DROP_SEARCH_TEXT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_search_text(text);"
+
+#: FR-13 (issue #54): the cast-safe numeric expression ADR-0012's third
+#: index shape needs. See ``docs/adr/0027-cast-safe-numeric-index-
+#: expression.md`` for the full argument - the short version: a `decimal`/
+#: `positiveInt` property can retain a value that is not castable to
+#: `numeric` (validation is not retroactive after a narrowing amendment),
+#: and `CREATE INDEX` on a bare `((value #>> '{}')::numeric)` fails outright
+#: the moment one such value is on record. This function turns that failure
+#: into a `NULL` - a row that cannot be interpreted numerically is simply
+#: unfindable by a range filter, which is correct, rather than blocking the
+#: index for every other row.
+#:
+#: **Declared `IMMUTABLE`, even though `pg_input_is_valid` (the function
+#: this wraps) is itself `STABLE`** - verified directly against the
+#: `postgres:18.6` this repository pins (`pg_proc.provolatile = 's'`). Only
+#: safe because the target type here is the single fixed literal
+#: `'numeric'`, never a caller-supplied value: `pg_input_is_valid`'s
+#: `STABLE` marking is a blanket one covering every possible target type
+#: (some of which, e.g. `enum`/`timestamptz`-adjacent types, are genuinely
+#: session- or catalog-state-sensitive), not evidence that numeric-literal
+#: validity itself varies - numeric parsing has no locale, `search_path` or
+#: timezone dependency. This is exactly `nptc_search_text`'s own precedent
+#: above: the one-argument `unaccent(text)` is `STABLE` because it resolves
+#: its dictionary through `search_path`, but the two-argument form with an
+#: explicit, fixed dictionary is genuinely immutable. Should this ever need
+#: revisiting, the documented fallback is a `LANGUAGE plpgsql` function with
+#: an `EXCEPTION WHEN others THEN RETURN NULL` block - rejected here only
+#: because it opens a subtransaction per row on every index build and every
+#: insert, a cost this `pg_input_is_valid`-based version avoids entirely.
+CREATE_NUMERIC_OR_NULL_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION nptc_numeric_or_null(v text)
+RETURNS numeric
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+SELECT CASE WHEN pg_input_is_valid(v, 'numeric') THEN v::numeric END
+$$;
+"""
+
+DROP_NUMERIC_OR_NULL_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_numeric_or_null(text);"
