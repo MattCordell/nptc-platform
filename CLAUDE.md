@@ -37,13 +37,13 @@ which GitHub issue lands each one.
 
 | Layer | Choice |
 |---|---|
-| Backend | Python 3.12+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2, `mypy --strict` |
 | Database | PostgreSQL 16+ (`pg_trgm`, `unaccent`) — one datastore, no Elasticsearch/vector store |
-| Frontend | React 19, TypeScript, Vite, TanStack Query; API client generated from the backend's OpenAPI doc via `openapi-typescript` |
 | Identity | Keycloak (OIDC auth code flow + PKCE) |
 | Background jobs | Postgres-backed queue, not Celery/Redis |
-| Reverse proxy | Caddy |
 | Packaging | Docker Compose (single-command stack is NFR-41, lands with issue F-7) |
+
+Languages, frameworks and versions live in the package manifests; ADR-0001 records why
+each was chosen and what was rejected.
 
 Business logic must never live in database triggers/functions (invisible to tests and
 review — see PRD §14.1 and CONTRIBUTING.md).
@@ -83,10 +83,6 @@ container `-n` gives that worker, rather than xdist spreading a module's tests (
 shared container assumptions) across workers. This is local-dev tooling only - CI's own
 `pytest` invocations are unchanged, since each CI job is already fast (~2-3 min) and one
 container per worker is a heavier ask of a CI runner than of a dev machine.
-
-Frontend commands run from `frontend/`, or via the root `package.json` scripts, which
-proxy to `pnpm --filter nptc-frontend`. The scripts are the standard set (`dev`,
-`build`, `test`, `lint`, `format:check`, `typecheck`) — see `frontend/package.json`.
 
 Repo governance scripts (Python, at repo root, tested under `scripts/tests/`):
 
