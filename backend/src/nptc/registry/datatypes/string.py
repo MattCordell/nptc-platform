@@ -18,6 +18,7 @@ from nptc.registry.handlers import (
     UnsupportedFilterOpError,
     ValidationIssue,
     ValueExpression,
+    jsonb_root_as_text,
 )
 
 _TEXTAREA_THRESHOLD = 200
@@ -77,16 +78,22 @@ class StringHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        text_column = cast(column, String)
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` (issue
+        #54, FR-13): the latter renders `CAST(value AS VARCHAR)`, which
+        stays JSON-quoted (`'"abc"'`, never `abc`) and so can never match
+        an unquoted filter value - see that function's own docstring, and
+        `nptc.db.property_indexes.create_statement`, which builds this
+        property's `TEXT_SCALAR` index over the identical expression."""
+        text_value = jsonb_root_as_text(column)
         if op is FilterOp.EQUALS:
-            return type_cast("ColumnElement[bool]", text_column == value)
+            return type_cast("ColumnElement[bool]", text_value == value)
         if op is FilterOp.IN:
-            return type_cast("ColumnElement[bool]", text_column.in_(value))
+            return type_cast("ColumnElement[bool]", text_value.in_(value))
         if op is FilterOp.PREFIX:
             # autoescape=True: without it, a caller-supplied `%`/`_` in
             # `value` is a LIKE wildcard, not a literal character - "a_c"
             # would otherwise match "abc".
-            return text_column.startswith(value, autoescape=True)
+            return text_value.startswith(value, autoescape=True)
         raise UnsupportedFilterOpError(f"string handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:

@@ -15,16 +15,20 @@ import jsonschema
 import pytest
 from sqlalchemy import Column, Integer, MetaData, Numeric, String, Table
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import JSONB
 
+from nptc.db.property_indexes import DesiredIndex, create_statement
 from nptc.registry import (
     BindingSpec,
     ControlKind,
     FilterOp,
+    IndexKind,
     PropertyDefinitionSpec,
     ResolvedLocalCode,
     SerialisationTarget,
     UnsupportedBindingError,
     UnsupportedFilterOpError,
+    ValueExpression,
 )
 from nptc.registry.datatypes.code import CodeHandler
 from nptc.registry.datatypes.decimal import DecimalHandler
@@ -61,6 +65,16 @@ def _spec(
 
 def _compiled(clause: object) -> str:
     return str(clause.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))  # type: ignore[attr-defined]
+
+
+def _compiled_with_params(clause: object) -> tuple[str, dict[str, object]]:
+    """`literal_binds=True` has no literal renderer for a JSONB bind value
+    (SQLAlchemy core has no "render this dict as a JSONB literal" support)
+    - `CodeHandler.filter_clause`'s `{"code": ...}` containment argument
+    needs this instead: the operator structure from the compiled SQL, the
+    actual value from the bound parameters."""
+    compiled = clause.compile(dialect=postgresql.dialect())  # type: ignore[attr-defined]
+    return str(compiled), dict(compiled.params)
 
 
 # --- string -----------------------------------------------------------
@@ -655,3 +669,110 @@ def test_code_serialise_gives_each_target_its_own_representation() -> None:
         "code": "138875005",
         "display": "SNOMED CT Concept (procedure)",
     }
+
+
+# --- filter_clause / index expression parity (issue #54, FR-13) -----------
+#
+# ADR-0012 fixed three index shapes; ADR-0027 made the numeric one
+# cast-safe. Neither is useful if the *filter* a caller actually runs
+# doesn't render the identical expression the index was built over - an
+# index that exists but is never matched by a query plan delivers nothing.
+# These tests are the parity argument test_db_property_index_plan.py's
+# EXPLAIN proof cannot make on its own, since that proof only exercises one
+# handler's fixture, not all five.
+
+
+@pytest.mark.req("FR-13")
+def test_code_equals_filter_uses_containment_not_key_equality() -> None:
+    """`index_shape()` declares this property's index as a `jsonb_path_ops`
+    GIN - that opclass serves only `@>`/`@?`/`@@`, so a `->>` equality
+    predicate (this handler's shape before #54) could never use it at
+    all."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.EQUALS, "138875005", table.c.value)
+
+    compiled, params = _compiled_with_params(clause)
+    assert "@>" in compiled
+    assert {"code": "138875005"} in params.values()
+
+
+@pytest.mark.req("FR-13")
+def test_code_in_filter_is_an_or_of_containments_not_a_single_array_containment() -> None:
+    """`@> ANY(array)` is not an indexable form under `jsonb_path_ops` - an
+    `OR` of individually-indexable containments is."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.IN, ["1", "2"], table.c.value)
+
+    compiled, params = _compiled_with_params(clause)
+    assert compiled.count("@>") == 2
+    assert " OR " in compiled.upper()
+    assert {"code": "1"} in params.values()
+    assert {"code": "2"} in params.values()
+
+
+@pytest.mark.req("FR-13")
+def test_string_equals_filter_matches_an_unquoted_value() -> None:
+    """Regression: the pre-#54 `CAST(value AS VARCHAR)` shape stays
+    JSON-quoted (`'"abc"'`, never `abc`), so an EQUALS filter for the bare
+    value `abc` could never match a real row at all."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = StringHandler().filter_clause(FilterOp.EQUALS, "abc", table.c.value)
+
+    assert _compiled(clause) == "(t.value #>> '{}') = 'abc'"
+
+
+@pytest.mark.req("FR-13")
+def test_decimal_equals_filter_uses_the_cast_safe_function() -> None:
+    """Regression: the pre-#54 `CAST(value AS NUMERIC)` shape raises
+    outright against a retained JSONB *string* value - see ADR-0027."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = DecimalHandler().filter_clause(FilterOp.EQUALS, 5, table.c.value)
+
+    compiled = _compiled(clause)
+    assert "nptc_numeric_or_null" in compiled
+    assert "CAST" not in compiled.upper()
+
+
+@pytest.mark.req("FR-13")
+def test_positive_int_equals_filter_uses_the_cast_safe_function() -> None:
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = PositiveIntHandler().filter_clause(FilterOp.EQUALS, 5, table.c.value)
+
+    assert "nptc_numeric_or_null" in _compiled(clause)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.parametrize(
+    ("handler", "value", "expression", "shared_fragment"),
+    [
+        (StringHandler(), "abc", ValueExpression.TEXT_SCALAR, "#>> '{}'"),
+        (UrlHandler(), "https://example.org", ValueExpression.TEXT_SCALAR, "#>> '{}'"),
+        (DecimalHandler(), 5, ValueExpression.NUMERIC_SCALAR, "nptc_numeric_or_null("),
+        (PositiveIntHandler(), 5, ValueExpression.NUMERIC_SCALAR, "nptc_numeric_or_null("),
+    ],
+)
+def test_filter_clause_shares_its_expression_with_the_generated_index(
+    handler: object, value: object, expression: ValueExpression, shared_fragment: str
+) -> None:
+    """The two are built by entirely different code paths -
+    `nptc.db.property_indexes.create_statement` for the index,
+    `filter_clause` for the query - so nothing but a test like this one
+    stops a future edit to either side from silently drifting apart and
+    leaving the index unused."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    desired = DesiredIndex(
+        property_key="k", index_seq=1, kind=IndexKind.EXPRESSION_BTREE, expression=expression
+    )
+
+    index_sql = create_statement(desired).as_string(None)
+    filter_sql = _compiled(handler.filter_clause(FilterOp.EQUALS, value, table.c.value))  # type: ignore[attr-defined]
+
+    assert shared_fragment in index_sql
+    assert shared_fragment in filter_sql
