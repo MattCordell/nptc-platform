@@ -312,6 +312,52 @@ Fix:
   literal>)` receiver called directly (never a variable reference) with every argument
   itself a `sql.SQL`/`sql.Identifier`/`sql.Literal` call.
 
+**Update (2026-08-28, issue #54 review).** An automated review of #54's PR found nine real
+gaps, all fixed in the same PR before merge:
+
+- **The reconciler diffed indexes by name only, missing a `datatype`/`key` amendment.**
+  `index_seq` (and so the index name) is immutable, but `datatype` and `key` are ordinary
+  mutable, audited `property_definition` columns - an amendment to either leaves an index
+  that is present and `indisvalid` yet serves nothing the property's *current*
+  `filter_clause` renders. Fixed by comparing `pg_get_indexdef(indexrelid)` against the
+  expression/key the property's *current* configuration would render
+  (`nptc.db.property_indexes.matches_indexdef`) and rebuilding on any mismatch, not just
+  re-commenting - a stale `COMMENT ON INDEX` alone is now insufficient evidence that only
+  the comment drifted.
+- **`CodeHandler.filter_clause(FilterOp.IN, [])` silently matched every row.** SQLAlchemy
+  2.0's `or_()` with zero arguments renders the empty string, not an always-false
+  predicate - `or_(false(), *(...))` restores the always-false-on-empty behaviour `in_([])`
+  (what this replaced) had.
+- **`FilterOp.PREFIX` could not use the `TEXT_SCALAR` index under a non-`C` collation.** The
+  default btree opclass only serves `LIKE 'foo%'` under `C`/`POSIX`; `text_pattern_ops`
+  serves `EQUALS`/`IN`/`PREFIX` from the same index (verified directly against
+  `postgres:18.6`), so no second index is needed.
+- **`facet_expression` kept the exact defects `filter_clause` was fixed for** on
+  `string`/`url` (`CAST(value AS VARCHAR)`, still JSON-quoted) and `positiveInt`
+  (`CAST(value AS integer)`, still raises on a retained non-numeric value) - realigned to
+  `jsonb_root_as_text`/`nptc_numeric_or_null` respectively, with a parity test.
+- **One failing index aborted the whole convergence run.** Each desired/orphaned index now
+  gets its own `try`/`except` (safe under `AUTOCOMMIT`: a failed statement leaves no aborted
+  transaction for the next one to inherit, verified directly), collected into a new
+  `ReconciliationReport.failed` field; the CLI exits non-zero on a real run with any
+  failures. A `CREATE INDEX` that succeeds but whose immediately-following `COMMENT ON
+  INDEX` then raises now reports the index as both created and failed, not neither.
+- **The CLI smuggled its resolved DSN through `os.environ`.** A DDL-capable credential
+  written into the process environment is inherited by any subprocess; `get_indexer_engine`/
+  `reconcile_property_indexes` now take an optional `database_url` parameter instead.
+- **The DDL relied on an unqualified `property_value` table reference.** The indexer role's
+  `search_path` need not put `public` first; `create_statement` now qualifies the table
+  (`public.property_value` - `CREATE INDEX` cannot itself schema-qualify the index name,
+  since Postgres always creates an index in its table's schema), and `drop_statement`/
+  `comment_statement` qualify the index name instead (which those two statements do accept).
+- **A whitespace-only `NPTC_INDEXER_DATABASE_URL` passed the fail-closed guard.**
+  `IndexerSettings.indexer_database_url` gained a `field_validator` that strips the value,
+  so `"   "` now correctly triggers `IndexerNotConfiguredError` instead of failing later,
+  less legibly, inside `create_engine`.
+- **`finally: connection.execute(_UNLOCK_SQL, ...)` could mask the original exception** if
+  the connection had already died - the unlock is now itself wrapped in a suppressing `try`;
+  the lock is session-scoped on a `NullPool` connection about to close regardless.
+
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
 not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every

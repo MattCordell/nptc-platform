@@ -33,6 +33,7 @@ from nptc.db.property_indexes import (
     drop_statement,
     include_object,
     index_name,
+    matches_indexdef,
 )
 from nptc.db.property_reconciler import (
     RECONCILE_LOCK_KEY,
@@ -219,6 +220,7 @@ def test_create_statement_text_scalar_uses_the_astext_expression() -> None:
     rendered = create_statement(desired).as_string(None)
 
     assert "value #>> '{}'" in rendered
+    assert "text_pattern_ops" in rendered
     assert "jsonb_path_ops" not in rendered
 
 
@@ -235,16 +237,91 @@ def test_create_statement_numeric_scalar_uses_the_cast_safe_function() -> None:
     assert "nptc_numeric_or_null(value #>> '{}')" in rendered
 
 
-def test_drop_statement_is_concurrent_and_conditional() -> None:
+def test_drop_statement_is_concurrent_conditional_and_schema_qualified() -> None:
+    """Schema-qualified (`public.<name>`), not bare - issue #54 review: the
+    indexer role's own `search_path` need not put `public` first, and
+    `DROP INDEX`/`COMMENT ON INDEX` (unlike `CREATE INDEX`) accept a
+    schema-qualified object name."""
     rendered = drop_statement("ix_propval_p7_1").as_string(None)
 
-    assert rendered == 'DROP INDEX CONCURRENTLY IF EXISTS "ix_propval_p7_1"'
+    assert rendered == 'DROP INDEX CONCURRENTLY IF EXISTS "public"."ix_propval_p7_1"'
 
 
 def test_comment_statement_carries_the_property_key() -> None:
     rendered = comment_statement("ix_propval_p7_1", "discipline").as_string(None)
 
-    assert rendered == "COMMENT ON INDEX \"ix_propval_p7_1\" IS 'discipline'"
+    assert rendered == 'COMMENT ON INDEX "public"."ix_propval_p7_1" IS \'discipline\''
+
+
+def test_create_statement_qualifies_the_table_not_the_index_name() -> None:
+    """A bare `CREATE INDEX name ON ...` cannot itself be schema-qualified -
+    Postgres always creates an index in its table's own schema - so
+    `create_statement` qualifies the *table* reference instead (issue #54
+    review), unlike `drop_statement`/`comment_statement` above."""
+    desired = DesiredIndex(
+        property_key="discipline",
+        index_seq=7,
+        kind=IndexKind.GIN,
+        expression=ValueExpression.RAW_JSONB,
+    )
+
+    rendered = create_statement(desired).as_string(None)
+
+    assert "ON public.property_value" in rendered
+
+
+# --- matches_indexdef (issue #54 review) ------------------------------------
+
+
+def test_matches_indexdef_true_for_the_definition_it_would_itself_render() -> None:
+    desired = DesiredIndex(
+        property_key="admin_text",
+        index_seq=99,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.TEXT_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p99_1 ON public.property_value USING btree "
+        "(((value #>> '{}'::text[])) text_pattern_ops) WHERE (property_key = 'admin_text'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is True
+
+
+def test_matches_indexdef_false_after_a_datatype_amendment() -> None:
+    """A property amended from `string` to `decimal` keeps the same index
+    name (`index_seq` never changes), but the actual index still carries
+    the old `TEXT_SCALAR` expression - unusable for the new datatype's
+    `filter_clause`."""
+    desired = DesiredIndex(
+        property_key="admin_text",
+        index_seq=99,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.NUMERIC_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p99_1 ON public.property_value USING btree "
+        "(((value #>> '{}'::text[])) text_pattern_ops) WHERE (property_key = 'admin_text'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is False
+
+
+def test_matches_indexdef_false_after_a_key_rename() -> None:
+    """The index predicate still names the property's old `key` - a rename
+    is the other mutable column an index name alone cannot notice."""
+    desired = DesiredIndex(
+        property_key="admin_text_renamed",
+        index_seq=99,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.TEXT_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p99_1 ON public.property_value USING btree "
+        "(((value #>> '{}'::text[])) text_pattern_ops) WHERE (property_key = 'admin_text'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is False
 
 
 def test_include_object_excludes_a_generated_index() -> None:
@@ -410,7 +487,9 @@ def test_reconcile_is_idempotent(
     assert second.created == ()
     assert second.dropped == ()
     assert second.repaired_invalid == ()
+    assert second.rebuilt_stale_definition == ()
     assert second.repaired_comment == ()
+    assert second.failed == ()
     assert not second.changed
 
 
@@ -578,3 +657,134 @@ def test_concurrent_reconciliation_is_skipped_not_raced(
         finally:
             holder.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": RECONCILE_LOCK_KEY})
             holder.commit()
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_rebuilds_after_a_datatype_amendment(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """Issue #54 review: `datatype` is an ordinary mutable, audited column,
+    not `index_seq` - amending it from `string` to `decimal` keeps the same
+    index name but leaves the old `TEXT_SCALAR` expression behind, unusable
+    for `DecimalHandler.filter_clause`'s `NUMERIC_SCALAR` predicate, unless
+    the reconciler notices the actual index definition (not just its name
+    and validity) has gone stale."""
+    key = _admin_property["key"]
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+    with owner_engine.connect() as connection:
+        oid_before = connection.execute(
+            text("SELECT (:name)::regclass::oid"), {"name": expected_name}
+        ).scalar_one()
+        connection.execute(
+            text("UPDATE property_definition SET datatype = 'decimal' WHERE key = :key"),
+            {"key": key},
+        )
+        connection.commit()
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.rebuilt_stale_definition
+    with owner_engine.connect() as connection:
+        indexdef = connection.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = :name"),
+            {"name": expected_name},
+        ).scalar_one()
+        oid_after = connection.execute(
+            text("SELECT (:name)::regclass::oid"), {"name": expected_name}
+        ).scalar_one()
+    assert "nptc_numeric_or_null" in indexdef
+    assert oid_after != oid_before  # actually rebuilt, not merely re-commented
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_reconcile_rebuilds_after_a_key_rename(
+    owner_engine: Engine, _indexer_configured: None, _admin_property: dict[str, object]
+) -> None:
+    """The other mutable column an index name alone cannot notice
+    (issue #54 review): a renamed `key` leaves the old key embedded in the
+    index's `WHERE property_key = '<old key>'` predicate, so a query for
+    the new key would never use it at all."""
+    old_key = _admin_property["key"]
+    new_key = "test_reconciler_string_property_renamed"
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+    try:
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text("UPDATE property_definition SET key = :new_key WHERE key = :old_key"),
+                {"new_key": new_key, "old_key": old_key},
+            )
+            connection.commit()
+
+        report = reconcile_property_indexes()
+
+        assert expected_name in report.rebuilt_stale_definition
+        with owner_engine.connect() as connection:
+            indexdef = connection.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE indexname = :name"),
+                {"name": expected_name},
+            ).scalar_one()
+            comment = connection.execute(
+                text("SELECT obj_description((:name)::regclass, 'pg_class')"),
+                {"name": expected_name},
+            ).scalar_one()
+        assert f"property_key = '{new_key}'::text" in indexdef
+        assert comment == new_key
+    finally:
+        # `_admin_property`'s own cleanup deletes by the *old* key - rename
+        # it back so that cleanup still finds and removes the row.
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text("UPDATE property_definition SET key = :old_key WHERE key = :new_key"),
+                {"old_key": old_key, "new_key": new_key},
+            )
+            connection.commit()
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_one_failing_index_does_not_abort_the_rest_of_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_engine: Engine,
+    _indexer_configured: None,
+    _admin_property: dict[str, object],
+) -> None:
+    """Issue #54 review: a single `CREATE INDEX CONCURRENTLY` failure must
+    not skip every other desired/orphaned index for the rest of that run -
+    the whole justification for a converge-everything reconciler is
+    repairing partial failures, not adding a new one of its own."""
+    from nptc.db import property_reconciler
+
+    failing_key = "test_reconciler_second_property_that_fails"
+    failing_index_seq = _insert_property(
+        owner_engine, key=failing_key, datatype="string", filterable=True
+    )
+    failing_name = index_name(failing_index_seq, 1)
+    real_create_statement = property_reconciler.create_statement
+
+    def _fail_for_the_second_property(desired: DesiredIndex) -> object:
+        if desired.property_key == failing_key:
+            raise psycopg.errors.QueryCanceled("simulated failure")
+        return real_create_statement(desired)
+
+    monkeypatch.setattr(property_reconciler, "create_statement", _fail_for_the_second_property)
+
+    try:
+        report = reconcile_property_indexes()
+
+        expected_name = index_name(_admin_property["index_seq"], 1)  # type: ignore[arg-type]
+        assert expected_name in report.created  # the other property still converged
+        assert report.failed == ((failing_name, "QueryCanceled"),)
+        with owner_engine.connect() as connection:
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_indexes WHERE indexname = :name"), {"name": failing_name}
+            ).first()
+        assert exists is None  # the failed index was never left half-built
+    finally:
+        _delete_property(owner_engine, failing_key)
+        _drop_generated_index_if_exists(owner_engine, failing_name)

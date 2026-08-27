@@ -8,6 +8,7 @@ instead; this module fabricates `ReconciliationReport` values to drive
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -52,7 +53,6 @@ def _patch_reconcile(monkeypatch: pytest.MonkeyPatch, report: ReconciliationRepo
     mock = MagicMock(return_value=report)
     fake_module = MagicMock()
     fake_module.reconcile_property_indexes = mock
-    fake_module.get_indexer_engine.cache_clear = MagicMock()
     monkeypatch.setattr("nptc.db.property_reconciler", fake_module)
     return mock
 
@@ -92,7 +92,7 @@ def test_dry_run_that_finds_drift_is_exit_drift_remains(
     out = capsys.readouterr().out
     assert code == cli.EXIT_DRIFT_REMAINS
     assert "WOULD CREATE: ix_propval_p1_1" in out
-    mock.assert_called_once_with(dry_run=True)
+    mock.assert_called_once_with(dry_run=True, database_url="postgresql://x")
 
 
 def test_dry_run_with_no_drift_is_exit_ok(
@@ -114,6 +114,7 @@ def test_dropped_and_repaired_are_reported(
         ReconciliationReport(
             dropped=("ix_propval_p2_1",),
             repaired_invalid=("ix_propval_p3_1",),
+            rebuilt_stale_definition=("ix_propval_p5_1",),
             repaired_comment=("ix_propval_p4_1",),
         ),
     )
@@ -124,7 +125,57 @@ def test_dropped_and_repaired_are_reported(
     assert code == cli.EXIT_OK
     assert "DROPPED: ix_propval_p2_1" in out
     assert "REBUILT (was invalid): ix_propval_p3_1" in out
+    assert "REBUILT (datatype/key changed): ix_propval_p5_1" in out
     assert "REPAIRED COMMENT: ix_propval_p4_1" in out
+
+
+def test_cli_forwards_the_resolved_dsn_directly_never_via_os_environ(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #54 review: a DDL-capable DSN must never be written into
+    `os.environ` just to smuggle it past `IndexerSettings` - every
+    subprocess this process spawns would otherwise inherit it."""
+    monkeypatch.delenv("NPTC_INDEXER_DATABASE_URL", raising=False)
+    mock = _patch_reconcile(monkeypatch, ReconciliationReport())
+
+    code = cli.main(["--database-url", "postgresql://explicit-dsn"])
+
+    assert code == cli.EXIT_OK
+    mock.assert_called_once_with(dry_run=False, database_url="postgresql://explicit-dsn")
+    assert "NPTC_INDEXER_DATABASE_URL" not in os.environ
+
+
+def test_a_failed_index_during_a_real_run_is_could_not_complete(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One index failing to converge must not be reported as success -
+    issue #54 review."""
+    _patch_reconcile(
+        monkeypatch,
+        ReconciliationReport(
+            created=("ix_propval_p1_1",), failed=(("ix_propval_p6_1", "LockNotAvailable"),)
+        ),
+    )
+
+    code = cli.main(["--database-url", "postgresql://x"])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_COULD_NOT_COMPLETE
+    assert "CREATED: ix_propval_p1_1" in out
+    assert "FAILED: ix_propval_p6_1 (LockNotAvailable)" in out
+
+
+def test_a_failed_index_during_a_dry_run_is_still_drift_remains(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patch_reconcile(
+        monkeypatch, ReconciliationReport(failed=(("ix_propval_p6_1", "LockNotAvailable"),))
+    )
+
+    code = cli.main(["--database-url", "postgresql://x", "--dry-run"])
+
+    assert code == cli.EXIT_DRIFT_REMAINS
+    assert "FAILED: ix_propval_p6_1 (LockNotAvailable)" in capsys.readouterr().out
 
 
 def test_skipped_locked_is_exit_ok(

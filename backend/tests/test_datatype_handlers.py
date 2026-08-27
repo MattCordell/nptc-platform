@@ -715,6 +715,24 @@ def test_code_in_filter_is_an_or_of_containments_not_a_single_array_containment(
 
 
 @pytest.mark.req("FR-13")
+def test_code_in_filter_with_an_empty_list_never_matches_anything() -> None:
+    """Regression (issue #54 review): SQLAlchemy 2.0's `or_()` called with
+    zero arguments renders to the empty string, silently dropping the
+    predicate entirely - an empty `IN` list must render an always-false
+    clause (what `in_([])` rendered before this handler switched to
+    containment), not "no predicate at all", which would match every row of
+    the property instead of none."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.IN, [], table.c.value)
+
+    compiled = _compiled(clause)
+    assert compiled != ""
+    assert "false" in compiled.lower()
+
+
+@pytest.mark.req("FR-13")
 def test_string_equals_filter_matches_an_unquoted_value() -> None:
     """Regression: the pre-#54 `CAST(value AS VARCHAR)` shape stays
     JSON-quoted (`'"abc"'`, never `abc`), so an EQUALS filter for the bare
@@ -776,3 +794,41 @@ def test_filter_clause_shares_its_expression_with_the_generated_index(
 
     assert shared_fragment in index_sql
     assert shared_fragment in filter_sql
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.parametrize(
+    "handler",
+    [StringHandler(), UrlHandler()],
+)
+def test_facet_expression_matches_filter_clause_unquoted_shape(handler: object) -> None:
+    """Regression (issue #54 review): `facet_expression` still returned
+    `CAST(value AS VARCHAR)` after `filter_clause` was fixed to stop doing
+    that - `CAST` stays JSON-quoted (`'"abc"'`), so a facet's own value
+    could never be fed back into `filter_clause`'s unquoted predicate to
+    select for it. Both must render the identical `#>> '{}'` shape."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    facet_sql = _compiled(handler.facet_expression(table.c.value))  # type: ignore[attr-defined]
+    filter_sql = _compiled(
+        handler.filter_clause(FilterOp.EQUALS, "abc", table.c.value)  # type: ignore[attr-defined]
+    )
+
+    assert "CAST" not in facet_sql.upper()
+    assert "#>> '{}'" in facet_sql
+    assert facet_sql in filter_sql
+
+
+@pytest.mark.req("FR-13")
+def test_positive_int_facet_expression_does_not_raise_on_a_retained_non_numeric_value() -> None:
+    """Regression (issue #54 review): `facet_expression` still returned
+    `CAST(value AS integer)` after `filter_clause` was fixed to stop doing
+    that for exactly the failure ADR-0027 documents - a direct cast raises
+    outright for a retained non-numeric value; `facet_expression` must
+    return `NULL` for it instead, the same as `filter_clause`."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    facet_sql = _compiled(PositiveIntHandler().facet_expression(table.c.value))
+
+    assert "nptc_numeric_or_null" in facet_sql
+    assert "CAST" not in facet_sql.upper()

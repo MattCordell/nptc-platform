@@ -953,12 +953,17 @@ afterwards) requires a migration, a restart, or a deployment.
 
 ### Automatic index generation (issue #54, FR-13)
 
-A property flagged `filterable` gets a supporting index on `property_value` - a
-`jsonb_path_ops` GIN for `code` (object-valued, containment queries), an expression btree on
-`(value #>> '{}')` for `string`/`url`, and one on `nptc_numeric_or_null(value #>> '{}')` (see
-`nptc.db.functions` and [ADR-0027](../adr/0027-cast-safe-numeric-index-expression.md)) for
-`decimal`/`positiveInt` - **without a hand-written migration**, matching FR-09's own "a
-property definition is a plain row insert" property one level up.
+A property flagged `filterable` gets a supporting index on `public.property_value` (the
+table reference is schema-qualified in the DDL itself - the indexer role's `search_path`
+need not put `public` first) - a `jsonb_path_ops` GIN for `code` (object-valued, containment
+queries), an expression btree with the `text_pattern_ops` opclass on `(value #>> '{}')` for
+`string`/`url` (that opclass, verified directly against `postgres:18.6`, is the one that
+serves `EQUALS`/`IN` *and* a `PREFIX`/`LIKE 'foo%'` filter from the same index under a
+non-`C` collation, so no second index is needed), and one on
+`nptc_numeric_or_null(value #>> '{}')` (see `nptc.db.functions` and
+[ADR-0027](../adr/0027-cast-safe-numeric-index-expression.md)) for `decimal`/`positiveInt` -
+**without a hand-written migration**, matching FR-09's own "a property definition is a plain
+row insert" property one level up.
 
 **A desired-state reconciler, not an event handler** - `nptc.db.property_reconciler.
 reconcile_property_indexes()` reads every `property_definition` row, computes each one's
@@ -966,13 +971,22 @@ desired index from its handler's `index_shape()` (`nptc.registry.handlers`), dif
 result against actual `pg_index` state (not `pg_indexes`, which is blind to `indisvalid`),
 and creates/drops/repairs to converge. This is what makes un-flagging a property remove its
 index rather than leave it orphaned, and what notices and rebuilds an index a failed
-`CREATE INDEX CONCURRENTLY` left `indisvalid = false`. Runs on its own `AUTOCOMMIT`
-connection (`NPTC_INDEXER_DATABASE_URL` - see
-[`configuration.md`](../operations/configuration.md)), since `CREATE INDEX CONCURRENTLY`
-cannot run inside a transaction block; guarded by a `pg_try_advisory_lock` so two concurrent
-runs converging on the same state is a no-op, not a race. Callable as a library (so a future
-`property_definition` write path can dispatch it as a background task - none exists yet) and
-via `scripts/reconcile_property_indexes.py` for an operator or a scheduled check.
+`CREATE INDEX CONCURRENTLY` left `indisvalid = false` - or one whose actual definition has
+gone stale against an amended `datatype`/`key` (both ordinary mutable, audited columns,
+unlike the immutable `index_seq` the index name is derived from): the diff also compares
+`pg_get_indexdef` against what the property's *current* configuration would render
+(`nptc.db.property_indexes.matches_indexdef`), not just the index's name and validity, and
+rebuilds rather than merely re-commenting on a mismatch. One index failing to converge does
+not abort the run - every other desired/orphaned index still gets a chance, and the failure
+is collected into the report rather than raised. Runs on its own `AUTOCOMMIT` connection
+(`NPTC_INDEXER_DATABASE_URL` - see [`configuration.md`](../operations/configuration.md)),
+since `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block; guarded by a
+`pg_try_advisory_lock` so two concurrent runs converging on the same state is a no-op, not a
+race. Callable as a library (so a future `property_definition` write path can dispatch it as
+a background task - none exists yet) and via `scripts/reconcile_property_indexes.py` for an
+operator or a scheduled check - the CLI takes the resolved DSN as a direct function
+argument, never via `os.environ`, so a DDL-capable credential is never left where a
+subprocess could inherit it.
 
 Every generated index is named `ix_propval_p{index_seq}_{slot}` (see the truncation caveat
 above) - `slot` is always `1` today; `2` is reserved for a composite

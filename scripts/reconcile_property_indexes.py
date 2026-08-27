@@ -31,10 +31,11 @@ import sys
 #: Exit codes - stable, safe to depend on from a scheduled check.
 #: 0 = converged (or --dry-run found nothing to do); 1 = --dry-run found
 #: drift to report (nothing was executed); 2 = usage error (bad arguments,
-#: no DSN configured); 3 = could not complete (connection/import failure).
-#: A real (non-dry-run) run that converges always returns 0 - "drift was
-#: found and fixed" is success, not a failure code, since fixing it is
-#: exactly what the run is for.
+#: no DSN configured); 3 = could not complete (connection/import failure, or
+#: - on a real, non-dry-run run - one or more individual indexes failed to
+#: converge; see the FAILED lines). A real run that converges everything it
+#: attempted always returns 0 - "drift was found and fixed" is success, not
+#: a failure code, since fixing it is exactly what the run is for.
 EXIT_OK = 0
 EXIT_DRIFT_REMAINS = 1
 EXIT_USAGE_ERROR = 2
@@ -107,14 +108,17 @@ def main(argv: list[str] | None = None) -> int:
         # exception itself is never printed (only its type name): it can
         # carry connection details (host/user/dbname) that don't belong in
         # operator-facing output (NFR-26).
-        import os
-
+        #
+        # `database_url` is passed straight through to
+        # `reconcile_property_indexes`, not written into `os.environ` (issue
+        # #54 review) - the DSN resolved above can carry a DDL-capable
+        # credential, and every subprocess this process spawns would
+        # otherwise inherit it purely to smuggle it past `IndexerSettings`.
         from nptc.db import property_reconciler
 
-        os.environ["NPTC_INDEXER_DATABASE_URL"] = database_url
-        property_reconciler.get_indexer_engine.cache_clear()
-
-        report = property_reconciler.reconcile_property_indexes(dry_run=args.dry_run)
+        report = property_reconciler.reconcile_property_indexes(
+            dry_run=args.dry_run, database_url=database_url
+        )
     except Exception as exc:
         print(
             f"error: could not reconcile property indexes ({type(exc).__name__})",
@@ -135,13 +139,23 @@ def main(argv: list[str] | None = None) -> int:
     verb = "WOULD REBUILD (invalid)" if args.dry_run else "REBUILT (was invalid)"
     for name in report.repaired_invalid:
         print(f"{verb}: {name}")
+    verb = (
+        "WOULD REBUILD (datatype/key changed)" if args.dry_run else "REBUILT (datatype/key changed)"
+    )
+    for name in report.rebuilt_stale_definition:
+        print(f"{verb}: {name}")
     verb = "WOULD REPAIR COMMENT" if args.dry_run else "REPAIRED COMMENT"
     for name in report.repaired_comment:
         print(f"{verb}: {name}")
+    for name, exception_type in report.failed:
+        print(f"FAILED: {name} ({exception_type})")
 
-    if not report.changed and not report.repaired_comment:
+    if not report.changed and not report.repaired_comment and not report.failed:
         print("OK: no drift - every filterable property's index is already converged")
         return EXIT_OK
+
+    if report.failed and not args.dry_run:
+        return EXIT_COULD_NOT_COMPLETE
 
     return EXIT_DRIFT_REMAINS if args.dry_run else EXIT_OK
 

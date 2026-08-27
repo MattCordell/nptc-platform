@@ -7,7 +7,7 @@ from typing import Any
 from typing import cast as type_cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import ColumnElement, String, cast
+from sqlalchemy import ColumnElement
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -98,4 +98,6 @@ class UrlHandler:
         raise UnsupportedFilterOpError(f"url handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        return cast(column, String)
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` - see
+        `string.py`'s `facet_expression` for why (issue #54 review)."""
+        return jsonb_root_as_text(column)

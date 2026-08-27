@@ -228,3 +228,13 @@ class IndexerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
     indexer_database_url: str = ""
+
+    @field_validator("indexer_database_url")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        """Normalises a whitespace-only value (`"   "`) to `""` (issue #54
+        review) - without this, `get_indexer_engine()`'s `if not settings.
+        indexer_database_url` guard reads a whitespace string as truthy,
+        skips `IndexerNotConfiguredError`, and fails much later inside
+        `create_engine` with a far less legible error naming nothing."""
+        return value.strip()

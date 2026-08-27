@@ -40,6 +40,7 @@ variable rather than a fallback to `NPTC_MIGRATION_DATABASE_URL`.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Final
@@ -58,6 +59,7 @@ from nptc.db.property_indexes import (
     create_statement,
     desired_indexes,
     drop_statement,
+    matches_indexdef,
 )
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
@@ -88,12 +90,19 @@ _UNLOCK_SQL = text("SELECT pg_advisory_unlock(:key)")
 #: (an index that exists by name but was never usably built) would read as
 #: "already present" and never be repaired. `obj_description` recovers the
 #: `COMMENT ON INDEX` carrying the property key (`nptc.db.property_indexes.
-#: comment_statement`) so a missing/stale comment can be repaired too. A
-#: fixed literal query, no runtime data - the `~` pattern is a compile-time
-#: constant mirroring `GENERATED_INDEX_NAME_RE`, never interpolated.
+#: comment_statement`) so a missing/stale comment can be repaired too.
+#: `pg_get_indexdef` recovers the index's actual expression/predicate, which
+#: `nptc.db.property_indexes.matches_indexdef` diffs against the property's
+#: *current* `datatype`/`key` - both are ordinary mutable, audited columns,
+#: so an index built before either was amended can look "present and valid"
+#: while serving nothing a current `filter_clause` renders (issue #54
+#: review). A fixed literal query, no runtime data - the `~` pattern is a
+#: compile-time constant mirroring `GENERATED_INDEX_NAME_RE`, never
+#: interpolated.
 _ACTUAL_STATE_SQL = text(
     "SELECT c.relname AS name, i.indisvalid AS is_valid, "
-    "obj_description(c.oid, 'pg_class') AS comment "
+    "obj_description(c.oid, 'pg_class') AS comment, "
+    "pg_get_indexdef(i.indexrelid) AS indexdef "
     "FROM pg_index i "
     "JOIN pg_class c ON c.oid = i.indexrelid "
     "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -151,18 +160,44 @@ class ReconciliationReport:
     created: tuple[str, ...] = ()
     dropped: tuple[str, ...] = ()
     repaired_invalid: tuple[str, ...] = ()
+    rebuilt_stale_definition: tuple[str, ...] = ()
     repaired_comment: tuple[str, ...] = ()
+    #: `(index_name, exception_type_name)` pairs for a DDL statement that
+    #: raised mid-run (issue #54 review) - one failure no longer aborts the
+    #: whole convergence, so every other desired/orphaned index still gets a
+    #: chance to converge in the same run. A name here does not exclude it
+    #: from `created`/`dropped`/`repaired_invalid`/`rebuilt_stale_definition`:
+    #: e.g. a `CREATE INDEX` that succeeded followed by a `COMMENT ON INDEX`
+    #: that raised reports the name in both `created` and `failed`, rather
+    #: than in neither. Never carries the exception's own message text
+    #: (NFR-26) - only its type name, matching the CLI's existing posture.
+    failed: tuple[tuple[str, str], ...] = ()
     skipped_locked: bool = False
 
     @property
     def changed(self) -> bool:
-        return bool(self.created or self.dropped or self.repaired_invalid)
+        return bool(
+            self.created or self.dropped or self.repaired_invalid or self.rebuilt_stale_definition
+        )
 
 
 @lru_cache(maxsize=1)
-def get_indexer_engine() -> Engine:
-    """The process-wide indexer engine, built from
+def get_indexer_engine(database_url: str | None = None) -> Engine:
+    """The indexer engine, built from `database_url` if given, else
     `NPTC_INDEXER_DATABASE_URL`.
+
+    `database_url` lets a caller (the CLI's `--database-url`) supply the DSN
+    directly rather than smuggling it in via `os.environ` (issue #54
+    review): writing a DDL-capable credential into the process environment
+    makes it visible to any subprocess this process ever spawns, purely to
+    get it past this function's own `IndexerSettings()` read. `lru_cache`
+    still applies, keyed on the argument - calling this twice with the same
+    `database_url` (including the default `None`) returns the same `Engine`,
+    matching the "one process-wide engine" posture `nptc.db.session.
+    get_engine` also takes; a *different* `database_url` simply gets its own
+    cached `Engine` (evicting the previous one under `maxsize=1`), which
+    costs nothing extra since `NullPool` never held an open connection for
+    the evicted entry to leak.
 
     `poolclass=NullPool`: no idle owner-scoped connection sits in a pool
     between reconciliations - this credential can do DDL, so the fewer open
@@ -173,13 +208,15 @@ def get_indexer_engine() -> Engine:
     `test_db_property_indexes.py::test_create_statement_fails_loudly_
     without_autocommit`.
     """
-    settings = IndexerSettings()
-    if not settings.indexer_database_url:
-        raise IndexerNotConfiguredError(
-            "NPTC_INDEXER_DATABASE_URL is not set - index reconciliation is disabled"
-        )
+    if database_url is None:
+        settings = IndexerSettings()
+        database_url = settings.indexer_database_url
+        if not database_url:
+            raise IndexerNotConfiguredError(
+                "NPTC_INDEXER_DATABASE_URL is not set - index reconciliation is disabled"
+            )
     return create_engine(
-        settings.indexer_database_url,
+        database_url,
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
     )
@@ -189,12 +226,16 @@ def _desired_by_name(desired: list[DesiredIndex]) -> dict[str, DesiredIndex]:
     return {index.name: index for index in desired}
 
 
-def reconcile_property_indexes(*, dry_run: bool = False) -> ReconciliationReport:
+def reconcile_property_indexes(
+    *, dry_run: bool = False, database_url: str | None = None
+) -> ReconciliationReport:
     """Converges actual `pg_index` state on every filterable property's
     desired index, in one call: builds missing indexes, drops orphaned
     ones (a property that was un-flagged, or whose `index_shape()` now
-    returns `None`), rebuilds any that failed into `indisvalid = false`,
-    and repairs a missing or stale `COMMENT ON INDEX`.
+    returns `None`), rebuilds any that failed into `indisvalid = false` (or
+    whose definition has gone stale against an amended `datatype`/`key` -
+    see `nptc.db.property_indexes.matches_indexdef`), and repairs a missing
+    or stale `COMMENT ON INDEX`.
 
     Argument-free by default and idempotent - safe to call from the CLI, a
     scheduled check, or (once a write path exists) a background task
@@ -208,8 +249,11 @@ def reconcile_property_indexes(*, dry_run: bool = False) -> ReconciliationReport
     report without executing any DDL - the diff against actual state is
     identical either way; only whether `create_statement`/`drop_statement`/
     `comment_statement` are actually run differs.
+
+    `database_url`, forwarded to `get_indexer_engine`, lets a caller supply
+    the DSN directly instead of `NPTC_INDEXER_DATABASE_URL`.
     """
-    engine = get_indexer_engine()
+    engine = get_indexer_engine(database_url)
     with engine.connect() as connection:
         locked = connection.execute(_TRY_LOCK_SQL, {"key": RECONCILE_LOCK_KEY}).scalar_one()
         if not locked:
@@ -217,7 +261,14 @@ def reconcile_property_indexes(*, dry_run: bool = False) -> ReconciliationReport
         try:
             return _reconcile_locked(connection, dry_run=dry_run)
         finally:
-            connection.execute(_UNLOCK_SQL, {"key": RECONCILE_LOCK_KEY})
+            # Best-effort: if `_reconcile_locked` raised because the
+            # connection itself died, retrying the unlock on it would raise
+            # again and mask the original exception (issue #54 review). The
+            # lock is session-scoped on a connection that is about to close
+            # anyway (`NullPool`), so losing it here costs nothing a process
+            # exit/reconnect wouldn't already reclaim.
+            with contextlib.suppress(Exception):
+                connection.execute(_UNLOCK_SQL, {"key": RECONCILE_LOCK_KEY})
 
 
 def _reconcile_locked(connection: Connection, *, dry_run: bool) -> ReconciliationReport:
@@ -232,7 +283,8 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
     desired = _desired_by_name(desired_indexes(definitions, _registry()))
 
     actual = {
-        row.name: (row.is_valid, row.comment) for row in connection.execute(_ACTUAL_STATE_SQL).all()
+        row.name: (row.is_valid, row.comment, row.indexdef)
+        for row in connection.execute(_ACTUAL_STATE_SQL).all()
     }
 
     raw = connection.connection.driver_connection
@@ -243,33 +295,67 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
             cursor.execute(statement)
 
     created: list[str] = []
+    dropped: list[str] = []
     repaired_invalid: list[str] = []
+    rebuilt_stale_definition: list[str] = []
     repaired_comment: list[str] = []
+    failed: list[tuple[str, str]] = []
     with raw.cursor() as cursor:
         for name, index in desired.items():
-            if name not in actual:
-                _execute(cursor, create_statement(index))
-                _execute(cursor, comment_statement(name, index.property_key))
-                created.append(name)
-                continue
-            is_valid, comment = actual[name]
-            if not is_valid:
-                _execute(cursor, drop_statement(name))
-                _execute(cursor, create_statement(index))
-                _execute(cursor, comment_statement(name, index.property_key))
-                repaired_invalid.append(name)
-                continue
-            if comment != index.property_key:
-                _execute(cursor, comment_statement(name, index.property_key))
-                repaired_comment.append(name)
+            # One index's failure must not abort every other index's own
+            # convergence in this run (issue #54 review) - a per-index
+            # `try/except`, not one around the whole loop. Safe under
+            # AUTOCOMMIT: each statement is its own implicit transaction, so
+            # a failed one leaves no aborted transaction behind for the next
+            # statement on this connection to inherit.
+            try:
+                if name not in actual:
+                    _execute(cursor, create_statement(index))
+                    # Recorded as created before the comment is even
+                    # attempted: a `COMMENT ON INDEX` that then raises must
+                    # still report this index as created, not as neither
+                    # created nor failed.
+                    created.append(name)
+                    _execute(cursor, comment_statement(name, index.property_key))
+                    continue
+                is_valid, comment, indexdef = actual[name]
+                if not is_valid:
+                    _execute(cursor, drop_statement(name))
+                    _execute(cursor, create_statement(index))
+                    repaired_invalid.append(name)
+                    _execute(cursor, comment_statement(name, index.property_key))
+                    continue
+                if not matches_indexdef(index, indexdef):
+                    # The index is `indisvalid` but no longer matches this
+                    # property's current `datatype`/`key` - both mutable,
+                    # audited columns unrelated to the immutable `index_seq`
+                    # the index name is derived from, so only the actual
+                    # index *definition* (not its name or validity) can
+                    # notice either kind of drift (issue #54 review).
+                    _execute(cursor, drop_statement(name))
+                    _execute(cursor, create_statement(index))
+                    rebuilt_stale_definition.append(name)
+                    _execute(cursor, comment_statement(name, index.property_key))
+                    continue
+                if comment != index.property_key:
+                    _execute(cursor, comment_statement(name, index.property_key))
+                    repaired_comment.append(name)
+            except Exception as exc:
+                failed.append((name, type(exc).__name__))
 
-        dropped = [name for name in actual if name not in desired]
-        for name in dropped:
-            _execute(cursor, drop_statement(name))
+        orphaned = [name for name in actual if name not in desired]
+        for name in orphaned:
+            try:
+                _execute(cursor, drop_statement(name))
+                dropped.append(name)
+            except Exception as exc:
+                failed.append((name, type(exc).__name__))
 
     return ReconciliationReport(
         created=tuple(created),
         dropped=tuple(dropped),
         repaired_invalid=tuple(repaired_invalid),
+        rebuilt_stale_definition=tuple(rebuilt_stale_definition),
         repaired_comment=tuple(repaired_comment),
+        failed=tuple(failed),
     )

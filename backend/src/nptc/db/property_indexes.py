@@ -74,6 +74,7 @@ __all__ = [
     "drop_statement",
     "include_object",
     "index_name",
+    "matches_indexdef",
 ]
 
 #: `ix_propval_p{index_seq}_{slot}` (ADR-0012). The fixed 12-byte prefix
@@ -157,6 +158,20 @@ def create_statement(desired: DesiredIndex) -> sql.Composed:
     `sql.SQL.format` uses `str.format` placeholder syntax, so a literal
     brace has to be doubled to survive it.
 
+    The table reference is schema-qualified (`public.property_value`), not
+    bare `property_value` - the reconciler's DDL connection uses
+    `NPTC_INDEXER_DATABASE_URL`'s own role, whose `search_path` need not put
+    `public` first (issue #54 review): an unqualified reference would let
+    `CREATE INDEX` silently succeed against a same-named relation in a
+    different schema, which the reconciler's actual-state query (fixed to
+    `nspname = 'public'`) would never see, and every subsequent run would
+    then retry the same `CREATE INDEX` and fail with "already exists". A bare
+    `CREATE INDEX name ON ...` cannot itself be schema-qualified - Postgres
+    always creates an index in its table's own schema - so qualifying the
+    table is what closes this, not qualifying the index name (`drop_statement`/
+    `comment_statement` below qualify the *index* name instead, since `DROP
+    INDEX`/`COMMENT ON INDEX` do accept a schema-qualified object name).
+
     **Every `.format()` argument below is an inline `sql.Identifier`/
     `sql.Literal` call, never a variable referencing one** - NFR-22's guard
     (`test_sql_parameterisation.py` rule 5) requires exactly this shape in
@@ -165,17 +180,24 @@ def create_statement(desired: DesiredIndex) -> sql.Composed:
     """
     if desired.expression is ValueExpression.RAW_JSONB:
         return sql.SQL(
-            "CREATE INDEX CONCURRENTLY {name} ON property_value USING gin "
+            "CREATE INDEX CONCURRENTLY {name} ON public.property_value USING gin "
             "(value jsonb_path_ops) WHERE property_key = {key}"
         ).format(name=sql.Identifier(desired.name), key=sql.Literal(desired.property_key))
     if desired.expression is ValueExpression.TEXT_SCALAR:
+        # `text_pattern_ops`, not the default opclass: verified directly
+        # against `postgres:18.6` that this is the one opclass that serves
+        # `EQUALS`/`IN` *and* a `PREFIX` (`LIKE 'foo%'`) filter from the same
+        # index under a non-`C` collation - the default opclass cannot serve
+        # `LIKE` at all outside `C`/`POSIX`, and a second index just for
+        # `PREFIX` would double write amplification on `property_value` for
+        # no reason (issue #54 review).
         return sql.SQL(
-            "CREATE INDEX CONCURRENTLY {name} ON property_value "
-            "((value #>> '{{}}')) WHERE property_key = {key}"
+            "CREATE INDEX CONCURRENTLY {name} ON public.property_value "
+            "((value #>> '{{}}') text_pattern_ops) WHERE property_key = {key}"
         ).format(name=sql.Identifier(desired.name), key=sql.Literal(desired.property_key))
     if desired.expression is ValueExpression.NUMERIC_SCALAR:
         return sql.SQL(
-            "CREATE INDEX CONCURRENTLY {name} ON property_value "
+            "CREATE INDEX CONCURRENTLY {name} ON public.property_value "
             "(nptc_numeric_or_null(value #>> '{{}}')) WHERE property_key = {key}"
         ).format(name=sql.Identifier(desired.name), key=sql.Literal(desired.property_key))
     raise AssertionError(f"unhandled ValueExpression: {desired.expression!r}")  # pragma: no cover
@@ -185,16 +207,53 @@ def drop_statement(name: str) -> sql.Composed:
     """`IF EXISTS`: the reconciler's own drop-orphaned step may race a
     concurrent reconciliation that already dropped the same index (see the
     advisory lock in `property_reconciler`, which makes that vanishingly
-    rare but not impossible to reason about as a no-op)."""
-    return sql.SQL("DROP INDEX CONCURRENTLY IF EXISTS {name}").format(name=sql.Identifier(name))
+    rare but not impossible to reason about as a no-op). Schema-qualified
+    (`public.<name>`) for the same `search_path` reason `create_statement`
+    qualifies its table reference - `DROP INDEX` accepts a schema-qualified
+    object name, unlike `CREATE INDEX`."""
+    return sql.SQL("DROP INDEX CONCURRENTLY IF EXISTS {name}").format(
+        name=sql.Identifier("public", name)
+    )
 
 
 def comment_statement(name: str, property_key: str) -> sql.Composed:
     """Carries the property key an index's own name never does (ADR-0012),
     resolving data-model.md's name-to-key traceability caveat for an
-    operator staring at `pg_indexes`."""
+    operator staring at `pg_indexes`. Schema-qualified for the same reason
+    `drop_statement` is."""
     return sql.SQL("COMMENT ON INDEX {name} IS {key}").format(
-        name=sql.Identifier(name), key=sql.Literal(property_key)
+        name=sql.Identifier("public", name), key=sql.Literal(property_key)
+    )
+
+
+def _expression_marker(expression: ValueExpression) -> str:
+    """A substring of `pg_get_indexdef()`'s own rendering that appears only
+    for this expression - verified directly against `postgres:18.6`'s actual
+    `pg_get_indexdef` output for each of the three shapes, not assumed from
+    `create_statement`'s input syntax (Postgres reformats it: extra
+    parentheses, an added `::text[]` cast on the `#>>` argument)."""
+    if expression is ValueExpression.RAW_JSONB:
+        return "jsonb_path_ops"
+    if expression is ValueExpression.TEXT_SCALAR:
+        return "value #>> '{}'::text[]"
+    if expression is ValueExpression.NUMERIC_SCALAR:
+        return "nptc_numeric_or_null((value #>> '{}'::text[]))"
+    raise AssertionError(f"unhandled ValueExpression: {expression!r}")  # pragma: no cover
+
+
+def matches_indexdef(desired: DesiredIndex, indexdef: str) -> bool:
+    """True when `indexdef` (from `pg_get_indexdef`, the reconciler's own
+    actual-state query) already reflects `desired`'s expression and property
+    key - false when a `property_definition` row's `datatype` or `key` was
+    amended *after* its index was built (issue #54 review): both are
+    ordinary mutable, audited columns, not `index_seq`, so the index name
+    alone cannot notice either change. A `False` result tells the reconciler
+    the existing index's predicate/expression can never serve the property
+    as it is configured today, and it must be dropped and rebuilt - not
+    merely re-commented."""
+    return (
+        _expression_marker(desired.expression) in indexdef
+        and f"property_key = '{desired.property_key}'::text" in indexdef
     )
 
 

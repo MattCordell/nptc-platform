@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, Integer, and_, cast, func
+from sqlalchemy import ColumnElement, and_, func
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -87,4 +87,13 @@ class PositiveIntHandler:
         raise UnsupportedFilterOpError(f"positiveInt handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        return cast(column, Integer)
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
+        `cast(column, Integer)` (issue #54 review): a direct
+        `CAST(value AS integer)` raises outright for a retained non-numeric
+        value - the exact failure mode ADR-0027 exists to close for
+        `filter_clause` above, left unfixed here would defeat the point of
+        fixing it there. Returns `numeric`, not `integer` - the same
+        widening `filter_clause` already accepts."""
+        return type_cast(
+            "ColumnElement[Any]", func.nptc_numeric_or_null(jsonb_root_as_text(column))
+        )

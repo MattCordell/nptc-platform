@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, String, cast
+from sqlalchemy import ColumnElement
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -97,4 +97,8 @@ class StringHandler:
         raise UnsupportedFilterOpError(f"string handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        return cast(column, String)
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` (issue
+        #54 review) - see `filter_clause` above for why: the latter stays
+        JSON-quoted, so a facet's own value could never be fed back into
+        `filter_clause`'s unquoted predicate to select for it."""
+        return jsonb_root_as_text(column)

@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, or_
+from sqlalchemy import ColumnElement, false, or_
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -276,7 +276,16 @@ class CodeHandler:
         if op is FilterOp.EQUALS:
             return column.contains({"code": value})
         if op is FilterOp.IN:
-            return or_(*(column.contains({"code": candidate}) for candidate in value))
+            # `false()` as `or_()`'s first argument, not `or_(*(...))` alone
+            # (issue #54 review): SQLAlchemy 2.0's `or_()` called with zero
+            # arguments (an empty `value`) renders to the empty string, not
+            # an always-false predicate, silently dropping this clause
+            # entirely and matching every row of the property rather than
+            # none - `in_([])` (what this replaced) never had that failure
+            # mode. `false()` guarantees at least one argument regardless of
+            # `value`'s length, restoring the always-false-on-empty
+            # behaviour without changing anything about a non-empty list.
+            return or_(false(), *(column.contains({"code": candidate}) for candidate in value))
         raise UnsupportedFilterOpError(f"code handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
