@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import uuid
 from pathlib import Path
 
 import pytest
@@ -387,6 +388,7 @@ def test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror(
     app_session.flush()
     other_business_key = format_business_key(999_000_101)
     fired = False
+    other_entry_id: uuid.UUID | None = None
 
     def _inject_concurrent_bind(
         conn: object,
@@ -396,7 +398,7 @@ def test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror(
         context: object,
         executemany: bool,
     ) -> None:
-        nonlocal fired
+        nonlocal fired, other_entry_id
         if fired or "code_binding.code" not in statement:
             return
         fired = True
@@ -427,18 +429,24 @@ def test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror(
         assert fired, "the injected concurrent bind never ran - the test proves nothing"
         app_session.rollback()
     finally:
-        with owner_engine.connect() as cleanup_connection:
-            cleanup_connection.execute(
-                text("DELETE FROM code_binding WHERE code = :code"), {"code": _VALID_CODE}
-            )
-            cleanup_connection.execute(
-                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
-                {"key": other_business_key},
-            )
-            cleanup_connection.commit()
+        # Scoped to the row this test itself committed via `other_entry_id`
+        # - not `WHERE code = :code` (issue #219 review): a whole-table
+        # delete by code would also remove any other test's row that
+        # happens to share it, on the session-scoped container every test
+        # in this run shares (CLAUDE.md's rule on this exact hazard).
+        if other_entry_id is not None:
+            with owner_engine.connect() as cleanup_connection:
+                cleanup_connection.execute(
+                    text("DELETE FROM code_binding WHERE entry_id = :entry_id"),
+                    {"entry_id": other_entry_id},
+                )
+                cleanup_connection.execute(
+                    text("DELETE FROM catalogue_entry WHERE id = :entry_id"),
+                    {"entry_id": other_entry_id},
+                )
+                cleanup_connection.commit()
 
 
-@pytest.mark.integration
 def test_race_translation_constraint_names_match_the_actual_indexes() -> None:
     """`bindings._ONE_ACTIVE_PER_ENTRY_CONSTRAINT`/`_ONE_ACTIVE_PER_CODE_
     CONSTRAINT` are plain string literals matched against `IntegrityError.
@@ -446,7 +454,11 @@ def test_race_translation_constraint_names_match_the_actual_indexes() -> None:
     __table_args__`'s actual `Index` names except this test. Renaming
     either index with no matching update here would silently regress the
     race translation above back to a raw `IntegrityError` (issue #219
-    review), with nothing else failing to say so."""
+    review), with nothing else failing to say so.
+
+    Not `@pytest.mark.integration`: pure `__table_args__` introspection,
+    no fixture, no container, no database - it belongs in the fast
+    `-m "not integration"` subset a cheap guard like this is for."""
     index_names = {arg.name for arg in CodeBinding.__table_args__ if isinstance(arg, Index)}
     assert bindings._ONE_ACTIVE_PER_ENTRY_CONSTRAINT in index_names
     assert bindings._ONE_ACTIVE_PER_CODE_CONSTRAINT in index_names
