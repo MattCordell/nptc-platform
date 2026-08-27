@@ -1,9 +1,10 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderRoute } from "../test/render-route.tsx";
+
 describe("not-found route", () => {
   it("renders the not-found page for an unknown URL, not a blank screen", async () => {
-    const { renderRoute } = await import("../test/render-route.tsx");
     await renderRoute("/no-such-page");
 
     expect(
@@ -24,7 +25,6 @@ describe("not-found route", () => {
   });
 
   it("renders the not-found page for an unrecognised segment under a real route", async () => {
-    const { renderRoute } = await import("../test/render-route.tsx");
     await renderRoute("/catalogue/NPTC-000247/not-a-tab");
 
     expect(
@@ -37,12 +37,12 @@ describe("route error boundary", () => {
   let consoleError: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // The "not-found route" tests above already imported the production
-    // module graph (route-tree.ts imports pages/home.tsx unconditionally,
-    // whatever route is under test), so it is cached by the time these
-    // tests run. Reset it before `vi.doMock` so the next dynamic import
-    // re-evaluates that graph against the mock, instead of returning the
-    // already-cached, unmocked modules.
+    // The static `renderRoute` import at the top of this file already
+    // pulled in the production module graph (route-tree.ts imports
+    // pages/home.tsx unconditionally, whatever route is under test), so it
+    // is cached by the time these tests run. Reset it before `vi.doMock` so
+    // the next dynamic import re-evaluates that graph against the mock,
+    // instead of returning the already-cached, unmocked modules.
     vi.resetModules();
     // React and the router both log the caught error, which is correct
     // behaviour, but it shouldn't spam test output.

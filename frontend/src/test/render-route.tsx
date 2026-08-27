@@ -1,6 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { StrictMode } from "react";
 
 import { createQueryClient } from "../api/query-client.ts";
@@ -72,6 +72,11 @@ export async function renderRoute(
       </QueryClientProvider>
     </StrictMode>,
   );
-  await router.load(); // settle the initial match before assertions run
+  // Load-bearing, not decorative: without the `act` wrapper this can return
+  // before the resolved match has actually committed, racing a caller's
+  // `findByRole` (#215 - see PR discussion for why).
+  await act(async () => {
+    await router.load();
+  });
   return { ...result, router, auth };
 }
