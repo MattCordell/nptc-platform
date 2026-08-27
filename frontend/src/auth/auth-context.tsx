@@ -104,25 +104,50 @@ export function AuthProvider({
       // concurrent interactive sign-in's, failing a sign-in that worked -
       // which is the whole reason transactions are keyed by state.
       let issuedState: string | null = null;
+      // What this renewal is refreshing. `store` assigns `tokensRef.current`
+      // synchronously (see `store` above), so comparing against it after an
+      // `await` tells us whether anything else - a `completeCallback` that
+      // raced this renewal - already changed the session. If it did, this
+      // renewal's refusal says nothing about that session and must not
+      // clear it (issue #216).
+      const startedWith = tokensRef.current;
       try {
         const url = await buildAuthorizeUrl(config, { prompt: "none" });
         issuedState = new URL(url).searchParams.get("state");
         const search = await silentAuthorize(url, config.redirectUri);
         const { tokens: next } = await completeSignIn(config, search);
+        // Symmetric with the failure-path guard below: this renewal only
+        // knows about the session it started with, so it must not install
+        // its own late answer over whatever `tokensRef.current` has become
+        // in the meantime - most concretely, a `completeCallback` sign-in
+        // that changed `null` to a session while this renewal was in
+        // flight. Note this is an identity comparison, so it only detects
+        // a value that has *changed*; it cannot tell "still null" apart
+        // from "cleared and set back to null", so it does not guard, say,
+        // a `signOut` that found no session to end (tokens were null both
+        // before and after).
+        if (tokensRef.current !== startedWith) {
+          return null;
+        }
         store(next);
         return next;
       } catch (error) {
         if (issuedState) {
           takeTransaction(issuedState);
         }
+        const stillOurs = tokensRef.current === startedWith;
         if (error instanceof InteractionRequiredError) {
           // Not a failure: the SSO session has ended, so the user is simply
           // signed out. This is the path a post-logout renewal takes.
-          store(null);
+          if (stillOurs) {
+            store(null);
+          }
           return null;
         }
-        store(null);
-        setUnavailable(true);
+        if (stillOurs) {
+          store(null);
+          setUnavailable(true);
+        }
         return null;
       } finally {
         renewal.current = null;
@@ -136,7 +161,14 @@ export function AuthProvider({
     if (current && current.expiresAt - RENEW_SKEW_MS > Date.now()) {
       return current.accessToken;
     }
-    return (await renew())?.accessToken ?? null;
+    const renewed = await renew();
+    // `renew()`'s own return value can be a stale `null`: a refused renewal
+    // that raced a concurrent `completeCallback` leaves that session in
+    // place (see the `stillOurs` guard above) but still resolves `null`
+    // itself. Falling back to the ref picks up whatever session actually
+    // ended up in place, rather than handing this caller a false "signed
+    // out" (issue #216).
+    return renewed?.accessToken ?? tokensRef.current?.accessToken ?? null;
   }, [renew]);
 
   const signIn = useCallback(

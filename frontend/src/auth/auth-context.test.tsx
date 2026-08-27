@@ -82,6 +82,22 @@ function pendingRenewal() {
   return vi.fn(() => new Promise<URLSearchParams>(() => {}));
 }
 
+/**
+ * A probe that stays pending until the test releases it, so a race against
+ * `completeCallback` can be driven deterministically rather than relying on
+ * incidental timing (issue #216).
+ */
+function releasableRenewal() {
+  let reject: (error: unknown) => void = () => {};
+  const promise = new Promise<URLSearchParams>((_, rej) => {
+    reject = rej;
+  });
+  return {
+    silentAuthorize: vi.fn(() => promise) as SilentAuthorize,
+    refuse: () => reject(new InteractionRequiredError("login_required")),
+  };
+}
+
 function renderProvider(silentAuthorize: SilentAuthorize = noSession()) {
   return render(
     <AuthProvider config={CONFIG} silentAuthorize={silentAuthorize} navigate={navigate}>
@@ -430,5 +446,134 @@ describe("completeCallback", () => {
     });
 
     expect(destination).toBe("/");
+  });
+});
+
+describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
+  it("does not clear a session completeCallback established while the probe is still in flight", async () => {
+    const { silentAuthorize, refuse } = releasableRenewal();
+    // The cold-load probe starts on mount and is now in flight, pending on
+    // `silentAuthorize` until `refuse()` below.
+    renderProvider(silentAuthorize);
+
+    await act(async () => {
+      await api().signIn({ redirect: "/submissions" });
+    });
+    const state = new URL(assigned[0]).searchParams.get("state") ?? "";
+
+    let destination: string | null = null;
+    await act(async () => {
+      destination = await api().completeCallback(
+        new URLSearchParams({ code: "the-code", state }),
+      );
+    });
+
+    expect(destination).toBe("/submissions");
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+
+    // The probe's late answer: an ordinary "no SSO session" refusal, the
+    // path that used to clear the session `completeCallback` just
+    // established. A macrotask boundary, not a fixed number of
+    // microtask ticks, so the refusal has fully travelled the `await
+    // silentAuthorize(...)` resumption, the catch, the renewal settling
+    // and `restore()`'s own `finally` before the assertion runs - a
+    // microtask-only flush could pass merely because it ran before any
+    // of that had happened.
+    await act(async () => {
+      refuse();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+  });
+
+  it("still clears an established session when its own expiry renewal is refused", async () => {
+    // The negative case: guarding the clear must not turn into never
+    // clearing. A signed-in session whose own renewal is refused - nothing
+    // else racing it - must still be cleared, exactly as before this fix.
+    //
+    // The token endpoint hands back an already-expired token (`expires_in:
+    // -1`), so the next `getAccessToken` call triggers a real renewal
+    // rather than reusing the cached token - no fake timers needed.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes(".well-known")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(DISCOVERY), {
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "access-token",
+              id_token: "id-token",
+              expires_in: -1,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    let succeed = true;
+    const renewal = vi.fn((url: string) => {
+      if (succeed) {
+        const state = new URL(url).searchParams.get("state") ?? "";
+        return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+      }
+      return Promise.reject(new InteractionRequiredError("login_required"));
+    });
+    renderProvider(renewal);
+    // The mount-time cold-load probe is what signs this in, not a call to
+    // `restore()` - it already ran and stored the session, so a second
+    // `restore()` here would be a no-op (`tokensRef.current` is already
+    // set). `waitFor` just waits out that probe's own async chain.
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    });
+
+    succeed = false;
+    await act(async () => {
+      await api().getAccessToken();
+    });
+
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+  });
+
+  it("falls back to the ref so a caller mid-race still gets the session completeCallback established", async () => {
+    const { silentAuthorize, refuse } = releasableRenewal();
+    renderProvider(silentAuthorize);
+
+    // Started while tokens are still null, so it joins the mount probe's
+    // in-flight renewal (the de-duped `renewal.current`) rather than
+    // returning a cached token - this is the caller the fallback exists
+    // for. Deliberately not awaited yet: it must stay pending across
+    // `completeCallback` below, or this test would pass the same way it
+    // would if `getAccessToken` were called after the session already
+    // existed, which proves nothing about the fallback.
+    const pending = api().getAccessToken();
+
+    await act(async () => {
+      await api().signIn({ redirect: "/submissions" });
+    });
+    const state = new URL(assigned[0]).searchParams.get("state") ?? "";
+
+    await act(async () => {
+      await api().completeCallback(new URLSearchParams({ code: "the-code", state }));
+    });
+
+    // A caller that asks for a token while the probe is still refusing must
+    // not be told "signed out" - `renew()`'s own resolved value is a stale
+    // `null`, but the ref reflects the session that actually won the race.
+    let token: string | null = "unset";
+    await act(async () => {
+      refuse();
+      token = await pending;
+    });
+
+    expect(token).toBe("access-token");
   });
 });
