@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
@@ -128,6 +128,57 @@ function StableErrorsForm({ onSubmit }: { onSubmit: () => void }) {
   );
 }
 
+/**
+ * A form whose caller never sets `pending` at all and whose refusal arrives
+ * several renders after the submit - the shape of a mutation hook that
+ * flips its own state a tick later. The focus contract must not depend on
+ * `pending` having flipped on the very next render.
+ */
+function SlowRefusingForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (tick === 0 || tick > 3) {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      if (tick === 3) {
+        setFormError("The catalogue rejected this entry.");
+      }
+      setTick((current) => current + 1);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [tick]);
+
+  return (
+    <Form submitLabel="Save entry" formError={formError} onSubmit={() => setTick(1)}>
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/** A form whose save starts and never finishes, so the mid-save state can
+ *  actually be observed. */
+function NeverFinishingForm() {
+  const [pending, setPending] = useState(false);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      pendingLabel="Saving"
+      pending={pending}
+      onSubmit={() => setPending(true)}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
 function summaryElement() {
   return screen.getByRole("heading", { name: "There is a problem" }).closest("div");
 }
@@ -173,10 +224,79 @@ describe("Form", () => {
       </Form>,
     );
 
-    expect(screen.getByRole("button", { name: "Saving" })).toBeDisabled();
+    const button = screen.getByRole("button", { name: "Saving" });
+    // aria-disabled, not disabled: a disabled control leaves the tab order
+    // and drops focus to <body> mid-save. See form.tsx.
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+    expect(button.closest("form")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("keeps focus on the submit button when a save starts, rather than stranding it", async () => {
+    const user = userEvent.setup();
+    render(<NeverFinishingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // The label has swapped, so this is the same button mid-save. A
+    // `disabled` attribute here would have moved focus to <body>.
+    expect(screen.getByRole("button", { name: "Saving" })).toHaveFocus();
+  });
+
+  it("refuses a click on the aria-disabled submit button while a save is in flight", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <Form submitLabel="Save entry" pending onSubmit={onSubmit}>
+        <p>Fields</p>
+      </Form>,
+    );
+
+    // The button is still clickable - that is the point of aria-disabled -
+    // so the guard in the submit handler is what has to refuse it.
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("does not let a caller unpick noValidate or aria-busy through spread props", () => {
+    render(
+      <Form
+        submitLabel="Save entry"
+        pending
+        onSubmit={vi.fn()}
+        noValidate={false}
+        aria-busy={false}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    const form = screen.getByRole("button", { name: "Save entry" }).closest("form");
+    expect(form).toHaveAttribute("novalidate");
+    expect(form).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("gives the summary the heading level its surroundings need", async () => {
+    const user = userEvent.setup();
+    render(
+      <Form
+        submitLabel="Save entry"
+        errors={STABLE_ERRORS}
+        errorSummaryHeadingLevel={3}
+        onSubmit={vi.fn()}
+      >
+        <Field id="requesting-term" label="Requesting term">
+          {(controlProps) => <input {...controlProps} type="text" />}
+        </Field>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
     expect(
-      screen.getByRole("button", { name: "Saving" }).closest("form"),
-    ).toHaveAttribute("aria-busy", "true");
+      screen.getByRole("heading", { level: 3, name: "There is a problem" }),
+    ).toBeInTheDocument();
   });
 
   it("ignores a submit that arrives while one is already in flight", async () => {
@@ -331,16 +451,31 @@ describe("Form", () => {
     expect(screen.getByRole("button", { name: "Set an error" })).toHaveFocus();
   });
 
-  it("stops waiting for a summary once a submit has been answered without errors", async () => {
+  it("keeps listening for the answer to a submit until an error actually arrives", async () => {
     const user = userEvent.setup();
     render(<ExternallyErroringForm />);
 
-    // A submit that produces no errors settles that submit; an error that
-    // turns up afterwards belongs to something else and must not grab focus.
+    // The deliberate cost of not consulting `pending`: a submit leaves the
+    // form listening, so an error that turns up afterwards is treated as
+    // that submit's answer and announced. After a submit, an error is far
+    // more likely to be its answer than not - and the case that matters
+    // more, a refusal arriving several renders later, is announced at all.
     await user.click(screen.getByRole("button", { name: "Save entry" }));
     await user.click(screen.getByRole("button", { name: "Set an error" }));
 
-    expect(screen.getByRole("button", { name: "Set an error" })).toHaveFocus();
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("announces a refusal that arrives late, from a caller that never sets pending", async () => {
+    const user = userEvent.setup();
+    render(<SlowRefusingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
   });
 
   it("announces again on a resubmit that fails the same way", async () => {

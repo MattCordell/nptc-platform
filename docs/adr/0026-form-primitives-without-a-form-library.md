@@ -92,9 +92,15 @@ an OpenAPI change first.
   A mismatch means a summary link that focuses nothing; every screen's test should
   exercise the failed-submit path, which surfaces it immediately.
 - `Form` renders its own submit button, so a screen cannot place a `type="submit"`
-  control inside it by another route. That is what makes "one submit path" and "disabled
+  control inside it by another route. That is what makes "one submit path" and "refused
   while pending" guarantees rather than conventions, at the cost of an opinionated
   actions row; `secondaryActions` covers Cancel and friends.
+- `Form` keeps listening for a submit's answer until an error arrives, rather than
+  treating the first render where `pending` is false as the answer. A caller that never
+  sets `pending`, or sets it a tick later, therefore still gets its refusal announced —
+  the majority case. The cost is the other direction: after a successful submit the form
+  is still listening, so an error appearing later with no further submit does take focus.
+  An error that follows no submit at all still never moves focus.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.

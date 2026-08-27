@@ -97,7 +97,7 @@ describe("CheckboxGroup", () => {
     );
   });
 
-  it("describes the group by its hint and error, and marks it invalid", () => {
+  it("describes each box by the group's hint and error, so the text is announced at all", () => {
     render(
       <CheckboxGroup
         legend="Specimen types"
@@ -109,11 +109,40 @@ describe("CheckboxGroup", () => {
       />,
     );
 
+    // Asserted as an accessible description on the control, not as an
+    // attribute on the fieldset: a group role's description is
+    // inconsistently announced, so an attribute there can pass a test while
+    // the user hears nothing.
+    for (const label of ["Serum", "Plasma", "Urine"]) {
+      expect(screen.getByLabelText(label)).toHaveAccessibleDescription(
+        "Choose every type the test accepts Choose at least one",
+      );
+      expect(screen.getByLabelText(label)).toHaveAttribute("aria-invalid", "true");
+    }
+    // And not duplicated onto the group, which would announce it twice on
+    // the first option.
     const group = screen.getByRole("group", { name: "Specimen types" });
-    expect(group).toHaveAttribute("aria-invalid", "true");
-    expect(group.getAttribute("aria-describedby")).toBe(
-      `${screen.getByText("Choose every type the test accepts").id} ${screen.getByText("Choose at least one").id}`,
+    expect(group).not.toHaveAttribute("aria-describedby");
+    expect(group).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("carries through a held value that is no longer an offered option", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <CheckboxGroup
+        legend="Specimen types"
+        options={SPECIMEN_OPTIONS}
+        value={["retired-specimen-code", "urine"]}
+        onChange={onChange}
+      />,
     );
+
+    await user.click(screen.getByLabelText("Serum"));
+
+    // A stored entry can hold a code the list no longer offers. Ticking an
+    // unrelated box must not delete it.
+    expect(onChange).toHaveBeenCalledWith(["serum", "urine", "retired-specimen-code"]);
   });
 
   it("gives two groups on one screen distinct names, so they do not behave as one", () => {

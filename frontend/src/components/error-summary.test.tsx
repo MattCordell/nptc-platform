@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useId } from "react";
 import { describe, expect, it } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
@@ -89,6 +90,42 @@ describe("ErrorSummary", () => {
     );
 
     expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("takes a heading level, for a form that is not the whole page", () => {
+    render(<ErrorSummary errors={ERRORS} headingLevel={3} />);
+
+    expect(
+      screen.getByRole("heading", { level: 3, name: "There is a problem" }),
+    ).toBeInTheDocument();
+  });
+
+  it("focuses a field whose id was generated rather than supplied", async () => {
+    const user = userEvent.setup();
+
+    function GeneratedIdDemo() {
+      const generated = useId();
+      return (
+        <>
+          <ErrorSummary
+            errors={[{ fieldId: generated, message: "Enter a requesting term" }]}
+          />
+          <label htmlFor={generated}>Requesting term</label>
+          <input id={generated} type="text" />
+        </>
+      );
+    }
+
+    render(<GeneratedIdDemo />);
+    // The point is that the summary does not depend on the shape of a
+    // React-generated id - a format React has changed before (`:` in
+    // React 18 was not a valid CSS selector; today it is `_r_0_`) and may
+    // change again. getElementById is what makes that not matter.
+    expect(screen.getByLabelText("Requesting term").id).not.toBe("");
+
+    await user.click(screen.getByRole("link", { name: "Enter a requesting term" }));
+
+    expect(screen.getByLabelText("Requesting term")).toHaveFocus();
   });
 
   it("has no automated accessibility violations", async () => {

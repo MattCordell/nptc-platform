@@ -57,19 +57,34 @@ export function CheckboxGroup({
     } else {
       selected.add(optionValue);
     }
-    // Reported in the order the options were declared, not in click order:
-    // a caller comparing the new value to the old one (a dirty check, an
-    // equality assertion in a test) should not see a difference that is
-    // only about which box the user happened to tick first.
-    onChange(options.filter((option) => selected.has(option.value)).map((o) => o.value));
+    // Known options are reported in the order they were declared, not in
+    // click order: a caller comparing the new value to the old one (a dirty
+    // check, an equality assertion) should not see a difference that is only
+    // about which box the user happened to tick first.
+    //
+    // Values with no matching option are carried through untouched rather
+    // than dropped. A stored entry can legitimately hold a code that is no
+    // longer offered - a retired specimen type, a value from an older
+    // version of the list - and re-deriving the whole array from `options`
+    // would delete it the moment the user ticked something unrelated. That
+    // is silent data loss on an interaction that had nothing to do with it.
+    const known = new Set(options.map((option) => option.value));
+    onChange([
+      ...options.filter((option) => selected.has(option.value)).map((o) => o.value),
+      ...value.filter((held) => !known.has(held)),
+    ]);
   };
 
+  // `aria-describedby`/`aria-invalid` go on each `<input>`, not on the
+  // `<fieldset>`. A group role's description is inconsistently announced -
+  // NVDA and JAWS commonly skip `aria-describedby` on a `group`, and
+  // `aria-invalid` is not reliably supported there at all - so the hint and
+  // error would be visible but silent, while the same text on a `Field`
+  // control is announced. Per-control support is universal, and putting it
+  // in both places instead would announce the hint twice on the first
+  // option.
   return (
-    <fieldset
-      className="flex flex-col gap-2 border-0 p-0"
-      aria-describedby={describedBy}
-      aria-invalid={error ? true : undefined}
-    >
+    <fieldset className="flex flex-col gap-2 border-0 p-0">
       <legend className="text-sm font-medium text-[var(--color-text)]">{legend}</legend>
       {hint ? (
         <p id={hintId} className="text-sm text-[var(--color-text-muted)]">
@@ -87,6 +102,8 @@ export function CheckboxGroup({
               value={option.value}
               checked={value.includes(option.value)}
               disabled={option.disabled}
+              aria-describedby={describedBy}
+              aria-invalid={error ? true : undefined}
               onChange={() => toggle(option.value)}
               className="h-4 w-4"
             />

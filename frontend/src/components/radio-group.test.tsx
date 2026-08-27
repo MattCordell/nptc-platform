@@ -146,7 +146,7 @@ describe("RadioGroup", () => {
     expect(screen.getByText("Choose a status")).toHaveAttribute("id", "status-error");
   });
 
-  it("describes the group by its hint and error, and marks it invalid", () => {
+  it("describes each option by the group's hint and error, so the text is announced at all", () => {
     render(
       <RadioGroup
         legend="Status"
@@ -158,11 +158,21 @@ describe("RadioGroup", () => {
       />,
     );
 
+    // On the controls, not on the fieldset - a group role's description is
+    // inconsistently announced, so an attribute there can pass a test while
+    // the user hears nothing.
+    for (const label of ["Draft", "In review", "Published"]) {
+      expect(screen.getByLabelText(label)).toHaveAccessibleDescription(
+        "Only published entries are exported Choose a status",
+      );
+      // No aria-invalid: ARIA does not support it on role="radio", and a
+      // fieldset exposes `group`, not `radiogroup`, where it would be. The
+      // error is carried in words by the description above.
+      expect(screen.getByLabelText(label)).not.toHaveAttribute("aria-invalid");
+    }
     const group = screen.getByRole("group", { name: "Status" });
-    expect(group).toHaveAttribute("aria-invalid", "true");
-    expect(group.getAttribute("aria-describedby")).toBe(
-      `${screen.getByText("Only published entries are exported").id} ${screen.getByText("Choose a status").id}`,
-    );
+    expect(group).not.toHaveAttribute("aria-describedby");
+    expect(group).not.toHaveAttribute("aria-invalid");
   });
 
   it("gives two groups on one screen distinct names, so they do not behave as one group", async () => {

@@ -121,12 +121,21 @@ export function RadioGroup({
     }
   };
 
+  // `aria-describedby` goes on each `<input>`, not on the `<fieldset>`. A
+  // group role's description is inconsistently announced - NVDA and JAWS
+  // commonly skip `aria-describedby` on a `group` - so the hint and error
+  // would be visible but silent, while the same text on a `Field` control
+  // is announced. Per-control support is universal, and putting it in both
+  // places instead would announce the hint twice on the first option.
+  //
+  // There is no `aria-invalid` anywhere here, unlike `CheckboxGroup`: ARIA
+  // does not support the property on `role="radio"` (eslint-plugin-jsx-a11y
+  // rejects it outright), and a `<fieldset>` exposes `group`, not
+  // `radiogroup`, where it would be. The error is carried in words by the
+  // description above instead - which is what a user actually hears either
+  // way.
   return (
-    <fieldset
-      className="flex flex-col gap-2 border-0 p-0"
-      aria-describedby={describedBy}
-      aria-invalid={error ? true : undefined}
-    >
+    <fieldset className="flex flex-col gap-2 border-0 p-0">
       <legend className="text-sm font-medium text-[var(--color-text)]">{legend}</legend>
       {hint ? (
         <p id={hintId} className="text-sm text-[var(--color-text-muted)]">
@@ -147,6 +156,7 @@ export function RadioGroup({
               value={option.value}
               checked={option.value === value}
               disabled={option.disabled}
+              aria-describedby={describedBy}
               tabIndex={index === tabbableIndex ? 0 : -1}
               onChange={() => onChange(option.value)}
               onKeyDown={(event) => handleKeyDown(event, index)}

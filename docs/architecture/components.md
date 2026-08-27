@@ -85,17 +85,27 @@ records why there is no form library behind these and what was rejected.
   label. They share `ChoiceOption` (`choice-option.ts`) so the two cannot take subtly
   different option shapes for the same job. `CheckboxGroup` keeps a tab stop per box
   (each is an independent yes/no answer); `RadioGroup` rovers, so a five-option group is
-  one `Tab` stop rather than five, with the arrow keys traversing it.
+  one `Tab` stop rather than five, with the arrow keys traversing it. A group's hint and
+  error are wired to each `<input>`, not to the `<fieldset>` — NVDA and JAWS commonly skip
+  `aria-describedby` on a `group`, so a description there is visible but silent. A
+  `CheckboxGroup` also carries through a held value that is no longer an offered option
+  (a retired code on a stored entry) rather than dropping it when the user ticks something
+  unrelated.
 - **`error-summary.tsx` — `ErrorSummary`.** One list of everything that failed, at the top
   of the form, each item a link to the control it names. Focusable (`tabIndex={-1}`) but
   not `role="alert"`: a form moves focus here on a failed submit, which announces the
-  region once — an alert role on top announces it twice.
+  region once — an alert role on top announces it twice. Its heading level is a prop
+  (default 2), because a form inside a `Dialog` or a nested section would otherwise carry
+  a hardcoded `<h2>` into a heading-order violation the per-component axe run cannot see.
 - **`form.tsx` — `Form`.** Owns the `<form>`, renders its own submit button, guards a
   double submit, and moves focus to the summary when a submit is answered with errors.
   It renders the submit button rather than accepting one as a child so that "one submit
-  path" and "submitting is disabled while a save is in flight" are structural rather than
+  path" and "submitting is refused while a save is in flight" are structural rather than
   conventions a screen has to remember; `secondaryActions` is the escape hatch for Cancel
-  and friends.
+  and friends. While pending, that button is `aria-disabled`, not `disabled` — a
+  `disabled` control leaves the tab order mid-save and drops the keyboard user's focus to
+  `<body>` with nothing announced; the submit handler's own guard is what refuses the
+  second submit.
 
 ### Composing a form
 
@@ -113,7 +123,10 @@ Two conventions a screen author needs, neither obvious from the call site:
 
 A rejected save goes in `Form`'s `formError`, not on a control: the API's error shape is
 `ErrorResponse { detail: string }` with no per-field `loc` (deliberately — FR-44,
-NFR-04), so a server refusal has no field to attach to.
+NFR-04), so a server refusal has no field to attach to. `Form` keeps listening for a
+submit's answer until an error actually arrives, however many renders later, and does not
+require the caller to set `pending` for that to work — `pending` drives the button and
+`aria-busy` only.
 
 ## Known limits of the automated check
 

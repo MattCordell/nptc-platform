@@ -18,6 +18,10 @@ type FormProps = {
    * per-field `loc`, so a server refusal cannot be attributed to a control
    * and belongs here rather than on one. */
   formError?: ReactNode;
+  /** True while a submit is in flight. Drives the submit button's disabled
+   * appearance, `aria-busy`, and the re-entry guard - it is *not* part of
+   * the focus contract below, deliberately, so a caller that never sets it
+   * still gets a summary announced when its refusal arrives. */
   pending?: boolean;
   /** Required - `Form` renders its own submit button, so "one submit path"
    * is structural rather than a convention a screen has to remember. */
@@ -26,6 +30,9 @@ type FormProps = {
   /** Cancel and friends, rendered beside the submit button. */
   secondaryActions?: ReactNode;
   errorSummaryTitle?: string;
+  /** Heading level for the error summary - see `ErrorSummary`. Give a form
+   * inside a `Dialog` or a nested section the level its surroundings need. */
+  errorSummaryHeadingLevel?: 2 | 3 | 4 | 5 | 6;
   children: ReactNode;
 } & Omit<ComponentPropsWithoutRef<"form">, "onSubmit" | "children">;
 
@@ -51,6 +58,7 @@ export function Form({
   pendingLabel,
   secondaryActions,
   errorSummaryTitle,
+  errorSummaryHeadingLevel,
   children,
   className,
   ...rest
@@ -73,22 +81,35 @@ export function Form({
   // answer to a submit the user just made" - worth interrupting them for -
   // from errors that were on screen all along.
   //
-  // `pending` is how a caller says "the answer has not arrived yet", so it
-  // is also what holds the flag open across an async submit; once pending
-  // is false the submit has been answered either way, and the flag is
-  // cleared so a later, unrelated error cannot steal focus.
+  // The flag is held until an error actually arrives, and is cleared only by
+  // announcing one. It deliberately does not consult `pending`: an earlier
+  // version cleared the flag on the first render where `pending` was false,
+  // which silently dropped the announcement for every caller whose pending
+  // state is not set synchronously inside `onSubmit` - a mutation hook that
+  // flips `isPending` a tick later, an `onSubmit` that awaits before setting
+  // state, or a caller that simply never passes `pending`. That is the
+  // majority case and the failure was invisible.
+  //
+  // The cost is the other direction: a submit that succeeds leaves the form
+  // still listening, so an error appearing later with no further submit does
+  // take focus. That is the better way round - after a submit, an error is
+  // far more likely to be its answer than not - and an error that follows no
+  // submit at all still never moves focus.
   useEffect(() => {
-    if (!awaitingResultRef.current || pending) {
+    if (!awaitingResultRef.current || !hasErrors) {
       return;
     }
     awaitingResultRef.current = false;
-    if (hasErrors) {
-      summaryRef.current?.focus();
-    }
-  }, [submitCount, errors, formError, hasErrors, pending]);
+    summaryRef.current?.focus();
+  }, [submitCount, errors, formError, hasErrors]);
 
   return (
     <form
+      // `rest` first, then this component's own contract: `noValidate`,
+      // `aria-busy` and the submit handler are what `Form` promises, and a
+      // caller must not be able to unpick them by passing an attribute -
+      // the same ordering `Select` uses over `Field`'s wiring.
+      {...rest}
       noValidate
       aria-busy={pending || undefined}
       onSubmit={(event) => {
@@ -101,7 +122,6 @@ export function Form({
         onSubmit();
       }}
       className={["flex flex-col gap-4", className ?? ""].filter(Boolean).join(" ")}
-      {...rest}
     >
       {/* `noValidate` above: the browser's own constraint bubbles are
           inconsistent between engines, vanish on a timer, and are not
@@ -112,10 +132,22 @@ export function Form({
         errors={fieldErrors}
         formError={formError}
         title={errorSummaryTitle}
+        headingLevel={errorSummaryHeadingLevel}
       />
       {children}
       <div className="flex items-center gap-2">
-        <Button type="submit" disabled={pending}>
+        {/* `aria-disabled`, not `disabled`: a user who submitted from the
+            keyboard has focus on this button, and `disabled` removes it from
+            the tab order mid-save, dropping focus to <body> with nothing
+            announced to explain it. The re-entry guard in `onSubmit` above
+            is what actually refuses the second submit, so the button only
+            needs to *say* it is unavailable - and an aria-disabled control
+            stays focusable and stays announced. */}
+        <Button
+          type="submit"
+          aria-disabled={pending || undefined}
+          className={pending ? "opacity-50" : undefined}
+        >
           {pending && pendingLabel ? pendingLabel : submitLabel}
         </Button>
         {secondaryActions}

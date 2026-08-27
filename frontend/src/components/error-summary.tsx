@@ -19,6 +19,12 @@ type ErrorSummaryProps = {
    * useful to send focus. */
   formError?: ReactNode;
   title?: string;
+  /** Heading level for the summary's own heading, defaulting to 2. A form
+   * is not always a whole page - inside a `Dialog`, or a nested section, a
+   * hardcoded `<h2>` is a heading-order violation on exactly the composed
+   * screens these primitives exist for, and axe only catches that at
+   * whole-page scope, which the per-component check never reaches. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6;
   /** React 19 takes `ref` as an ordinary prop, so this needs no
    * `forwardRef` - and none of the baseline components use one. `Form`
    * holds the ref to move focus here on a failed submit. */
@@ -38,8 +44,15 @@ type ErrorSummaryProps = {
  * Each item is a real link, so it is reachable in a screen reader's link
  * list, but its default navigation is suppressed - see the click handler.
  */
-export function ErrorSummary({ errors, formError, title, ref }: ErrorSummaryProps) {
+export function ErrorSummary({
+  errors,
+  formError,
+  title,
+  headingLevel = 2,
+  ref,
+}: ErrorSummaryProps) {
   const titleId = useId();
+  const Heading = `h${headingLevel}` as const;
 
   if (errors.length === 0 && !formError) {
     return null;
@@ -52,9 +65,12 @@ export function ErrorSummary({ errors, formError, title, ref }: ErrorSummaryProp
       aria-labelledby={titleId}
       className="flex flex-col gap-2 rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-surface)] p-4"
     >
-      <h2 id={titleId} className="text-base font-semibold text-[var(--color-danger)]">
+      <Heading
+        id={titleId}
+        className="text-base font-semibold text-[var(--color-danger)]"
+      >
         {title ?? "There is a problem"}
-      </h2>
+      </Heading>
       {formError ? <p className="text-sm text-[var(--color-text)]">{formError}</p> : null}
       {errors.length > 0 ? (
         <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
@@ -75,6 +91,13 @@ export function ErrorSummary({ errors, formError, title, ref }: ErrorSummaryProp
                   // in jsdom). Moving focus by hand is what makes "and
                   // where" true rather than aspirational.
                   event.preventDefault();
+                  // getElementById, not querySelector: the format of a
+                  // `useId` id is React's to change, and has included
+                  // characters that are not valid in a CSS selector before
+                  // now (`:` in React 18; `_r_0_` today). Looking the
+                  // element up by id rather than by selector does not
+                  // depend on that, so the ids a caller gets for free by
+                  // not supplying one keep working.
                   document.getElementById(error.fieldId)?.focus();
                 }}
               >
