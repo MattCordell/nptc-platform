@@ -139,9 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     verb = "WOULD REBUILD (invalid)" if args.dry_run else "REBUILT (was invalid)"
     for name in report.repaired_invalid:
         print(f"{verb}: {name}")
-    verb = (
-        "WOULD REBUILD (datatype/key changed)" if args.dry_run else "REBUILT (datatype/key changed)"
-    )
+    verb = "WOULD REBUILD (definition changed)" if args.dry_run else "REBUILT (definition changed)"
     for name in report.rebuilt_stale_definition:
         print(f"{verb}: {name}")
     verb = "WOULD REPAIR COMMENT" if args.dry_run else "REPAIRED COMMENT"
@@ -150,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, exception_type in report.failed:
         print(f"FAILED: {name} ({exception_type})")
 
-    if not report.changed and not report.repaired_comment and not report.failed:
+    if not report.changed and not report.repaired_comment:
         print("OK: no drift - every filterable property's index is already converged")
         return EXIT_OK
 

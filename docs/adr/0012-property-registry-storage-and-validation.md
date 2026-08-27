@@ -315,15 +315,17 @@ Fix:
 **Update (2026-08-28, issue #54 review).** An automated review of #54's PR found nine real
 gaps, all fixed in the same PR before merge:
 
-- **The reconciler diffed indexes by name only, missing a `datatype`/`key` amendment.**
-  `index_seq` (and so the index name) is immutable, but `datatype` and `key` are ordinary
-  mutable, audited `property_definition` columns - an amendment to either leaves an index
-  that is present and `indisvalid` yet serves nothing the property's *current*
-  `filter_clause` renders. Fixed by comparing `pg_get_indexdef(indexrelid)` against the
-  expression/key the property's *current* configuration would render
-  (`nptc.db.property_indexes.matches_indexdef`) and rebuilding on any mismatch, not just
-  re-commenting - a stale `COMMENT ON INDEX` alone is now insufficient evidence that only
-  the comment drifted.
+- **The reconciler diffed indexes by name only, missing a `datatype` amendment.**
+  `index_seq` (and so the index name) is immutable, but `datatype` is an ordinary mutable,
+  audited `property_definition` column - an amendment leaves an index that is present and
+  `indisvalid` yet serves nothing the property's *current* `filter_clause` renders. Fixed by
+  comparing `pg_get_indexdef(indexrelid)` against the expression/key the property's
+  *current* configuration would render (`nptc.db.property_indexes.matches_indexdef`) and
+  rebuilding on any mismatch, not just re-commenting - a stale `COMMENT ON INDEX` alone is
+  now insufficient evidence that only the comment drifted. (`key` is compared too, as
+  defence in depth against a raw-SQL rename, though `PropertyDefinition.key` is itself
+  `@validates`-guarded and CHECK-constrained never to change once set, FR-12 - the original
+  wording of this bullet incorrectly called it mutable; corrected on review.)
 - **`CodeHandler.filter_clause(FilterOp.IN, [])` silently matched every row.** SQLAlchemy
   2.0's `or_()` with zero arguments renders the empty string, not an always-false
   predicate - `or_(false(), *(...))` restores the always-false-on-empty behaviour `in_([])`
@@ -357,6 +359,43 @@ gaps, all fixed in the same PR before merge:
 - **`finally: connection.execute(_UNLOCK_SQL, ...)` could mask the original exception** if
   the connection had already died - the unlock is now itself wrapped in a suppressing `try`;
   the lock is session-scoped on a `NullPool` connection about to close regardless.
+
+**Update (2026-08-28, issue #54 review, second pass).** A re-review of the fixes above found
+the drift-detection marker itself was under-specified, plus five smaller gaps:
+
+- **`matches_indexdef`'s `TEXT_SCALAR` marker was a substring of the `NUMERIC_SCALAR` one.**
+  `value #>> '{}'::text[]` appears inside `nptc_numeric_or_null((value #>> '{}'::text[]))`
+  too, so a `decimal`/`positiveInt` -> `string`/`url` amendment (the untested direction of
+  the pair) went undetected: the property kept a `nptc_numeric_or_null(...)` btree no
+  `StringHandler.filter_clause` predicate can use. Fixed by anchoring the `TEXT_SCALAR`
+  marker on `text_pattern_ops` instead - the opclass only that shape's `create_statement`
+  ever specifies, so it cannot appear in either of the other two shapes' `pg_get_indexdef`
+  output. This single change also fixes an index built by an earlier commit on this branch
+  (default opclass, no `text_pattern_ops` in its own `pg_get_indexdef`): it now correctly
+  reads as stale and gets rebuilt with the corrected opclass, rather than the `PREFIX` fix
+  silently never reaching an already-reconciled database.
+- **`nptc_numeric_or_null` was left unqualified inside the index expression** while the table
+  reference beside it was already schema-qualified for the identical `search_path` reason -
+  `create_statement` now calls `public.nptc_numeric_or_null(...)`.
+- **`FilterOp.PREFIX` still had no query-plan evidence.** `test_db_property_index_plan.py`
+  gained an `EXPLAIN` case proving `PREFIX` itself uses the `text_pattern_ops` index (the
+  pattern is two constants either side of `||`, which Postgres constant-folds before
+  planning - the same "provably constant" shape the existing `EQUALS` case relies on).
+- **`ReconciliationReport.changed` excluded `failed`.** A future library caller (#55/#138's
+  post-commit dispatch) that only branches on `changed` before logging must not see a falsy
+  report while indexes failed to converge - `changed` now folds `failed` in.
+- **A rebuild whose `DROP` succeeded but whose `CREATE` then raised was reported nowhere
+  useful** - not in `dropped`, not in the rebuild lists, only in `failed`, leaving an operator
+  unable to tell the property currently has no index at all. Fixed the same way `created`
+  already handled a create-then-comment failure: the name is recorded in `dropped` as soon as
+  the `DROP` succeeds, and only moved to `repaired_invalid`/`rebuilt_stale_definition` once the
+  replacement `CREATE` also succeeds.
+- **Correction to the previous update's own text**: `key` is not actually a mutable column -
+  `PropertyDefinition.key` is `@validates`-guarded and CHECK-constrained never to change once
+  set (FR-12). The reconciler still compares it (as defence in depth against a raw-SQL
+  rename, which is what `test_reconcile_rebuilds_after_a_key_rename` has to perform to reach
+  that code path at all), but the earlier wording calling it "an ordinary mutable, audited
+  column" was wrong and is corrected here.
 
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,

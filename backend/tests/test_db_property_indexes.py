@@ -38,6 +38,7 @@ from nptc.db.property_indexes import (
 from nptc.db.property_reconciler import (
     RECONCILE_LOCK_KEY,
     IndexerNotConfiguredError,
+    ReconciliationReport,
     get_indexer_engine,
     reconcile_property_indexes,
 )
@@ -234,7 +235,7 @@ def test_create_statement_numeric_scalar_uses_the_cast_safe_function() -> None:
 
     rendered = create_statement(desired).as_string(None)
 
-    assert "nptc_numeric_or_null(value #>> '{}')" in rendered
+    assert "public.nptc_numeric_or_null(value #>> '{}')" in rendered
 
 
 def test_drop_statement_is_concurrent_conditional_and_schema_qualified() -> None:
@@ -322,6 +323,75 @@ def test_matches_indexdef_false_after_a_key_rename() -> None:
     )
 
     assert matches_indexdef(desired, indexdef) is False
+
+
+def test_matches_indexdef_true_for_a_numeric_definition() -> None:
+    desired = DesiredIndex(
+        property_key="admin_number",
+        index_seq=100,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.NUMERIC_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p100_1 ON public.property_value USING btree "
+        "(public.nptc_numeric_or_null((value #>> '{}'::text[]))) "
+        "WHERE (property_key = 'admin_number'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is True
+
+
+def test_matches_indexdef_false_after_a_datatype_amendment_the_other_direction() -> None:
+    """Regression (issue #54 review, second pass): the `TEXT_SCALAR` marker
+    used to be a bare substring of the `NUMERIC_SCALAR` rendering
+    (`value #>> '{}'::text[]` appears inside `nptc_numeric_or_null((value
+    #>> '{}'::text[]))` too), so a `decimal`/`positiveInt` -> `string`/`url`
+    amendment went undetected - the untested direction of the pair, the
+    opposite of `test_matches_indexdef_false_after_a_datatype_amendment`
+    above (which covers `string` -> `decimal`)."""
+    desired = DesiredIndex(
+        property_key="admin_number",
+        index_seq=100,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.TEXT_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p100_1 ON public.property_value USING btree "
+        "(public.nptc_numeric_or_null((value #>> '{}'::text[]))) "
+        "WHERE (property_key = 'admin_number'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is False
+
+
+def test_matches_indexdef_false_for_a_text_scalar_index_built_before_the_opclass_switch() -> None:
+    """Regression (issue #54 review, second pass): an index built by an
+    earlier commit on this branch (default btree opclass, no
+    `text_pattern_ops`) must read as stale so it gets rebuilt with the
+    corrected opclass - not "already converged" just because the bare
+    `#>> '{}'` expression matches."""
+    desired = DesiredIndex(
+        property_key="admin_text",
+        index_seq=99,
+        kind=IndexKind.EXPRESSION_BTREE,
+        expression=ValueExpression.TEXT_SCALAR,
+    )
+    indexdef = (
+        "CREATE INDEX ix_propval_p99_1 ON public.property_value USING btree "
+        "((value #>> '{}'::text[])) WHERE (property_key = 'admin_text'::text)"
+    )
+
+    assert matches_indexdef(desired, indexdef) is False
+
+
+def test_reconciliation_report_changed_is_true_when_only_failed_is_populated() -> None:
+    """Regression (issue #54 review, second pass): a library caller
+    (#55/#138's future post-commit dispatch) that only branches on
+    `changed` before logging must not see a falsy report while an index
+    failed to converge."""
+    report = ReconciliationReport(failed=(("ix_propval_p1_1", "LockNotAvailable"),))
+
+    assert report.changed is True
 
 
 def test_include_object_excludes_a_generated_index() -> None:
@@ -788,3 +858,50 @@ def test_one_failing_index_does_not_abort_the_rest_of_the_run(
     finally:
         _delete_property(owner_engine, failing_key)
         _drop_generated_index_if_exists(owner_engine, failing_name)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_a_rebuild_whose_create_fails_after_a_successful_drop_is_reported_as_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+    owner_engine: Engine,
+    _indexer_configured: None,
+    _admin_property: dict[str, object],
+) -> None:
+    """Regression (issue #54 review, second pass): if `DROP INDEX` succeeds
+    but the following `CREATE INDEX` then raises, the index is genuinely
+    gone - the report must say so (`dropped`), not only `failed`, and must
+    not claim the rebuild completed (`repaired_invalid`)."""
+    from nptc.db import property_reconciler
+
+    key = _admin_property["key"]
+    index_seq = _admin_property["index_seq"]
+    expected_name = index_name(index_seq, 1)  # type: ignore[arg-type]
+    reconcile_property_indexes()
+    with owner_engine.connect() as connection:
+        connection.execute(
+            text("UPDATE pg_index SET indisvalid = false WHERE indexrelid = (:name)::regclass"),
+            {"name": expected_name},
+        )
+        connection.commit()
+
+    real_create_statement = property_reconciler.create_statement
+
+    def _fail_create(desired: DesiredIndex) -> object:
+        if desired.property_key == key:
+            raise psycopg.errors.QueryCanceled("simulated failure")
+        return real_create_statement(desired)
+
+    monkeypatch.setattr(property_reconciler, "create_statement", _fail_create)
+
+    report = reconcile_property_indexes()
+
+    assert expected_name in report.dropped
+    assert expected_name not in report.repaired_invalid
+    assert expected_name not in report.rebuilt_stale_definition
+    assert report.failed == ((expected_name, "QueryCanceled"),)
+    with owner_engine.connect() as connection:
+        exists = connection.execute(
+            text("SELECT 1 FROM pg_indexes WHERE indexname = :name"), {"name": expected_name}
+        ).first()
+    assert exists is None  # the old index is gone; no replacement was built

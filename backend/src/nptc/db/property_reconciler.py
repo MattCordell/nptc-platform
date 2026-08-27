@@ -93,11 +93,14 @@ _UNLOCK_SQL = text("SELECT pg_advisory_unlock(:key)")
 #: comment_statement`) so a missing/stale comment can be repaired too.
 #: `pg_get_indexdef` recovers the index's actual expression/predicate, which
 #: `nptc.db.property_indexes.matches_indexdef` diffs against the property's
-#: *current* `datatype`/`key` - both are ordinary mutable, audited columns,
-#: so an index built before either was amended can look "present and valid"
-#: while serving nothing a current `filter_clause` renders (issue #54
-#: review). A fixed literal query, no runtime data - the `~` pattern is a
-#: compile-time constant mirroring `GENERATED_INDEX_NAME_RE`, never
+#: *current* `datatype` - an ordinary mutable, audited column, unlike the
+#: immutable `index_seq` the index name is derived from - so an index built
+#: before an amendment can look "present and valid" while serving nothing a
+#: current `filter_clause` renders (issue #54 review; `key` is compared too,
+#: as defence in depth, though `PropertyDefinition.key` is itself immutable
+#: once set - see `matches_indexdef`'s own docstring). A fixed literal
+#: query, no runtime data - the `~` pattern is a compile-time constant
+#: mirroring `GENERATED_INDEX_NAME_RE`, never
 #: interpolated.
 _ACTUAL_STATE_SQL = text(
     "SELECT c.relname AS name, i.indisvalid AS is_valid, "
@@ -169,15 +172,30 @@ class ReconciliationReport:
     #: from `created`/`dropped`/`repaired_invalid`/`rebuilt_stale_definition`:
     #: e.g. a `CREATE INDEX` that succeeded followed by a `COMMENT ON INDEX`
     #: that raised reports the name in both `created` and `failed`, rather
-    #: than in neither. Never carries the exception's own message text
-    #: (NFR-26) - only its type name, matching the CLI's existing posture.
+    #: than in neither; a rebuild whose `DROP` succeeded but whose `CREATE`
+    #: then raised reports the name in `dropped` and `failed` (never in
+    #: `repaired_invalid`/`rebuilt_stale_definition`, since the replacement
+    #: was never actually built) - accurately telling an operator the
+    #: property currently has *no* index, not merely that something went
+    #: wrong. Never carries the exception's own message text (NFR-26) -
+    #: only its type name, matching the CLI's existing posture.
     failed: tuple[tuple[str, str], ...] = ()
     skipped_locked: bool = False
 
     @property
     def changed(self) -> bool:
+        """Whether this run changed anything *or* left something
+        unconverged - a library caller (the future #55/#138 background-task
+        dispatch) that only checks `changed` before deciding whether to log
+        must not see a falsy report while `failed` is non-empty (issue #54
+        review): a failure is exactly the kind of outcome such a caller
+        needs to notice, not silently pass over."""
         return bool(
-            self.created or self.dropped or self.repaired_invalid or self.rebuilt_stale_definition
+            self.created
+            or self.dropped
+            or self.repaired_invalid
+            or self.rebuilt_stale_definition
+            or self.failed
         )
 
 
@@ -321,19 +339,33 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
                 is_valid, comment, indexdef = actual[name]
                 if not is_valid:
                     _execute(cursor, drop_statement(name))
+                    # Recorded as dropped as soon as the DROP succeeds, same
+                    # reasoning as `created` above (issue #54 review, second
+                    # pass): if the following CREATE then raises, the index
+                    # is genuinely gone, and the report must say so rather
+                    # than only naming it under `failed` - an operator
+                    # reading `failed` alone cannot tell whether the
+                    # property still has *an* index, just a stale one, or
+                    # none at all.
+                    dropped.append(name)
                     _execute(cursor, create_statement(index))
+                    dropped.remove(name)
                     repaired_invalid.append(name)
                     _execute(cursor, comment_statement(name, index.property_key))
                     continue
                 if not matches_indexdef(index, indexdef):
                     # The index is `indisvalid` but no longer matches this
-                    # property's current `datatype`/`key` - both mutable,
-                    # audited columns unrelated to the immutable `index_seq`
-                    # the index name is derived from, so only the actual
-                    # index *definition* (not its name or validity) can
-                    # notice either kind of drift (issue #54 review).
+                    # property's current `datatype` - a mutable, audited
+                    # column unrelated to the immutable `index_seq` the
+                    # index name is derived from, so only the actual index
+                    # *definition* (not its name or validity) can notice the
+                    # drift (issue #54 review; `key` is compared too as
+                    # defence in depth, though it is not actually mutable in
+                    # practice - see `matches_indexdef`'s own docstring).
                     _execute(cursor, drop_statement(name))
+                    dropped.append(name)  # see the repaired_invalid branch above
                     _execute(cursor, create_statement(index))
+                    dropped.remove(name)
                     rebuilt_stale_definition.append(name)
                     _execute(cursor, comment_statement(name, index.property_key))
                     continue
@@ -342,14 +374,26 @@ def _reconcile_locked(connection: Connection, *, dry_run: bool) -> Reconciliatio
                     repaired_comment.append(name)
             except Exception as exc:
                 failed.append((name, type(exc).__name__))
+                if raw.closed:
+                    # The connection itself died, not just this one
+                    # statement (issue #54 review, minor) - every remaining
+                    # desired index would otherwise get its own noisy
+                    # `failed` entry for the same root cause. Stop here; the
+                    # unattempted names are simply not in this run's report
+                    # at all, and the next run picks them up normally.
+                    break
 
         orphaned = [name for name in actual if name not in desired]
         for name in orphaned:
+            if raw.closed:
+                break
             try:
                 _execute(cursor, drop_statement(name))
                 dropped.append(name)
             except Exception as exc:
                 failed.append((name, type(exc).__name__))
+                if raw.closed:
+                    break
 
     return ReconciliationReport(
         created=tuple(created),

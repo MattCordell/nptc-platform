@@ -196,9 +196,14 @@ def create_statement(desired: DesiredIndex) -> sql.Composed:
             "((value #>> '{{}}') text_pattern_ops) WHERE property_key = {key}"
         ).format(name=sql.Identifier(desired.name), key=sql.Literal(desired.property_key))
     if desired.expression is ValueExpression.NUMERIC_SCALAR:
+        # `public.nptc_numeric_or_null`, not the bare function name - the
+        # same `search_path` exposure the table reference above closes
+        # (issue #54 review): an unqualified function call resolves through
+        # the indexer role's own `search_path` at `CREATE INDEX` time, not
+        # necessarily `public` first.
         return sql.SQL(
             "CREATE INDEX CONCURRENTLY {name} ON public.property_value "
-            "(nptc_numeric_or_null(value #>> '{{}}')) WHERE property_key = {key}"
+            "(public.nptc_numeric_or_null(value #>> '{{}}')) WHERE property_key = {key}"
         ).format(name=sql.Identifier(desired.name), key=sql.Literal(desired.property_key))
     raise AssertionError(f"unhandled ValueExpression: {desired.expression!r}")  # pragma: no cover
 
@@ -228,29 +233,55 @@ def comment_statement(name: str, property_key: str) -> sql.Composed:
 
 def _expression_marker(expression: ValueExpression) -> str:
     """A substring of `pg_get_indexdef()`'s own rendering that appears only
-    for this expression - verified directly against `postgres:18.6`'s actual
-    `pg_get_indexdef` output for each of the three shapes, not assumed from
-    `create_statement`'s input syntax (Postgres reformats it: extra
-    parentheses, an added `::text[]` cast on the `#>>` argument)."""
+    for this expression and no other - verified directly against
+    `postgres:18.6`'s actual `pg_get_indexdef` output for each of the three
+    shapes, not assumed from `create_statement`'s input syntax (Postgres
+    reformats it: extra parentheses, an added `::text[]` cast on the `#>>`
+    argument).
+
+    **Must be exclusive, not merely present** (issue #54 review, second
+    pass): the bare fragment `value #>> '{}'::text[]` is a substring of the
+    `NUMERIC_SCALAR` rendering too (`nptc_numeric_or_null` wraps the same
+    `#>>` expression), so using it for `TEXT_SCALAR` let a `decimal`/
+    `positiveInt` -> `string`/`url` amendment go undetected - the untested
+    direction of the two, since the reverse (`string` -> `decimal`) already
+    failed the *absence* of `nptc_numeric_or_null` and was caught. Anchoring
+    on `text_pattern_ops` instead - the opclass only `TEXT_SCALAR`'s
+    `create_statement` ever specifies - fixes both directions in one move,
+    and as a side effect also catches an index built before the
+    `text_pattern_ops` switch (default btree opclass, issue #54 review's own
+    finding 3): its `pg_get_indexdef` output has no `text_pattern_ops` at
+    all, so it now correctly reads as stale and gets rebuilt."""
     if expression is ValueExpression.RAW_JSONB:
         return "jsonb_path_ops"
     if expression is ValueExpression.TEXT_SCALAR:
-        return "value #>> '{}'::text[]"
+        return "text_pattern_ops"
     if expression is ValueExpression.NUMERIC_SCALAR:
-        return "nptc_numeric_or_null((value #>> '{}'::text[]))"
+        return "nptc_numeric_or_null("
     raise AssertionError(f"unhandled ValueExpression: {expression!r}")  # pragma: no cover
 
 
 def matches_indexdef(desired: DesiredIndex, indexdef: str) -> bool:
     """True when `indexdef` (from `pg_get_indexdef`, the reconciler's own
     actual-state query) already reflects `desired`'s expression and property
-    key - false when a `property_definition` row's `datatype` or `key` was
-    amended *after* its index was built (issue #54 review): both are
-    ordinary mutable, audited columns, not `index_seq`, so the index name
-    alone cannot notice either change. A `False` result tells the reconciler
-    the existing index's predicate/expression can never serve the property
-    as it is configured today, and it must be dropped and rebuilt - not
-    merely re-commented."""
+    key - false when a `property_definition` row's `datatype` was amended
+    *after* its index was built (issue #54 review): `datatype` is an
+    ordinary mutable, audited column, unlike the immutable `index_seq` the
+    index name is derived from, so the name alone cannot notice the change.
+    (`key` is *not* mutable in practice - `PropertyDefinition.key` is
+    `@validates`-guarded and CHECK-constrained to never change once set,
+    FR-12 - but the same comparison catches a raw-SQL rename too, as
+    defence in depth, and correctly finds nothing to object to in the
+    ordinary case where `key` never moves.) A `False` result tells the
+    reconciler the existing index's predicate/expression can never serve
+    the property as it is configured today, and it must be dropped and
+    rebuilt - not merely re-commented.
+
+    The property key literal is compared via plain f-string interpolation
+    into a substring check, not a parameterised query - safe here because
+    `property_key`'s own CHECK constraint (`^[a-z][a-z0-9_]{0,62}$`) already
+    rules out a quote character, unlike the general case NFR-22 guards
+    against."""
     return (
         _expression_marker(desired.expression) in indexdef
         and f"property_key = '{desired.property_key}'::text" in indexdef

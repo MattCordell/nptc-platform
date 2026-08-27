@@ -58,7 +58,7 @@ These codes are stable and safe to depend on from a scheduled check.
 CREATED: ix_propval_p7_1
 DROPPED: ix_propval_p12_1
 REBUILT (was invalid): ix_propval_p9_1
-REBUILT (datatype/key changed): ix_propval_p14_1
+REBUILT (definition changed): ix_propval_p14_1
 REPAIRED COMMENT: ix_propval_p9_1
 FAILED: ix_propval_p20_1 (LockNotAvailable)
 OK: no drift - every filterable property's index is already converged
@@ -72,11 +72,12 @@ OK: no drift - every filterable property's index is already converged
   leaving an index that existed by name but was never usable
   (`pg_index.indisvalid = false`, invisible to `pg_indexes`). The reconciler drops and
   rebuilds it.
-- `REBUILT (datatype/key changed)` - the property's `datatype` or `key` was amended after
-  its index was built (both are ordinary mutable, audited columns - the index name itself,
-  derived from the immutable `index_seq`, cannot notice either change). The reconciler
-  compares the index's actual definition against what the property's current configuration
-  would render and rebuilds on any mismatch, rather than trusting the name/validity alone.
+- `REBUILT (definition changed)` - the property's `datatype` was amended after its index was
+  built (an ordinary mutable, audited column - the index name itself, derived from the
+  immutable `index_seq`, cannot notice the change; `key` is checked too as defence in depth,
+  though it is not actually mutable in practice - FR-12). The reconciler compares the
+  index's actual definition against what the property's current configuration would render
+  and rebuilds on any mismatch, rather than trusting the name/validity alone.
 - `REPAIRED COMMENT` - the `COMMENT ON INDEX` carrying the property key (the only place
   that key appears - index *names* never contain it, see ADR-0012) was missing or stale
   while the index's own definition still matched. Repaired in place; the index itself is

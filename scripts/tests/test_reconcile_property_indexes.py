@@ -125,7 +125,7 @@ def test_dropped_and_repaired_are_reported(
     assert code == cli.EXIT_OK
     assert "DROPPED: ix_propval_p2_1" in out
     assert "REBUILT (was invalid): ix_propval_p3_1" in out
-    assert "REBUILT (datatype/key changed): ix_propval_p5_1" in out
+    assert "REBUILT (definition changed): ix_propval_p5_1" in out
     assert "REPAIRED COMMENT: ix_propval_p4_1" in out
 
 

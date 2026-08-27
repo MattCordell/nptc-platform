@@ -243,6 +243,28 @@ def _run_partial_index_plan_proof(owner_engine: Engine, key_a: str, index_name_a
         assert "Index Cond" in plan, plan
         assert "Seq Scan on property_value" not in plan, plan
 
+        # --- PREFIX also uses the index (issue #54 review): switching the
+        # TEXT_SCALAR opclass to text_pattern_ops is only proven by this
+        # module if PREFIX itself gets an EXPLAIN case, not just EQUALS.
+        # `startswith(..., autoescape=True)` renders `col LIKE <lit> || '%'
+        # ESCAPE '/'` - two constants either side of `||`, which Postgres
+        # constant-folds into one literal at plan time, so this is the same
+        # "provably constant" shape EQUALS above relies on.
+        prefix_stmt = select(PropertyValue.entry_id).where(
+            PropertyValue.property_key == key_a,
+            handler.filter_clause(FilterOp.PREFIX, "val ", PropertyValue.value),
+        )
+        prefix_literal_sql = str(
+            prefix_stmt.compile(
+                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+        prefix_plan = "\n".join(
+            connection.execute(text("EXPLAIN " + prefix_literal_sql)).scalars().all()
+        )
+        assert index_name_a in prefix_plan, prefix_plan
+        assert "Seq Scan on property_value" not in prefix_plan, prefix_plan
+
         # --- negative control: the identical predicate shape, but with
         # property_key bound as a parameter under a forced generic plan,
         # cannot use the partial index at all - proving the literal above

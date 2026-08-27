@@ -972,8 +972,9 @@ result against actual `pg_index` state (not `pg_indexes`, which is blind to `ind
 and creates/drops/repairs to converge. This is what makes un-flagging a property remove its
 index rather than leave it orphaned, and what notices and rebuilds an index a failed
 `CREATE INDEX CONCURRENTLY` left `indisvalid = false` - or one whose actual definition has
-gone stale against an amended `datatype`/`key` (both ordinary mutable, audited columns,
-unlike the immutable `index_seq` the index name is derived from): the diff also compares
+gone stale against an amended `datatype` (an ordinary mutable, audited column, unlike the
+immutable `index_seq` the index name is derived from - `key` is compared too as defence in
+depth, though it is not actually mutable in practice, FR-12): the diff also compares
 `pg_get_indexdef` against what the property's *current* configuration would render
 (`nptc.db.property_indexes.matches_indexdef`), not just the index's name and validity, and
 rebuilds rather than merely re-commenting on a mismatch. One index failing to converge does
