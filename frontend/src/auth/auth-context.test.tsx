@@ -482,17 +482,54 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
     expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
   });
 
-  it("still clears stale tokens when a renewal refusal is not racing anything", async () => {
+  it("still clears an established session when its own expiry renewal is refused", async () => {
     // The negative case: guarding the clear must not turn into never
-    // clearing. An ordinary post-logout-shaped renewal (no concurrent
-    // sign-in) still signs the user out.
-    const renewal = vi.fn(() =>
-      Promise.reject(new InteractionRequiredError("login_required")),
+    // clearing. A signed-in session whose own renewal is refused - nothing
+    // else racing it - must still be cleared, exactly as before this fix.
+    //
+    // The token endpoint hands back an already-expired token (`expires_in:
+    // -1`), so the next `getAccessToken` call triggers a real renewal
+    // rather than reusing the cached token - no fake timers needed.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes(".well-known")) {
+          return Promise.resolve(
+            new Response(JSON.stringify(DISCOVERY), {
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "access-token",
+              id_token: "id-token",
+              expires_in: -1,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }),
     );
+    let succeed = true;
+    const renewal = vi.fn((url: string) => {
+      if (succeed) {
+        const state = new URL(url).searchParams.get("state") ?? "";
+        return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+      }
+      return Promise.reject(new InteractionRequiredError("login_required"));
+    });
     renderProvider(renewal);
-
     await act(async () => {
       await api().restore();
+    });
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+
+    succeed = false;
+    await act(async () => {
+      await api().getAccessToken();
     });
 
     expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
