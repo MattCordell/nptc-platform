@@ -24,7 +24,15 @@ All under `/api/v1/catalogue`, same path space as the public read routes.
 `business_key` accepts any status, not only `active` - an editing surface has to reach a
 `draft` entry before it can ever become `active`. `nptc.catalogue.entries.
 load_entry_for_update` is the loader, shared with `save_entry`/`save_entries` rather than
-re-querying `CatalogueEntry` by hand.
+re-querying `CatalogueEntry` by hand. Pinned by an explicit test for every status
+(`draft`/`active`/`deprecated`/`withdrawn`), not just exercised incidentally.
+
+The `201` from `POST /bindings` carries a `Location` header pointing at
+`GET /entries/{business_key}` - not a URL for the binding on its own, since nothing below
+`/bindings/{code}` serves a `GET` (the two routes there are both `POST` sub-resources). A
+client wanting the binding it just created already has it in the response body; `Location`
+exists so the response also names the resource it changed, and names one that actually
+resolves.
 
 ## Addressing a binding: by `code`, never an id
 
@@ -102,11 +110,14 @@ concurrent binds racing for the same entry or the same code both pass the pre-ch
 only one wins at insert - `ix_code_binding_one_active_per_entry`/
 `ix_code_binding_one_active_entry_per_code` are what actually decide. The loser's
 `IntegrityError` is translated to the same `409` domain error the pre-check would have
-raised (`nptc.auth.identity._is_username_collision` is the precedent for this
-constraint-name-based translation), so a lost race still reads as a normal conflict, not
-a 500. `load_entry_for_update` takes no row lock, so this is optimistic, not pessimistic,
+raised, via `nptc.db.errors.unique_violation_constraint` - the same constraint-name unwrap
+`nptc.auth.identity._is_username_collision` already needed, pulled out to one shared
+helper rather than a second copy - so a lost race still reads as a normal conflict, not a
+500. `load_entry_for_update` takes no row lock, so this is optimistic, not pessimistic,
 concurrency control - acceptable here because the loser gets a clean, actionable 409
-rather than corrupting state.
+rather than corrupting state. Forced deterministically (an `after_cursor_execute` hook
+supplying the ordering plain sequential test code cannot express) in
+`test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror`.
 
 Every `CodeBinding*` exception from `nptc.catalogue.bindings` is mapped in
 `nptc.api.errors` by the same convention every other handler in that module follows:

@@ -36,6 +36,7 @@ from nptc.auth.grants import (
 )
 from nptc.auth.linking import may_auto_link
 from nptc.auth.permissions import Role
+from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
@@ -103,7 +104,6 @@ def _find_candidate_user_ids(
 
 
 _USERNAME_UNIQUE_CONSTRAINT = "uq_app_user_username"
-_UNIQUE_VIOLATION_SQLSTATE = "23505"
 
 
 def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) -> str:
@@ -128,11 +128,7 @@ def _is_username_collision(exc: IntegrityError) -> bool:
     causes - retrying with a new username suffix cannot fix either, and
     reporting them as a username-allocation failure would misdirect
     whoever reads the eventual error."""
-    orig = exc.orig
-    sqlstate = getattr(orig, "sqlstate", None)
-    diag = getattr(orig, "diag", None)
-    constraint_name = getattr(diag, "constraint_name", None)
-    return sqlstate == _UNIQUE_VIOLATION_SQLSTATE and constraint_name == _USERNAME_UNIQUE_CONSTRAINT
+    return unique_violation_constraint(exc) == _USERNAME_UNIQUE_CONSTRAINT
 
 
 def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditContext) -> User:

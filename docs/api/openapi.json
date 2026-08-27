@@ -488,6 +488,14 @@
                   "$ref": "#/components/schemas/Binding"
                 }
               }
+            },
+            "headers": {
+              "Location": {
+                "description": "The entry (`GET {business_key}`) the new binding was added to.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "401": {

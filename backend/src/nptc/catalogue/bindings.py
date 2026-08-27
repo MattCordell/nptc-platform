@@ -49,6 +49,7 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import (
     SNOMED_CT_SYSTEM,
@@ -82,8 +83,10 @@ __all__ = [
 #: the same domain error the pre-check already raises, rather than letting
 #: the loser surface as a raw `IntegrityError` (`nptc.auth.identity.
 #: _is_username_collision` is the precedent for this constraint-name-based
-#: recovery).
-_UNIQUE_VIOLATION_SQLSTATE = "23505"
+#: recovery - `nptc.db.errors.unique_violation_constraint` is the unwrap
+#: logic both now share). `test_race_translation_constraint_names_match_
+#: the_actual_indexes` in `test_catalogue_bindings.py` pins these two
+#: literals against `CodeBinding.__table_args__`'s actual `Index` names.
 _ONE_ACTIVE_PER_ENTRY_CONSTRAINT = "ix_code_binding_one_active_per_entry"
 _ONE_ACTIVE_PER_CODE_CONSTRAINT = "ix_code_binding_one_active_entry_per_code"
 
@@ -313,12 +316,7 @@ def create_binding(
             reason=validated_reason,
         )
     except IntegrityError as exc:
-        orig = exc.orig
-        sqlstate = getattr(orig, "sqlstate", None)
-        diag = getattr(orig, "diag", None)
-        constraint_name = getattr(diag, "constraint_name", None)
-        if sqlstate != _UNIQUE_VIOLATION_SQLSTATE:
-            raise
+        constraint_name = unique_violation_constraint(exc)
         if constraint_name == _ONE_ACTIVE_PER_ENTRY_CONSTRAINT:
             raise CodeBindingAlreadyActiveError(
                 f"entry {entry.id} already has an active code binding"

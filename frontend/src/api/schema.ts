@@ -847,6 +847,8 @@ export interface operations {
             /** @description Successful Response */
             201: {
                 headers: {
+                    /** @description The entry (`GET {business_key}`) the new binding was added to. */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {

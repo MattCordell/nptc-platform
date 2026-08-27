@@ -16,10 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nptc.api.dependencies import get_terminology_client
 from nptc.api.errors import register_exception_handlers
+from nptc.api.prefix import API_PREFIX
 from nptc.api.routers import auth, catalogue, catalogue_bindings
 from nptc.settings import ApiSettings
 
-API_PREFIX = "/api/v1"
+__all__ = ["API_PREFIX", "create_app"]
 
 
 def create_app(*, settings: ApiSettings | None = None) -> FastAPI:

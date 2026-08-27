@@ -199,8 +199,13 @@ _DETAIL_BINDING_NOT_FOUND = "No active code binding was found for the given code
 #: NFR-04/NFR-26: names nothing about what actually happened - this is a
 #: platform invariant failure (see `CodeBindingWriteNotFoundError`'s own
 #: docstring), not a caller mistake, so there is nothing for a caller to
-#: act on differently.
-_DETAIL_BINDING_WRITE_NOT_FOUND = "This request could not be completed. Try again."
+#: act on differently. Deliberately does not say "try again" - unlike
+#: every routine refusal in this module, a retry will not clear this one
+#: (`_RESPONSE_500` in `catalogue_bindings.py` and `catalogue-write-api.md`
+#: both say so too; this string must not contradict them).
+_DETAIL_BINDING_WRITE_NOT_FOUND = (
+    "This request could not be completed. Contact an administrator if the problem persists."
+)
 
 
 def _unauthenticated(detail: str) -> JSONResponse:

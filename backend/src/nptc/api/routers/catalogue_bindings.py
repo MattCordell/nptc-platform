@@ -52,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
+from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import Binding, BindingList, BusinessKeyPath, _binding
 from nptc.auth.permissions import Permission
@@ -130,6 +131,24 @@ BINDING_WRITE_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     500: _RESPONSE_500,
 }
 
+#: `bind_code` alone: its 201 carries a `Location` header pointing at the
+#: entry the new binding was added to (there is no route for a binding on
+#: its own - see `bind_code`'s own body). Declared here, not left implicit,
+#: so a caller reading `docs/api/openapi.json` learns about it without
+#: reading the route body (issue #219 review: an earlier, undeclared
+#: version of this header pointed at a path with no `GET`).
+_BIND_CODE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    **BINDING_WRITE_ERROR_RESPONSES,
+    201: {
+        "headers": {
+            "Location": {
+                "description": "The entry (`GET {business_key}`) the new binding was added to.",
+                "schema": {"type": "string"},
+            }
+        }
+    },
+}
+
 
 def _reject_blank(value: str | None) -> str | None:
     """Shared by every `fsn`/`au_preferred_term` field below. `min_length=1`
@@ -203,7 +222,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
     "/entries/{business_key}/bindings",
     summary="Bind a SNOMED CT code to a catalogue entry",
     status_code=201,
-    responses=BINDING_WRITE_ERROR_RESPONSES,
+    responses=_BIND_CODE_RESPONSES,
     dependencies=[_EDIT],
 )
 def bind_code(
@@ -225,7 +244,13 @@ def bind_code(
         reason=body.reason,
     )
     session.flush()
-    response.headers["Location"] = f"{router.prefix}/entries/{business_key}/bindings/{binding.code}"
+    # Not `.../bindings/{code}`: nothing serves a `GET` there (the two
+    # routes below `bindings/{code}` are both `POST`s), so that path is one
+    # a client could not follow. The entry detail route does exist, does
+    # show the new binding, and is the resource a caller who just bound a
+    # code to it would actually want back (issue #219 review - an earlier
+    # version of this header pointed at the unfollowable, unprefixed path).
+    response.headers["Location"] = f"{API_PREFIX}{router.prefix}/entries/{business_key}"
     return _row_to_binding(session, entry_id=entry.id, binding_id=binding.id)
 
 

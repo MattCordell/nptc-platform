@@ -14,12 +14,13 @@ import inspect
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Index, event, func, select, text
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
+from nptc.catalogue import bindings
 from nptc.catalogue.bindings import (
     CodeBindingAlreadyActiveError,
     CodeBindingAlreadyRetiredError,
@@ -32,7 +33,7 @@ from nptc.catalogue.bindings import (
     link_replacement,
     retire_binding,
 )
-from nptc.catalogue.entries import allocate_business_key, create_entry
+from nptc.catalogue.entries import allocate_business_key, create_entry, format_business_key
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
@@ -360,6 +361,95 @@ def test_create_binding_rejects_a_code_already_bound_to_a_different_entry(
         _new_binding(app_session, second_entry)
 
     assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror(
+    app_session: Session, app_engine: Engine, owner_engine: Engine
+) -> None:
+    """`create_binding`'s own comment on the `try`/`except IntegrityError`
+    block admits its pre-checks narrow the race but cannot close it: two
+    concurrent binds for the same code both pass the `already_bound_
+    entry_id` `SELECT` and only one wins at insert. Plain sequential test
+    code cannot express that ordering (issue #219 review) -
+    `test_version_id_col_backstop_catches_a_genuine_concurrent_race` in
+    `test_catalogue_optimistic_locking.py` is the precedent this follows:
+    an `after_cursor_execute` hook on `app_engine` fires the instant the
+    code-side pre-check `SELECT` has run (matched by `code_binding.code`
+    appearing in the statement - the entry-side pre-check above it never
+    mentions the `code` column) but before this call's own flush, then
+    commits a competing active binding for the same code on a genuinely
+    different entry from a second connection. The point of this test is
+    that the resulting `IntegrityError` - `ix_code_binding_one_active_
+    entry_per_code`'s own violation - comes out translated, not raw."""
+    entry = _new_entry(app_session)
+    app_session.flush()
+    other_business_key = format_business_key(999_000_101)
+    fired = False
+
+    def _inject_concurrent_bind(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if fired or "code_binding.code" not in statement:
+            return
+        fired = True
+        with app_engine.connect() as other_connection:
+            other_entry_id = other_connection.execute(
+                text(
+                    "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                    "VALUES (:key, 'Raced-in entry') RETURNING id"
+                ),
+                {"key": other_business_key},
+            ).scalar_one()
+            other_connection.execute(
+                text(
+                    "INSERT INTO code_binding (entry_id, code, fsn) VALUES (:entry_id, :code, :fsn)"
+                ),
+                {"entry_id": other_entry_id, "code": _VALID_CODE, "fsn": _VALID_FSN},
+            )
+            other_connection.commit()
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_bind)
+        try:
+            with pytest.raises(CodeBindingCodeAlreadyBoundError):
+                _new_binding(app_session, entry)
+        finally:
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_bind)
+
+        assert fired, "the injected concurrent bind never ran - the test proves nothing"
+        app_session.rollback()
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM code_binding WHERE code = :code"), {"code": _VALID_CODE}
+            )
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": other_business_key},
+            )
+            cleanup_connection.commit()
+
+
+@pytest.mark.integration
+def test_race_translation_constraint_names_match_the_actual_indexes() -> None:
+    """`bindings._ONE_ACTIVE_PER_ENTRY_CONSTRAINT`/`_ONE_ACTIVE_PER_CODE_
+    CONSTRAINT` are plain string literals matched against `IntegrityError.
+    orig.diag.constraint_name` - nothing ties them to `CodeBinding.
+    __table_args__`'s actual `Index` names except this test. Renaming
+    either index with no matching update here would silently regress the
+    race translation above back to a raw `IntegrityError` (issue #219
+    review), with nothing else failing to say so."""
+    index_names = {arg.name for arg in CodeBinding.__table_args__ if isinstance(arg, Index)}
+    assert bindings._ONE_ACTIVE_PER_ENTRY_CONSTRAINT in index_names
+    assert bindings._ONE_ACTIVE_PER_CODE_CONSTRAINT in index_names
 
 
 @pytest.mark.req("FR-08")

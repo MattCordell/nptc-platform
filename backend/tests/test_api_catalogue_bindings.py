@@ -152,6 +152,32 @@ def test_bind_code_returns_201_with_the_binding_as_served(api: ApiTestApp) -> No
     assert _audit_event_count(api) == before + 1
 
 
+@pytest.mark.integration
+def test_bind_code_location_header_points_at_a_route_that_actually_serves_it(
+    api: ApiTestApp,
+) -> None:
+    """`response.headers["Location"]` must be a URL a client can actually
+    follow - `/api/v1` prefix included, since that comes from `include_
+    router`, not the router's own `prefix` (issue #219 review: an earlier
+    version omitted it and pointed at a path with no `GET` handler at
+    all). `status="active"` specifically: the public `GET` this test
+    follows the header to only serves `active` entries (FR-20), unlike
+    every other test in this module."""
+    business_key = _seed_entry(api, status="active")
+    token = _admin_token(api, subject="sub-bind-location")
+
+    response = _bind(api, business_key, token)
+
+    assert response.status_code == 201, response.text
+    location = response.headers["Location"]
+    assert location == f"/api/v1/catalogue/entries/{business_key}"
+
+    followed = api.client.get(location, headers={"Authorization": f"Bearer {token}"})
+    assert followed.status_code == 200, followed.text
+    codes = {b["code"] for b in followed.json()["bindings"]}
+    assert CODE_A in codes
+
+
 @pytest.mark.req("FR-36")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
