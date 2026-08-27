@@ -64,6 +64,22 @@ describe("Field", () => {
     expect(input.getAttribute("aria-describedby")).toBe(`${hint.id} ${error.id}`);
   });
 
+  it("puts a caller-supplied id on the control, and derives the hint and error ids from it", () => {
+    // An ErrorSummary item links to `#requesting-term` to move focus to this
+    // control (issue #210); it can only do that for an id the caller chose.
+    render(
+      <Field id="requesting-term" label="Requesting term" hint="A hint" error="Required">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>,
+    );
+
+    const input = screen.getByLabelText("Requesting term");
+    expect(input).toHaveAttribute("id", "requesting-term");
+    expect(input.getAttribute("aria-describedby")).toBe(
+      "requesting-term-hint requesting-term-error",
+    );
+  });
+
   it("composes with a select control, not just input", () => {
     render(
       <Field label="Status">
