@@ -111,8 +111,17 @@ class BindingRow:
     `load_bindings` - the module docstring's rule two: the UUID
     `code_binding.replaced_by_binding_id` actually holds never reaches a
     caller of this module at all.
+
+    `id` is this row's own primary key - an internal detail, never put on
+    the public `Binding` response model (see `catalogue_shared.py`'s own
+    rule). It exists on this row type only so a write route can re-read the
+    exact row it just wrote: `(entry_id, code)` is unique only among
+    *active* bindings, so a code bound, retired, and bound again leaves two
+    retired rows sharing a code, and only `id` still tells them apart
+    (issue #219 review).
     """
 
+    id: uuid.UUID
     entry_id: uuid.UUID
     system: str
     code: str
@@ -259,6 +268,7 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     successor = aliased(CodeBinding)
     rows = session.execute(
         select(
+            CodeBinding.id,
             CodeBinding.entry_id,
             CodeBinding.system,
             CodeBinding.code,
@@ -275,6 +285,7 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     ).all()
     return tuple(
         BindingRow(
+            id=row.id,
             entry_id=row.entry_id,
             system=row.system,
             code=row.code,

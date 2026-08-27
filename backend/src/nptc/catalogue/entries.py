@@ -217,7 +217,18 @@ def create_entry(
     return entry
 
 
-def _load_for_update(session: Session, business_key: str) -> CatalogueEntry:
+def load_entry_for_update(session: Session, business_key: str) -> CatalogueEntry:
+    """One entry by `business_key`, any status - unlike
+    `nptc.catalogue.queries.get_entry`, which is the *public* read path and
+    filters to `PUBLIC_STATUSES` on purpose (an unpublished entry must stay
+    invisible to an anonymous caller). An editing surface needs the entry
+    regardless of status - a draft has to be editable before it can ever
+    become `active` - so this loader carries no status filter at all.
+
+    Public (not `_load_for_update`) so a write route elsewhere in the
+    `nptc.catalogue`/`nptc.api` write surface (issue #219) can resolve the
+    same entry this module's own `save_entry`/`save_entries` do, rather than
+    re-querying `CatalogueEntry` by hand."""
     entry = session.execute(
         select(CatalogueEntry).where(CatalogueEntry.business_key == business_key)
     ).scalar_one_or_none()
@@ -303,7 +314,7 @@ def save_entry(
     `reason` (FR-37) is validated before the entry is even loaded, so a
     rejected note never reaches the row-version check at all."""
     validated_reason = validate_changelog_note(reason)
-    entry = _load_for_update(session, business_key)
+    entry = load_entry_for_update(session, business_key)
 
     if entry.row_version != expected_row_version:
         changed_by, changed_at = _latest_change_attribution(session, entry.id)
@@ -359,7 +370,7 @@ def save_entry(
     except (StaleDataError, ObjectDeletedError):
         savepoint.rollback()
         session.expire(entry)
-        refreshed = _load_for_update(session, business_key)
+        refreshed = load_entry_for_update(session, business_key)
         changed_by, changed_at = _latest_change_attribution(session, refreshed.id)
         raise EntryVersionConflictError(
             _build_conflict_report(

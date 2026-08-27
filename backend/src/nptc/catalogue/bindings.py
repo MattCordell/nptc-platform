@@ -37,16 +37,19 @@ this has no acknowledgement path: a code is either free or it isn't.
 
 from __future__ import annotations
 
+import uuid
 from typing import ClassVar
 
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import (
     SNOMED_CT_SYSTEM,
@@ -60,14 +63,32 @@ __all__ = [
     "CodeBindingAlreadyActiveError",
     "CodeBindingAlreadyRetiredError",
     "CodeBindingCodeAlreadyBoundError",
+    "CodeBindingNotFoundError",
     "CodeBindingNotRetiredError",
     "CodeBindingSelfSupersessionError",
+    "CodeBindingWriteNotFoundError",
     "InvalidCodeBindingEditionHintError",
     "InvalidCodeBindingSystemError",
     "create_binding",
     "link_replacement",
+    "load_active_binding",
     "retire_binding",
 ]
+
+#: `IntegrityError.orig.diag.constraint_name` for the two partial unique
+#: indexes `create_binding` below pre-checks before insert. Read-then-write
+#: pre-checks narrow the race but cannot close it (issue #219 review): two
+#: concurrent inserts can both pass the pre-check and only one wins at
+#: flush. Named here so the flush-time fallback maps the same constraint to
+#: the same domain error the pre-check already raises, rather than letting
+#: the loser surface as a raw `IntegrityError` (`nptc.auth.identity.
+#: _is_username_collision` is the precedent for this constraint-name-based
+#: recovery - `nptc.db.errors.unique_violation_constraint` is the unwrap
+#: logic both now share). `test_race_translation_constraint_names_match_
+#: the_actual_indexes` in `test_catalogue_bindings.py` pins these two
+#: literals against `CodeBinding.__table_args__`'s actual `Index` names.
+_ONE_ACTIVE_PER_ENTRY_CONSTRAINT = "ix_code_binding_one_active_per_entry"
+_ONE_ACTIVE_PER_CODE_CONSTRAINT = "ix_code_binding_one_active_entry_per_code"
 
 
 class CodeBindingAlreadyRetiredError(ValueError):
@@ -129,6 +150,34 @@ class InvalidCodeBindingEditionHintError(ValueError):
     http_status: ClassVar[int] = 422
 
 
+class CodeBindingNotFoundError(LookupError):
+    """Raised by `load_active_binding` when `entry` has no *active* binding
+    for `code` - the addressing scheme issue #219's write routes use, since
+    the public `Binding` model (deliberately) carries no id a client could
+    retire or replace by. A retired binding is not addressable this way: a
+    caller retiring or replacing a binding by its code means the one that
+    is currently in force, and `ix_code_binding_one_active_entry_per_code`
+    guarantees at most one row can match. 404, matching
+    `nptc.catalogue.errors.EntryNotFoundError`'s own reasoning for the
+    identifier one level up."""
+
+    http_status: ClassVar[int] = 404
+
+
+class CodeBindingWriteNotFoundError(LookupError):
+    """Raised when a route re-reads a binding it just wrote (by `id`,
+    through `nptc.catalogue.queries.load_bindings`) and the row is not
+    there. Distinct from `CodeBindingNotFoundError`: that one reports a
+    caller's own path parameter not resolving; this one reports the write
+    path's own invariant - "the row this function just flushed exists" -
+    failing, which is a platform bug, not a caller mistake. 500, and mapped
+    through `nptc.api.errors` like every other handled exception rather
+    than surfacing as an unhandled `AssertionError`, so it is logged with
+    the same discipline as every other refusal."""
+
+    http_status: ClassVar[int] = 500
+
+
 class InvalidCodeBindingSystemError(ValueError):
     """Raised by `create_binding` when `system` is blank -
     `ck_code_binding_system_not_blank` is the actual database invariant;
@@ -152,6 +201,29 @@ def _validate_system(system: str) -> str:
     if not system.strip():
         raise InvalidCodeBindingSystemError("system cannot be blank")
     return system
+
+
+def load_active_binding(session: Session, *, entry_id: uuid.UUID, code: str) -> CodeBinding:
+    """The entry's *active* binding for `code`, or `CodeBindingNotFoundError`.
+
+    The one lookup issue #219's write routes need and none of the module's
+    existing functions provide: they all take an already-loaded
+    `CodeBinding`/`CatalogueEntry`, because the service layer has never
+    before had an HTTP caller needing to resolve one from a path parameter.
+    Scoped to `status == 'active'` deliberately - see the exception's own
+    docstring for why a retired binding is not a valid target here."""
+    binding = session.execute(
+        select(CodeBinding).where(
+            CodeBinding.entry_id == entry_id,
+            CodeBinding.code == code,
+            CodeBinding.status == str(CodeBindingStatus.ACTIVE),
+        )
+    ).scalar_one_or_none()
+    if binding is None:
+        raise CodeBindingNotFoundError(
+            f"entry {entry_id} has no active code binding for code {code!r}"
+        )
+    return binding
 
 
 def create_binding(
@@ -228,14 +300,33 @@ def create_binding(
         edition_hint=validated_edition_hint,
     )
     session.add(binding)
-    record_change(
-        session,
-        ctx,
-        action="code_binding.created",
-        instance=binding,
-        kind=ChangeKind.CREATED,
-        reason=validated_reason,
-    )
+    # The two pre-checks above narrow the race but cannot close it: two
+    # concurrent binds both pass them and only one wins at insert.
+    # `record_change(kind=CREATED)` flushes the session itself (see its own
+    # docstring) - that flush is what actually hits the database and is
+    # where the loser's `IntegrityError` surfaces, so it is what this
+    # translates, rather than reaching the caller raw.
+    try:
+        record_change(
+            session,
+            ctx,
+            action="code_binding.created",
+            instance=binding,
+            kind=ChangeKind.CREATED,
+            reason=validated_reason,
+        )
+    except IntegrityError as exc:
+        constraint_name = unique_violation_constraint(exc)
+        if constraint_name == _ONE_ACTIVE_PER_ENTRY_CONSTRAINT:
+            raise CodeBindingAlreadyActiveError(
+                f"entry {entry.id} already has an active code binding"
+            ) from exc
+        if constraint_name == _ONE_ACTIVE_PER_CODE_CONSTRAINT:
+            raise CodeBindingCodeAlreadyBoundError(
+                f"code {validated_code!r} on {validated_system!r} is already actively bound "
+                "to another entry"
+            ) from exc
+        raise
     return binding
 
 

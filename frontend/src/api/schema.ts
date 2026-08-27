@@ -134,7 +134,8 @@ export interface paths {
          */
         get: operations["read_bindings_api_v1_catalogue_entries__business_key__bindings_get"];
         put?: never;
-        post?: never;
+        /** Bind a SNOMED CT code to a catalogue entry */
+        post: operations["bind_code_api_v1_catalogue_entries__business_key__bindings_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -158,10 +159,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/entries/{business_key}/bindings/{code}/retirement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire an entry's active code binding */
+        post: operations["retire_binding_api_v1_catalogue_entries__business_key__bindings__code__retirement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalogue/entries/{business_key}/bindings/{code}/replacement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retire an entry's active code binding and bind its successor
+         * @description Runs `retire_binding` -> `create_binding` -> `link_replacement` in
+         *     that order, inside this request's one transaction (see the module
+         *     docstring) - `code`/`fsn`/etc. of the successor are the caller's own,
+         *     exactly like `bind_code` above.
+         */
+        post: operations["replace_binding_api_v1_catalogue_entries__business_key__bindings__code__replacement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * BindCodeRequest
+         * @description The body of `POST /catalogue/entries/{business_key}/bindings`.
+         *
+         *     `code` is a string end-to-end (FR-06) - `nptc.catalogue.bindings.
+         *     create_binding` validates it via `nptc_shared.sctid.SCTID` before any
+         *     row is touched. `fsn`/`au_preferred_term` are carried through exactly
+         *     as submitted (FR-82); this screen is the one place they are meant to be
+         *     typed in, and neither is cleaned or re-derived here or anywhere else.
+         */
+        BindCodeRequest: {
+            /** Code */
+            code: string;
+            /** Fsn */
+            fsn: string;
+            /** Au Preferred Term */
+            au_preferred_term?: string | null;
+            /** @default unknown */
+            edition_hint: components["schemas"]["CodeBindingEditionHint"];
+            /** Reason */
+            reason: string;
+        };
         /**
          * Binding
          * @description A SNOMED CT code binding, active or retired.
@@ -201,6 +264,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["Binding"][];
         };
+        /**
+         * CodeBindingEditionHint
+         * @enum {string}
+         */
+        CodeBindingEditionHint: "au" | "int" | "unknown";
         /**
          * Designation
          * @description A catalogue-authored synonym, or a preferred variant in a language
@@ -337,6 +405,33 @@ export interface components {
             value: unknown;
             /** Justification */
             justification: string | null;
+        };
+        /**
+         * ReplaceBindingRequest
+         * @description One `reason` covers all three steps of the replacement (retire,
+         *     create, link) - a caller explaining *why* a code is being replaced is
+         *     explaining one editorial decision, not three.
+         */
+        ReplaceBindingRequest: {
+            successor: components["schemas"]["ReplacementSuccessor"];
+            /** Reason */
+            reason: string;
+        };
+        /** ReplacementSuccessor */
+        ReplacementSuccessor: {
+            /** Code */
+            code: string;
+            /** Fsn */
+            fsn: string;
+            /** Au Preferred Term */
+            au_preferred_term?: string | null;
+            /** @default unknown */
+            edition_hint: components["schemas"]["CodeBindingEditionHint"];
+        };
+        /** RetireBindingRequest */
+        RetireBindingRequest: {
+            /** Reason */
+            reason: string;
         };
         /**
          * SearchHit
@@ -733,6 +828,89 @@ export interface operations {
             };
         };
     };
+    bind_code_api_v1_catalogue_entries__business_key__bindings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    /** @description The entry (`GET {business_key}`) the new binding was added to. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Binding"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active code binding, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_properties_api_v1_catalogue_entries__business_key__properties_get: {
         parameters: {
             query?: never;
@@ -774,6 +952,170 @@ export interface operations {
             };
             /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retire_binding_api_v1_catalogue_entries__business_key__bindings__code__retirement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetireBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Binding"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active code binding, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_binding_api_v1_catalogue_entries__business_key__bindings__code__replacement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BindingList"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active code binding, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

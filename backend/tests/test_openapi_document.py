@@ -88,6 +88,12 @@ _CATALOGUE_SCHEMA_NAMES = (
     "PropertyList",
     "SearchHit",
     "SearchPage",
+    # issue #219's write surface: request bodies, not just responses - the
+    # no-internal-identifier assertion below applies to both.
+    "BindCodeRequest",
+    "RetireBindingRequest",
+    "ReplaceBindingRequest",
+    "ReplacementSuccessor",
 )
 
 

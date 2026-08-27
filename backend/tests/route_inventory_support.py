@@ -47,6 +47,16 @@ def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
     the production app it would report an empty set and pass, silently
     asserting that every mutating endpoint is covered because it could not
     see any.
+
+    **`_IncludedRouter`'s own shape moved again, found wiring issue #219**
+    (the first mutating routes the real app ever had, which is what finally
+    exercised this path with a non-empty result to check). Newer FastAPI no
+    longer puts a `.routes` attribute directly on `_IncludedRouter` - the
+    included `APIRouter`'s routes live one level deeper, at
+    `.original_router.routes`. Both attributes are tried below, oldest
+    first, so this keeps working across the FastAPI version this repo
+    happens to pin rather than silently going back to seeing nothing the
+    next time that internal shape changes.
     """
     keys: set[RouteKey] = set()
 
@@ -57,6 +67,9 @@ def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
                     if method not in _NON_MUTATING_METHODS:
                         keys.add(RouteKey(method=method, path=route.path))
             nested = getattr(route, "routes", None)
+            if nested is None:
+                original_router = getattr(route, "original_router", None)
+                nested = getattr(original_router, "routes", None)
             if nested is not None:
                 visit(nested)
 

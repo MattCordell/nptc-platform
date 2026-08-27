@@ -445,6 +445,120 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Bind a SNOMED CT code to a catalogue entry",
+        "operationId": "bind_code_api_v1_catalogue_entries__business_key__bindings_post",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindCodeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "The entry (`GET {business_key}`) the new binding was added to.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, or no active code binding, matches the given identifier.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/catalogue/entries/{business_key}/properties": {
@@ -514,10 +628,286 @@
           }
         }
       }
+    },
+    "/api/v1/catalogue/entries/{business_key}/bindings/{code}/retirement": {
+      "post": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Retire an entry's active code binding",
+        "operationId": "retire_binding_api_v1_catalogue_entries__business_key__bindings__code__retirement_post",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetireBindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, or no active code binding, matches the given identifier.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}/bindings/{code}/replacement": {
+      "post": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Retire an entry's active code binding and bind its successor",
+        "description": "Runs `retire_binding` -> `create_binding` -> `link_replacement` in\nthat order, inside this request's one transaction (see the module\ndocstring) - `code`/`fsn`/etc. of the successor are the caller's own,\nexactly like `bind_code` above.",
+        "operationId": "replace_binding_api_v1_catalogue_entries__business_key__bindings__code__replacement_post",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceBindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, or no active code binding, matches the given identifier.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "BindCodeRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fsn": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Fsn"
+          },
+          "au_preferred_term": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Au Preferred Term"
+          },
+          "edition_hint": {
+            "$ref": "#/components/schemas/CodeBindingEditionHint",
+            "default": "unknown"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "fsn",
+          "reason"
+        ],
+        "title": "BindCodeRequest",
+        "description": "The body of `POST /catalogue/entries/{business_key}/bindings`.\n\n`code` is a string end-to-end (FR-06) - `nptc.catalogue.bindings.\ncreate_binding` validates it via `nptc_shared.sctid.SCTID` before any\nrow is touched. `fsn`/`au_preferred_term` are carried through exactly\nas submitted (FR-82); this screen is the one place they are meant to be\ntyped in, and neither is cleaned or re-derived here or anywhere else."
+      },
       "Binding": {
         "properties": {
           "system": {
@@ -608,6 +998,15 @@
           "items"
         ],
         "title": "BindingList"
+      },
+      "CodeBindingEditionHint": {
+        "type": "string",
+        "enum": [
+          "au",
+          "int",
+          "unknown"
+        ],
+        "title": "CodeBindingEditionHint"
       },
       "Designation": {
         "properties": {
@@ -871,6 +1270,72 @@
         ],
         "title": "PropertyValue",
         "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based."
+      },
+      "ReplaceBindingRequest": {
+        "properties": {
+          "successor": {
+            "$ref": "#/components/schemas/ReplacementSuccessor"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "successor",
+          "reason"
+        ],
+        "title": "ReplaceBindingRequest",
+        "description": "One `reason` covers all three steps of the replacement (retire,\ncreate, link) - a caller explaining *why* a code is being replaced is\nexplaining one editorial decision, not three."
+      },
+      "ReplacementSuccessor": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fsn": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Fsn"
+          },
+          "au_preferred_term": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Au Preferred Term"
+          },
+          "edition_hint": {
+            "$ref": "#/components/schemas/CodeBindingEditionHint",
+            "default": "unknown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "fsn"
+        ],
+        "title": "ReplacementSuccessor"
+      },
+      "RetireBindingRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "RetireBindingRequest"
       },
       "SearchHit": {
         "properties": {

@@ -19,6 +19,10 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 
+from nptc.api.app import create_app
+from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL
+from nptc.settings import ApiSettings
+
 
 def _load(name: str):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
@@ -92,3 +96,42 @@ def test_a_stale_covered_entry_is_flagged() -> None:
 
     with pytest.raises(AssertionError, match="no longer exist"):
         assert_inventory_covers_every_mutating_route(app, covered=covered)
+
+
+#: Grown alongside each new mutating endpoint (this module's own docstring,
+#: and `route_inventory_support`'s), starting with issue #219's three code
+#: binding write routes - the first mutating routes the real app has ever
+#: had. Each one's negative-auth coverage lives in
+#: `test_api_catalogue_bindings.py`.
+COVERED_WRITE_ROUTES = frozenset(
+    {
+        # `route.path` is the route's own pattern relative to the router it
+        # was declared on, not the `/api/v1`-prefixed path `include_router`
+        # mounts it at (that prefix is applied by the mount, not baked into
+        # the child `APIRoute.path` itself) - `mutating_routes` walks the
+        # route objects directly, so these keys have to match that, not the
+        # OpenAPI document's fully-qualified paths.
+        RouteKey(method="POST", path="/catalogue/entries/{business_key}/bindings"),
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/bindings/{code}/retirement",
+        ),
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/bindings/{code}/replacement",
+        ),
+    }
+)
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.req("FR-81")
+def test_the_real_app_has_no_uncovered_mutating_route() -> None:
+    """The trigger this module's own docstring named: now the real app has
+    mutating routes (issue #219), point the checker at it directly rather
+    than only at synthetic apps. Fails in both directions - see
+    `assert_inventory_covers_every_mutating_route`'s own docstring - so a
+    write route added without updating `COVERED_WRITE_ROUTES` is caught
+    here, not discovered later as a gap in negative-auth testing."""
+    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    assert_inventory_covers_every_mutating_route(app, covered=COVERED_WRITE_ROUTES)

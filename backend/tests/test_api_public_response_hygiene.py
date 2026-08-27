@@ -40,6 +40,12 @@ from typing import Any
 import pytest
 from sqlalchemy.engine import Connection
 
+from nptc.audit.writer import AuditContext
+from nptc.auth.grants import grant_role_unchecked
+from nptc.auth.permissions import Role
+from nptc.catalogue.entries import create_entry
+from nptc.db.models.user import User
+
 
 def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
@@ -107,8 +113,14 @@ def _catalogue_paths(api: ApiTestApp, seeded: SeededCatalogue) -> list[str]:
     endpoint is covered" quietly stops being true.
     """
     paths: list[str] = []
-    for template in api.app.openapi()["paths"]:
+    for template, methods in api.app.openapi()["paths"].items():
         if not template.startswith(f"{API_PREFIX}/catalogue"):
+            continue
+        if "get" not in methods:
+            # issue #219's write routes (bind/retire/replace) live under
+            # this same prefix but take no GET - covered by their own
+            # hygiene test below instead, since a GET-only scanner cannot
+            # fill their `{code}` parameter or supply a request body.
             continue
         path = template[len(API_PREFIX) :].replace("{business_key}", seeded.canonical)
         unfilled = re.findall(r"\{([^}]+)\}", path)
@@ -255,3 +267,69 @@ def test_the_detail_response_carries_every_field_the_public_ui_needs(
     assert len(body["designations"]) >= 2
     assert len(body["properties"]) >= 3
     assert {binding["status"] for binding in body["bindings"]} == {"active", "retired"}
+
+
+# --- issue #219's write routes: the same two invariants ------------------
+
+
+#: The exact hazard this module's own docstring names: `replaced_by_binding_id`
+#: was the column that had to be resolved away for the *read* routes, and
+#: issue #219's replacement route is the first write route with the same
+#: shape - `superseded.replaced_by_binding_id` is set by `link_replacement`
+#: inside the same request. This test proves the write response never
+#: serves the id it just wrote, not merely the id an unrelated read never
+#: had.
+@pytest.mark.req("NFR-04")
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
+    api: ApiTestApp,
+) -> None:
+    token = api.token(subject="sub-write-hygiene")
+    api.get("/auth/me", token=token)
+    user = api.session.query(User).order_by(User.created_at.desc()).first()
+    assert user is not None
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    admin_token = api.token(subject="sub-write-hygiene", extra_claims={"acr": "2"})
+
+    business_key = create_entry(
+        api.session,
+        AuditContext.system(),
+        preferred_term="Write hygiene fixture",
+        reason="Created for issue #219 hygiene test",
+    ).business_key
+    api.session.flush()
+
+    bind_response = api.post(
+        f"/catalogue/entries/{business_key}/bindings",
+        token=admin_token,
+        json={
+            "code": _seed.ACTIVE_CODE,
+            "fsn": _seed.ACTIVE_FSN,
+            "reason": "Bound for the write-hygiene test.",
+        },
+    )
+    replace_response = api.post(
+        f"/catalogue/entries/{business_key}/bindings/{_seed.ACTIVE_CODE}/replacement",
+        token=admin_token,
+        json={
+            "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
+            "reason": "Replaced for the write-hygiene test.",
+        },
+    )
+
+    for response in (bind_response, replace_response):
+        assert response.status_code in (200, 201), response.text
+        found_uuid = _UUID_RE.search(response.text)
+        assert found_uuid is None, f"{response.request.url}: {found_uuid and found_uuid.group()}"
+        found_number = _UNQUOTED_LONG_NUMBER_RE.search(response.text)
+        assert found_number is None, (
+            f"{response.request.url}: unquoted long number {found_number and found_number.group()!r}"
+        )

@@ -53,24 +53,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
-from nptc.api.errors import StoredFSNNotRenderableError
 from nptc.api.routers.auth import ErrorResponse
+from nptc.api.routers.catalogue_shared import Binding, BindingList, BusinessKeyPath, _binding
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.search import search_entries
 from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.exports.semantic_tag import (
-    EmptyDisplayTermError,
-    NotAServedFSNError,
-    render_display_term,
-)
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
@@ -143,20 +138,6 @@ PUBLIC_BINDING_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     **PUBLIC_ENTRY_ERROR_RESPONSES,
     500: _RESPONSE_500_DISPLAY_TERM,
 }
-
-#: Shared by the path parameter on every detail route. A business key that
-#: is not `NPTC-` plus at least six digits (FR-03) is a 422 here, before any
-#: query runs - so a UUID in the path is rejected as malformed rather than
-#: looked up and reported as "not found", which would imply a UUID is a
-#: thing this API accepts.
-BusinessKeyPath = Annotated[
-    str,
-    Path(
-        pattern=BUSINESS_KEY_PATTERN.pattern,
-        description="The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
-        examples=["NPTC-000247"],
-    ),
-]
 
 #: 200 is the documented default and 200 is also the ceiling on what one
 #: response should carry; a caller wanting the whole catalogue pages through
@@ -245,33 +226,6 @@ class Designation(BaseModel):
     length: int
 
 
-class Binding(BaseModel):
-    """A SNOMED CT code binding, active or retired.
-
-    `code` is a string, always (FR-06). `display_term` is `fsn` with its
-    semantic tag removed exactly once, by FR-83's single sanctioned
-    renderer - it is derived here rather than stored, because a stored
-    stripped value is indistinguishable from an unstripped one and that
-    ambiguity is what makes double-stripping possible.
-
-    A retired binding carries `retirement_reason` and, where PRD FR-08's
-    replacement case applies, `replaced_by_code` - the successor's *code*,
-    which is what a client holding the retired one needs in order to move.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    system: str
-    code: str
-    fsn: str
-    display_term: str
-    au_preferred_term: str | None
-    edition_hint: str
-    status: str
-    retirement_reason: str | None
-    replaced_by_code: str | None
-
-
 class PropertyValue(BaseModel):
     """One property value, rendered by its datatype's own handler.
 
@@ -324,12 +278,6 @@ class DesignationList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[Designation]
-
-
-class BindingList(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: list[Binding]
 
 
 class PropertyList(BaseModel):
@@ -406,39 +354,6 @@ def _designation(row: queries.DesignationRow) -> Designation:
         language=row.language,
         status=row.status,
         length=row.length,
-    )
-
-
-def _display_term(fsn: str) -> str:
-    """FR-83's one sanctioned strip, with its refusal re-labelled for the
-    read path.
-
-    Deliberately *not* a fallback to `fsn`, and not a blanked label: an FSN
-    with no semantic tag means a stored value that did not come from the
-    terminology server (FR-82), and a visible failure is the only outcome
-    that gets it fixed. What the re-labelling changes is only *whose* fault
-    the status reports. `render_display_term` raises at 422, which is right
-    when a caller supplied the FSN; here the caller supplied a business key
-    and the FSN came out of the database, so this is a 500 - see
-    `StoredFSNNotRenderableError`.
-    """
-    try:
-        return render_display_term(fsn)
-    except (NotAServedFSNError, EmptyDisplayTermError) as exc:
-        raise StoredFSNNotRenderableError(str(exc)) from exc
-
-
-def _binding(row: queries.BindingRow) -> Binding:
-    return Binding(
-        system=row.system,
-        code=row.code,
-        fsn=row.fsn,
-        display_term=_display_term(row.fsn),
-        au_preferred_term=row.au_preferred_term,
-        edition_hint=row.edition_hint,
-        status=row.status,
-        retirement_reason=row.retirement_reason,
-        replaced_by_code=row.replaced_by_code,
     )
 
 

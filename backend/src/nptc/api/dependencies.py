@@ -301,6 +301,12 @@ def audit_context(
     return base.model_copy(update={"actor_user_id": principal.user_id})
 
 
+#: The alias a state-changing route injects (issue #219 is the first
+#: caller). `audit_context` itself predates any route that uses it - see
+#: its own docstring - so this is the missing last step, not new plumbing.
+AuditContextDep = Annotated[AuditContext, Depends(audit_context)]
+
+
 def permission_dep(permission: Permission) -> Callable[[Principal], Principal]:
     """The adapter pre-specified in `docs/architecture/permissions.md`.
 
