@@ -8,8 +8,8 @@ issues.
 
 This is not the public API [public-api.md](public-api.md) describes. It requires
 authentication and the `catalogue.edit_published` permission, and it is not part of the
-FR-20 external-vendor contract - it exists for this platform's own admin screens (#149,
-#150, #151), starting with code bindings.
+FR-20 external-vendor contract - it exists for this platform's own admin screens
+(issues #149, #150, #151), starting with code bindings.
 
 ## Endpoints
 
