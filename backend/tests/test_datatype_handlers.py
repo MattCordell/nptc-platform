@@ -21,6 +21,7 @@ from nptc.registry import (
     ControlKind,
     FilterOp,
     PropertyDefinitionSpec,
+    ResolvedLocalCode,
     SerialisationTarget,
     UnsupportedBindingError,
     UnsupportedFilterOpError,
@@ -294,6 +295,63 @@ def test_code_rejects_missing_required_field() -> None:
     )
 
 
+@pytest.mark.req("FR-89")
+def test_code_rejects_a_forbidden_code() -> None:
+    """FR-89: 'Any' is never a specimen code - the exact seam
+    Specimen's own `constraints = {"forbidden_codes": ["Any"]}` uses
+    (`nptc.db.bootstrap`)."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    spec = _spec("code", constraints={"forbidden_codes": ["Any"]})
+    value = {"system": "http://example.org/local", "code": "Any"}
+
+    issues = handler.validate(value, spec)
+
+    assert [issue.code for issue in issues] == ["forbidden-code"]
+
+
+@pytest.mark.req("FR-89")
+def test_code_rejects_a_forbidden_code_case_insensitively() -> None:
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    spec = _spec("code", constraints={"forbidden_codes": ["Any"]})
+    value = {"system": "http://example.org/local", "code": "any"}
+
+    issues = handler.validate(value, spec)
+
+    assert [issue.code for issue in issues] == ["forbidden-code"]
+
+
+@pytest.mark.req("FR-89")
+def test_code_accepts_a_code_not_on_the_forbidden_list() -> None:
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    spec = _spec("code", constraints={"forbidden_codes": ["Any"]})
+    # A real SCTID (see shared/tests/test_sctid.py's own known-good
+    # fixture), with no binding configured, so nothing else can reject it.
+    value = {"system": "http://snomed.info/sct", "code": "873871000168106"}
+
+    issues = handler.validate(value, spec)
+
+    assert issues == []
+
+
+@pytest.mark.req("FR-89")
+def test_code_ignores_a_malformed_non_list_forbidden_codes_rather_than_failing_open() -> None:
+    """A `forbidden_codes` stored as a bare string is iterable-of-characters
+    - without the `isinstance(forbidden_codes, list)` guard, `"Any"` would
+    silently forbid the single-letter codes `a`, `n`, `y` while never
+    catching the intended whole-code entries, including `"Any"` itself.
+    `nptc.registry.schema.validate_constraints` is the layer meant to
+    reject this shape before it reaches here; this is the defence in depth
+    for the case where it doesn't."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    spec = _spec("code", constraints={"forbidden_codes": "Any"})
+
+    issues_for_any = handler.validate({"system": "http://example.org/local", "code": "Any"}, spec)
+    issues_for_a = handler.validate({"system": "http://example.org/local", "code": "a"}, spec)
+
+    assert issues_for_any == []
+    assert issues_for_a == []
+
+
 @pytest.mark.req("FR-77")
 @pytest.mark.req("FR-06")
 def test_code_rejects_a_numeric_code_as_a_validation_issue_not_a_crash() -> None:
@@ -364,6 +422,157 @@ def test_code_local_code_system_without_lookup_raises_loudly() -> None:
 
     with pytest.raises(UnsupportedBindingError):
         handler.validate(value, spec)
+
+
+class _StubLocalCodeLookup:
+    """A minimal `LocalCodeLookup`, no database - keyed on
+    `(system_key, code)` so a test seeds only the rows it needs."""
+
+    def __init__(self, table: dict[tuple[str, str], ResolvedLocalCode]) -> None:
+        self._table = table
+        self.calls: list[tuple[str, str]] = []
+
+    def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None:
+        self.calls.append((system_key, code))
+        return self._table.get((system_key, code))
+
+
+@pytest.mark.req("FR-10")
+def test_code_local_code_system_binding_without_a_key_raises_loudly() -> None:
+    """A `BindingSpec(binding_target="local_code_system",
+    local_code_system_key=None)` is a malformed property definition, not a
+    bad value."""
+    handler = CodeHandler(
+        terminology_client=StubTerminologyClient(),
+        local_code_lookup=_StubLocalCodeLookup({}),
+    )
+    binding = BindingSpec(
+        binding_target="local_code_system",
+        value_set_uri=None,
+        strength="required",
+        edition="local",
+        local_code_system_key=None,
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://example.org/local", "code": "DISC-1"}
+
+    with pytest.raises(UnsupportedBindingError):
+        handler.validate(value, spec)
+
+
+@pytest.mark.req("FR-10")
+def test_code_local_code_system_binding_resolves_against_the_lookup_not_the_terminology_server() -> (
+    None
+):
+    """FR-10/#56: validated internally against LocalCode, never Ontoserver."""
+    terminology = StubTerminologyClient()
+    lookup = _StubLocalCodeLookup(
+        {
+            ("discipline", "DISC-1"): ResolvedLocalCode(
+                code="DISC-1",
+                display="Chemical pathology",
+                status="active",
+                system_status="active",
+                provisional=False,
+            )
+        }
+    )
+    handler = CodeHandler(terminology_client=terminology, local_code_lookup=lookup)
+    binding = BindingSpec(
+        binding_target="local_code_system",
+        value_set_uri=None,
+        strength="required",
+        edition="local",
+        local_code_system_key="discipline",
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://example.org/local", "code": "DISC-1"}
+
+    issues = handler.validate(value, spec)
+
+    assert issues == []
+    assert lookup.calls == [("discipline", "DISC-1")]
+
+
+@pytest.mark.req("FR-10")
+def test_code_local_code_system_binding_rejects_a_code_absent_from_the_system() -> None:
+    handler = CodeHandler(
+        terminology_client=StubTerminologyClient(),
+        local_code_lookup=_StubLocalCodeLookup({}),
+    )
+    binding = BindingSpec(
+        binding_target="local_code_system",
+        value_set_uri=None,
+        strength="required",
+        edition="local",
+        local_code_system_key="discipline",
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://example.org/local", "code": "NOT-A-CODE"}
+
+    issues = handler.validate(value, spec)
+
+    assert [issue.code for issue in issues] == ["not-a-local-code"]
+
+
+@pytest.mark.req("FR-10")
+def test_code_local_code_system_binding_rejects_a_deprecated_code() -> None:
+    lookup = _StubLocalCodeLookup(
+        {
+            ("discipline", "DISC-1"): ResolvedLocalCode(
+                code="DISC-1",
+                display="Retired",
+                status="deprecated",
+                system_status="active",
+                provisional=False,
+            )
+        }
+    )
+    handler = CodeHandler(terminology_client=StubTerminologyClient(), local_code_lookup=lookup)
+    binding = BindingSpec(
+        binding_target="local_code_system",
+        value_set_uri=None,
+        strength="required",
+        edition="local",
+        local_code_system_key="discipline",
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://example.org/local", "code": "DISC-1"}
+
+    issues = handler.validate(value, spec)
+
+    assert [issue.code for issue in issues] == ["local-code-deprecated"]
+
+
+@pytest.mark.req("FR-10")
+def test_code_local_code_system_binding_rejects_a_code_in_a_deprecated_system() -> None:
+    """A code can be fine while its owning system has been retired wholesale
+    - `system_status` is checked independently of the code's own `status`."""
+    lookup = _StubLocalCodeLookup(
+        {
+            ("discipline", "DISC-1"): ResolvedLocalCode(
+                code="DISC-1",
+                display="Chemical pathology",
+                status="active",
+                system_status="deprecated",
+                provisional=False,
+            )
+        }
+    )
+    handler = CodeHandler(terminology_client=StubTerminologyClient(), local_code_lookup=lookup)
+    binding = BindingSpec(
+        binding_target="local_code_system",
+        value_set_uri=None,
+        strength="required",
+        edition="local",
+        local_code_system_key="discipline",
+    )
+    spec = _spec("code", binding=binding)
+    value = {"system": "http://example.org/local", "code": "DISC-1"}
+
+    issues = handler.validate(value, spec)
+
+    assert [issue.code for issue in issues] == ["local-code-system-deprecated"]
 
 
 @pytest.mark.req("FR-10")

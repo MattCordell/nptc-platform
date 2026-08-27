@@ -53,11 +53,12 @@ one that loses the race.
 Field values below are fixed against PRD SS6.5/6.6, not invented here:
 
 - **Discipline / Subgroup** (FR-90/FR-91-92): coded, `0..*`, bound to a
-  governed RCPA local code system (`binding_target = 'local_code_system'`)
-  - that `LocalCodeSystem` table is itself still a stub (P1-6's own
-  scaffolding note), so no `value_set_uri` is set for either; the FK-less
-  `local_code_system` binding target exists precisely so this is
-  representable before that table lands.
+  governed RCPA local code system (`binding_target = 'local_code_system'`,
+  `local_code_system_key = 'discipline'`/`'subgroup'` - #56's
+  `local_code_system` table, and #52's own FK naming which system - both
+  landed since this module was first written). No `value_set_uri` for
+  either: that column is `value_set`-only (see `_VALUE_SET_URI_REQUIRED_
+  CHECK_SQL` on the model).
 - **Specimen** (FR-88/FR-89): coded, `0..*`, bound to the SNOMED CT-AU
   value set rooted at `123038009` |Specimen|, exactly as PRD S6.6 verifies
   it (`<123038009` resolves every sampled specimen). `'Any'` is
@@ -116,6 +117,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             required_for_submission=False,
             required_for_publication=True,
             binding_target=BindingTarget.LOCAL_CODE_SYSTEM,
+            local_code_system_key="discipline",
             strength=BindingStrength.REQUIRED,
             filterable=True,
             origin=PropertyOrigin.SYSTEM,
@@ -130,6 +132,7 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             required_for_submission=False,
             required_for_publication=False,
             binding_target=BindingTarget.LOCAL_CODE_SYSTEM,
+            local_code_system_key="subgroup",
             strength=BindingStrength.REQUIRED,
             filterable=True,
             origin=PropertyOrigin.SYSTEM,
@@ -147,6 +150,12 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             value_set_uri=_SPECIMEN_VALUE_SET_URI,
             strength=BindingStrength.REQUIRED,
             edition="au",
+            # FR-89: 'Any' is never a specimen code - the absence of a
+            # specimen constraint is `catalogue_entry.specimen_unconstrained`
+            # plus zero specimen values, never this literal string. Checked
+            # by `CodeHandler.validate()` via its `constraints_schema()`
+            # seam (issue #52), not a hardcoded property key in the handler.
+            constraints={"forbidden_codes": ["Any"]},
             filterable=True,
             origin=PropertyOrigin.SYSTEM,
             display_order=30,

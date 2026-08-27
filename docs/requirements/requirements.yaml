@@ -88,13 +88,13 @@
   phase: p1
   title: "Adding, deprecating or amending a property definition MUST NOT require a schema migration, application restart, or code deployment"
   status: implemented
-  notes: "Issue #51 (ADR-0012): PropertyDefinition/PropertyValue land as a conventional relational table plus row-per-value storage, so a new definition is a plain row insert. Proven against a running application by backend/tests/test_property_registry_no_migration_required.py, which opens two independent connections off one already-migrated engine and defines/uses a new property with no migration and no restart in between."
+  notes: "Issue #51 (ADR-0012): PropertyDefinition/PropertyValue land as a conventional relational table plus row-per-value storage, so a new definition is a plain row insert. Proven against a running application by backend/tests/test_property_registry_no_migration_required.py, which opens two independent connections off one already-migrated engine and defines/uses a new property with no migration and no restart in between. Issue #52 adds the piece that keeps this true under amendment: nptc.registry.schema.property_schema derives a property's JSON Schema from the definition row and memoises it in-process against (key, row_version), never key alone, so a narrowing amendment (e.g. tightening a binding's strength) is picked up by the next validation with no restart - see backend/tests/test_registry_schema.py."
 - id: "FR-10"
   priority: MUST
   phase: p1
   title: "A property of datatype code MUST carry a terminology binding, not merely a datatype"
   status: implemented
-  notes: "Issue #51 (ADR-0012): the binding is four real columns (binding_target, value_set_uri, strength, edition) with CHECK ((datatype = 'code') = (binding_target IS NOT NULL)) and CHECK (binding_target IS DISTINCT FROM 'value_set' OR value_set_uri IS NOT NULL), making a code-without-a-binding, or a value_set binding without a URI, unrepresentable at the schema level - backend/tests/test_db_property_definition.py asserts both refusals with sqlstate 23514."
+  notes: "Issue #51 (ADR-0012): the binding is four real columns (binding_target, value_set_uri, strength, edition) with CHECK ((datatype = 'code') = (binding_target IS NOT NULL)) and CHECK (binding_target IS DISTINCT FROM 'value_set' OR value_set_uri IS NOT NULL), making a code-without-a-binding, or a value_set binding without a URI, unrepresentable at the schema level - backend/tests/test_db_property_definition.py asserts both refusals with sqlstate 23514. Issue #52 adds the fifth binding column, local_code_system_key (migration 0013), CHECK-paired to binding_target = 'local_code_system' the same way, and wires CodeHandler._validate_binding's local_code_system branch to actually call LocalCodeLookup.resolve() - validated internally against the LocalCode table, with no terminology-server call (backend/tests/test_datatype_handlers.py, backend/tests/test_catalogue_property_values.py::test_discipline_resolves_against_local_code_with_no_terminology_call). A strength of extensible is accepted only with a recorded justification; required rejects any out-of-value-set code (nptc.catalogue.property_values.save_property_values)."
 - id: "FR-11"
   priority: MUST
   phase: p1
@@ -262,7 +262,7 @@
   phase: p1
   title: "Concurrent editing MUST be handled with optimistic locking on row_version"
   status: in-progress
-  notes: "Issue #46: catalogue_entry.row_version is owned by exactly one write path, SQLAlchemy's version_id_col on the mapped UPDATE (ADR-0012's doctrine, applied here), never a trigger or a Core update()/delete() statement - the latter is a static AST guard in backend/tests/test_sql_parameterisation.py (VERSIONED_TABLE_MODELS). nptc.catalogue.entries.save_entry rejects a stale expected_row_version before mutating anything and shows the caller the conflicting field values (EntryVersionConflictError.report); a genuine concurrent race is caught by version_id_col itself via a per-entry savepoint. A rejected save emits no audit event (backend/tests/test_catalogue_optimistic_locking.py). save_entries is the seam #63's bulk reclassify is meant to call instead of a Core bulk update. Remains in-progress: no HTTP surface until #149/#150."
+  notes: "Issue #46: catalogue_entry.row_version is owned by exactly one write path, SQLAlchemy's version_id_col on the mapped UPDATE (ADR-0012's doctrine, applied here), never a trigger or a Core update()/delete() statement - the latter is a static AST guard in backend/tests/test_sql_parameterisation.py (VERSIONED_TABLE_MODELS). nptc.catalogue.entries.save_entry rejects a stale expected_row_version before mutating anything and shows the caller the conflicting field values (EntryVersionConflictError.report); a genuine concurrent race is caught by version_id_col itself via a per-entry savepoint. A rejected save emits no audit event (backend/tests/test_catalogue_optimistic_locking.py). save_entries is the seam #63's bulk reclassify is meant to call instead of a Core bulk update. Issue #52 extends the same guard to nptc.catalogue.property_values.save_property_values, which has no row_version of its own (a whole-property replace over property_value rows): it checks expected_row_version against entry.row_version before touching any row, then bumps entry.row_version as part of the write so a second, now-stale save (same or a different property) is rejected rather than silently clobbering the first - a no-op resubmission is detected before mutation and bumps neither (backend/tests/test_catalogue_property_values.py). Remains in-progress: no HTTP surface until #149/#150."
 - id: "FR-39"
   priority: SHOULD
   phase: p1
@@ -561,14 +561,14 @@
   priority: MUST
   phase: p1
   title: "Specimen MUST be a coded property with cardinality 0..*, bound to a value set rooted at 123038009, replacing the semicolon-delimited string"
-  status: planned
-  notes: "The transform's seeding-time treatment (P0-9/#31): a Specimen cell is split on ';' into 0..* provisional values; each is coded only on an exact match against nptc_transform.specimen_table.SPECIMEN_TABLE's surface forms (SPECIMEN_VALUE_UNMAPPED, informational, otherwise) - the migrate-verbatim-as-provisional-codes precedent FR-92 also follows. The governed value set itself, and its enforcement, belong to the backend registry (P1) and remain planned."
+  status: implemented
+  notes: "The transform's seeding-time treatment (P0-9/#31): a Specimen cell is split on ';' into 0..* provisional values; each is coded only on an exact match against nptc_transform.specimen_table.SPECIMEN_TABLE's surface forms (SPECIMEN_VALUE_UNMAPPED, informational, otherwise) - the migrate-verbatim-as-provisional-codes precedent FR-92 also follows. Issue #51 seeds the governed backend registry property (nptc.db.bootstrap: coded, 0..*, bound to <123038009); issue #52 enforces it - nptc.catalogue.property_values.save_property_values validates the whole set via nptc.registry.schema.validate_values before any row is touched, proven against the sample's own seven-specimen entry (backend/tests/test_catalogue_property_values.py::test_specimen_accepts_the_samples_seven_specimen_case)."
 - id: "FR-89"
   priority: MUST
   phase: p1
   title: "The value 'Any' MUST NOT be represented as a specimen code"
-  status: planned
-  notes: "The transform's seeding-time treatment (P0-9/#31): 'Any' resolves to specimen_unconstrained: true and zero specimen values in import-dataset.json, never a specimen code (SPECIMEN_UNCONSTRAINED_RESOLVED, auto-correctable). Enforcing this at the backend registry level (P1) remains planned."
+  status: implemented
+  notes: "The transform's seeding-time treatment (P0-9/#31): 'Any' resolves to specimen_unconstrained: true and zero specimen values in import-dataset.json, never a specimen code (SPECIMEN_UNCONSTRAINED_RESOLVED, auto-correctable). Issue #52 enforces this at the backend registry level: nptc.db.bootstrap seeds specimen's constraints as {\"forbidden_codes\": [\"Any\"]}, CodeHandler.validate() rejects a case-insensitive match against it (backend/tests/test_datatype_handlers.py::test_code_rejects_a_forbidden_code), and nptc.catalogue.property_values.save_property_values additionally refuses to combine specimen_unconstrained = true with a recorded specimen value (the cross-field half of this requirement PRD S6.2 describes) - backend/tests/test_catalogue_property_values.py::test_specimen_value_is_rejected_when_the_entry_is_marked_unconstrained."
 - id: "FR-90"
   priority: MUST
   phase: p1

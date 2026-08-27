@@ -208,30 +208,39 @@ def test_a_malformed_terminology_config_fails_app_construction(
 ) -> None:
     """The real fix for a deployment typo: fail at start-up, not per request.
 
-    `get_datatype_registry` builds `TerminologyConfig.from_env()`, which
+    `get_terminology_client` builds `TerminologyConfig.from_env()`, which
     refuses a malformed numeric variable rather than falling back to the
-    default. Left to the first request that needed the registry, that refusal
-    would be an unhandled 500 on a *public* read endpoint - and, because
-    `lru_cache` does not cache a raised exception, a fresh one on every
-    request for as long as nobody noticed. `create_app` therefore builds the
-    registry itself, which turns the same typo into a start-up failure.
+    default. Left to the first request that needed a terminology client,
+    that refusal would be an unhandled 500 on a *public* read endpoint -
+    and, because `lru_cache` does not cache a raised exception, a fresh one
+    on every request for as long as nobody noticed. `create_app` therefore
+    builds the client itself, which turns the same typo into a start-up
+    failure.
+
+    Issue #52 split what was `get_datatype_registry` into
+    `get_terminology_client` (still `lru_cache`d process-wide - an
+    `OntoserverClient` owns an HTTP pool) and a request-scoped
+    `get_datatype_registry` (it now wires a `DatabaseLocalCodeLookup`
+    against the request's own `Session`, per FR-10/#56, so it can no
+    longer be a single process-lifetime instance). This test moves to the
+    piece that still fails at start-up.
 
     No `integration` mark and no database: this is entirely about where the
     exception is raised.
     """
     from nptc.api.app import create_app
-    from nptc.api.dependencies import get_datatype_registry
+    from nptc.api.dependencies import get_terminology_client
 
     monkeypatch.setenv(_TX_CONFIG_VAR, "not-a-number")
     # The cache is process-wide, so it is cleared on the way in (another test
     # may have populated it with a good config) and on the way out (so this
     # test's bad config does not become everybody's).
-    get_datatype_registry.cache_clear()
+    get_terminology_client.cache_clear()
     try:
         with pytest.raises(TerminologyConfigError):
             create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
     finally:
-        get_datatype_registry.cache_clear()
+        get_terminology_client.cache_clear()
 
 
 @pytest.mark.req("FR-20")

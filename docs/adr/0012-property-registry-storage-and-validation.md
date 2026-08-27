@@ -152,6 +152,26 @@ built for `catalogue_entry.row_version` (FR-38), which adopts this same
 when #52 lands closes the gap this section originally noted, at essentially no
 cost - the rule is a frozenset lookup, not a per-table guard.
 
+**Update (2026-08-27, issue #52).** `PropertyDefinition` gained a fifth binding
+column, `local_code_system_key` (migration 0013), FK'd to `local_code_system(key)`
+and CHECK-paired to `binding_target = 'local_code_system'` exactly as
+`value_set_uri` is paired to `binding_target = 'value_set'` above - #51 could not
+do this itself, since `local_code_system` (#56) had not landed yet, so the column
+was left out entirely rather than added FK-less; #52 adds it as a real FK from the
+start. This is also the issue that builds the JSON Schema derivation/memoisation
+module `#137` named as its own seam (`nptc.registry.schema`, keyed on `(key,
+row_version)` exactly as specified above), the write path
+(`nptc.catalogue.property_values.save_property_values`, whole-set replace, validate
+before any row is touched) and the cardinality upper bound enforcement this ADR
+assigned to it. One correction to this ADR's own Decision text: widening
+`nptc.db.roles.GRANT_PROPERTY_DEFINITION_UPDATE_SQL` in place to include the new
+column would have silently rewritten migration 0010's own replayed history (that
+migration re-executes the constant verbatim on every fresh migrate) - the actual
+fix is a second, narrower grant statement executed by 0013 itself, not a wider
+constant. `CodeHandler._validate_binding`'s `local_code_system` branch, left
+returning `[]` unconditionally by #51/#53, now calls `LocalCodeLookup.resolve()`
+for real.
+
 **FR-13 index strategy.** The PRD's single-vs-multi-valued split does not survive the
 row-per-value shape (multi-valuedness is rows, not a JSON array); the distinction that
 actually determines the DDL is the **datatype's operator class**. Three concrete shapes,

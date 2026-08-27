@@ -66,7 +66,15 @@ class CodeHandler:
         }
 
     def constraints_schema(self) -> Mapping[str, Any]:
-        return {"type": "object", "additionalProperties": False}
+        # `forbidden_codes` (issue #52, FR-89): the seam ADR-0012 reserved
+        # for exactly this - a property-specific rule expressed as data
+        # (Specimen's own `constraints`), not a hardcoded property key
+        # anywhere in this handler.
+        return {
+            "type": "object",
+            "properties": {"forbidden_codes": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        }
 
     def validate(self, value: Any, spec: PropertyDefinitionSpec) -> Sequence[ValidationIssue]:
         if not isinstance(value, Mapping):
@@ -89,6 +97,31 @@ class CodeHandler:
             return [
                 ValidationIssue(
                     code="wrong-type", message="'system' and 'code' must both be strings"
+                )
+            ]
+        forbidden_codes = spec.constraints.get("forbidden_codes")
+        # Defensive against a malformed `constraints` document (e.g.
+        # `forbidden_codes` stored as a bare string): `validate_constraints`
+        # is the layer meant to catch that shape defect before it ever
+        # reaches here, but a `str` is iterable-of-characters and must not
+        # be allowed to fail open by silently forbidding single letters
+        # while missing the intended whole-code entries.
+        if isinstance(forbidden_codes, list) and code.casefold() in {
+            forbidden.casefold() for forbidden in forbidden_codes if isinstance(forbidden, str)
+        }:
+            # FR-89: the literal value 'Any' must never be represented as a
+            # specimen code - it is the absence of a constraint, not a
+            # value, and belongs in `catalogue_entry.specimen_unconstrained`
+            # instead. Checked before the SCTID/binding checks below: a
+            # forbidden code is refused on its own terms, not reported
+            # alongside an unrelated format or binding complaint.
+            return [
+                ValidationIssue(
+                    code="forbidden-code",
+                    message=(
+                        f"{code!r} is not a valid value for {spec.label} - leave it "
+                        "unrecorded rather than entering this value"
+                    ),
                 )
             ]
         issues: list[ValidationIssue] = []
@@ -116,7 +149,7 @@ class CodeHandler:
         handler cannot service is a deployment/config defect, not something
         the value being validated could have avoided, so it is deliberately
         not surfaced as a `ValidationIssue` (ADR-0013 open question 1: "a
-        loud refusal, never a silent pass", until #56 lands)."""
+        loud refusal, never a silent pass")."""
         binding = spec.binding
         assert binding is not None  # narrowed by the caller
         if binding.binding_target == "local_code_system":
@@ -125,9 +158,13 @@ class CodeHandler:
                     "local_code_system binding requires a LocalCodeLookup, "
                     "none was supplied to CodeHandler (see #56/FR-90)"
                 )
-            # #56 has not yet defined LocalCodeLookup's shape (ADR-0013 open
-            # question 1) - nothing further to call here until it does.
-            return []
+            if binding.local_code_system_key is None:
+                raise UnsupportedBindingError(
+                    "binding_target 'local_code_system' requires a "
+                    "local_code_system_key; got None - this is a malformed "
+                    "PropertyDefinitionSpec, not a bad value"
+                )
+            return self._validate_local_code_binding(code, binding.local_code_system_key)
         if binding.value_set_uri is None:
             raise UnsupportedBindingError(
                 "binding_target 'value_set' requires a value_set_uri; "
@@ -143,6 +180,38 @@ class CodeHandler:
                 ValidationIssue(
                     code="not-in-value-set",
                     message=result.message or f"{code!r} is not valid for {binding.value_set_uri}",
+                )
+            ]
+        return []
+
+    def _validate_local_code_binding(self, code: str, system_key: str) -> Sequence[ValidationIssue]:
+        """FR-10: "validated internally against the platform's own
+        LocalCode table, because Ontoserver does not hold them" - no
+        `self._terminology` call anywhere in this method. `resolve()`
+        distinguishes three outcomes; each gets its own issue code rather
+        than one generic "invalid" so a caller's field-level message can
+        say what actually happened."""
+        assert self._local_code_lookup is not None  # narrowed by the caller
+        resolved = self._local_code_lookup.resolve(system_key, code)
+        if resolved is None:
+            return [
+                ValidationIssue(
+                    code="not-a-local-code",
+                    message=f"{code!r} is not a code in the {system_key!r} local code system",
+                )
+            ]
+        if resolved.system_status == "deprecated":
+            return [
+                ValidationIssue(
+                    code="local-code-system-deprecated",
+                    message=f"the {system_key!r} local code system has been deprecated",
+                )
+            ]
+        if resolved.status == "deprecated":
+            return [
+                ValidationIssue(
+                    code="local-code-deprecated",
+                    message=f"{code!r} has been deprecated in the {system_key!r} local code system",
                 )
             ]
         return []
