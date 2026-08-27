@@ -116,10 +116,16 @@ export function AuthProvider({
         issuedState = new URL(url).searchParams.get("state");
         const search = await silentAuthorize(url, config.redirectUri);
         const { tokens: next } = await completeSignIn(config, search);
-        // Symmetric with the failure-path guard below: a concurrent
-        // `signOut` with no session to end returns without navigating away
-        // (see `signOut`), so a renewal that lands afterwards must not
-        // install a session on a page that stayed put.
+        // Symmetric with the failure-path guard below: this renewal only
+        // knows about the session it started with, so it must not install
+        // its own late answer over whatever `tokensRef.current` has become
+        // in the meantime - most concretely, a `completeCallback` sign-in
+        // that changed `null` to a session while this renewal was in
+        // flight. Note this is an identity comparison, so it only detects
+        // a value that has *changed*; it cannot tell "still null" apart
+        // from "cleared and set back to null", so it does not guard, say,
+        // a `signOut` that found no session to end (tokens were null both
+        // before and after).
         if (tokensRef.current !== startedWith) {
           return null;
         }

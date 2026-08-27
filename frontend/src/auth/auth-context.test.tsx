@@ -473,10 +473,15 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
 
     // The probe's late answer: an ordinary "no SSO session" refusal, the
     // path that used to clear the session `completeCallback` just
-    // established.
+    // established. A macrotask boundary, not a fixed number of
+    // microtask ticks, so the refusal has fully travelled the `await
+    // silentAuthorize(...)` resumption, the catch, the renewal settling
+    // and `restore()`'s own `finally` before the assertion runs - a
+    // microtask-only flush could pass merely because it ran before any
+    // of that had happened.
     await act(async () => {
       refuse();
-      await Promise.resolve().then(() => Promise.resolve());
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
@@ -522,10 +527,13 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
       return Promise.reject(new InteractionRequiredError("login_required"));
     });
     renderProvider(renewal);
-    await act(async () => {
-      await api().restore();
+    // The mount-time cold-load probe is what signs this in, not a call to
+    // `restore()` - it already ran and stored the session, so a second
+    // `restore()` here would be a no-op (`tokensRef.current` is already
+    // set). `waitFor` just waits out that probe's own async chain.
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
     });
-    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
 
     succeed = false;
     await act(async () => {
@@ -538,6 +546,15 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
   it("falls back to the ref so a caller mid-race still gets the session completeCallback established", async () => {
     const { silentAuthorize, refuse } = releasableRenewal();
     renderProvider(silentAuthorize);
+
+    // Started while tokens are still null, so it joins the mount probe's
+    // in-flight renewal (the de-duped `renewal.current`) rather than
+    // returning a cached token - this is the caller the fallback exists
+    // for. Deliberately not awaited yet: it must stay pending across
+    // `completeCallback` below, or this test would pass the same way it
+    // would if `getAccessToken` were called after the session already
+    // existed, which proves nothing about the fallback.
+    const pending = api().getAccessToken();
 
     await act(async () => {
       await api().signIn({ redirect: "/submissions" });
@@ -553,7 +570,6 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
     // `null`, but the ref reflects the session that actually won the race.
     let token: string | null = "unset";
     await act(async () => {
-      const pending = api().getAccessToken();
       refuse();
       token = await pending;
     });
