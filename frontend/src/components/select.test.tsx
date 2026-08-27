@@ -43,7 +43,9 @@ describe("Select", () => {
   });
 
   it("renders a placeholder as an empty first option, so an untouched select is not silently answered", () => {
-    render(<Select label="Status" options={STATUS_OPTIONS} placeholder="Choose a status" />);
+    render(
+      <Select label="Status" options={STATUS_OPTIONS} placeholder="Choose a status" />,
+    );
 
     const placeholder = screen.getByRole("option", { name: "Choose a status" });
     expect(placeholder).toHaveValue("");
