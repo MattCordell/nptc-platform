@@ -333,6 +333,25 @@ def test_code_accepts_a_code_not_on_the_forbidden_list() -> None:
     assert issues == []
 
 
+@pytest.mark.req("FR-89")
+def test_code_ignores_a_malformed_non_list_forbidden_codes_rather_than_failing_open() -> None:
+    """A `forbidden_codes` stored as a bare string is iterable-of-characters
+    - without the `isinstance(forbidden_codes, list)` guard, `"Any"` would
+    silently forbid the single-letter codes `a`, `n`, `y` while never
+    catching the intended whole-code entries, including `"Any"` itself.
+    `nptc.registry.schema.validate_constraints` is the layer meant to
+    reject this shape before it reaches here; this is the defence in depth
+    for the case where it doesn't."""
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+    spec = _spec("code", constraints={"forbidden_codes": "Any"})
+
+    issues_for_any = handler.validate({"system": "http://example.org/local", "code": "Any"}, spec)
+    issues_for_a = handler.validate({"system": "http://example.org/local", "code": "a"}, spec)
+
+    assert issues_for_any == []
+    assert issues_for_a == []
+
+
 @pytest.mark.req("FR-77")
 @pytest.mark.req("FR-06")
 def test_code_rejects_a_numeric_code_as_a_validation_issue_not_a_crash() -> None:

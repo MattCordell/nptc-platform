@@ -77,6 +77,34 @@ class TestPropertySchema:
         assert first != second
         assert second == {"type": "string", "maxLength": 999}
 
+    def test_a_hit_is_genuinely_lru_not_fifo(self) -> None:
+        """Re-derive `_SCHEMA_CACHE_SIZE` distinct keys, re-touching the
+        very first one just before the cache is full - a FIFO eviction
+        would drop it anyway (it is the oldest by insertion order); a
+        genuine LRU must not, since the touch makes it the most recently
+        used."""
+        import nptc.registry.schema as schema_module
+
+        cache_size = schema_module._SCHEMA_CACHE_SIZE
+        handler = StringHandler()
+        first_key = _spec(key="key-0", constraints={"maxLength": 1})
+        property_schema(first_key, handler, row_version=1)
+
+        for n in range(1, cache_size):
+            property_schema(
+                _spec(key=f"key-{n}", constraints={"maxLength": 1}), handler, row_version=1
+            )
+
+        # Touch the first key again - now the most recently used.
+        property_schema(first_key, handler, row_version=1)
+        # One more distinct key forces exactly one eviction.
+        property_schema(
+            _spec(key=f"key-{cache_size}", constraints={"maxLength": 1}), handler, row_version=1
+        )
+
+        assert ("key-0", 1) in schema_module._FRAGMENT_CACHE
+        assert ("key-1", 1) not in schema_module._FRAGMENT_CACHE
+
 
 class TestValidateConstraints:
     def test_a_conforming_constraints_document_passes(self) -> None:

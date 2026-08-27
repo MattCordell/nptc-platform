@@ -29,6 +29,7 @@ AST guard is scoped around.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -51,14 +52,16 @@ __all__ = [
 #: across a long-running process.
 _SCHEMA_CACHE_SIZE = 512
 
-#: `(key, row_version) -> derived fragment`. A plain dict, not
+#: `(key, row_version) -> derived fragment`. An `OrderedDict`, not
 #: `functools.lru_cache`, because the thing being cached is derived from
 #: two arguments (`spec`, `handler`) that are not usefully hashable
 #: together - `handler` is a shared, long-lived instance and `spec` is a
 #: frozen dataclass rebuilt per call, so keying on it directly would never
 #: hit. `key`/`row_version` alone are exactly ADR-0012's own cache key.
-_FRAGMENT_CACHE: dict[tuple[str, int], Mapping[str, Any]] = {}
-_FRAGMENT_CACHE_ORDER: list[tuple[str, int]] = []
+#: `move_to_end` on a hit makes this genuinely LRU (not FIFO) with a single
+#: structure to keep in sync - no separate order list that a concurrent
+#: miss on the same key could desynchronise from the dict.
+_FRAGMENT_CACHE: OrderedDict[tuple[str, int], Mapping[str, Any]] = OrderedDict()
 
 
 class MalformedConstraintsError(ValueError):
@@ -100,13 +103,12 @@ def property_schema(
     cache_key = (spec.key, row_version)
     cached = _FRAGMENT_CACHE.get(cache_key)
     if cached is not None:
+        _FRAGMENT_CACHE.move_to_end(cache_key)
         return cached
     fragment = handler.json_schema_fragment(spec)
     _FRAGMENT_CACHE[cache_key] = fragment
-    _FRAGMENT_CACHE_ORDER.append(cache_key)
-    if len(_FRAGMENT_CACHE_ORDER) > _SCHEMA_CACHE_SIZE:
-        oldest = _FRAGMENT_CACHE_ORDER.pop(0)
-        _FRAGMENT_CACHE.pop(oldest, None)
+    if len(_FRAGMENT_CACHE) > _SCHEMA_CACHE_SIZE:
+        _FRAGMENT_CACHE.popitem(last=False)
     return fragment
 
 
@@ -125,7 +127,6 @@ def reset_schema_cache() -> None:
     production code never calls it - a real amendment changes
     `row_version`, which is what actually invalidates the cache."""
     _FRAGMENT_CACHE.clear()
-    _FRAGMENT_CACHE_ORDER.clear()
 
 
 def validate_constraints(spec: PropertyDefinitionSpec, handler: DatatypeHandler) -> None:

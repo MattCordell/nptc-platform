@@ -51,7 +51,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0010_property_definition_and_value.py`](../../backend/migrations/versions/0010_property_definition_and_value.py) | `property_definition`, `property_value` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | None |
 | [`0011_local_code_systems.py`](../../backend/migrations/versions/0011_local_code_systems.py) | `local_code_system`, `local_code`, `local_code_snomed_map`, plus their seed data (see [`data-model.md`](../architecture/data-model.md#local-code-systems-and-the-advisory-snomed-map-issue-56-fr-90-fr-91-fr-92)) | None |
 | [`0012_catalogue_search_indexes.py`](../../backend/migrations/versions/0012_catalogue_search_indexes.py) | `nptc_search_text`, two GIN trigram indexes | See [below](#0012_catalogue_search_indexespy) - a standing `REINDEX` obligation if the `unaccent` dictionary ever changes |
-| [`0013_property_definition_local_code_system_key.py`](../../backend/migrations/versions/0013_property_definition_local_code_system_key.py) | `property_definition.local_code_system_key` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | None |
+| [`0013_property_definition_local_code_system_key.py`](../../backend/migrations/versions/0013_property_definition_local_code_system_key.py) | `property_definition.local_code_system_key` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | See [below](#0013_property_definition_local_code_system_keypy) - backfills the new column on any database that already ran `seed_system_properties` before adding the `NOT NULL`-when-bound `CHECK` |
 
 ## Provisioning the app role's login
 
@@ -195,6 +195,21 @@ exactly why this obligation is written down here rather than left implicit in th
 
 `downgrade()` drops both indexes and then the function, in that order (the reverse of
 `upgrade()`), since each index expression depends on the function.
+
+## `0013_property_definition_local_code_system_key.py`
+
+Adds `property_definition.local_code_system_key` (issue #52, FR-09/FR-10 - see
+[`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)).
+Backfills before the new `local_code_system_key_required` CHECK is created: any database
+that has already run `seed_system_properties` holds `discipline`/`subgroup` rows with
+`binding_target = 'local_code_system'` and `local_code_system_key IS NULL` (the column did
+not exist when those rows were seeded, and `seed_system_properties` skips a row it has
+already seeded, so it never revisits them on a later run). The migration sets
+`local_code_system_key = key` for exactly those rows - correct because bootstrap seeds both
+`discipline`'s and `subgroup`'s governed `local_code_system.key` identical to the property's
+own key. A database whose `discipline`/`subgroup` definition was hand-edited to bind some
+other `local_code_system` is not something this backfill can recover automatically; correct
+it manually before upgrading, or accept that it will be backfilled to the standard value.
 
 ## Testcontainers and Docker
 

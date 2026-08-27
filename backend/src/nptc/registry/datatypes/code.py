@@ -100,8 +100,14 @@ class CodeHandler:
                 )
             ]
         forbidden_codes = spec.constraints.get("forbidden_codes")
-        if forbidden_codes and code.casefold() in {
-            forbidden.casefold() for forbidden in forbidden_codes
+        # Defensive against a malformed `constraints` document (e.g.
+        # `forbidden_codes` stored as a bare string): `validate_constraints`
+        # is the layer meant to catch that shape defect before it ever
+        # reaches here, but a `str` is iterable-of-characters and must not
+        # be allowed to fail open by silently forbidding single letters
+        # while missing the intended whole-code entries.
+        if isinstance(forbidden_codes, list) and code.casefold() in {
+            forbidden.casefold() for forbidden in forbidden_codes if isinstance(forbidden, str)
         }:
             # FR-89: the literal value 'Any' must never be represented as a
             # specimen code - it is the absence of a constraint, not a

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.entries import allocate_business_key, create_entry
+from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
     PropertyDefinitionNotFoundError,
@@ -40,6 +41,7 @@ from nptc.db.models.property_definition import (
 from nptc.db.models.property_value import PropertyValue
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
+from nptc.registry.schema import MalformedConstraintsError
 from nptc_shared.terminology.models import Edition, ValidationResult
 from nptc_shared.terminology.stub import StubTerminologyClient
 
@@ -146,6 +148,7 @@ def test_save_property_values_inserts_rows_and_emits_one_audit_event(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("first", "second"),
         reason="Recording free text for FR-09 test",
@@ -184,6 +187,7 @@ def test_save_property_values_flushes_an_unflushed_entry_first(app_session: Sess
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("x"),
         reason="Writing a property against a not-yet-flushed entry",
@@ -204,6 +208,7 @@ def test_save_property_values_replaces_the_whole_set(app_session: Session) -> No
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("a", "b", "c"),
         reason="First write",
@@ -214,6 +219,7 @@ def test_save_property_values_replaces_the_whole_set(app_session: Session) -> No
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("only-one"),
         reason="Replacement write",
@@ -236,6 +242,7 @@ def test_save_property_values_with_an_empty_list_deletes_existing_rows(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("a"),
         reason="First write",
@@ -246,6 +253,7 @@ def test_save_property_values_with_an_empty_list_deletes_existing_rows(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=[],
         reason="Clearing the property",
@@ -266,6 +274,7 @@ def test_save_property_values_rejects_an_unknown_property_key(app_session: Sessi
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key="does_not_exist",
             values=_inputs("x"),
             reason="Should never be recorded",
@@ -286,6 +295,7 @@ def test_save_property_values_rejects_a_blank_reason_before_touching_any_row(
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=_inputs("x"),
             reason="",
@@ -311,6 +321,7 @@ def test_a_schema_violation_leaves_no_row_and_raises_a_field_level_error(
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=_inputs("way too long"),
             reason="Should be rejected",
@@ -334,6 +345,7 @@ def test_a_cardinality_violation_leaves_no_row(app_session: Session) -> None:
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=_inputs("one", "two"),
             reason="Should be rejected",
@@ -358,6 +370,7 @@ def test_an_invalid_write_does_not_leave_the_prior_valid_rows_disturbed(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs("ok"),
         reason="Valid first write",
@@ -369,6 +382,7 @@ def test_an_invalid_write_does_not_leave_the_prior_valid_rows_disturbed(
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=_inputs("way too long"),
             reason="Should be rejected",
@@ -403,6 +417,7 @@ def test_specimen_accepts_the_samples_seven_specimen_case(app_session: Session) 
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key="specimen",
         values=[
             PropertyValueInput(value={"system": _SPECIMEN_SYSTEM, "code": code}) for code in codes
@@ -425,6 +440,7 @@ def test_specimen_rejects_the_literal_value_any(app_session: Session) -> None:
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key="specimen",
             values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "Any"}),
             reason="Should be rejected",
@@ -452,6 +468,7 @@ def test_specimen_value_is_rejected_when_the_entry_is_marked_unconstrained(
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key="specimen",
             values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
             reason="Should be rejected - entry is specimen_unconstrained",
@@ -475,6 +492,7 @@ def test_specimen_unconstrained_entry_accepts_zero_specimen_values(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key="specimen",
         values=[],
         reason="No specimen values - the entry is unconstrained",
@@ -500,6 +518,7 @@ def test_discipline_resolves_against_local_code_with_no_terminology_call(
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key="discipline",
         # Seeded by migration 0011 as a real member of the `discipline`
         # local code system.
@@ -525,6 +544,7 @@ def test_discipline_rejects_a_code_absent_from_the_local_system(app_session: Ses
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key="discipline",
             values=_inputs({"system": "http://example.org/local/discipline", "code": "not-a-code"}),
             reason="Should be rejected",
@@ -589,6 +609,7 @@ def test_required_strength_rejects_an_out_of_value_set_code_even_with_a_justific
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=[
                 PropertyValueInput(
@@ -617,6 +638,7 @@ def test_extensible_strength_rejects_an_out_of_value_set_code_with_no_justificat
             app_session,
             AuditContext.system(),
             entry=entry,
+            expected_row_version=entry.row_version,
             property_key=prop.key,
             values=_inputs({"system": _VS_SYSTEM, "code": _OUT_OF_SET_CODE}),
             reason="Should be rejected - no justification supplied",
@@ -639,6 +661,7 @@ def test_extensible_strength_accepts_an_out_of_value_set_code_with_a_justificati
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=[
             PropertyValueInput(
@@ -669,6 +692,7 @@ def test_example_strength_accepts_an_out_of_value_set_code_with_no_justification
         app_session,
         AuditContext.system(),
         entry=entry,
+        expected_row_version=entry.row_version,
         property_key=prop.key,
         values=_inputs({"system": _VS_SYSTEM, "code": _OUT_OF_SET_CODE}),
         reason="example strength is advisory only",
@@ -676,3 +700,171 @@ def test_example_strength_accepts_an_out_of_value_set_code_with_no_justification
     )
 
     assert len(rows) == 1
+
+
+# --- FR-38: optimistic concurrency on the entry's row_version ---------------
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_save_property_values_rejects_a_stale_expected_row_version(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_versioned_prop", cardinality="0..*")
+    stale_version = entry.row_version
+
+    with pytest.raises(EntryVersionConflictError) as excinfo:
+        save_property_values(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            expected_row_version=stale_version - 1,
+            property_key=prop.key,
+            values=_inputs("x"),
+            reason="Should be rejected - stale row_version",
+            registry=_registry(app_session),
+        )
+
+    assert excinfo.value.report.expected_row_version == stale_version - 1
+    assert excinfo.value.report.current_row_version == stale_version
+    assert _property_value_count(app_session, entry_id=entry.id, property_key=prop.key) == 0
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_save_property_values_bumps_row_version_so_a_second_stale_writer_is_rejected(
+    app_session: Session,
+) -> None:
+    """Two editors load the same entry, each save a change to the same
+    property; the second must see a version conflict rather than silently
+    clobbering the first (FR-38's "no silent last-write-wins")."""
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_versioned_prop_2", cardinality="0..*")
+    registry = _registry(app_session)
+    editor_a_version = entry.row_version
+    editor_b_version = entry.row_version
+
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=editor_a_version,
+        property_key=prop.key,
+        values=_inputs("editor-a-value"),
+        reason="Editor A saves first",
+        registry=registry,
+    )
+
+    with pytest.raises(EntryVersionConflictError):
+        save_property_values(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            expected_row_version=editor_b_version,
+            property_key=prop.key,
+            values=_inputs("editor-b-value"),
+            reason="Editor B saves against a now-stale version",
+            registry=registry,
+        )
+
+    rows = (
+        app_session.execute(
+            select(PropertyValue).where(
+                PropertyValue.entry_id == entry.id, PropertyValue.property_key == prop.key
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.value for row in rows] == ["editor-a-value"]
+
+
+# --- a no-op write leaves row_version and the audit trail untouched ---------
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_resubmitting_the_same_values_is_a_no_op(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_free_text_no_op", cardinality="0..*")
+    registry = _registry(app_session)
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key=prop.key,
+        values=_inputs("same", "values"),
+        reason="First write",
+        registry=registry,
+    )
+    row_version_after_first_write = entry.row_version
+    audit_count_after_first_write = _audit_event_count(app_session)
+
+    rows = save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key=prop.key,
+        values=_inputs("same", "values"),
+        reason="Resubmitting the same values",
+        registry=registry,
+    )
+
+    assert [row.value for row in rows] == ["same", "values"]
+    assert entry.row_version == row_version_after_first_write
+    assert _audit_event_count(app_session) == audit_count_after_first_write
+
+
+# --- a malformed constraints document fails closed, not open ----------------
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_a_malformed_constraints_document_is_rejected_before_any_value_is_judged(
+    app_session: Session,
+) -> None:
+    """`forbidden_codes` stored as a bare string (not a list) must not
+    silently fail open - `validate_constraints` catches the shape defect
+    in the *definition* before `CodeHandler.validate` ever sees a value."""
+    entry = _new_entry(app_session)
+    definition = PropertyDefinition(
+        key="a_malformed_constraints_prop",
+        label="A Malformed Constraints Prop",
+        datatype="code",
+        cardinality="0..1",
+        scope=PropertyScope.MAINTENANCE,
+        required_for_submission=False,
+        required_for_publication=False,
+        binding_target="value_set",
+        value_set_uri=_VS_URI,
+        strength="required",
+        edition="test",
+        filterable=False,
+        origin=PropertyOrigin.ADMIN,
+        display_order=0,
+        constraints={"forbidden_codes": "Any"},
+    )
+    app_session.add(definition)
+    app_session.flush()
+    terminology = StubTerminologyClient()
+    terminology.seed_validate_code(
+        "Any",
+        ValidationResult(code="Any", result=True),
+        value_set_url=_VS_URI,
+        edition=_VS_EDITION,
+    )
+
+    with pytest.raises(MalformedConstraintsError):
+        save_property_values(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            expected_row_version=entry.row_version,
+            property_key=definition.key,
+            values=_inputs({"system": _VS_SYSTEM, "code": "Any"}),
+            reason="Should be rejected - the definition itself is malformed",
+            registry=_registry(app_session, terminology),
+        )
+
+    assert _property_value_count(app_session, entry_id=entry.id, property_key=definition.key) == 0

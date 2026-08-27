@@ -64,6 +64,7 @@ from nptc.audit.policy import AuditFieldPolicy
 from nptc.audit.recording import record_snapshot_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.catalogue.errors import ConflictReport, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
@@ -73,7 +74,7 @@ from nptc.registry.handlers import (
     PropertyDefinitionSpec,
     ValidationIssue,
 )
-from nptc.registry.schema import validate_values
+from nptc.registry.schema import validate_constraints, validate_values
 
 __all__ = [
     "PropertyDefinitionNotFoundError",
@@ -159,6 +160,15 @@ class PropertyValidationError(ValueError):
 
     issues: tuple[PropertyWriteIssue, ...] = field(default_factory=tuple)
     http_status: ClassVar[int] = 422
+
+    def __post_init__(self) -> None:
+        # A frozen dataclass subclassing `ValueError` never runs
+        # `Exception.__init__`, so `self.args` stays `()` - `repr()` and a
+        # bare `logging.exception(exc)` would otherwise show nothing about
+        # which issues were raised. `object.__setattr__` is required here:
+        # `frozen=True` blocks the plain assignment `self.args = ...` even
+        # inside `__post_init__`.
+        object.__setattr__(self, "args", (str(self),))
 
     def __str__(self) -> str:
         return f"{len(self.issues)} property value issue(s): " + "; ".join(
@@ -278,17 +288,33 @@ def save_property_values(
     values: Sequence[PropertyValueInput],
     reason: str,
     registry: DatatypeRegistry,
+    expected_row_version: int,
 ) -> Sequence[PropertyValue]:
     """Replaces every `property_value` row for `(entry, property_key)`
     with `values`, validated as a whole set before any row is touched.
 
     Raises `PropertyDefinitionNotFoundError` for an unknown `property_key`,
     `nptc.catalogue.changelog.ChangelogNoteError` for a rejected `reason`,
-    and `PropertyValidationError` (never a bare `IntegrityError`) for a
-    value or cardinality problem - each raised before `session.add`/
-    `session.delete` is ever called, so a rejected write leaves neither a
-    partial write nor an audit event behind, matching `save_entry`'s own
-    precondition-before-mutation posture (FR-37).
+    `EntryVersionConflictError` (FR-38) if `expected_row_version` no longer
+    matches `entry.row_version`, and `PropertyValidationError` (never a bare
+    `IntegrityError`) for a value or cardinality problem - each raised
+    before `session.add`/`session.delete` is ever called, so a rejected
+    write leaves neither a partial write nor an audit event behind,
+    matching `save_entry`'s own precondition-before-mutation posture
+    (FR-37).
+
+    **Why `expected_row_version` guards this write, even though it only
+    ever touches `property_value` rows.** `save_property_values` is a
+    whole-property replace with no per-row version of its own to check -
+    two editors who each load the same entry, then each save a change to
+    the *same* property, would otherwise silently clobber one another
+    (last write wins, with a plausible-looking audit trail for both),
+    which is exactly the outcome FR-38 forbids for `catalogue_entry`
+    itself. Checking `entry.row_version` and then bumping it as part of
+    this write (rather than adding a second, `property_value`-scoped
+    version column) reuses `catalogue_entry.row_version`'s existing
+    `version_id_col` machinery as the one optimistic lock a caller needs
+    to track per entry, covering both this path and `save_entry`'s.
 
     Returns the newly inserted rows, ordered by ordinal.
     """
@@ -304,6 +330,22 @@ def save_property_values(
     if not sa_inspect(entry).identity:
         session.flush()
 
+    if entry.row_version != expected_row_version:
+        # `changed_by`/`changed_at` are left unpopulated here, unlike
+        # `nptc.catalogue.entries.save_entry`'s own conflict report: that
+        # attribution lookup (`_latest_change_attribution`) is a private
+        # helper of that module, and duplicating it for this one field
+        # would widen this fix beyond the concurrency guard itself.
+        # `ConflictReport` already treats both as optional for exactly
+        # this case.
+        raise EntryVersionConflictError(
+            ConflictReport(
+                business_key=entry.business_key,
+                expected_row_version=expected_row_version,
+                current_row_version=entry.row_version,
+            )
+        )
+
     definition = session.execute(
         select(PropertyDefinition).where(PropertyDefinition.key == property_key)
     ).scalar_one_or_none()
@@ -312,6 +354,12 @@ def save_property_values(
 
     spec = _spec_for(definition)
     handler = registry.get(definition.datatype)
+    # A malformed `constraints` document is a defect in the *definition*,
+    # not something this write's caller could have avoided - checked before
+    # any value is judged against it, so a bad definition never fails open
+    # (see `CodeHandler.validate`'s own defensive fallback for the case
+    # where it does anyway).
+    validate_constraints(spec, handler)
     raw_values = [item.value for item in values]
 
     schema_issues = validate_values(raw_values, spec, handler, row_version=definition.row_version)
@@ -343,6 +391,21 @@ def save_property_values(
         .all()
     )
     before_payload: Mapping[str, object] = {"values": [_value_payload(row) for row in existing]}
+    intended_after_payload: Mapping[str, object] = {
+        "values": [
+            {"ordinal": ordinal, "value": item.value, "justification": item.justification}
+            for ordinal, item in enumerate(values)
+        ]
+    }
+
+    # A no-op write (the same values resubmitted) is checked *before* any
+    # row is touched: comparing payloads after the DELETE/INSERT would
+    # still leave a real (if pointless) write in the transaction, and this
+    # is also what keeps a no-op from bumping `entry.row_version` below -
+    # an editor who re-submits unchanged values should not invalidate a
+    # concurrent editor's own unrelated, still-current row_version.
+    if before_payload == intended_after_payload:
+        return existing
 
     if existing:
         session.execute(
@@ -364,23 +427,30 @@ def save_property_values(
     ]
     for row in inserted:
         session.add(row)
+
+    # Bumps `catalogue_entry.row_version` as part of this write, so a
+    # second concurrent `save_property_values`/`save_entry` call against
+    # the same entry sees a stale `expected_row_version` rather than
+    # silently clobbering this one - see the docstring's note on reusing
+    # `row_version`'s existing `version_id_col` machinery as the one lock
+    # this entry has.
+    entry.row_version += 1
     session.flush()
 
     after_payload: Mapping[str, object] = {"values": [_value_payload(row) for row in inserted]}
 
-    if before_payload != after_payload:
-        record_snapshot_change(
-            session,
-            ctx,
-            action="property_value.set",
-            entity_type="property_value_set",
-            entity_id=f"{entry.id}:{property_key}",
-            policy=_PROPERTY_VALUES_AUDIT_POLICY,
-            before=before_payload if existing else None,
-            after=after_payload if inserted else None,
-            kind=_change_kind(existing=bool(existing), inserted=bool(inserted)),
-            reason=validated_reason,
-        )
+    record_snapshot_change(
+        session,
+        ctx,
+        action="property_value.set",
+        entity_type="property_value_set",
+        entity_id=f"{entry.id}:{property_key}",
+        policy=_PROPERTY_VALUES_AUDIT_POLICY,
+        before=before_payload if existing else None,
+        after=after_payload if inserted else None,
+        kind=_change_kind(existing=bool(existing), inserted=bool(inserted)),
+        reason=validated_reason,
+    )
 
     return inserted
 

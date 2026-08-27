@@ -34,8 +34,28 @@ is exactly the failure a `uv run pytest` from a clean container caught.
 `GRANT_PROPERTY_DEFINITION_LOCAL_CODE_SYSTEM_KEY_UPDATE_SQL` grants only
 the one column this migration adds.
 
+**Backfill, not just a schema change.** Any database that has already run
+`seed_system_properties` holds `discipline`/`subgroup` rows with
+`binding_target = 'local_code_system'` and `local_code_system_key IS NULL`
+(the column did not exist when those rows were seeded). `seed_system_
+properties` skips by key on every later run, so it never revisits those
+rows once seeded - without a backfill here, the new `local_code_system_key_
+required` CHECK would fail the upgrade outright on such a database, and if
+it somehow did not, both definitions would raise `UnsupportedBindingError`
+(a 500, not a validation issue) on every subsequent discipline/subgroup
+write. The backfill sets `local_code_system_key = key`: bootstrap.py seeds
+both `discipline` and `subgroup` with a `local_code_system.key` identical to
+the property's own key (the two local code systems exist for exactly these
+two properties), so this is not a guess at the right value, it is the one
+value bootstrap.py already establishes for a fresh database. A database
+whose `discipline`/`subgroup` `PropertyDefinition` was hand-edited to bind
+some other `local_code_system` key is not something a blind backfill can
+recover; `docs/operations/upgrade.md` calls this out.
+
 Downgrade drops the FK, the two CHECKs, restores `binding_fields_require_
-target` to its pre-#52 form, and drops the column.
+target` to its pre-#52 form, and drops the column. The backfilled data is
+not reversed - `local_code_system_key` no longer exists as a column, so
+there is nothing to reverse it in.
 """
 
 from __future__ import annotations
@@ -72,6 +92,13 @@ def upgrade() -> None:
         "local_code_system",
         ["local_code_system_key"],
         ["key"],
+    )
+    # Backfill before the CHECK below, which would otherwise fail this
+    # upgrade on any database that already ran `seed_system_properties` -
+    # see the module docstring's "Backfill, not just a schema change" note.
+    op.execute(
+        "UPDATE property_definition SET local_code_system_key = key "
+        "WHERE binding_target = 'local_code_system' AND local_code_system_key IS NULL"
     )
     op.create_check_constraint(
         op.f("ck_property_definition_local_code_system_key_required"),
