@@ -46,7 +46,13 @@ over rule configuration).
   without `Field` needing to special-case each one.
 - **`button.tsx` — `Button`.** `type` is a required prop, not defaulted: an untyped
   `<button>` inside a `<form>` defaults to `type="submit"`, a frequent source of an
-  accidental submit on what was meant to be a plain action button.
+  accidental submit on what was meant to be a plain action button. `aria-disabled`
+  gets the same unavailable styling as `disabled` — reach for it whenever a button
+  turns unavailable *under* the user, as a submit or a Cancel does mid-save, because
+  `disabled` removes the control from the tab order and strands their focus. It styles
+  the control only: refusing the action stays the caller's job (`Form` guards re-entry
+  in its own submit handler), so a `type="button"` action needs its `onClick` guarded
+  too.
 - **`dialog.tsx` — `Dialog`.** A modal that prefers the native `<dialog>` element's
   `showModal()` where the runtime supports it, but does not depend on it for the focus
   contract — `showModal()`/the browser's own `Tab` trap are not implemented in jsdom, so
