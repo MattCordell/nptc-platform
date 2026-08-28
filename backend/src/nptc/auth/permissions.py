@@ -100,6 +100,7 @@ class Permission(StrEnum):
     SUBMISSION_TRANSITION_APPROVE = "submission.transition.approve"
     CATALOGUE_EDIT_PUBLISHED = "catalogue.edit_published"
     RELEASE_PUBLISH = "release.publish"
+    REGISTRY_READ = "registry.read"
     REGISTRY_MANAGE = "registry.manage"
     EXPORT_CONFIG_MANAGE = "export_config.manage"
     ROLE_GRANT_ANY = "role.grant.any"
@@ -141,6 +142,7 @@ PERMISSION_KIND: Final[Mapping[Permission, PermissionKind]] = {
     Permission.SUBMISSION_TRANSITION_APPROVE: PermissionKind.WRITE,
     Permission.CATALOGUE_EDIT_PUBLISHED: PermissionKind.WRITE,
     Permission.RELEASE_PUBLISH: PermissionKind.WRITE,
+    Permission.REGISTRY_READ: PermissionKind.READ,
     Permission.REGISTRY_MANAGE: PermissionKind.WRITE,
     Permission.EXPORT_CONFIG_MANAGE: PermissionKind.WRITE,
     Permission.ROLE_GRANT_ANY: PermissionKind.WRITE,
@@ -196,6 +198,7 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
             Permission.AMENDMENT_PROPOSE,
             Permission.INTEREST_REGISTER,
             Permission.SUBMISSION_WITHDRAW_OWN,
+            Permission.REGISTRY_READ,
         }
     ),
     Role.REVIEWER: frozenset(
@@ -208,6 +211,7 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
             Permission.AMENDMENT_PROPOSE,
             Permission.INTEREST_REGISTER,
             Permission.SUBMISSION_WITHDRAW_OWN,
+            Permission.REGISTRY_READ,
             Permission.SUBMITTER_IDENTITY_VIEW,
             Permission.INTEREST_IDENTITIES_VIEW,
             Permission.COMMENT_INTERNAL_READ,
@@ -233,6 +237,7 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
             Permission.AMENDMENT_PROPOSE,
             Permission.INTEREST_REGISTER,
             Permission.SUBMISSION_WITHDRAW_ANY,
+            Permission.REGISTRY_READ,
             Permission.SUBMITTER_IDENTITY_VIEW,
             Permission.INTEREST_IDENTITIES_VIEW,
             Permission.COMMENT_INTERNAL_READ,

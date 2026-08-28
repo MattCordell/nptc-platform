@@ -905,7 +905,7 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.browse`.",
+            "description": "The caller is authenticated but does not hold `registry.read`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -984,11 +984,18 @@
             }
           },
           "422": {
-            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
                 }
               }
             }
@@ -1036,7 +1043,7 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.browse`.",
+            "description": "The caller is authenticated but does not hold `registry.read`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1146,11 +1153,18 @@
             }
           },
           "422": {
-            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
                 }
               }
             }
@@ -1307,11 +1321,18 @@
             }
           },
           "422": {
-            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
                 }
               }
             }

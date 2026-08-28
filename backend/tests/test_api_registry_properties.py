@@ -422,40 +422,28 @@ def test_delete_property_unknown_key_is_still_409_not_404(api: ApiTestApp) -> No
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_list_properties_no_credential_still_succeeds(api: ApiTestApp) -> None:
-    """Issue #223 review finding 6: `GET /registry/properties` is now
-    gated on `Permission.CATALOGUE_BROWSE`, which `Role.ANON` holds too
-    (`nptc.auth.permissions.ROLE_PERMISSIONS`) - matching `nptc.api.
-    routers.catalogue`'s own public, unauthenticated read routes gated on
-    the same permission (FR-20). An anonymous caller here is no longer a
-    401: this route is exactly the one `DefinitionAudience.DATA_ENTRY` is
-    named for, and a submission/maintenance form has to be reachable
-    before a caller has signed in at all."""
+def test_list_properties_no_credential_is_401(api: ApiTestApp) -> None:
+    """Issue #223 round-2 review, finding 1: `GET /registry/properties` was
+    briefly gated on `Permission.CATALOGUE_BROWSE`, which `Role.ANON` also
+    holds - making the route fully public, which was never the intent.
+    ADR-0028's `Permission.REGISTRY_READ` is member-tier, never held by
+    `Role.ANON`, so an anonymous caller is refused with 401 like every
+    other authenticated-only route."""
     response = api.get("/registry/properties", token=None)
-    assert response.status_code == 200, response.text
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_list_properties_authenticated_with_no_granted_role_still_succeeds(
-    api: ApiTestApp,
-) -> None:
-    """Issue #223 review finding 6: `GET /registry/properties` is now gated
-    on `Permission.CATALOGUE_BROWSE`, not `registry.manage` - and
-    `CATALOGUE_BROWSE` is held by every role in the PRD Section 4.7 matrix,
-    `Role.ANON` included (`nptc.auth.permissions.ROLE_PERMISSIONS`), so
-    there is no principal that can authenticate and still lack it. That is
-    exactly finding 6's point: a member with no special grant at all (the
-    "just filling in a submission form" audience `DefinitionAudience.
-    DATA_ENTRY` is named for) must be able to reach this route, which the
-    old `registry.manage` gate made impossible. A 403-without-permission
-    test would assert something this permission's own data makes
-    unreachable - see `nptc.api.routers.catalogue`'s identical `
-    CATALOGUE_BROWSE`-gated routes, which carry the same 401-only coverage
-    for the same reason."""
+def test_list_properties_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    """See `test_list_properties_no_credential_is_401`'s own docstring.
+    A principal authenticated with no granted role holds only
+    `ROLE_PERMISSIONS[Role.ANON]`, which does not include
+    `Permission.REGISTRY_READ` (ADR-0028) - so this is a 403, not the
+    200 round-1's over-correction produced."""
     token = api.token(subject="sub-list-no-granted-role")
     response = api.get("/registry/properties", token=token)
-    assert response.status_code == 200, response.text
+    assert response.status_code == 403, response.text
 
 
 @pytest.mark.req("NFR-20")
@@ -486,31 +474,31 @@ def test_create_property_administrator_without_mfa_gets_step_up_challenge(
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_get_property_no_credential_still_succeeds(api: ApiTestApp) -> None:
-    """See `test_list_properties_no_credential_still_succeeds`'s own
-    docstring - `CATALOGUE_BROWSE` is held by `Role.ANON` too."""
+def test_get_property_no_credential_is_401(api: ApiTestApp) -> None:
+    """See `test_list_properties_no_credential_is_401`'s own docstring
+    (ADR-0028) - `GET /registry/properties/{key}` is gated on the same
+    `Permission.REGISTRY_READ`."""
     admin_token = _admin_token(api, subject="sub-get-setup")
     key = _unique_key("get_no_cred")
     _create(api, admin_token, key)
 
     response = api.get(f"/registry/properties/{key}", token=None)
-    assert response.status_code == 200, response.text
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_get_property_authenticated_with_no_granted_role_still_succeeds(api: ApiTestApp) -> None:
-    """See `test_list_properties_authenticated_with_no_granted_role_still_
-    succeeds`'s own docstring: `CATALOGUE_BROWSE` is held by every role,
-    so there is no authenticated principal a 403-without-permission test
-    could exercise here."""
-    admin_token = _admin_token(api, subject="sub-get-setup-browse")
+def test_get_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    """See `test_list_properties_authenticated_without_permission_is_403`'s
+    own docstring - the single-property `GET` route did not previously have
+    its own 403 test (round-2 review); it is gated identically."""
+    admin_token = _admin_token(api, subject="sub-get-setup-no-permission")
     key = _unique_key("get_no_special_role")
     _create(api, admin_token, key)
     token = api.token(subject="sub-get-no-granted-role")
 
     response = api.get(f"/registry/properties/{key}", token=token)
-    assert response.status_code == 200, response.text
+    assert response.status_code == 403, response.text
 
 
 @pytest.mark.req("NFR-08")

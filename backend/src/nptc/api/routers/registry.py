@@ -11,12 +11,17 @@ carries `http_status` and is mapped centrally by `nptc.api.errors`.
 
 **Every mutating route (`POST`/`PATCH`/`POST .../deprecation`/`DELETE`) is
 gated on `Permission.REGISTRY_MANAGE`** (FR-44) - never a role name. **Both
-`GET` routes are gated on `Permission.CATALOGUE_BROWSE`** instead (issue
-#223 review finding 6): `REGISTRY_MANAGE` is administrator-tier, and
-gating a read route on it made `DefinitionAudience.DATA_ENTRY` unreachable
-by the very audience it is named for - a member filling in a submission
-form could not call `GET /registry/properties` to learn which properties
-to offer.
+`GET` routes are gated on `Permission.REGISTRY_READ`** instead (issue #223
+review round-1 finding 6, corrected in round 2 per ADR-0028):
+`REGISTRY_MANAGE` is administrator-tier, and gating a read route on it made
+`DefinitionAudience.DATA_ENTRY` unreachable by the very audience it is
+named for - a member filling in a submission form could not call `GET
+/registry/properties` to learn which properties to offer. Gating on
+`Permission.CATALOGUE_BROWSE` instead (round 1's fix) over-corrected: that
+permission is held by `Role.ANON` too, so the registry ended up fully
+public. `Permission.REGISTRY_READ` is the member-tier permission ADR-0028
+introduces for exactly this gap - held from `Role.MEMBER` up, never by
+`Role.ANON`, `Role.OBSERVER` or `Role.PROVISIONAL`.
 
 **`DELETE` never deletes.** `delete_property_definition` always raises
 `PropertyDefinitionDeleteRefusedError` (409) - `property_definition` has no
@@ -79,9 +84,9 @@ _RESPONSE_401: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "No credential, or one that could not be verified.",
 }
-_RESPONSE_403_BROWSE: Final[dict[str, Any]] = {
+_RESPONSE_403_READ: Final[dict[str, Any]] = {
     "model": ErrorResponse,
-    "description": "The caller is authenticated but does not hold `catalogue.browse`.",
+    "description": "The caller is authenticated but does not hold `registry.read`.",
 }
 _RESPONSE_403_MANAGE: Final[dict[str, Any]] = {
     "model": ErrorResponse,
@@ -99,12 +104,36 @@ _RESPONSE_409: Final[dict[str, Any]] = {
         "deprecating a system property, or (on `DELETE`) any request at all."
     ),
 }
+#: Round-2 review, minor finding 2: a route below can produce *two*
+#: genuinely different 422 body shapes, not one - a typed domain error
+#: (`ErrorResponse`, `{"detail": "<string>"}`, e.g.
+#: `PropertyDatatypeUnknownError`/`PropertyConstraintsInvalidError`) and a
+#: pydantic validation failure that never reaches the route body at all
+#: (FastAPI's own `HTTPValidationError`,
+#: `{"detail": [{"loc": ..., "msg": ...}, ...]}` - the explicit-`null` and
+#: invalid-enum-value paths both exercise this one). The previous
+#: `"model": ErrorResponse` only documented the first, silently suppressing
+#: FastAPI's automatic `HTTPValidationError` entry it would otherwise add
+#: for any route with a request body. Declared here as `anyOf` over both
+#: component schemas, referenced the same way FastAPI names them
+#: (`ErrorResponse`, `HTTPValidationError`) rather than overriding one away.
 _RESPONSE_422: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
     "description": (
         "A field failed validation, the request body named a `key` field, or an explicit "
-        "`null` was given for a field that is otherwise omittable."
+        "`null` was given for a field that is otherwise omittable. Two distinct body shapes "
+        "occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure "
+        "(FastAPI's own `HTTPValidationError`)."
     ),
+    "content": {
+        "application/json": {
+            "schema": {
+                "anyOf": [
+                    {"$ref": "#/components/schemas/ErrorResponse"},
+                    {"$ref": "#/components/schemas/HTTPValidationError"},
+                ]
+            }
+        }
+    },
 }
 
 #: Issue #223 review finding 10: each route below gets its own dict naming
@@ -112,11 +141,11 @@ _RESPONSE_422: Final[dict[str, Any]] = {
 #: dict that advertises a status it cannot return any more.
 _RESPONSES_LIST: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
-    403: _RESPONSE_403_BROWSE,
+    403: _RESPONSE_403_READ,
 }
 _RESPONSES_GET_ONE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
-    403: _RESPONSE_403_BROWSE,
+    403: _RESPONSE_403_READ,
     404: _RESPONSE_404,
 }
 _RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
@@ -148,7 +177,7 @@ _RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
 SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 _MANAGE = Depends(permission_dep(Permission.REGISTRY_MANAGE))
-_BROWSE = Depends(permission_dep(Permission.CATALOGUE_BROWSE))
+_READ = Depends(permission_dep(Permission.REGISTRY_READ))
 
 
 class PropertyDefinitionResponse(BaseModel):
@@ -311,7 +340,7 @@ def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
     "/properties",
     summary="List property definitions",
     responses=_RESPONSES_LIST,
-    dependencies=[_BROWSE],
+    dependencies=[_READ],
 )
 def list_properties(
     session: SessionDep,
@@ -326,7 +355,7 @@ def list_properties(
     "/properties/{key}",
     summary="Get one property definition",
     responses=_RESPONSES_GET_ONE,
-    dependencies=[_BROWSE],
+    dependencies=[_READ],
 )
 def get_property(session: SessionDep, key: str) -> PropertyDefinitionResponse:
     definition = load_definition(session, key)

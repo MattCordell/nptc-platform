@@ -1411,7 +1411,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The caller is authenticated but does not hold `catalogue.browse`. */
+            /** @description The caller is authenticated but does not hold `registry.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1480,13 +1480,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1520,7 +1520,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The caller is authenticated but does not hold `catalogue.browse`. */
+            /** @description The caller is authenticated but does not hold `registry.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1667,13 +1667,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1738,13 +1738,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };
