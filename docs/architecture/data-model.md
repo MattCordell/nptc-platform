@@ -881,9 +881,42 @@ validation on its own merits.
 `property_definition`/`property_value` land with #51, per ADR-0012's design record - see that
 ADR for the full reasoning, including the rejected alternatives (runtime DDL, classic EAV)
 and the FR-13 index executor, which #54 resolved (see the "Automatic index generation"
-section below and ADR-0012's dated amendment). #52 (JSON Schema validation) and #54
-(automatic index generation) have landed; #55 (deprecation/key immutability workflow) still
-builds on top of what is described here.
+section below and ADR-0012's dated amendment). #52 (JSON Schema validation), #54
+(automatic index generation) and #55 (the application-layer deprecation/key-immutability
+workflow and the `PropertyDefinition` admin router) have all landed.
+
+**#55's deprecation lifecycle, in one direction only.** `status` moves `active` ->
+`deprecated` via `POST /registry/properties/{key}/deprecation`
+(`nptc.db.definitions.deprecate_definition`) and never back - there is no "reactivate"
+function, and an attempt to move `deprecated` -> `active` (whether through the HTTP layer
+or a direct service call) is refused with a typed 409. Deprecating an `origin = 'system'`
+property (Discipline, Subgroup, Specimen, Usage guidance - the four bootstrap-seeded rows)
+is likewise refused with a typed 409: an explicit assumption issue #55 takes, not something
+the PRD itself states. Deprecating never touches a single `property_value` row - FR-11's
+whole point is that recorded values remain readable indefinitely; only this definition's own
+`status`/`deprecated_at` change. `nptc.db.definitions.list_definitions`'s `audience`
+parameter is what actually governs visibility: `DefinitionAudience.DATA_ENTRY` (the default
+for `GET /registry/properties`) excludes a deprecated property entirely, so it is never
+offered as something new to record a value against; `DefinitionAudience.EXPORT`
+(`?include_deprecated=true`) returns every status, since a historical value recorded
+against a since-deprecated property must still resolve to a spec and a handler when
+re-serialised. A value write against a deprecated property
+(`nptc.catalogue.property_values.save_property_values`) is refused 422, naming the
+property. `DELETE /registry/properties/{key}` always refuses with a typed 409 regardless of
+whether `key` exists - `property_definition` has no `DELETE` grant at the database layer at
+all (issue #51); this is the HTTP-visible refusal for the same invariant, not a second
+enforcement mechanism. `key` immutability is enforced twice at the application layer beyond
+the database's own `@validates`/privilege guard (issue #51): `PATCH /registry/properties/{key}`'s
+request model carries no `key` field at all and is `extra="forbid"`, so a client naming one
+gets a pydantic 422 before the service layer is ever reached; `nptc.db.definitions.
+amend_definition` raises a typed `PropertyKeyImmutableError` (409) before touching any other
+attribute if called directly with a key-change attempt.
+
+Out of scope for #55, by design: byte-level regeneration of a *historical, already-published*
+export that references a since-deprecated property - `nptc.exports`/`nptc.releases` are
+still P4 stubs with no release/export_config table to regenerate against. The
+`DefinitionAudience.EXPORT` listing above is the resolver half only; the follow-up issue
+filed alongside #55's PR covers the rest.
 
 `property_definition` is a conventional relational table, not a document:
 
