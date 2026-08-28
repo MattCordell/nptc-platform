@@ -454,6 +454,7 @@ def deprecate_property(
 @router.delete(
     "/properties/{key}",
     summary="Delete a property definition (always refused)",
+    status_code=409,
     responses=_RESPONSES_DELETE,
     dependencies=[_MANAGE],
 )

@@ -1190,11 +1190,13 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
+          "409": {
+            "description": "The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -1210,16 +1212,6 @@
           },
           "403": {
             "description": "The caller is authenticated but does not hold `registry.manage`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all.",
             "content": {
               "application/json": {
                 "schema": {

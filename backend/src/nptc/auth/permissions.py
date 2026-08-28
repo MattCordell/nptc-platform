@@ -185,6 +185,7 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
             Permission.INTEREST_VIEW_COUNTS,
             Permission.SUBMISSION_CREATE,
             Permission.AMENDMENT_PROPOSE,
+            Permission.REGISTRY_READ,
             Permission.SUBMISSION_WITHDRAW_OWN,
         }
     ),

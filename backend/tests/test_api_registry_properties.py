@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
+from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
@@ -75,6 +75,35 @@ def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str
 
 def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
+
+
+def _role_token(api: ApiTestApp, *, subject: str, role: Role) -> str:
+    """Resolves `subject` to exactly `role` - no more, no less.
+
+    `_create_user` (`nptc.auth.identity`) auto-grants every brand-new
+    identity `Role.PROVISIONAL` on first sign-in, and roles are additive
+    (`roles_for_user` returns the union of every grant, and permissions are
+    the union over that set) - so granting a role on top of a fresh
+    identity does not isolate that role's own permissions, it only adds to
+    Provisional's. `revoke_all_roles_unchecked` clears that default grant
+    first so the token in hand reflects `role` alone."""
+    bootstrap = api.token(subject=subject)
+    api.get("/auth/me", token=bootstrap)
+    user = api.session.execute(
+        select(User)
+        .join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(UserIdentity.subject == subject)
+    ).scalar_one()
+    revoke_all_roles_unchecked(api.session, target_user_id=user.id, audit=AuditContext.system())
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=role,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    return api.token(subject=subject)
 
 
 def _unique_key(prefix: str) -> str:
@@ -437,11 +466,17 @@ def test_list_properties_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_list_properties_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
     """See `test_list_properties_no_credential_is_401`'s own docstring.
-    A principal authenticated with no granted role holds only
-    `ROLE_PERMISSIONS[Role.ANON]`, which does not include
-    `Permission.REGISTRY_READ` (ADR-0028) - so this is a 403, not the
-    200 round-1's over-correction produced."""
-    token = api.token(subject="sub-list-no-granted-role")
+    `_create_user` auto-grants a brand-new identity `Role.PROVISIONAL`
+    (`nptc.auth.identity`), and round-4 review (issue #223) gave
+    `Role.PROVISIONAL` `Permission.REGISTRY_READ` too (FR-23 - the
+    submission form Provisional can already create is generated from this
+    registry), so a bare newly-seen subject is no longer the right
+    "lacks `registry.read`" case. `Role.OBSERVER` is: FR-80 keeps it
+    entirely read-only/non-contributing, with no submission form to
+    generate, so it is the only authenticated role without
+    `Permission.REGISTRY_READ` (ADR-0028) - this is a 403, not the 200
+    round-1's over-correction produced."""
+    token = _role_token(api, subject="sub-list-observer-role", role=Role.OBSERVER)
     response = api.get("/registry/properties", token=token)
     assert response.status_code == 403, response.text
 
@@ -495,10 +530,24 @@ def test_get_property_authenticated_without_permission_is_403(api: ApiTestApp) -
     admin_token = _admin_token(api, subject="sub-get-setup-no-permission")
     key = _unique_key("get_no_special_role")
     _create(api, admin_token, key)
-    token = api.token(subject="sub-get-no-granted-role")
+    token = _role_token(api, subject="sub-get-observer-role", role=Role.OBSERVER)
 
     response = api.get(f"/registry/properties/{key}", token=token)
     assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_list_properties_provisional_role_is_200(api: ApiTestApp) -> None:
+    """Issue #223 round-4 review: FR-23 names Provisional as one of the
+    roles able to submit a proposed new test, and the submission form is
+    generated from the property registry - so ADR-0028's
+    `Permission.REGISTRY_READ` must not exclude `Role.PROVISIONAL`. A
+    Provisional principal gets 200, not the 403 an ANON-tier caller gets
+    in `test_list_properties_authenticated_without_permission_is_403`."""
+    token = _role_token(api, subject="sub-list-provisional", role=Role.PROVISIONAL)
+    response = api.get("/registry/properties", token=token)
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.req("NFR-08")

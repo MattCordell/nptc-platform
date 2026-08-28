@@ -29,15 +29,23 @@ authenticated members and above, not for a stranger.
 ## Decision
 
 Add `Permission.REGISTRY_READ = "registry.read"` (`PermissionKind.READ`) to
-`backend/src/nptc/auth/permissions.py`, held by `Role.MEMBER`, `Role.REVIEWER` and
-`Role.ADMINISTRATOR` — **not** `Role.ANON`, `Role.OBSERVER` or `Role.PROVISIONAL`. This
-mirrors the existing `own`/`any`/quota split's own principle from ADR-0019: a new
-capability boundary gets its own permission, never an ad-hoc check bolted onto an existing
-one.
+`backend/src/nptc/auth/permissions.py`, held by `Role.PROVISIONAL`, `Role.MEMBER`,
+`Role.REVIEWER` and `Role.ADMINISTRATOR` — **not** `Role.ANON` or `Role.OBSERVER`. FR-23
+(a MUST) names Provisional, Member, Reviewer and Administrator as the roles able to submit
+a proposed new test, and the submission form is generated from the property registry —
+every property whose `scope` includes `submission` appears, and `required_for_submission`
+ones are enforced. A role FR-23 names as able to submit cannot be denied the read access
+that form generation depends on. `Role.OBSERVER` stays excluded: FR-80 makes Observer
+entirely read-only and non-contributing, so it has no submission form to generate and no
+principled claim on this permission. This is the deliberate line `REGISTRY_READ` draws —
+"roles that can submit", not "roles above Observer" — and it mirrors the existing
+`own`/`any`/quota split's own principle from ADR-0019: a new capability boundary gets its
+own permission, never an ad-hoc check bolted onto an existing one.
 
 PRD Section 4.7 gains a new row, "View property registry (read-only)", with `Y` from
-Member up — placed alongside "Register interest" (the other Member-and-up-only row) since
-both first become available at that tier. `test_permission_matrix.py`'s
+Provisional up — placed directly after "Propose amendments" (the other rows describing
+what Provisional actually gains over Observer per Section 4.3), not after "Register
+interest" (a capability Provisional is explicitly denied). `test_permission_matrix.py`'s
 `_ROW_PERMISSIONS` bridge maps the new row to `Permission.REGISTRY_READ`, keeping the
 PRD table the single independent source of truth the test already parses directly.
 
@@ -67,8 +75,9 @@ this whole thread started from (`REGISTRY_MANAGE` unreachable by Member).
 
 ## Consequences
 
-- `Permission.REGISTRY_READ` is `MEMBER`-tier: any later route serving the same
-  "authenticated member reading maintenance-form plumbing" audience (e.g. local code
+- `Permission.REGISTRY_READ` is deliberately scoped to "roles that can submit" (Provisional
+  and up), not simply "member-tier and up": any later route serving the same "authenticated,
+  submission-capable caller reading maintenance-form plumbing" audience (e.g. local code
   systems) can reuse it rather than reaching for `CATALOGUE_BROWSE` or `REGISTRY_MANAGE`.
 - `test_permission_matrix.py`, `test_permissions_data.py` (exhaustive `PERMISSION_KIND`
   classification, monotonicity) and the AST authorisation guard

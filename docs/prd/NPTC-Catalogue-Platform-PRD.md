@@ -186,8 +186,8 @@ Authoritative. Where prose elsewhere in this document disagrees with this table,
 | View interest counts | . | Y | Y | Y | Y | Y |
 | Create submissions | . | . | Y (max 5) | Y (20/hr) | Y | Y |
 | Propose amendments | . | . | Y (max 5) | Y (20/hr) | Y | Y |
+| View property registry (read-only) | . | . | Y | Y | Y | Y |
 | Register interest | . | . | . | Y | Y | Y |
-| View property registry (read-only) | . | . | . | Y | Y | Y |
 | Withdraw own submission before approval | . | . | Y (own) | Y (own) | Y (own) | Y (any) |
 | View submitter identities | . | . | . | . | Y | Y |
 | View who registered interest | . | . | . | . | Y | Y |
