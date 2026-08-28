@@ -59,6 +59,7 @@ _ROW_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "Create submissions": frozenset({Permission.SUBMISSION_CREATE}),
     "Propose amendments": frozenset({Permission.AMENDMENT_PROPOSE}),
     "Register interest": frozenset({Permission.INTEREST_REGISTER}),
+    "View property registry (read-only)": frozenset({Permission.REGISTRY_READ}),
     "View submitter identities": frozenset({Permission.SUBMITTER_IDENTITY_VIEW}),
     "View who registered interest": frozenset({Permission.INTEREST_IDENTITIES_VIEW}),
     "Read and write internal comments": frozenset(

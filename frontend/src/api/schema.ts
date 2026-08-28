@@ -199,10 +199,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/properties": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List property definitions */
+        get: operations["list_properties_api_v1_registry_properties_get"];
+        put?: never;
+        /** Create a property definition */
+        post: operations["create_property_api_v1_registry_properties_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/properties/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one property definition */
+        get: operations["get_property_api_v1_registry_properties__key__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a property definition (always refused)
+         * @description Always refuses (FR-11) - `property_definition` has no `DELETE` grant
+         *     at the database layer at all (issue #51). `key` is accepted (and, for a
+         *     genuinely unknown key, still refused the same way, not 404'd) so the
+         *     response is uniform regardless of whether the key exists - the caller's
+         *     mistake either way is asking to delete at all, not naming the wrong
+         *     key.
+         */
+        delete: operations["delete_property_api_v1_registry_properties__key__delete"];
+        options?: never;
+        head?: never;
+        /** Amend a property definition */
+        patch: operations["amend_property_api_v1_registry_properties__key__patch"];
+        trace?: never;
+    };
+    "/api/v1/registry/properties/{key}/deprecation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deprecate a property definition */
+        post: operations["deprecate_property_api_v1_registry_properties__key__deprecation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AmendPropertyDefinitionRequest
+         * @description The body of `PATCH /registry/properties/{key}`. Deliberately carries
+         *     no `key` field (FR-12) and forbids any extra field a client might try to
+         *     smuggle one in as - `extra="forbid"` turns a `key` in the body into a
+         *     pydantic 422 before this ever reaches `nptc.db.definitions.
+         *     amend_definition`.
+         *
+         *     **An explicit `null` on a known field is refused, not a silent no-op**
+         *     (issue #223 review finding 9). None of these fields is a nullable
+         *     domain value, so a client sending `{"label": null, ...}` almost
+         *     certainly meant to omit the field, not clear it - `_reject_explicit_null`
+         *     below distinguishes "omitted" from "provided as null" via
+         *     `model_fields_set`, which `changes()` cannot do once every field has
+         *     collapsed to `None`.
+         */
+        AmendPropertyDefinitionRequest: {
+            /** Label */
+            label?: string | null;
+            /** Required For Submission */
+            required_for_submission?: boolean | null;
+            /** Required For Publication */
+            required_for_publication?: boolean | null;
+            /** Filterable */
+            filterable?: boolean | null;
+            /** Display Order */
+            display_order?: number | null;
+            /** Constraints */
+            constraints?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expected Row Version */
+            expected_row_version: number;
+            /** Reason */
+            reason: string;
+        };
         /**
          * BindCodeRequest
          * @description The body of `POST /catalogue/entries/{business_key}/bindings`.
@@ -265,10 +363,91 @@ export interface components {
             items: components["schemas"]["Binding"][];
         };
         /**
+         * BindingStrength
+         * @enum {string}
+         */
+        BindingStrength: "required" | "extensible" | "example";
+        /**
+         * BindingTarget
+         * @enum {string}
+         */
+        BindingTarget: "value_set" | "local_code_system";
+        /**
          * CodeBindingEditionHint
          * @enum {string}
          */
         CodeBindingEditionHint: "au" | "int" | "unknown";
+        /**
+         * CreatePropertyDefinitionRequest
+         * @description The body of `POST /registry/properties`. Every property created
+         *     through this route is `origin = 'admin'` - there is no field to
+         *     request otherwise; the four `origin = 'system'` rows are seeded once,
+         *     at bootstrap, and never created through this API.
+         *
+         *     `cardinality`/`scope`/`strength`/`binding_target` are typed against the
+         *     exact `StrEnum`s `property_definition`'s own database `CHECK`
+         *     constraints close over (issue #223 review finding 3) - an invalid value
+         *     is now a pydantic 422 before the request ever reaches the ORM, rather
+         *     than a `23514` `IntegrityError` that `create_definition`'s `except
+         *     IntegrityError` used to re-raise unchanged, surfacing as an unhandled
+         *     500. `datatype` stays a bare `str` deliberately - FR-77's own extension
+         *     point, so admitting a new datatype never touches this router - and is
+         *     instead validated by `create_definition` itself, against the live
+         *     `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
+         *     rather than a broken row that only misbehaves at the first value
+         *     write.
+         */
+        CreatePropertyDefinitionRequest: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Datatype */
+            datatype: string;
+            cardinality: components["schemas"]["PropertyCardinality"];
+            scope: components["schemas"]["PropertyScope"];
+            /**
+             * Required For Submission
+             * @default false
+             */
+            required_for_submission: boolean;
+            /**
+             * Required For Publication
+             * @default false
+             */
+            required_for_publication: boolean;
+            /**
+             * Filterable
+             * @default false
+             */
+            filterable: boolean;
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
+            binding_target?: components["schemas"]["BindingTarget"] | null;
+            /** Value Set Uri */
+            value_set_uri?: string | null;
+            strength?: components["schemas"]["BindingStrength"] | null;
+            /** Edition */
+            edition?: string | null;
+            /** Local Code System Key */
+            local_code_system_key?: string | null;
+            /** Constraints */
+            constraints?: {
+                [key: string]: unknown;
+            };
+            /** Reason */
+            reason: string;
+        };
+        /** DeprecatePropertyDefinitionRequest */
+        DeprecatePropertyDefinitionRequest: {
+            /** Expected Row Version */
+            expected_row_version: number;
+            /** Reason */
+            reason: string;
+        };
         /**
          * Designation
          * @description A catalogue-authored synonym, or a preferred variant in a language
@@ -376,11 +555,76 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * PropertyCardinality
+         * @enum {string}
+         */
+        PropertyCardinality: "0..1" | "1..1" | "0..*" | "1..*";
+        /** PropertyDefinitionList */
+        PropertyDefinitionList: {
+            /** Items */
+            items: components["schemas"]["PropertyDefinitionResponse"][];
+        };
+        /**
+         * PropertyDefinitionResponse
+         * @description One `property_definition` row, on the wire. No internal id (NFR-04) -
+         *     `key` is the one public identifier this resource is ever addressed by.
+         */
+        PropertyDefinitionResponse: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Datatype */
+            datatype: string;
+            /** Cardinality */
+            cardinality: string;
+            /** Scope */
+            scope: string;
+            /** Required For Submission */
+            required_for_submission: boolean;
+            /** Required For Publication */
+            required_for_publication: boolean;
+            /** Binding Target */
+            binding_target: string | null;
+            /** Value Set Uri */
+            value_set_uri: string | null;
+            /** Strength */
+            strength: string | null;
+            /** Edition */
+            edition: string | null;
+            /** Local Code System Key */
+            local_code_system_key: string | null;
+            /** Filterable */
+            filterable: boolean;
+            /** Origin */
+            origin: string;
+            /** Status */
+            status: string;
+            /** Display Order */
+            display_order: number;
+            /** Constraints */
+            constraints: {
+                [key: string]: unknown;
+            };
+            /** Row Version */
+            row_version: number;
+        };
         /** PropertyList */
         PropertyList: {
             /** Items */
             items: components["schemas"]["PropertyValue"][];
         };
+        /**
+         * PropertyScope
+         * @enum {string}
+         */
+        PropertyScope: "submission" | "maintenance" | "both";
         /**
          * PropertyValue
          * @description One property value, rendered by its datatype's own handler.
@@ -515,6 +759,19 @@ export interface components {
             organisation: string | null;
             /** Status */
             status: string;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;
@@ -1121,6 +1378,364 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_properties_api_v1_registry_properties_get: {
+        parameters: {
+            query?: {
+                include_deprecated?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyDefinitionList"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_property_api_v1_registry_properties_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePropertyDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyDefinitionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_property_api_v1_registry_properties__key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyDefinitionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No property definition matches the given key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_property_api_v1_registry_properties__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    amend_property_api_v1_registry_properties__key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AmendPropertyDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyDefinitionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No property definition matches the given key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deprecate_property_api_v1_registry_properties__key__deprecation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeprecatePropertyDefinitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyDefinitionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No property definition matches the given key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };

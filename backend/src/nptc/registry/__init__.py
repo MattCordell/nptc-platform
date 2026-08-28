@@ -5,8 +5,12 @@ A leaf package (ADR-0013 SS2): may import ``nptc_shared``, SQLAlchemy,
 imports it. The only datatype ``switch``/``match`` in the codebase may live in
 ``registry/datatypes/`` - enforced by ``backend/tests/test_datatype_dispatch.py``.
 
-``registry/definitions.py`` (PropertyDefinition service, #51/#55) is not yet
-implemented. ``registry/schema.py`` (JSON Schema derivation, #52) is.
+``registry/definitions.py`` (PropertyDefinition typed errors and the
+``DefinitionAudience`` vocabulary, #55) and ``registry/schema.py`` (JSON
+Schema derivation, #52) are implemented. The ORM-backed half of the
+PropertyDefinition service (create/amend/deprecate/list) lives in
+``nptc.db.definitions``, not here - ADR-0013 SS2's leaf rule keeps the ORM
+model out of this package.
 
 ``nptc.db.property_indexes`` (issue #54, FR-13) - the DDL executor for
 automatic index generation - lives under ``nptc.db``, not here, for the
@@ -15,6 +19,16 @@ same leaf-rule reason ``nptc.db.bootstrap`` does: it imports the
 """
 
 from nptc.registry.datatypes import BUILTIN_DATATYPES, build_builtin_handlers
+from nptc.registry.definitions import (
+    DefinitionAudience,
+    DeprecatedPropertyWriteError,
+    PropertyAlreadyDeprecatedError,
+    PropertyDefinitionDeleteRefusedError,
+    PropertyDefinitionKeyExistsError,
+    PropertyKeyImmutableError,
+    PropertyReactivationRefusedError,
+    SystemPropertyDeprecationRefusedError,
+)
 from nptc.registry.handlers import (
     INDEX_KIND_BY_EXPRESSION,
     BindingSpec,
@@ -46,6 +60,8 @@ __all__ = [
     "ControlKind",
     "DatatypeHandler",
     "DatatypeRegistry",
+    "DefinitionAudience",
+    "DeprecatedPropertyWriteError",
     "DuplicateDatatypeError",
     "FilterOp",
     "FormControlDescriptor",
@@ -53,9 +69,15 @@ __all__ = [
     "IndexKind",
     "IndexShape",
     "LocalCodeLookup",
+    "PropertyAlreadyDeprecatedError",
+    "PropertyDefinitionDeleteRefusedError",
+    "PropertyDefinitionKeyExistsError",
     "PropertyDefinitionSpec",
+    "PropertyKeyImmutableError",
+    "PropertyReactivationRefusedError",
     "ResolvedLocalCode",
     "SerialisationTarget",
+    "SystemPropertyDeprecationRefusedError",
     "UnknownDatatypeError",
     "UnsupportedBindingError",
     "UnsupportedFilterOpError",
