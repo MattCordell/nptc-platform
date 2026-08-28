@@ -41,6 +41,7 @@ from nptc.registry.definitions import (
     PropertyAlreadyDeprecatedError,
     PropertyDefinitionKeyExistsError,
     PropertyKeyImmutableError,
+    PropertyReactivationRefusedError,
     SystemPropertyDeprecationRefusedError,
 )
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
@@ -294,6 +295,36 @@ def test_deprecate_definition_refuses_a_system_property(app_session: Session) ->
             definition=definition,
             expected_row_version=definition.row_version,
             reason=_REASON,
+        )
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_amend_definition_refuses_reactivating_a_deprecated_property(
+    app_session: Session,
+) -> None:
+    """Deprecation is one-way - there is no `reactivate()` function, so the
+    only way to attempt `deprecated` -> `active` is via `amend_definition`
+    with a `status` kwarg, and that must be refused too."""
+    definition = _create(app_session)
+    app_session.flush()
+    deprecate_definition(
+        app_session,
+        AuditContext.system(),
+        definition=definition,
+        expected_row_version=definition.row_version,
+        reason=_REASON,
+    )
+    app_session.flush()
+
+    with pytest.raises(PropertyReactivationRefusedError):
+        amend_definition(
+            app_session,
+            AuditContext.system(),
+            definition=definition,
+            expected_row_version=definition.row_version,
+            reason=_REASON,
+            status="active",
         )
 
 
