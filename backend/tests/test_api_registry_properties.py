@@ -186,6 +186,91 @@ def test_patch_property_with_a_stale_row_version_is_409(api: ApiTestApp) -> None
     assert response.status_code == 409, response.text
 
 
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_patch_property_with_an_explicit_null_is_422(api: ApiTestApp) -> None:
+    """Issue #223 review finding 9: an explicit `null` on a known field is
+    refused, not a silent no-op - `AmendPropertyDefinitionRequest` treats
+    "field omitted" and "field explicitly set to null" as different
+    things, and none of these fields is a nullable domain value."""
+    token = _admin_token(api, subject="sub-patch-explicit-null")
+    key = _unique_key("patch_explicit_null")
+    created = _create(api, token, key).json()
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": created["row_version"],
+            "reason": _REASON,
+            "label": None,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_deprecate_property_with_a_stale_row_version_is_409(api: ApiTestApp) -> None:
+    """Issue #223 review finding 7: `deprecate_property`'s stale-
+    `expected_row_version` branch had no HTTP-layer test, mirroring
+    `test_patch_property_with_a_stale_row_version_is_409` above."""
+    token = _admin_token(api, subject="sub-deprecate-stale")
+    key = _unique_key("deprecate_stale")
+    created = _create(api, token, key).json()
+
+    response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"] + 1, "reason": _REASON},
+    )
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_create_property_with_an_unknown_datatype_is_422(api: ApiTestApp) -> None:
+    """Issue #223 review finding 3: `datatype` has no database `CHECK` at
+    all (FR-77's own extension point), so an unrecognised value must be
+    refused with a 422 before the row is ever written, not a `201`
+    followed by a broken row."""
+    token = _admin_token(api, subject="sub-create-bad-datatype")
+    response = _create(api, token, _unique_key("bad_datatype"), datatype="banana")
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_create_property_with_an_invalid_cardinality_is_422(api: ApiTestApp) -> None:
+    """Issue #223 review finding 3: `cardinality` is typed against the
+    exact `CHECK`-backed enum, so an invalid value is a pydantic 422, not
+    the `23514` `IntegrityError` `create_definition` used to re-raise
+    unchanged as an unhandled 500."""
+    token = _admin_token(api, subject="sub-create-bad-cardinality")
+    response = _create(api, token, _unique_key("bad_cardinality"), cardinality="0..99")
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_create_property_with_constraints_invalid_for_the_datatype_is_422(
+    api: ApiTestApp,
+) -> None:
+    """Issue #223 review finding 4: `constraints` is validated against the
+    resolved datatype handler's own `constraints_schema()` at create time."""
+    token = _admin_token(api, subject="sub-create-bad-constraints")
+    response = _create(
+        api,
+        token,
+        _unique_key("bad_constraints"),
+        constraints={"maxLength": "not-an-integer"},
+    )
+    assert response.status_code == 422, response.text
+
+
 @pytest.mark.req("FR-11")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
@@ -335,20 +420,42 @@ def test_delete_property_unknown_key_is_still_409_not_404(api: ApiTestApp) -> No
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
 
 
-@pytest.mark.req("NFR-20")
+@pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_list_properties_no_credential_is_401(api: ApiTestApp) -> None:
+def test_list_properties_no_credential_still_succeeds(api: ApiTestApp) -> None:
+    """Issue #223 review finding 6: `GET /registry/properties` is now
+    gated on `Permission.CATALOGUE_BROWSE`, which `Role.ANON` holds too
+    (`nptc.auth.permissions.ROLE_PERMISSIONS`) - matching `nptc.api.
+    routers.catalogue`'s own public, unauthenticated read routes gated on
+    the same permission (FR-20). An anonymous caller here is no longer a
+    401: this route is exactly the one `DefinitionAudience.DATA_ENTRY` is
+    named for, and a submission/maintenance form has to be reachable
+    before a caller has signed in at all."""
     response = api.get("/registry/properties", token=None)
-    assert response.status_code == 401, response.text
-    assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_list_properties_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    token = api.token(subject="sub-list-no-permission")
+def test_list_properties_authenticated_with_no_granted_role_still_succeeds(
+    api: ApiTestApp,
+) -> None:
+    """Issue #223 review finding 6: `GET /registry/properties` is now gated
+    on `Permission.CATALOGUE_BROWSE`, not `registry.manage` - and
+    `CATALOGUE_BROWSE` is held by every role in the PRD Section 4.7 matrix,
+    `Role.ANON` included (`nptc.auth.permissions.ROLE_PERMISSIONS`), so
+    there is no principal that can authenticate and still lack it. That is
+    exactly finding 6's point: a member with no special grant at all (the
+    "just filling in a submission form" audience `DefinitionAudience.
+    DATA_ENTRY` is named for) must be able to reach this route, which the
+    old `registry.manage` gate made impossible. A 403-without-permission
+    test would assert something this permission's own data makes
+    unreachable - see `nptc.api.routers.catalogue`'s identical `
+    CATALOGUE_BROWSE`-gated routes, which carry the same 401-only coverage
+    for the same reason."""
+    token = api.token(subject="sub-list-no-granted-role")
     response = api.get("/registry/properties", token=token)
-    assert response.status_code == 403, response.text
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.req("NFR-20")
@@ -377,27 +484,33 @@ def test_create_property_administrator_without_mfa_gets_step_up_challenge(
     assert 'error="insufficient_user_authentication"' in response.headers["WWW-Authenticate"]
 
 
-@pytest.mark.req("NFR-20")
+@pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_get_property_no_credential_is_401(api: ApiTestApp) -> None:
+def test_get_property_no_credential_still_succeeds(api: ApiTestApp) -> None:
+    """See `test_list_properties_no_credential_still_succeeds`'s own
+    docstring - `CATALOGUE_BROWSE` is held by `Role.ANON` too."""
     admin_token = _admin_token(api, subject="sub-get-setup")
     key = _unique_key("get_no_cred")
     _create(api, admin_token, key)
 
     response = api.get(f"/registry/properties/{key}", token=None)
-    assert response.status_code == 401, response.text
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
-def test_get_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-get-setup-403")
-    key = _unique_key("get_no_permission")
+def test_get_property_authenticated_with_no_granted_role_still_succeeds(api: ApiTestApp) -> None:
+    """See `test_list_properties_authenticated_with_no_granted_role_still_
+    succeeds`'s own docstring: `CATALOGUE_BROWSE` is held by every role,
+    so there is no authenticated principal a 403-without-permission test
+    could exercise here."""
+    admin_token = _admin_token(api, subject="sub-get-setup-browse")
+    key = _unique_key("get_no_special_role")
     _create(api, admin_token, key)
-    token = api.token(subject="sub-get-no-permission")
+    token = api.token(subject="sub-get-no-granted-role")
 
     response = api.get(f"/registry/properties/{key}", token=token)
-    assert response.status_code == 403, response.text
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.req("NFR-08")

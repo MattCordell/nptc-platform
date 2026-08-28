@@ -4,12 +4,19 @@ Follows `routers/catalogue_bindings.py`'s house style exactly: the
 return-type annotation drives the response model (never `response_model=`
 on the decorator), `ConfigDict(frozen=True)` on every request/response
 model, module-level `Final` `_RESPONSES` dicts naming only the statuses a
-route can actually produce, and no try/except in a route body - every
-domain exception carries `http_status` and is mapped centrally by
-`nptc.api.errors`.
+route can actually produce (issue #223 review finding 10: each route gets
+its own precise dict, not a shared one that advertises a status it cannot
+return), and no try/except in a route body - every domain exception
+carries `http_status` and is mapped centrally by `nptc.api.errors`.
 
-**Every mutating route is gated on `Permission.REGISTRY_MANAGE`** (FR-44) -
-never a role name.
+**Every mutating route (`POST`/`PATCH`/`POST .../deprecation`/`DELETE`) is
+gated on `Permission.REGISTRY_MANAGE`** (FR-44) - never a role name. **Both
+`GET` routes are gated on `Permission.CATALOGUE_BROWSE`** instead (issue
+#223 review finding 6): `REGISTRY_MANAGE` is administrator-tier, and
+gating a read route on it made `DefinitionAudience.DATA_ENTRY` unreachable
+by the very audience it is named for - a member filling in a submission
+form could not call `GET /registry/properties` to learn which properties
+to offer.
 
 **`DELETE` never deletes.** `delete_property_definition` always raises
 `PropertyDefinitionDeleteRefusedError` (409) - `property_definition` has no
@@ -38,10 +45,15 @@ from __future__ import annotations
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
+from nptc.api.dependencies import (
+    AuditContextDep,
+    get_datatype_registry,
+    get_session,
+    permission_dep,
+)
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
 from nptc.db.definitions import (
@@ -51,8 +63,15 @@ from nptc.db.definitions import (
     list_definitions,
     load_definition,
 )
-from nptc.db.models.property_definition import PropertyDefinition
+from nptc.db.models.property_definition import (
+    BindingStrength,
+    BindingTarget,
+    PropertyCardinality,
+    PropertyDefinition,
+    PropertyScope,
+)
 from nptc.registry.definitions import DefinitionAudience, PropertyDefinitionDeleteRefusedError
+from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 
@@ -60,7 +79,11 @@ _RESPONSE_401: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "No credential, or one that could not be verified.",
 }
-_RESPONSE_403: Final[dict[str, Any]] = {
+_RESPONSE_403_BROWSE: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": "The caller is authenticated but does not hold `catalogue.browse`.",
+}
+_RESPONSE_403_MANAGE: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "The caller is authenticated but does not hold `registry.manage`.",
 }
@@ -78,19 +101,54 @@ _RESPONSE_409: Final[dict[str, Any]] = {
 }
 _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
-    "description": "A field failed validation, or the request body named a `key` field.",
+    "description": (
+        "A field failed validation, the request body named a `key` field, or an explicit "
+        "`null` was given for a field that is otherwise omittable."
+    ),
 }
 
-_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+#: Issue #223 review finding 10: each route below gets its own dict naming
+#: only the statuses it can actually produce - no route reuses a shared
+#: dict that advertises a status it cannot return any more.
+_RESPONSES_LIST: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
-    403: _RESPONSE_403,
+    403: _RESPONSE_403_BROWSE,
+}
+_RESPONSES_GET_ONE: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_BROWSE,
+    404: _RESPONSE_404,
+}
+_RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_MANAGE,
+    409: _RESPONSE_409,
+    422: _RESPONSE_422,
+}
+_RESPONSES_PATCH: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_MANAGE,
     404: _RESPONSE_404,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
 }
+_RESPONSES_DEPRECATE: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_MANAGE,
+    404: _RESPONSE_404,
+    409: _RESPONSE_409,
+    422: _RESPONSE_422,
+}
+_RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_MANAGE,
+    409: _RESPONSE_409,
+}
 
 SessionDep = Annotated[Session, Depends(get_session)]
+RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 _MANAGE = Depends(permission_dep(Permission.REGISTRY_MANAGE))
+_BROWSE = Depends(permission_dep(Permission.CATALOGUE_BROWSE))
 
 
 class PropertyDefinitionResponse(BaseModel):
@@ -129,22 +187,35 @@ class CreatePropertyDefinitionRequest(BaseModel):
     """The body of `POST /registry/properties`. Every property created
     through this route is `origin = 'admin'` - there is no field to
     request otherwise; the four `origin = 'system'` rows are seeded once,
-    at bootstrap, and never created through this API."""
+    at bootstrap, and never created through this API.
+
+    `cardinality`/`scope`/`strength`/`binding_target` are typed against the
+    exact `StrEnum`s `property_definition`'s own database `CHECK`
+    constraints close over (issue #223 review finding 3) - an invalid value
+    is now a pydantic 422 before the request ever reaches the ORM, rather
+    than a `23514` `IntegrityError` that `create_definition`'s `except
+    IntegrityError` used to re-raise unchanged, surfacing as an unhandled
+    500. `datatype` stays a bare `str` deliberately - FR-77's own extension
+    point, so admitting a new datatype never touches this router - and is
+    instead validated by `create_definition` itself, against the live
+    `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
+    rather than a broken row that only misbehaves at the first value
+    write."""
 
     model_config = ConfigDict(frozen=True)
 
     key: str
     label: str
     datatype: str
-    cardinality: str
-    scope: str
+    cardinality: PropertyCardinality
+    scope: PropertyScope
     required_for_submission: bool = False
     required_for_publication: bool = False
     filterable: bool = False
     display_order: int = 0
-    binding_target: str | None = None
+    binding_target: BindingTarget | None = None
     value_set_uri: str | None = None
-    strength: str | None = None
+    strength: BindingStrength | None = None
     edition: str | None = None
     local_code_system_key: str | None = None
     constraints: dict[str, Any] = Field(default_factory=dict)
@@ -156,7 +227,15 @@ class AmendPropertyDefinitionRequest(BaseModel):
     no `key` field (FR-12) and forbids any extra field a client might try to
     smuggle one in as - `extra="forbid"` turns a `key` in the body into a
     pydantic 422 before this ever reaches `nptc.db.definitions.
-    amend_definition`."""
+    amend_definition`.
+
+    **An explicit `null` on a known field is refused, not a silent no-op**
+    (issue #223 review finding 9). None of these fields is a nullable
+    domain value, so a client sending `{"label": null, ...}` almost
+    certainly meant to omit the field, not clear it - `_reject_explicit_null`
+    below distinguishes "omitted" from "provided as null" via
+    `model_fields_set`, which `changes()` cannot do once every field has
+    collapsed to `None`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -168,6 +247,20 @@ class AmendPropertyDefinitionRequest(BaseModel):
     constraints: dict[str, Any] | None = None
     expected_row_version: int
     reason: str
+
+    @model_validator(mode="after")
+    def _reject_explicit_null(self) -> AmendPropertyDefinitionRequest:
+        null_fields = sorted(
+            name
+            for name in self.model_fields_set
+            if name not in {"expected_row_version", "reason"} and getattr(self, name) is None
+        )
+        if null_fields:
+            raise ValueError(
+                "the following fields were explicitly set to null, which is not a valid "
+                f"value for any of them - omit a field instead of nulling it: {null_fields}"
+            )
+        return self
 
     def changes(self) -> dict[str, Any]:
         return {
@@ -217,8 +310,8 @@ def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
 @router.get(
     "/properties",
     summary="List property definitions",
-    responses={401: _RESPONSE_401, 403: _RESPONSE_403},
-    dependencies=[_MANAGE],
+    responses=_RESPONSES_LIST,
+    dependencies=[_BROWSE],
 )
 def list_properties(
     session: SessionDep,
@@ -232,8 +325,8 @@ def list_properties(
 @router.get(
     "/properties/{key}",
     summary="Get one property definition",
-    responses={401: _RESPONSE_401, 403: _RESPONSE_403, 404: _RESPONSE_404},
-    dependencies=[_MANAGE],
+    responses=_RESPONSES_GET_ONE,
+    dependencies=[_BROWSE],
 )
 def get_property(session: SessionDep, key: str) -> PropertyDefinitionResponse:
     definition = load_definition(session, key)
@@ -244,17 +337,19 @@ def get_property(session: SessionDep, key: str) -> PropertyDefinitionResponse:
     "/properties",
     summary="Create a property definition",
     status_code=201,
-    responses=_WRITE_RESPONSES,
+    responses=_RESPONSES_CREATE,
     dependencies=[_MANAGE],
 )
 def create_property(
     session: SessionDep,
     ctx: AuditContextDep,
+    registry: RegistryDep,
     body: Annotated[CreatePropertyDefinitionRequest, Body()],
 ) -> PropertyDefinitionResponse:
     definition = create_definition(
         session,
         ctx,
+        registry=registry,
         key=body.key,
         label=body.label,
         datatype=body.datatype,
@@ -279,12 +374,13 @@ def create_property(
 @router.patch(
     "/properties/{key}",
     summary="Amend a property definition",
-    responses=_WRITE_RESPONSES,
+    responses=_RESPONSES_PATCH,
     dependencies=[_MANAGE],
 )
 def amend_property(
     session: SessionDep,
     ctx: AuditContextDep,
+    registry: RegistryDep,
     key: str,
     body: Annotated[AmendPropertyDefinitionRequest, Body()],
 ) -> PropertyDefinitionResponse:
@@ -292,6 +388,7 @@ def amend_property(
     amended = amend_definition(
         session,
         ctx,
+        registry=registry,
         definition=definition,
         expected_row_version=body.expected_row_version,
         reason=body.reason,
@@ -304,7 +401,7 @@ def amend_property(
 @router.post(
     "/properties/{key}/deprecation",
     summary="Deprecate a property definition",
-    responses=_WRITE_RESPONSES,
+    responses=_RESPONSES_DEPRECATE,
     dependencies=[_MANAGE],
 )
 def deprecate_property(
@@ -328,7 +425,7 @@ def deprecate_property(
 @router.delete(
     "/properties/{key}",
     summary="Delete a property definition (always refused)",
-    responses={**_WRITE_RESPONSES, 409: _RESPONSE_409},
+    responses=_RESPONSES_DELETE,
     dependencies=[_MANAGE],
 )
 def delete_property(key: str) -> None:

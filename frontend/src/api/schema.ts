@@ -272,6 +272,14 @@ export interface components {
          *     smuggle one in as - `extra="forbid"` turns a `key` in the body into a
          *     pydantic 422 before this ever reaches `nptc.db.definitions.
          *     amend_definition`.
+         *
+         *     **An explicit `null` on a known field is refused, not a silent no-op**
+         *     (issue #223 review finding 9). None of these fields is a nullable
+         *     domain value, so a client sending `{"label": null, ...}` almost
+         *     certainly meant to omit the field, not clear it - `_reject_explicit_null`
+         *     below distinguishes "omitted" from "provided as null" via
+         *     `model_fields_set`, which `changes()` cannot do once every field has
+         *     collapsed to `None`.
          */
         AmendPropertyDefinitionRequest: {
             /** Label */
@@ -355,6 +363,16 @@ export interface components {
             items: components["schemas"]["Binding"][];
         };
         /**
+         * BindingStrength
+         * @enum {string}
+         */
+        BindingStrength: "required" | "extensible" | "example";
+        /**
+         * BindingTarget
+         * @enum {string}
+         */
+        BindingTarget: "value_set" | "local_code_system";
+        /**
          * CodeBindingEditionHint
          * @enum {string}
          */
@@ -365,6 +383,19 @@ export interface components {
          *     through this route is `origin = 'admin'` - there is no field to
          *     request otherwise; the four `origin = 'system'` rows are seeded once,
          *     at bootstrap, and never created through this API.
+         *
+         *     `cardinality`/`scope`/`strength`/`binding_target` are typed against the
+         *     exact `StrEnum`s `property_definition`'s own database `CHECK`
+         *     constraints close over (issue #223 review finding 3) - an invalid value
+         *     is now a pydantic 422 before the request ever reaches the ORM, rather
+         *     than a `23514` `IntegrityError` that `create_definition`'s `except
+         *     IntegrityError` used to re-raise unchanged, surfacing as an unhandled
+         *     500. `datatype` stays a bare `str` deliberately - FR-77's own extension
+         *     point, so admitting a new datatype never touches this router - and is
+         *     instead validated by `create_definition` itself, against the live
+         *     `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
+         *     rather than a broken row that only misbehaves at the first value
+         *     write.
          */
         CreatePropertyDefinitionRequest: {
             /** Key */
@@ -373,10 +404,8 @@ export interface components {
             label: string;
             /** Datatype */
             datatype: string;
-            /** Cardinality */
-            cardinality: string;
-            /** Scope */
-            scope: string;
+            cardinality: components["schemas"]["PropertyCardinality"];
+            scope: components["schemas"]["PropertyScope"];
             /**
              * Required For Submission
              * @default false
@@ -397,12 +426,10 @@ export interface components {
              * @default 0
              */
             display_order: number;
-            /** Binding Target */
-            binding_target?: string | null;
+            binding_target?: components["schemas"]["BindingTarget"] | null;
             /** Value Set Uri */
             value_set_uri?: string | null;
-            /** Strength */
-            strength?: string | null;
+            strength?: components["schemas"]["BindingStrength"] | null;
             /** Edition */
             edition?: string | null;
             /** Local Code System Key */
@@ -533,6 +560,11 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * PropertyCardinality
+         * @enum {string}
+         */
+        PropertyCardinality: "0..1" | "1..1" | "0..*" | "1..*";
         /** PropertyDefinitionList */
         PropertyDefinitionList: {
             /** Items */
@@ -588,6 +620,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["PropertyValue"][];
         };
+        /**
+         * PropertyScope
+         * @enum {string}
+         */
+        PropertyScope: "submission" | "maintenance" | "both";
         /**
          * PropertyValue
          * @description One property value, rendered by its datatype's own handler.
@@ -1374,7 +1411,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            /** @description The caller is authenticated but does not hold `catalogue.browse`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1434,15 +1471,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No property definition matches the given key. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
             409: {
                 headers: {
@@ -1452,7 +1480,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, or the request body named a `key` field. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1492,7 +1520,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The caller is authenticated but does not hold `registry.manage`. */
+            /** @description The caller is authenticated but does not hold `catalogue.browse`. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -1559,15 +1587,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No property definition matches the given key. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all. */
             409: {
                 headers: {
@@ -1577,13 +1596,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, or the request body named a `key` field. */
+            /** @description Validation Error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1648,7 +1667,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, or the request body named a `key` field. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1719,7 +1738,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation, or the request body named a `key` field. */
+            /** @description A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable. */
             422: {
                 headers: {
                     [name: string]: unknown;

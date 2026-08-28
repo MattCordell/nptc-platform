@@ -905,7 +905,7 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `catalogue.browse`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -973,16 +973,6 @@
               }
             }
           },
-          "404": {
-            "description": "No property definition matches the given key.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "409": {
             "description": "The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all.",
             "content": {
@@ -994,7 +984,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation, or the request body named a `key` field.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1046,7 +1036,7 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `catalogue.browse`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1156,7 +1146,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation, or the request body named a `key` field.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1214,16 +1204,6 @@
               }
             }
           },
-          "404": {
-            "description": "No property definition matches the given key.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "409": {
             "description": "The request conflicts with the current state of the system - a duplicate `key`, an attempt to change `key`, a stale `expected_row_version`, a second deprecation, deprecating a system property, or (on `DELETE`) any request at all.",
             "content": {
@@ -1235,11 +1215,11 @@
             }
           },
           "422": {
-            "description": "A field failed validation, or the request body named a `key` field.",
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1327,7 +1307,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation, or the request body named a `key` field.",
+            "description": "A field failed validation, the request body named a `key` field, or an explicit `null` was given for a field that is otherwise omittable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1427,7 +1407,7 @@
           "reason"
         ],
         "title": "AmendPropertyDefinitionRequest",
-        "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`."
+        "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`.\n\n**An explicit `null` on a known field is refused, not a silent no-op**\n(issue #223 review finding 9). None of these fields is a nullable\ndomain value, so a client sending `{\"label\": null, ...}` almost\ncertainly meant to omit the field, not clear it - `_reject_explicit_null`\nbelow distinguishes \"omitted\" from \"provided as null\" via\n`model_fields_set`, which `changes()` cannot do once every field has\ncollapsed to `None`."
       },
       "BindCodeRequest": {
         "properties": {
@@ -1561,6 +1541,23 @@
         ],
         "title": "BindingList"
       },
+      "BindingStrength": {
+        "type": "string",
+        "enum": [
+          "required",
+          "extensible",
+          "example"
+        ],
+        "title": "BindingStrength"
+      },
+      "BindingTarget": {
+        "type": "string",
+        "enum": [
+          "value_set",
+          "local_code_system"
+        ],
+        "title": "BindingTarget"
+      },
       "CodeBindingEditionHint": {
         "type": "string",
         "enum": [
@@ -1585,12 +1582,10 @@
             "title": "Datatype"
           },
           "cardinality": {
-            "type": "string",
-            "title": "Cardinality"
+            "$ref": "#/components/schemas/PropertyCardinality"
           },
           "scope": {
-            "type": "string",
-            "title": "Scope"
+            "$ref": "#/components/schemas/PropertyScope"
           },
           "required_for_submission": {
             "type": "boolean",
@@ -1615,13 +1610,12 @@
           "binding_target": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/BindingTarget"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Binding Target"
+            ]
           },
           "value_set_uri": {
             "anyOf": [
@@ -1637,13 +1631,12 @@
           "strength": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/BindingStrength"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Strength"
+            ]
           },
           "edition": {
             "anyOf": [
@@ -1687,7 +1680,7 @@
           "reason"
         ],
         "title": "CreatePropertyDefinitionRequest",
-        "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API."
+        "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API.\n\n`cardinality`/`scope`/`strength`/`binding_target` are typed against the\nexact `StrEnum`s `property_definition`'s own database `CHECK`\nconstraints close over (issue #223 review finding 3) - an invalid value\nis now a pydantic 422 before the request ever reaches the ORM, rather\nthan a `23514` `IntegrityError` that `create_definition`'s `except\nIntegrityError` used to re-raise unchanged, surfacing as an unhandled\n500. `datatype` stays a bare `str` deliberately - FR-77's own extension\npoint, so admitting a new datatype never touches this router - and is\ninstead validated by `create_definition` itself, against the live\n`DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422\nrather than a broken row that only misbehaves at the first value\nwrite."
       },
       "DeprecatePropertyDefinitionRequest": {
         "properties": {
@@ -1917,6 +1910,16 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "PropertyCardinality": {
+        "type": "string",
+        "enum": [
+          "0..1",
+          "1..1",
+          "0..*",
+          "1..*"
+        ],
+        "title": "PropertyCardinality"
+      },
       "PropertyDefinitionList": {
         "properties": {
           "items": {
@@ -2083,6 +2086,15 @@
           "items"
         ],
         "title": "PropertyList"
+      },
+      "PropertyScope": {
+        "type": "string",
+        "enum": [
+          "submission",
+          "maintenance",
+          "both"
+        ],
+        "title": "PropertyScope"
       },
       "PropertyValue": {
         "properties": {
