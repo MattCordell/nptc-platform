@@ -45,6 +45,8 @@ __all__ = [
     "DefinitionAudience",
     "DeprecatedPropertyWriteError",
     "PropertyAlreadyDeprecatedError",
+    "PropertyConstraintsInvalidError",
+    "PropertyDatatypeUnknownError",
     "PropertyDefinitionDeleteRefusedError",
     "PropertyDefinitionKeyExistsError",
     "PropertyKeyImmutableError",
@@ -130,6 +132,34 @@ class PropertyDefinitionKeyExistsError(Exception):
     than an unhandled `IntegrityError`."""
 
     http_status: ClassVar[int] = 409
+
+
+class PropertyDatatypeUnknownError(Exception):
+    """Raised by `nptc.db.definitions.create_definition`/`amend_definition`
+    when `datatype` does not resolve via `DatatypeRegistry.get()` (FR-77,
+    issue #223 review finding 3). `property_definition.datatype` has no
+    database `CHECK` at all - that is FR-77's own extension point - so
+    without this, an unknown datatype produced a `201` and a broken row
+    that only failed later, at the first value write, with an unhandled
+    `UnknownDatatypeError`. Raised before the row is ever written."""
+
+    http_status: ClassVar[int] = 422
+
+    def __init__(self, datatype: str) -> None:
+        self.datatype = datatype
+        super().__init__(f"{datatype!r} is not a known datatype")
+
+
+class PropertyConstraintsInvalidError(Exception):
+    """Raised when `constraints` does not conform to the resolved datatype
+    handler's own `constraints_schema()` (issue #223 review finding 4).
+    Wraps `nptc.registry.schema.MalformedConstraintsError` with an
+    `http_status` ClassVar so it can be mapped the same way every other
+    typed error in this module already is - `MalformedConstraintsError`
+    itself is a plain `ValueError` with no such field, since `nptc.
+    registry.schema` is a leaf module with no HTTP concept."""
+
+    http_status: ClassVar[int] = 422
 
 
 class DeprecatedPropertyWriteError(Exception):

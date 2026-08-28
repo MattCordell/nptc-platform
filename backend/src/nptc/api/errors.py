@@ -87,6 +87,8 @@ from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 from nptc.registry.definitions import (
     DeprecatedPropertyWriteError,
     PropertyAlreadyDeprecatedError,
+    PropertyConstraintsInvalidError,
+    PropertyDatatypeUnknownError,
     PropertyDefinitionDeleteRefusedError,
     PropertyDefinitionKeyExistsError,
     PropertyKeyImmutableError,
@@ -228,6 +230,10 @@ _DETAIL_SYSTEM_PROPERTY_DEPRECATION_REFUSED = "A built-in system property cannot
 _DETAIL_PROPERTY_DEFINITION_KEY_EXISTS = "A property definition with this key already exists."
 _DETAIL_DEPRECATED_PROPERTY_WRITE = (
     "This property has been deprecated and no longer accepts new values."
+)
+_DETAIL_PROPERTY_DATATYPE_UNKNOWN = "This is not a recognised property datatype."
+_DETAIL_PROPERTY_CONSTRAINTS_INVALID = (
+    "The constraints given for this property are not valid for its datatype."
 )
 
 
@@ -701,11 +707,35 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_deprecated_property_write(
         _request: Request, exc: DeprecatedPropertyWriteError
     ) -> JSONResponse:
-        _logger.info("value write refused, property deprecated: %s", exc)
+        # issue #223 review finding 11: the response body carries only
+        # `detail`, matching every other handler in this module - the
+        # `property_key` stays in this log line only, which already has it.
+        _logger.info(
+            "value write refused, property deprecated: %s (property_key=%s)",
+            exc,
+            exc.property_key,
+        )
         return JSONResponse(
             status_code=exc.http_status,
-            content={
-                "detail": _DETAIL_DEPRECATED_PROPERTY_WRITE,
-                "property_key": exc.property_key,
-            },
+            content={"detail": _DETAIL_DEPRECATED_PROPERTY_WRITE},
+        )
+
+    @app.exception_handler(PropertyDatatypeUnknownError)
+    async def _handle_property_datatype_unknown(
+        _request: Request, exc: PropertyDatatypeUnknownError
+    ) -> JSONResponse:
+        _logger.info("property write refused, unknown datatype: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PROPERTY_DATATYPE_UNKNOWN},
+        )
+
+    @app.exception_handler(PropertyConstraintsInvalidError)
+    async def _handle_property_constraints_invalid(
+        _request: Request, exc: PropertyConstraintsInvalidError
+    ) -> JSONResponse:
+        _logger.info("property write refused, invalid constraints: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PROPERTY_CONSTRAINTS_INVALID},
         )

@@ -39,6 +39,8 @@ from nptc.registry.definitions import (
     DefinitionAudience,
     DeprecatedPropertyWriteError,
     PropertyAlreadyDeprecatedError,
+    PropertyConstraintsInvalidError,
+    PropertyDatatypeUnknownError,
     PropertyDefinitionKeyExistsError,
     PropertyKeyImmutableError,
     PropertyReactivationRefusedError,
@@ -69,7 +71,19 @@ def _new_key() -> str:
     return f"test_prop_{uuid.uuid4().hex[:12]}"
 
 
-def _create(session: Session, *, key: str | None = None, **overrides: object) -> PropertyDefinition:
+def _fresh_registry() -> DatatypeRegistry:
+    return DatatypeRegistry(
+        build_builtin_handlers(HandlerDeps(terminology_client=None, local_code_lookup=None))
+    )
+
+
+def _create(
+    session: Session,
+    *,
+    key: str | None = None,
+    registry: DatatypeRegistry | None = None,
+    **overrides: object,
+) -> PropertyDefinition:
     kwargs: dict[str, object] = {
         "key": key or _new_key(),
         "label": "Test property",
@@ -83,7 +97,9 @@ def _create(session: Session, *, key: str | None = None, **overrides: object) ->
         "reason": _REASON,
     }
     kwargs.update(overrides)
-    return create_definition(session, AuditContext.system(), **kwargs)  # type: ignore[arg-type]
+    return create_definition(
+        session, AuditContext.system(), registry=registry or _fresh_registry(), **kwargs
+    )  # type: ignore[arg-type]
 
 
 # --- create_definition -------------------------------------------------
@@ -111,12 +127,43 @@ def test_create_definition_refuses_a_duplicate_key(app_session: Session) -> None
         _create(app_session, key=key)
 
 
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_create_definition_refuses_an_unknown_datatype(app_session: Session) -> None:
+    """Issue #223 review finding 3: `property_definition.datatype` has no
+    database `CHECK` at all (FR-77's own extension point), so without this,
+    `POST`ing an unrecognised datatype returned `201` and only failed
+    later, at the first value write, with an unhandled
+    `UnknownDatatypeError`."""
+    with pytest.raises(PropertyDatatypeUnknownError):
+        _create(app_session, datatype="banana")
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_create_definition_refuses_constraints_invalid_for_the_datatype(
+    app_session: Session,
+) -> None:
+    """Issue #223 review finding 4: `constraints` must conform to the
+    resolved datatype handler's own `constraints_schema()` at create time,
+    not only be validated the first time a value is written against it."""
+    with pytest.raises(PropertyConstraintsInvalidError):
+        _create(
+            app_session,
+            datatype="string",
+            cardinality="0..1",
+            constraints={"maxLength": "not-an-integer"},
+        )
+
+
 # --- amend_definition (FR-12: key immutability) -------------------------
 
 
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
-def test_amend_definition_changes_label_key_stays_identical(app_session: Session) -> None:
+def test_amend_definition_changes_label_key_stays_identical(
+    app_session: Session, registry: DatatypeRegistry
+) -> None:
     definition = _create(app_session, label="Original label")
     app_session.flush()
     key = definition.key
@@ -124,6 +171,7 @@ def test_amend_definition_changes_label_key_stays_identical(app_session: Session
     amended = amend_definition(
         app_session,
         AuditContext.system(),
+        registry=registry,
         definition=definition,
         expected_row_version=definition.row_version,
         reason=_REASON,
@@ -137,7 +185,9 @@ def test_amend_definition_changes_label_key_stays_identical(app_session: Session
 
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
-def test_amend_definition_refuses_a_key_change(app_session: Session) -> None:
+def test_amend_definition_refuses_a_key_change(
+    app_session: Session, registry: DatatypeRegistry
+) -> None:
     definition = _create(app_session)
     app_session.flush()
 
@@ -145,6 +195,7 @@ def test_amend_definition_refuses_a_key_change(app_session: Session) -> None:
         amend_definition(
             app_session,
             AuditContext.system(),
+            registry=registry,
             definition=definition,
             expected_row_version=definition.row_version,
             reason=_REASON,
@@ -154,7 +205,9 @@ def test_amend_definition_refuses_a_key_change(app_session: Session) -> None:
 
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
-def test_amend_definition_refuses_a_stale_row_version(app_session: Session) -> None:
+def test_amend_definition_refuses_a_stale_row_version(
+    app_session: Session, registry: DatatypeRegistry
+) -> None:
     definition = _create(app_session)
     app_session.flush()
 
@@ -162,12 +215,63 @@ def test_amend_definition_refuses_a_stale_row_version(app_session: Session) -> N
         amend_definition(
             app_session,
             AuditContext.system(),
+            registry=registry,
             definition=definition,
             expected_row_version=definition.row_version + 1,
             reason=_REASON,
             label="Should not apply",
         )
     assert getattr(type(excinfo.value), "http_status", None) == 409
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_amend_definition_refuses_an_unamendable_field(
+    app_session: Session, registry: DatatypeRegistry
+) -> None:
+    """Issue #223 review finding 5: `amend_definition` enforces its own
+    allowlist rather than trusting a whitelist enforced only by the HTTP
+    router's request model - a caller of the service function directly
+    (e.g. a batch import) naming `origin` (owned by a dedicated function,
+    never amendable) must be refused, not silently `setattr`'d."""
+    definition = _create(app_session)
+    app_session.flush()
+
+    with pytest.raises(ValueError, match="origin"):
+        amend_definition(
+            app_session,
+            AuditContext.system(),
+            registry=registry,
+            definition=definition,
+            expected_row_version=definition.row_version,
+            reason=_REASON,
+            origin="system",
+        )
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_amend_definition_refuses_constraints_invalid_for_the_datatype(
+    app_session: Session, registry: DatatypeRegistry
+) -> None:
+    """Issue #223 review finding 4: `validate_constraints` is called at
+    amend time too, not only at create time - a `constraints` document that
+    does not conform to the (immutable) datatype's own `constraints_schema()`
+    must be refused before the row is ever updated, not left to surface
+    later at the first value write."""
+    definition = _create(app_session, datatype="string", cardinality="0..1")
+    app_session.flush()
+
+    with pytest.raises(PropertyConstraintsInvalidError):
+        amend_definition(
+            app_session,
+            AuditContext.system(),
+            registry=registry,
+            definition=definition,
+            expected_row_version=definition.row_version,
+            reason=_REASON,
+            constraints={"maxLength": "not-an-integer"},
+        )
 
 
 # --- deprecate_definition (FR-11) ---------------------------------------
@@ -195,6 +299,28 @@ def test_deprecate_definition_emits_one_audit_event_and_sets_status(
     assert deprecated.status == "deprecated"
     assert deprecated.deprecated_at is not None
     assert _audit_event_count(app_session) == before + 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_deprecate_definition_refuses_a_stale_row_version(app_session: Session) -> None:
+    """Issue #223 review finding 7: `deprecate_definition`'s stale-
+    `expected_row_version` branch is a verbatim copy of `amend_definition`'s
+    own (`test_amend_definition_refuses_a_stale_row_version`) and had no
+    test of its own - a copy-paste divergence between the two would have
+    gone unnoticed."""
+    definition = _create(app_session)
+    app_session.flush()
+
+    with pytest.raises(Exception) as excinfo:
+        deprecate_definition(
+            app_session,
+            AuditContext.system(),
+            definition=definition,
+            expected_row_version=definition.row_version + 1,
+            reason=_REASON,
+        )
+    assert getattr(type(excinfo.value), "http_status", None) == 409
 
 
 @pytest.mark.req("FR-11")
@@ -301,7 +427,7 @@ def test_deprecate_definition_refuses_a_system_property(app_session: Session) ->
 @pytest.mark.req("FR-11")
 @pytest.mark.integration
 def test_amend_definition_refuses_reactivating_a_deprecated_property(
-    app_session: Session,
+    app_session: Session, registry: DatatypeRegistry
 ) -> None:
     """Deprecation is one-way - there is no `reactivate()` function, so the
     only way to attempt `deprecated` -> `active` is via `amend_definition`
@@ -321,6 +447,7 @@ def test_amend_definition_refuses_reactivating_a_deprecated_property(
         amend_definition(
             app_session,
             AuditContext.system(),
+            registry=registry,
             definition=definition,
             expected_row_version=definition.row_version,
             reason=_REASON,
