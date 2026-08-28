@@ -30,6 +30,7 @@ from sqlalchemy.engine import Connection
 
 from nptc.db import models  # noqa: F401 -- side effect: registers every model with Base.metadata
 from nptc.db.base import Base
+from nptc.db.property_indexes import include_object
 from nptc.settings import MigrationSettings
 
 config = context.config
@@ -46,7 +47,12 @@ target_metadata = Base.metadata
 
 
 def _run_migrations_with_connection(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -59,6 +65,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()

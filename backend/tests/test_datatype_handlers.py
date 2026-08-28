@@ -15,16 +15,20 @@ import jsonschema
 import pytest
 from sqlalchemy import Column, Integer, MetaData, Numeric, String, Table
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import JSONB
 
+from nptc.db.property_indexes import DesiredIndex, create_statement
 from nptc.registry import (
     BindingSpec,
     ControlKind,
     FilterOp,
+    IndexKind,
     PropertyDefinitionSpec,
     ResolvedLocalCode,
     SerialisationTarget,
     UnsupportedBindingError,
     UnsupportedFilterOpError,
+    ValueExpression,
 )
 from nptc.registry.datatypes.code import CodeHandler
 from nptc.registry.datatypes.decimal import DecimalHandler
@@ -61,6 +65,16 @@ def _spec(
 
 def _compiled(clause: object) -> str:
     return str(clause.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))  # type: ignore[attr-defined]
+
+
+def _compiled_with_params(clause: object) -> tuple[str, dict[str, object]]:
+    """`literal_binds=True` has no literal renderer for a JSONB bind value
+    (SQLAlchemy core has no "render this dict as a JSONB literal" support)
+    - `CodeHandler.filter_clause`'s `{"code": ...}` containment argument
+    needs this instead: the operator structure from the compiled SQL, the
+    actual value from the bound parameters."""
+    compiled = clause.compile(dialect=postgresql.dialect())  # type: ignore[attr-defined]
+    return str(compiled), dict(compiled.params)
 
 
 # --- string -----------------------------------------------------------
@@ -655,3 +669,166 @@ def test_code_serialise_gives_each_target_its_own_representation() -> None:
         "code": "138875005",
         "display": "SNOMED CT Concept (procedure)",
     }
+
+
+# --- filter_clause / index expression parity (issue #54, FR-13) -----------
+#
+# ADR-0012 fixed three index shapes; ADR-0027 made the numeric one
+# cast-safe. Neither is useful if the *filter* a caller actually runs
+# doesn't render the identical expression the index was built over - an
+# index that exists but is never matched by a query plan delivers nothing.
+# These tests are the parity argument test_db_property_index_plan.py's
+# EXPLAIN proof cannot make on its own, since that proof only exercises one
+# handler's fixture, not all five.
+
+
+@pytest.mark.req("FR-13")
+def test_code_equals_filter_uses_containment_not_key_equality() -> None:
+    """`index_shape()` declares this property's index as a `jsonb_path_ops`
+    GIN - that opclass serves only `@>`/`@?`/`@@`, so a `->>` equality
+    predicate (this handler's shape before #54) could never use it at
+    all."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.EQUALS, "138875005", table.c.value)
+
+    compiled, params = _compiled_with_params(clause)
+    assert "@>" in compiled
+    assert {"code": "138875005"} in params.values()
+
+
+@pytest.mark.req("FR-13")
+def test_code_in_filter_is_an_or_of_containments_not_a_single_array_containment() -> None:
+    """`@> ANY(array)` is not an indexable form under `jsonb_path_ops` - an
+    `OR` of individually-indexable containments is."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.IN, ["1", "2"], table.c.value)
+
+    compiled, params = _compiled_with_params(clause)
+    assert compiled.count("@>") == 2
+    assert " OR " in compiled.upper()
+    assert {"code": "1"} in params.values()
+    assert {"code": "2"} in params.values()
+
+
+@pytest.mark.req("FR-13")
+def test_code_in_filter_with_an_empty_list_never_matches_anything() -> None:
+    """Regression (issue #54 review): SQLAlchemy 2.0's `or_()` called with
+    zero arguments renders to the empty string, silently dropping the
+    predicate entirely - an empty `IN` list must render an always-false
+    clause (what `in_([])` rendered before this handler switched to
+    containment), not "no predicate at all", which would match every row of
+    the property instead of none."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    handler = CodeHandler(terminology_client=StubTerminologyClient())
+
+    clause = handler.filter_clause(FilterOp.IN, [], table.c.value)
+
+    compiled = _compiled(clause)
+    assert compiled != ""
+    assert "false" in compiled.lower()
+
+
+@pytest.mark.req("FR-13")
+def test_string_equals_filter_matches_an_unquoted_value() -> None:
+    """Regression: the pre-#54 `CAST(value AS VARCHAR)` shape stays
+    JSON-quoted (`'"abc"'`, never `abc`), so an EQUALS filter for the bare
+    value `abc` could never match a real row at all."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = StringHandler().filter_clause(FilterOp.EQUALS, "abc", table.c.value)
+
+    assert _compiled(clause) == "(t.value #>> '{}') = 'abc'"
+
+
+@pytest.mark.req("FR-13")
+def test_decimal_equals_filter_uses_the_cast_safe_function() -> None:
+    """Regression: the pre-#54 `CAST(value AS NUMERIC)` shape raises
+    outright against a retained JSONB *string* value - see ADR-0027."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = DecimalHandler().filter_clause(FilterOp.EQUALS, 5, table.c.value)
+
+    compiled = _compiled(clause)
+    assert "nptc_numeric_or_null" in compiled
+    assert "CAST" not in compiled.upper()
+
+
+@pytest.mark.req("FR-13")
+def test_positive_int_equals_filter_uses_the_cast_safe_function() -> None:
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    clause = PositiveIntHandler().filter_clause(FilterOp.EQUALS, 5, table.c.value)
+
+    assert "nptc_numeric_or_null" in _compiled(clause)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.parametrize(
+    ("handler", "value", "expression", "shared_fragment"),
+    [
+        (StringHandler(), "abc", ValueExpression.TEXT_SCALAR, "#>> '{}'"),
+        (UrlHandler(), "https://example.org", ValueExpression.TEXT_SCALAR, "#>> '{}'"),
+        (DecimalHandler(), 5, ValueExpression.NUMERIC_SCALAR, "nptc_numeric_or_null("),
+        (PositiveIntHandler(), 5, ValueExpression.NUMERIC_SCALAR, "nptc_numeric_or_null("),
+    ],
+)
+def test_filter_clause_shares_its_expression_with_the_generated_index(
+    handler: object, value: object, expression: ValueExpression, shared_fragment: str
+) -> None:
+    """The two are built by entirely different code paths -
+    `nptc.db.property_indexes.create_statement` for the index,
+    `filter_clause` for the query - so nothing but a test like this one
+    stops a future edit to either side from silently drifting apart and
+    leaving the index unused."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+    desired = DesiredIndex(
+        property_key="k", index_seq=1, kind=IndexKind.EXPRESSION_BTREE, expression=expression
+    )
+
+    index_sql = create_statement(desired).as_string(None)
+    filter_sql = _compiled(handler.filter_clause(FilterOp.EQUALS, value, table.c.value))  # type: ignore[attr-defined]
+
+    assert shared_fragment in index_sql
+    assert shared_fragment in filter_sql
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.parametrize(
+    "handler",
+    [StringHandler(), UrlHandler()],
+)
+def test_facet_expression_matches_filter_clause_unquoted_shape(handler: object) -> None:
+    """Regression (issue #54 review): `facet_expression` still returned
+    `CAST(value AS VARCHAR)` after `filter_clause` was fixed to stop doing
+    that - `CAST` stays JSON-quoted (`'"abc"'`), so a facet's own value
+    could never be fed back into `filter_clause`'s unquoted predicate to
+    select for it. Both must render the identical `#>> '{}'` shape."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    facet_sql = _compiled(handler.facet_expression(table.c.value))  # type: ignore[attr-defined]
+    filter_sql = _compiled(
+        handler.filter_clause(FilterOp.EQUALS, "abc", table.c.value)  # type: ignore[attr-defined]
+    )
+
+    assert "CAST" not in facet_sql.upper()
+    assert "#>> '{}'" in facet_sql
+    assert facet_sql in filter_sql
+
+
+@pytest.mark.req("FR-13")
+def test_positive_int_facet_expression_does_not_raise_on_a_retained_non_numeric_value() -> None:
+    """Regression (issue #54 review): `facet_expression` still returned
+    `CAST(value AS integer)` after `filter_clause` was fixed to stop doing
+    that for exactly the failure ADR-0027 documents - a direct cast raises
+    outright for a retained non-numeric value; `facet_expression` must
+    return `NULL` for it instead, the same as `filter_clause`."""
+    table = Table("t", MetaData(), Column("value", JSONB))
+
+    facet_sql = _compiled(PositiveIntHandler().facet_expression(table.c.value))
+
+    assert "nptc_numeric_or_null" in facet_sql
+    assert "CAST" not in facet_sql.upper()

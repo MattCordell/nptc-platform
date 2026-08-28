@@ -21,6 +21,7 @@ from nptc.db.models import (  # noqa: F401 -- import for side effect: populates 
     User,
     UserIdentity,
 )
+from nptc.db.property_indexes import include_object
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
@@ -31,8 +32,16 @@ _VERSION_PREFIX_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*")
 def test_upgrade_head_matches_models(db: Connection) -> None:
     """`upgrade head` is clean on a fresh DB: nobody edited a model without
     generating a migration for it. `compare_metadata` is blind to
-    extensions and grants - see test_db_round_trip.py for those."""
-    context = MigrationContext.configure(db)
+    extensions and grants - see test_db_round_trip.py for those.
+
+    ``include_object`` matters here specifically: this runs against the
+    shared session-scoped ``nptc_test`` database, and #54's reconciler DDL
+    runs on its own autocommit connection, so a generated
+    ``ix_propval_p*`` index from another test in the run survives this
+    fixture's rollback and would otherwise show up as a spurious diff."""
+    context = MigrationContext.configure(
+        db, opts={"include_object": include_object, "compare_type": True}
+    )
 
     diff = compare_metadata(context, Base.metadata)
 

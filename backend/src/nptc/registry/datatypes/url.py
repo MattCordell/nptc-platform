@@ -7,7 +7,7 @@ from typing import Any
 from typing import cast as type_cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import ColumnElement, String, cast
+from sqlalchemy import ColumnElement
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -19,6 +19,7 @@ from nptc.registry.handlers import (
     UnsupportedFilterOpError,
     ValidationIssue,
     ValueExpression,
+    jsonb_root_as_text,
 )
 
 _SUPPORTED_OPS = frozenset({FilterOp.EQUALS, FilterOp.IN, FilterOp.PREFIX})
@@ -84,15 +85,19 @@ class UrlHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        text_column = cast(column, String)
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` - see
+        `string.py`'s `filter_clause` for why (issue #54, FR-13)."""
+        text_value = jsonb_root_as_text(column)
         if op is FilterOp.EQUALS:
-            return type_cast("ColumnElement[bool]", text_column == value)
+            return type_cast("ColumnElement[bool]", text_value == value)
         if op is FilterOp.IN:
-            return type_cast("ColumnElement[bool]", text_column.in_(value))
+            return type_cast("ColumnElement[bool]", text_value.in_(value))
         if op is FilterOp.PREFIX:
             # autoescape=True: see string.py's filter_clause for why.
-            return text_column.startswith(value, autoescape=True)
+            return text_value.startswith(value, autoescape=True)
         raise UnsupportedFilterOpError(f"url handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        return cast(column, String)
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` - see
+        `string.py`'s `facet_expression` for why (issue #54 review)."""
+        return jsonb_root_as_text(column)

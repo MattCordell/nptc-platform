@@ -1,0 +1,107 @@
+# Filterable-property index reconciliation CLI
+
+`scripts/reconcile_property_indexes.py` converges the indexes `property_value` actually
+carries against every `property_definition` row's own desired index - the automatic index
+generation FR-13 requires (backlog issue
+[#54](https://github.com/MattCordell/nptc-platform/issues/54)), so making a property
+searchable never depends on someone remembering to write a migration. It is a thin
+operator wrapper around `nptc.db.property_reconciler.reconcile_property_indexes`; no new
+reconciliation logic lives here.
+
+The three index shapes ([ADR-0012](../../adr/0012-property-registry-storage-and-validation.md),
+[ADR-0027](../../adr/0027-cast-safe-numeric-index-expression.md)), the naming scheme
+(`ix_propval_p{index_seq}_{slot}`), and the reconciler's own desired-state design are
+documented in [`data-model.md`](../../architecture/data-model.md#automatic-index-generation-issue-54-fr-13).
+This runbook covers only the operator-facing CLI.
+
+## Usage
+
+```powershell
+uv run python scripts/reconcile_property_indexes.py
+uv run python scripts/reconcile_property_indexes.py --database-url postgresql+psycopg://nptc_indexer:change-me@localhost:5432/nptc
+uv run python scripts/reconcile_property_indexes.py --dry-run
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--database-url` | *(none)* | DSN to reconcile with. Falls back to `NPTC_INDEXER_DATABASE_URL` if not given. Must be a role that can `CREATE`/`DROP INDEX` on `property_value` - see [`upgrade.md`](../upgrade.md#provisioning-the-index-reconcilers-login-issue-54-fr-13) for provisioning one. |
+| `--dry-run` | off | Reports what would change without executing any DDL. |
+
+## When to run it
+
+- After flagging a property `filterable` (or un-flagging one), if
+  `NPTC_INDEXER_DATABASE_URL` is not configured in the API process itself - this is the
+  "converge now" path for that deployment shape.
+- On a schedule, as a safety net: the reconciler repairs an index a failed
+  `CREATE INDEX CONCURRENTLY` left `indisvalid = false`, which nothing else notices on its
+  own.
+- With `--dry-run`, before a maintenance window, to see what a real run would do.
+
+Idempotent and safe to run repeatedly or concurrently - a `pg_try_advisory_lock` guards
+the whole run, so two overlapping invocations converging on the same state simply have one
+report `SKIPPED` rather than racing or erroring.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Converged - either there was nothing to do, or (a real, non-`--dry-run` run) drift was found and fixed. "Found and fixed" is success here, not a failure code, since fixing it is the whole point of running the command. Also returned when another reconciliation was already in progress (`SKIPPED`). |
+| `1` | `--dry-run` only: drift was found and reported, but nothing was executed. Never returned by a real run. |
+| `2` | Usage error: no DSN resolvable from `--database-url`/`NPTC_INDEXER_DATABASE_URL`, or an explicitly-empty `--database-url ""`. |
+| `3` | Could not complete: the database was unreachable, the credential lacked the privilege to `CREATE`/`DROP INDEX`, the connection dropped mid-run, any other environment problem, or (a real, non-`--dry-run` run only) one or more individual indexes failed to converge, or a filterable property's `datatype` has no registered handler at all - see the `FAILED` / `SKIPPED (unknown datatype)` lines. Not a finding about drift on the indexes that *did* converge; those are still reported and left in their new state. The message names only the exception's type, never its full text, since that can carry connection details (NFR-26/NFR-35). |
+
+These codes are stable and safe to depend on from a scheduled check.
+
+## What the output lines mean
+
+```text
+CREATED: ix_propval_p7_1
+DROPPED: ix_propval_p12_1
+REBUILT (was invalid): ix_propval_p9_1
+REBUILT (definition changed): ix_propval_p14_1
+REPAIRED COMMENT: ix_propval_p9_1
+FAILED: ix_propval_p20_1 (LockNotAvailable)
+SKIPPED (unknown datatype): some_quantity_property
+OK: no drift - every filterable property's index is already converged
+```
+
+- `CREATED` - a filterable property had no index; one was built.
+- `DROPPED` - an index existed for a property that is no longer filterable (or whose
+  `index_shape()` now returns `None`) - AC 3's "un-flagging removes the index" made
+  concrete.
+- `REBUILT (was invalid)` - a previous `CREATE INDEX CONCURRENTLY` failed partway,
+  leaving an index that existed by name but was never usable
+  (`pg_index.indisvalid = false`, invisible to `pg_indexes`). The reconciler drops and
+  rebuilds it.
+- `REBUILT (definition changed)` - the property's `datatype` was amended after its index was
+  built (an ordinary mutable, audited column - the index name itself, derived from the
+  immutable `index_seq`, cannot notice the change; `key` is checked too as defence in depth,
+  though it is not actually mutable in practice - FR-12). The reconciler compares the
+  index's actual definition against what the property's current configuration would render
+  and rebuilds on any mismatch, rather than trusting the name/validity alone.
+- `REPAIRED COMMENT` - the `COMMENT ON INDEX` carrying the property key (the only place
+  that key appears - index *names* never contain it, see ADR-0012) was missing or stale
+  while the index's own definition still matched. Repaired in place; the index itself is
+  not rebuilt.
+- `FAILED` - a `CREATE`/`DROP INDEX` (or its paired `COMMENT ON INDEX`) raised for this one
+  index; every other index in the same run still converges normally. A real (non-`--dry-run`
+  run) with any `FAILED` lines exits `3`, even though it also converged everything else -
+  re-run afterwards to retry just the failed ones. Only the exception's type is named
+  (NFR-26): check the database's own logs for the underlying cause.
+- `SKIPPED (unknown datatype)` - this filterable property's `datatype` has no handler
+  registered in the running build (an app rollback across a datatype addition, a seed
+  applied ahead of the code, or a raw-SQL amendment can all produce this - `datatype` is
+  plain `TEXT` with no `CHECK`/`ENUM`, FR-77's own extension point). Nothing was attempted
+  for this one property; any index it already has is left exactly as it was, not
+  orphan-dropped. Re-run once the running build has a handler for it.
+- `SKIPPED` (no parenthetical) - another reconciliation was already holding the advisory
+  lock. Nothing was attempted; re-run later if needed.
+- `--dry-run` prefixes each line with `WOULD` (`WOULD CREATE`, `WOULD DROP`, ...) and
+  executes nothing; a `FAILED` line under `--dry-run` means computing the diff itself raised
+  for that index, and still contributes to exit `1` (drift found), not `3`.
+
+## No output beyond the summary line means nothing to do
+
+An idle deployment where every filterable property's index is already converged prints
+only the `OK:` line and exits `0`. This is the expected steady state, not a sign the
+reconciler isn't working - most invocations, most of the time, should look like this.

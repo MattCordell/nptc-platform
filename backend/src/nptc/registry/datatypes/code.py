@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, false, or_
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -264,10 +264,28 @@ class CodeHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
+        """`@>` containment, not `->>'code' = ...` (issue #54, FR-13):
+        `index_shape()` above declares this property's index as a
+        `jsonb_path_ops` GIN, and that opclass serves only `@>`/`@?`/`@@` -
+        a `->>` equality predicate cannot use it at all, GIN or otherwise.
+        `FilterOp.IN` becomes an `OR` of per-code containments rather than
+        `@> ANY(array)`: the latter is not an indexable form under
+        `jsonb_path_ops`, while an `OR` of individually-indexable
+        containments is - the same shape `nptc.db.property_indexes.
+        create_statement` assumes when it builds this property's index."""
         if op is FilterOp.EQUALS:
-            return type_cast("ColumnElement[bool]", column["code"].astext == value)
+            return column.contains({"code": value})
         if op is FilterOp.IN:
-            return type_cast("ColumnElement[bool]", column["code"].astext.in_(value))
+            # `false()` as `or_()`'s first argument, not `or_(*(...))` alone
+            # (issue #54 review): SQLAlchemy 2.0's `or_()` called with zero
+            # arguments (an empty `value`) renders to the empty string, not
+            # an always-false predicate, silently dropping this clause
+            # entirely and matching every row of the property rather than
+            # none - `in_([])` (what this replaced) never had that failure
+            # mode. `false()` guarantees at least one argument regardless of
+            # `value`'s length, restoring the always-false-on-empty
+            # behaviour without changing anything about a non-empty list.
+            return or_(false(), *(column.contains({"code": candidate}) for candidate in value))
         raise UnsupportedFilterOpError(f"code handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:

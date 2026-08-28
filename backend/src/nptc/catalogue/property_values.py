@@ -68,12 +68,8 @@ from nptc.catalogue.errors import ConflictReport, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
-from nptc.registry.handlers import (
-    BindingSpec,
-    DatatypeRegistry,
-    PropertyDefinitionSpec,
-    ValidationIssue,
-)
+from nptc.db.property_specs import spec_for
+from nptc.registry.handlers import DatatypeRegistry, PropertyDefinitionSpec, ValidationIssue
 from nptc.registry.schema import validate_constraints, validate_values
 
 __all__ = [
@@ -174,43 +170,6 @@ class PropertyValidationError(ValueError):
         return f"{len(self.issues)} property value issue(s): " + "; ".join(
             f"{issue.property_key}: {issue.message}" for issue in self.issues
         )
-
-
-def _binding_spec(definition: PropertyDefinition) -> BindingSpec | None:
-    if definition.binding_target is None:
-        return None
-    return BindingSpec(
-        binding_target=definition.binding_target,
-        value_set_uri=definition.value_set_uri,
-        strength=definition.strength or "",
-        edition=definition.edition or "",
-        local_code_system_key=definition.local_code_system_key,
-    )
-
-
-def _scope(definition: PropertyDefinition) -> frozenset[str]:
-    if definition.scope == "both":
-        return frozenset({"submission", "maintenance"})
-    return frozenset({definition.scope})
-
-
-def _spec_for(definition: PropertyDefinition) -> PropertyDefinitionSpec:
-    """The frozen view `nptc.registry` handlers and `validate_values`
-    take - never the ORM row itself (ADR-0013 SS2's leaf rule: `nptc.
-    registry` must not import `nptc.db`, so the conversion happens here,
-    on the `nptc.catalogue` side of that boundary)."""
-    return PropertyDefinitionSpec(
-        key=definition.key,
-        label=definition.label,
-        datatype=definition.datatype,
-        cardinality=definition.cardinality,
-        scope=_scope(definition),
-        required_for_submission=definition.required_for_submission,
-        required_for_publication=definition.required_for_publication,
-        binding=_binding_spec(definition),
-        filterable=definition.filterable,
-        constraints=definition.constraints,
-    )
 
 
 def _validate_specimen_cross_field(
@@ -352,7 +311,7 @@ def save_property_values(
     if definition is None:
         raise PropertyDefinitionNotFoundError(f"no property_definition with key {property_key!r}")
 
-    spec = _spec_for(definition)
+    spec = spec_for(definition)
     handler = registry.get(definition.datatype)
     # A malformed `constraints` document is a defect in the *definition*,
     # not something this write's caller could have avoided - checked before

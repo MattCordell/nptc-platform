@@ -22,8 +22,9 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
+from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, Text, literal_column
 
 from nptc_shared.terminology import TerminologyClient
 
@@ -134,6 +135,41 @@ class ValidationIssue:
     code: str
     message: str
     path: str | None = None  # ordinal / sub-field, for multi-valued properties
+
+
+def jsonb_root_as_text(column: ColumnElement[Any]) -> ColumnElement[Any]:
+    """``value #>> '{}'`` - the whole JSONB document's own scalar text
+    representation, unquoted (issue #54, FR-13, ADR-0012's `TEXT_SCALAR`/
+    `NUMERIC_SCALAR` index expression). Every `filter_clause()` serving one
+    of those two shapes (`string`, `url`, `decimal`, `positiveInt`) must
+    build its predicate from this expression, never `cast(column, String)`
+    - that renders `CAST(value AS VARCHAR)`, which stays JSON-quoted
+    (`'"abc"'`, not `abc`) and so can never match an unquoted filter value,
+    and (for `decimal`/`positiveInt`) `CAST(value AS NUMERIC)` raises
+    outright the moment the retained value is a JSONB *string* rather than
+    a JSONB number - the exact "cannot cast jsonb string to type numeric"
+    failure ADR-0027 exists to close, verified directly against
+    `postgres:18.6` before writing this function.
+
+    `nptc.db.property_indexes.create_statement` composes the identical
+    `(value #>> '{{}}')` text for the index itself (doubled braces there
+    only because `sql.SQL.format` uses `str.format` placeholder syntax) -
+    the two must never drift apart, which is what
+    `test_datatype_handlers.py`'s parity test asserts.
+
+    `literal_column`, not a bound parameter: the right-hand side of `#>>`
+    is the fixed, compile-time-constant empty path `'{}'`, never caller
+    data, so NFR-22's guard (a concern about runtime data reaching SQL) has
+    nothing to flag here.
+
+    `return_type=Text`: a bare `.op(...)` result carries no type by
+    default, which would silently drop `StringHandler`/`UrlHandler`'s
+    `.startswith(..., autoescape=True)` support (autoescape is a `String`
+    comparator behaviour) - `return_type` gives the resulting expression a
+    real `Text` comparator instead of leaving it untyped."""
+    return type_cast(
+        "ColumnElement[Any]", column.op("#>>", return_type=Text)(literal_column("'{}'"))
+    )
 
 
 # --- the contract itself -------------------------------------------------

@@ -8,7 +8,7 @@ from numbers import Real
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, Numeric, and_, cast
+from sqlalchemy import ColumnElement, and_, func
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -20,6 +20,7 @@ from nptc.registry.handlers import (
     UnsupportedFilterOpError,
     ValidationIssue,
     ValueExpression,
+    jsonb_root_as_text,
 )
 
 _SUPPORTED_OPS = frozenset({FilterOp.EQUALS, FilterOp.RANGE})
@@ -64,7 +65,16 @@ class DecimalHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        numeric_column = cast(column, Numeric)
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
+        `cast(column, Numeric)` (issue #54, FR-13, ADR-0027): a direct
+        `CAST(value AS NUMERIC)` on a JSONB *string* (e.g. a value retained
+        from before a `string` -> `decimal` datatype amendment) raises
+        "cannot cast jsonb string to type numeric" outright rather than
+        excluding that row - verified directly against `postgres:18.6`.
+        `nptc_numeric_or_null` returns `NULL` for exactly that case instead,
+        matching `nptc.db.property_indexes.create_statement`'s identical
+        `NUMERIC_SCALAR` index expression."""
+        numeric_column = func.nptc_numeric_or_null(jsonb_root_as_text(column))
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", numeric_column == value)
         if op is FilterOp.RANGE:

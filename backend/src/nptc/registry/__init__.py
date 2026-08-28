@@ -5,8 +5,13 @@ A leaf package (ADR-0013 SS2): may import ``nptc_shared``, SQLAlchemy,
 imports it. The only datatype ``switch``/``match`` in the codebase may live in
 ``registry/datatypes/`` - enforced by ``backend/tests/test_datatype_dispatch.py``.
 
-``registry/definitions.py`` (PropertyDefinition service, #51/#55) and
-``registry/schema.py`` (JSON Schema derivation, #52) are not yet implemented.
+``registry/definitions.py`` (PropertyDefinition service, #51/#55) is not yet
+implemented. ``registry/schema.py`` (JSON Schema derivation, #52) is.
+
+``nptc.db.property_indexes`` (issue #54, FR-13) - the DDL executor for
+automatic index generation - lives under ``nptc.db``, not here, for the
+same leaf-rule reason ``nptc.db.bootstrap`` does: it imports the
+``PropertyDefinition`` ORM model directly.
 """
 
 from nptc.registry.datatypes import BUILTIN_DATATYPES, build_builtin_handlers
@@ -31,6 +36,7 @@ from nptc.registry.handlers import (
     UnsupportedFilterOpError,
     ValidationIssue,
     ValueExpression,
+    jsonb_root_as_text,
 )
 
 __all__ = [
@@ -56,4 +62,5 @@ __all__ = [
     "ValidationIssue",
     "ValueExpression",
     "build_builtin_handlers",
+    "jsonb_root_as_text",
 ]

@@ -880,9 +880,10 @@ validation on its own merits.
 
 `property_definition`/`property_value` land with #51, per ADR-0012's design record - see that
 ADR for the full reasoning, including the rejected alternatives (runtime DDL, classic EAV)
-and the FR-13 index executor's still-open question, which stays open until #54. #52 (JSON
-Schema validation), #54 (automatic index generation) and #55 (deprecation/key immutability
-workflow) still build on top of what is described here.
+and the FR-13 index executor, which #54 resolved (see the "Automatic index generation"
+section below and ADR-0012's dated amendment). #52 (JSON Schema validation) and #54
+(automatic index generation) have landed; #55 (deprecation/key immutability workflow) still
+builds on top of what is described here.
 
 `property_definition` is a conventional relational table, not a document:
 
@@ -903,7 +904,7 @@ workflow) still build on top of what is described here.
 | `edition` | `TEXT` | Nullable. Which SNOMED edition the value set resolves against - unconstrained text, no vocabulary CHECK (ADR-0012 does not fix this vocabulary), but still subject to `binding_fields_require_target` above |
 | `local_code_system_key` | `TEXT` | Nullable. FK to `local_code_system(key)` (issue #52, migration 0013); `CHECK` (`local_code_system_key_required`) requires it when `binding_target = 'local_code_system'`, mirroring `value_set_uri_required`'s own shape - `#51` left this column out entirely rather than FK-less, since `local_code_system` did not exist yet |
 | `constraints` | `JSONB` | `NOT NULL DEFAULT '{}'`. Handler-owned datatype parameters, this table only reserves the column - ADR-0013 (#137, merged) fixes interior validation as each handler's own `constraints_schema()` |
-| `filterable` | `BOOLEAN` | `NOT NULL`. Will drive #54's index generation (FR-13) |
+| `filterable` | `BOOLEAN` | `NOT NULL`. Drives #54's index generation (FR-13) - see below |
 | `origin` | `TEXT` | `NOT NULL`. `system` or `admin` |
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`. `active` or `deprecated` - no delete (FR-11) |
 | `display_order` | `INTEGER` | `NOT NULL` |
@@ -950,10 +951,61 @@ violation) - which is also FR-09's own acceptance test for this issue: adding a 
 ordinary row data, so nothing about seeding (or an administrator adding a fifth property
 afterwards) requires a migration, a restart, or a deployment.
 
-FR-13's generated indexes (`ix_propval_p{index_seq}_{slot}`, see the truncation caveat above)
-will be excluded from Alembic autogenerate and this file's own round-trip fingerprint via an
-`include_object` hook in `env.py` when #54 lands - without it, the first index #54 creates
-would fail the downgrade/upgrade comparison in `test_db_round_trip.py`.
+### Automatic index generation (issue #54, FR-13)
+
+A property flagged `filterable` gets a supporting index on `public.property_value` (the
+table reference is schema-qualified in the DDL itself - the indexer role's `search_path`
+need not put `public` first) - a `jsonb_path_ops` GIN for `code` (object-valued, containment
+queries), an expression btree with the `text_pattern_ops` opclass on `(value #>> '{}')` for
+`string`/`url` (that opclass, verified directly against `postgres:18.6`, is the one that
+serves `EQUALS`/`IN` *and* a `PREFIX`/`LIKE 'foo%'` filter from the same index under a
+non-`C` collation, so no second index is needed), and one on
+`nptc_numeric_or_null(value #>> '{}')` (see `nptc.db.functions` and
+[ADR-0027](../adr/0027-cast-safe-numeric-index-expression.md)) for `decimal`/`positiveInt` -
+**without a hand-written migration**, matching FR-09's own "a property definition is a plain
+row insert" property one level up.
+
+**A desired-state reconciler, not an event handler** - `nptc.db.property_reconciler.
+reconcile_property_indexes()` reads every `property_definition` row, computes each one's
+desired index from its handler's `index_shape()` (`nptc.registry.handlers`), diffs the
+result against actual `pg_index` state (not `pg_indexes`, which is blind to `indisvalid`),
+and creates/drops/repairs to converge. This is what makes un-flagging a property remove its
+index rather than leave it orphaned, and what notices and rebuilds an index a failed
+`CREATE INDEX CONCURRENTLY` left `indisvalid = false` - or one whose actual definition has
+gone stale against an amended `datatype` (an ordinary mutable, audited column, unlike the
+immutable `index_seq` the index name is derived from - `key` is compared too as defence in
+depth, though it is not actually mutable in practice, FR-12): the diff also compares
+`pg_get_indexdef` against what the property's *current* configuration would render
+(`nptc.db.property_indexes.matches_indexdef`), not just the index's name and validity, and
+rebuilds rather than merely re-commenting on a mismatch. One index failing to converge does
+not abort the run - every other desired/orphaned index still gets a chance, and the failure
+is collected into the report rather than raised. The same holds for a filterable property
+whose `datatype` has no handler registered in the running build (`datatype` is plain `TEXT`
+with no `CHECK`/`ENUM`, FR-77's own extension point, and mutable - reachable via a rollback,
+an early seed, or a raw-SQL amendment): it is reported separately
+(`ReconciliationReport.skipped_unknown_datatype`) and its existing index, if any, is held
+back from the orphan-drop sweep rather than being dropped just because nothing could compute
+a desired shape for it this run. Runs on its own `AUTOCOMMIT` connection
+(`NPTC_INDEXER_DATABASE_URL` - see [`configuration.md`](../operations/configuration.md)),
+since `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block; guarded by a
+`pg_try_advisory_lock` so two concurrent runs converging on the same state is a no-op, not a
+race. Callable as a library (so a future `property_definition` write path can dispatch it as
+a background task - none exists yet) and via `scripts/reconcile_property_indexes.py` for an
+operator or a scheduled check - the CLI takes the resolved DSN as a direct function
+argument, never via `os.environ`, so a DDL-capable credential is never left where a
+subprocess could inherit it.
+
+Every generated index is named `ix_propval_p{index_seq}_{slot}` (see the truncation caveat
+above) - `slot` is always `1` today; `2` is reserved for a composite
+`(property_key, <expr>)` btree fallback that ADR-0012's amendment records as unneeded (the
+partial index alone proved usable under a generic plan - see
+`test_db_property_index_plan.py`'s negative control). The property key itself is never in
+the name; it goes in a `COMMENT ON INDEX` the reconciler also keeps in sync, resolving this
+file's own name-to-key traceability gap for an operator staring at `pg_indexes`. Generated
+indexes are excluded from Alembic autogenerate and this file's own round-trip fingerprint via
+an `include_object` hook in `env.py` (and the fingerprint's own filter in
+`test_db_round_trip.py`) matched against the same `ix_propval_p\d+_[12]` regex - they are
+reconciler-managed runtime state, not schema history.
 
 ## Search normalisation and the trigram indexes (issue #142, FR-14, FR-15)
 

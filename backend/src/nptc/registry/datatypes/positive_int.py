@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, Integer, and_, cast
+from sqlalchemy import ColumnElement, and_, func
 
 from nptc.registry.handlers import (
     ControlKind,
@@ -25,6 +25,7 @@ from nptc.registry.handlers import (
     UnsupportedFilterOpError,
     ValidationIssue,
     ValueExpression,
+    jsonb_root_as_text,
 )
 
 _SUPPORTED_OPS = frozenset({FilterOp.EQUALS, FilterOp.IN, FilterOp.RANGE})
@@ -67,7 +68,15 @@ class PositiveIntHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        numeric_column = cast(column, Integer)
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
+        `cast(column, Integer)` - see `decimal.py`'s `filter_clause` for
+        why (issue #54, FR-13, ADR-0027). `nptc_numeric_or_null` returns
+        `numeric`, not `integer`; comparing a `numeric` column against an
+        `int`-typed bind parameter (`EQUALS`/`IN`/`RANGE` all pass Python
+        `int`s here) is exactly what Postgres's own numeric/integer
+        implicit comparison already handles, so no further cast is
+        needed."""
+        numeric_column = func.nptc_numeric_or_null(jsonb_root_as_text(column))
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", numeric_column == value)
         if op is FilterOp.IN:
@@ -78,4 +87,13 @@ class PositiveIntHandler:
         raise UnsupportedFilterOpError(f"positiveInt handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        return cast(column, Integer)
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
+        `cast(column, Integer)` (issue #54 review): a direct
+        `CAST(value AS integer)` raises outright for a retained non-numeric
+        value - the exact failure mode ADR-0027 exists to close for
+        `filter_clause` above, left unfixed here would defeat the point of
+        fixing it there. Returns `numeric`, not `integer` - the same
+        widening `filter_clause` already accepts."""
+        return type_cast(
+            "ColumnElement[Any]", func.nptc_numeric_or_null(jsonb_root_as_text(column))
+        )

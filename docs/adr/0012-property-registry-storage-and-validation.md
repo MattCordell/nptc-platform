@@ -237,6 +237,230 @@ Fix:
   datatype amendment (`string` -> `decimal`) is ever permitted on a property already
   carrying values.
 
+**Update (2026-08-27, issue #54).** The open questions above are resolved.
+
+- **Executor topology: an in-process reconciler, callable as a library, plus a CLI - not a
+  separate deployable.** The separate-process candidate would have to learn that
+  `filterable` changed by polling `property_definition`, which is the P3 `nptc.jobs` SKIP
+  LOCKED queue in a different hat - the very thing this ADR's own alternatives-rejected
+  table already forbids pulling forward for this issue. `nptc.db.property_reconciler.
+  reconcile_property_indexes()` runs on its own `NPTC_INDEXER_DATABASE_URL` credential
+  (`nptc.settings.IndexerSettings`, empty-default fail-closed, deliberately not a fallback
+  to `NPTC_MIGRATION_DATABASE_URL` or `NPTC_DATABASE_URL`), on an `AUTOCOMMIT` connection -
+  verified directly against `postgres:18.6` that `CREATE INDEX CONCURRENTLY` raises `25001`
+  otherwise. `scripts/reconcile_property_indexes.py` is the operator/scheduled-check path.
+  Not wired into `create_app()`: that would make the API require a DDL credential at boot
+  and run DDL on every test app construction. The write-path dispatch (a
+  `starlette.background` task calling `reconcile_property_indexes()` right after a
+  `property_definition` write commits) is left to #55/#138 - the first issue at which such
+  a write path exists at all; `reconcile_property_indexes()` is deliberately argument-free
+  and public so that dispatch needs no new interface when it lands.
+- **A desired-state reconciler, not an event handler - stronger than either open candidate
+  implied.** Reading every `property_definition` row and diffing against actual `pg_index`
+  state (joining `pg_index`/`pg_class`/`pg_namespace`, **not** `pg_indexes`, which exposes
+  no `indisvalid`) means a `CREATE INDEX CONCURRENTLY` that failed partway - leaving an
+  index that exists by name but is never used by the planner - is noticed and rebuilt on
+  the next run, not just created once and forgotten. This is also what makes "un-flagging
+  removes the index" (this issue's own acceptance criterion) fall out for free, with no
+  special-case code. The reconciler also keeps the `COMMENT ON INDEX` (below) in sync,
+  repairing a missing or stale one in place without a rebuild.
+- **Slot 2 (the composite `(property_key, <expr>)` btree fallback) is not built.** The
+  claim this ADR flagged as needing proof - that rendering `property_key` as a literal is
+  what makes the partial index usable under a generic plan - is proven in
+  `test_db_property_index_plan.py`: a positive case (the literal-rendered query names the
+  generated index in `EXPLAIN`) paired with a negative control (the identical predicate
+  shape via `PREPARE`/`EXPLAIN EXECUTE` under `plan_cache_mode = force_generic_plan` does
+  not), with no `enable_seqscan = off` touched. The literal proved usable on its own, so
+  slot 2 stays reserved (the `{slot}` name component, the `[12]` in
+  `GENERATED_INDEX_NAME_RE`, the `include_object` hook already accommodate it) rather than
+  built - a second index per filterable property would double write amplification on
+  `property_value` for a fallback the proof found unnecessary.
+- **The numeric expression is made cast-safe, not gated on the P3 conformance sweep.**
+  `nptc_numeric_or_null(text) RETURNS numeric` (`nptc.db.functions`, migration 0014,
+  [ADR-0027](0027-cast-safe-numeric-index-expression.md)) turns a non-castable retained
+  value into `NULL` rather than failing `CREATE INDEX` outright - verified directly that a
+  bare `CAST(value AS NUMERIC)` raises "cannot cast jsonb string to type numeric" against
+  exactly the retained-JSONB-string scenario this ADR named. Gating on the sweep instead was
+  rejected: the sweep is P3 and unbuilt, so gating on it would have shipped this ADR's third
+  index shape dead and untested indefinitely. `IndexShape.requires_conformance_sweep`
+  is not made redundant by this - it stops being an index-generation precondition and
+  becomes a signal to the future sweep that this datatype can carry syntactically-present,
+  semantically-non-numeric values on record.
+- **Correction to this ADR's own Decision text, in the same voice as #52's correction
+  above.** The three index expressions this section specifies did not match any handler's
+  `filter_clause()` as #51/#53 shipped it: `CodeHandler` rendered `->>'code' = ...`
+  equality, which a `jsonb_path_ops` GIN cannot serve at all (it serves only
+  `@>`/`@?`/`@@`); `StringHandler`/`UrlHandler` rendered `CAST(value AS VARCHAR)`, which
+  stays JSON-quoted (`'"abc"'`, never `abc`) and so could never match an unquoted filter
+  value - a latent correctness bug independent of indexing; `DecimalHandler`/
+  `PositiveIntHandler` rendered `CAST(value AS NUMERIC)`, exactly the cast-unsafe shape
+  this ADR itself warned against. #54 realigned all five handlers' `filter_clause()` (via a
+  new shared `nptc.registry.handlers.jsonb_root_as_text()` for the `TEXT_SCALAR`/
+  `NUMERIC_SCALAR` shapes, and `@>` containment - an `OR` of containments for `IN`, since
+  `@> ANY(array)` is not GIN-indexable - for `CodeHandler`), bound to the index expressions
+  by a parity test (`test_datatype_handlers.py`) so the two representations cannot silently
+  drift apart again.
+- **`COMMENT ON INDEX <name> IS '<property key>'`**, composed and reconciled the same way
+  the index itself is - resolving this file's own "the key isn't in the name" traceability
+  note for an operator staring at `pg_indexes`.
+- **NFR-22's guard gained a fifth rule, not a fourth** - `test_sql_parameterisation.py` had
+  already grown a fourth (`versioned-table-bulk-statement`, issue #46) since this ADR's
+  original text, without its docstring's "Three rules" header being updated to match. Rule
+  5 scopes `psycopg.sql` composition to exactly one module,
+  `nptc.db.property_indexes` - a call to `sql.SQL(...)` anywhere else fails outright, and
+  inside that module a `.format()` call is safe only when it is a `sql.SQL(<string
+  literal>)` receiver called directly (never a variable reference) with every argument
+  itself a `sql.SQL`/`sql.Identifier`/`sql.Literal` call.
+
+**Update (2026-08-28, issue #54 review).** An automated review of #54's PR found nine real
+gaps, all fixed in the same PR before merge:
+
+- **The reconciler diffed indexes by name only, missing a `datatype` amendment.**
+  `index_seq` (and so the index name) is immutable, but `datatype` is an ordinary mutable,
+  audited `property_definition` column - an amendment leaves an index that is present and
+  `indisvalid` yet serves nothing the property's *current* `filter_clause` renders. Fixed by
+  comparing `pg_get_indexdef(indexrelid)` against the expression/key the property's
+  *current* configuration would render (`nptc.db.property_indexes.matches_indexdef`) and
+  rebuilding on any mismatch, not just re-commenting - a stale `COMMENT ON INDEX` alone is
+  now insufficient evidence that only the comment drifted. (`key` is compared too, as
+  defence in depth against a raw-SQL rename, though `PropertyDefinition.key` is itself
+  `@validates`-guarded and CHECK-constrained never to change once set, FR-12 - the original
+  wording of this bullet incorrectly called it mutable; corrected on review.)
+- **`CodeHandler.filter_clause(FilterOp.IN, [])` silently matched every row.** SQLAlchemy
+  2.0's `or_()` with zero arguments renders the empty string, not an always-false
+  predicate - `or_(false(), *(...))` restores the always-false-on-empty behaviour `in_([])`
+  (what this replaced) had.
+- **`FilterOp.PREFIX` could not use the `TEXT_SCALAR` index under a non-`C` collation.** The
+  default btree opclass only serves `LIKE 'foo%'` under `C`/`POSIX`; `text_pattern_ops`
+  serves `EQUALS`/`IN`/`PREFIX` from the same index (verified directly against
+  `postgres:18.6`), so no second index is needed.
+- **`facet_expression` kept the exact defects `filter_clause` was fixed for** on
+  `string`/`url` (`CAST(value AS VARCHAR)`, still JSON-quoted) and `positiveInt`
+  (`CAST(value AS integer)`, still raises on a retained non-numeric value) - realigned to
+  `jsonb_root_as_text`/`nptc_numeric_or_null` respectively, with a parity test.
+- **One failing index aborted the whole convergence run.** Each desired/orphaned index now
+  gets its own `try`/`except` (safe under `AUTOCOMMIT`: a failed statement leaves no aborted
+  transaction for the next one to inherit, verified directly), collected into a new
+  `ReconciliationReport.failed` field; the CLI exits non-zero on a real run with any
+  failures. A `CREATE INDEX` that succeeds but whose immediately-following `COMMENT ON
+  INDEX` then raises now reports the index as both created and failed, not neither.
+- **The CLI smuggled its resolved DSN through `os.environ`.** A DDL-capable credential
+  written into the process environment is inherited by any subprocess; `get_indexer_engine`/
+  `reconcile_property_indexes` now take an optional `database_url` parameter instead.
+- **The DDL relied on an unqualified `property_value` table reference.** The indexer role's
+  `search_path` need not put `public` first; `create_statement` now qualifies the table
+  (`public.property_value` - `CREATE INDEX` cannot itself schema-qualify the index name,
+  since Postgres always creates an index in its table's schema), and `drop_statement`/
+  `comment_statement` qualify the index name instead (which those two statements do accept).
+- **A whitespace-only `NPTC_INDEXER_DATABASE_URL` passed the fail-closed guard.**
+  `IndexerSettings.indexer_database_url` gained a `field_validator` that strips the value,
+  so `"   "` now correctly triggers `IndexerNotConfiguredError` instead of failing later,
+  less legibly, inside `create_engine`.
+- **`finally: connection.execute(_UNLOCK_SQL, ...)` could mask the original exception** if
+  the connection had already died - the unlock is now itself wrapped in a suppressing `try`;
+  the lock is session-scoped on a `NullPool` connection about to close regardless.
+
+**Update (2026-08-28, issue #54 review, second pass).** A re-review of the fixes above found
+the drift-detection marker itself was under-specified, plus five smaller gaps:
+
+- **`matches_indexdef`'s `TEXT_SCALAR` marker was a substring of the `NUMERIC_SCALAR` one.**
+  `value #>> '{}'::text[]` appears inside `nptc_numeric_or_null((value #>> '{}'::text[]))`
+  too, so a `decimal`/`positiveInt` -> `string`/`url` amendment (the untested direction of
+  the pair) went undetected: the property kept a `nptc_numeric_or_null(...)` btree no
+  `StringHandler.filter_clause` predicate can use. Fixed by anchoring the `TEXT_SCALAR`
+  marker on `text_pattern_ops` instead - the opclass only that shape's `create_statement`
+  ever specifies, so it cannot appear in either of the other two shapes' `pg_get_indexdef`
+  output. This single change also fixes an index built by an earlier commit on this branch
+  (default opclass, no `text_pattern_ops` in its own `pg_get_indexdef`): it now correctly
+  reads as stale and gets rebuilt with the corrected opclass, rather than the `PREFIX` fix
+  silently never reaching an already-reconciled database.
+- **`nptc_numeric_or_null` was left unqualified inside the index expression** while the table
+  reference beside it was already schema-qualified for the identical `search_path` reason -
+  `create_statement` now calls `public.nptc_numeric_or_null(...)`.
+- **`FilterOp.PREFIX` still had no query-plan evidence.** `test_db_property_index_plan.py`
+  gained an `EXPLAIN` case proving `PREFIX` itself uses the `text_pattern_ops` index (the
+  pattern is two constants either side of `||`, which Postgres constant-folds before
+  planning - the same "provably constant" shape the existing `EQUALS` case relies on).
+- **`ReconciliationReport.changed` excluded `failed`.** A future library caller (#55/#138's
+  post-commit dispatch) that only branches on `changed` before logging must not see a falsy
+  report while indexes failed to converge - `changed` now folds `failed` in.
+- **A rebuild whose `DROP` succeeded but whose `CREATE` then raised was reported nowhere
+  useful** - not in `dropped`, not in the rebuild lists, only in `failed`, leaving an operator
+  unable to tell the property currently has no index at all. Fixed the same way `created`
+  already handled a create-then-comment failure: the name is recorded in `dropped` as soon as
+  the `DROP` succeeds, and only moved to `repaired_invalid`/`rebuilt_stale_definition` once the
+  replacement `CREATE` also succeeds.
+- **Correction to the previous update's own text**: `key` is not actually a mutable column -
+  `PropertyDefinition.key` is `@validates`-guarded and CHECK-constrained never to change once
+  set (FR-12). The reconciler still compares it (as defence in depth against a raw-SQL
+  rename, which is what `test_reconcile_rebuilds_after_a_key_rename` has to perform to reach
+  that code path at all), but the earlier wording calling it "an ordinary mutable, audited
+  column" was wrong and is corrected here.
+
+**Update (2026-08-28, issue #54 review, third pass).** A third review confirmed the
+second-pass marker fix is exclusive in both directions, and found one new problem plus two
+things worth deciding before merge:
+
+- **The `public.` qualification on the function reference was one-sided.** `create_statement`
+  was fixed to call `public.nptc_numeric_or_null(...)`, but `nptc.db.functions.
+  CREATE_NUMERIC_OR_NULL_FUNCTION_SQL` still created the function unqualified - so migration
+  0014 puts it in whatever schema the *migration* role's `search_path` names first, while the
+  reconciler, on a different role's connection, now insists on `public`. Unlike the table
+  reference, a mismatch here is not silently wrong but a permanent failure (`function
+  public.nptc_numeric_or_null(text) does not exist`) retried forever. Fixed by qualifying both
+  the `CREATE` and the `DROP` in `functions.py`. `nptc_sctid_is_valid`/`nptc_search_text` do
+  not have this problem and were not touched: they are only ever referenced by other
+  migration-created objects under the same role, so they are self-consistent either way - this
+  function is the first one referenced from a genuinely different connection, which is what
+  makes its schema an interface rather than an implementation detail.
+- **The `PREFIX` `EXPLAIN` case the second pass added proved the opclass *can* serve `PREFIX`,
+  but only under `literal_binds=True`** - a rendering `filter_clause` never actually produces.
+  The real predicate is `LIKE $1 || '%' ESCAPE '/'`, a bound parameter, not a folded constant.
+  Added a second case executing that exact shape through `_Explain` (real bind processors, no
+  `literal_binds`): a single ad hoc execution gets Postgres's own per-execution custom plan,
+  which substitutes the bound value before planning - the same benefit the literal case gets,
+  confirmed empirically rather than inferred. The existing `force_generic_plan` negative
+  control is what would catch the *other* case (a plan reused across many distinct values).
+- **`ReconciliationReport.changed` was overloaded** after the second pass folded `failed` into
+  it: `changed` then meant neither "did this run alter anything" nor "did everything converge",
+  and the CLI had to compensate by checking `repaired_comment` separately. Split into two
+  properties - `changed` (created/dropped/repaired_invalid/rebuilt_stale_definition/
+  repaired_comment; excludes `failed`) and `converged` (`not failed`) - so #55/#138's future
+  caller can ask either question directly.
+- **Minor, code-clarity only**: the `dropped.append(name)` / `dropped.remove(name)` pair around
+  a rebuild's `CREATE` (added in the second pass) is correct but reads as a mistake at a
+  glance. Rewritten as a `try` scoped to just the `CREATE`, appending to `dropped` only in its
+  `except` before re-raising - same behaviour, no add-then-undo.
+
+**Update (2026-08-28, issue #54 review, fourth pass).** A fourth review confirmed all four
+third-pass items, including empirically re-running the new bound-parameter `PREFIX` case and
+the drop-succeeded/create-failed case against a real Postgres, and found one new problem: an
+unknown `datatype` on a single `property_definition` row aborted the entire run.
+
+- **`desired_indexes` called `registry.get(definition.datatype)` per row, unguarded, before
+  the per-index `try`/`except` loop this issue's own earlier rounds built.** `registry.get`
+  raises `UnknownDatatypeError` for anything unregistered, so that exception escaped
+  `reconcile_property_indexes` entirely: no index anywhere converged, `ReconciliationReport`
+  was never constructed, and the CLI reported only `error: could not reconcile property
+  indexes (UnknownDatatypeError)`, naming no property. Reachable, not theoretical:
+  `property_definition.datatype` is plain `TEXT` with no `CHECK`/`ENUM` - deliberately, FR-77's
+  extension point ("admitting a new datatype never touches this table") - and it is mutable,
+  so a database carrying a row for a datatype whose handler is not in the *running* build is a
+  normal consequence of that design (an app rollback across a datatype addition, a seed
+  applied ahead of the code, or a raw-SQL amendment).
+- **Skipping the row outright was rejected**: if `desired_indexes` simply excluded it from the
+  desired set, the property's existing index (if any) would no longer be in `desired` either,
+  and the orphan sweep would drop it - destroying a working index under `CONCURRENTLY` (the
+  expensive direction to rebuild) merely because a handler is temporarily absent. Fixed by
+  having `desired_indexes` return a second list, `UnknownDatatypeProperty` rows (`property_key`
+  plus `index_seq`, enough to compute the index name without ever consulting a handler), which
+  the reconciler both (a) reports as `ReconciliationReport.skipped_unknown_datatype` and (b)
+  excludes from the orphan-drop sweep by name. `converged` now also considers this list, so a
+  library caller sees `converged is False` rather than a falsely-clean report, and the CLI
+  names the property directly (`SKIPPED (unknown datatype): <key>`) instead of a bare exception
+  type. A `filterable=False` row with an unknown datatype needs no index either way (same as a
+  known one) and is skipped from both lists silently - there is nothing to protect or report.
+
 **FR-11/FR-12 enforcement: column-level privilege is what makes both unconditional, never a
 trigger** - the FK above is a secondary backstop, conditional on a dependent value existing,
 not the mechanism itself. `nptc_app` gets `UPDATE` at column level on every
