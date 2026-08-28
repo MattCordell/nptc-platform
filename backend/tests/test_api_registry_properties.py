@@ -1,0 +1,514 @@
+"""HTTP tests for `nptc.api.routers.registry` (issue #55, FR-11, FR-12,
+FR-38, FR-44, NFR-08).
+
+Follows `test_api_catalogue_bindings.py`'s own precedent exactly: the
+service layer already has its own unit tests
+(`test_registry_definitions.py`); this module proves the HTTP adapter -
+request/response shape, status codes, the exception-handler mapping in
+`nptc.api.errors`, and authorisation - against the real `create_app()`.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.engine import Connection
+
+from nptc.audit.writer import AuditContext
+from nptc.auth.grants import grant_role_unchecked
+from nptc.auth.permissions import Role
+from nptc.catalogue.entries import create_entry
+from nptc.db.models.audit import AuditEvent
+from nptc.db.models.user import User
+from nptc.db.models.user_identity import UserIdentity
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_api_support = _load("api_app_support")
+build_api_test_app = _api_support.build_api_test_app
+ApiTestApp = _api_support.ApiTestApp
+
+_REASON = "Created for issue #55 registry API test."
+
+
+@pytest.fixture
+def api(app_db: Connection) -> Iterator[ApiTestApp]:
+    yield from build_api_test_app(app_db)
+
+
+def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
+    bootstrap = api.token(subject=subject)
+    api.get("/auth/me", token=bootstrap)
+    user = api.session.execute(
+        select(User)
+        .join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(UserIdentity.subject == subject)
+    ).scalar_one()
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    extra_claims = {"acr": "2"} if with_mfa else {}
+    return api.token(subject=subject, extra_claims=extra_claims)
+
+
+def _audit_event_count(api: ApiTestApp) -> int:
+    return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
+
+
+def _unique_key(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def _create_body(key: str, **overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "key": key,
+        "label": key.replace("_", " ").title(),
+        "datatype": "string",
+        "cardinality": "0..1",
+        "scope": "both",
+        "display_order": 0,
+        "reason": _REASON,
+    }
+    body.update(overrides)
+    return body
+
+
+def _create(api: ApiTestApp, token: str, key: str, **overrides: object) -> Any:
+    return api.post("/registry/properties", token=token, json=_create_body(key, **overrides))
+
+
+# --- happy paths -----------------------------------------------------------
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_create_property_returns_201_and_records_one_audit_event(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-create-happy")
+    before = _audit_event_count(api)
+    key = _unique_key("create_happy")
+
+    response = _create(api, token, key)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["key"] == key
+    assert body["status"] == "active"
+    assert body["origin"] == "admin"
+    assert _audit_event_count(api) == before + 1
+
+
+@pytest.mark.req("FR-12")
+@pytest.mark.integration
+def test_patch_property_changes_label_key_unchanged(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-happy")
+    key = _unique_key("patch_happy")
+    created = _create(api, token, key).json()
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": created["row_version"],
+            "reason": _REASON,
+            "label": "A brand new label",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["key"] == key
+    assert body["label"] == "A brand new label"
+
+
+@pytest.mark.req("FR-12")
+@pytest.mark.integration
+def test_patch_property_with_a_key_field_in_the_body_is_422(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-key-forbidden")
+    key = _unique_key("patch_key_forbidden")
+    created = _create(api, token, key).json()
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": created["row_version"],
+            "reason": _REASON,
+            "key": "some_other_key",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_patch_property_with_a_stale_row_version_is_409(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-stale")
+    key = _unique_key("patch_stale")
+    created = _create(api, token, key).json()
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": created["row_version"] + 1,
+            "reason": _REASON,
+            "label": "Should not apply",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_deprecate_property_returns_200_and_records_one_audit_event(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-deprecate-happy")
+    key = _unique_key("deprecate_happy")
+    created = _create(api, token, key).json()
+    before = _audit_event_count(api)
+
+    response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "deprecated"
+    assert _audit_event_count(api) == before + 1
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_list_properties_default_excludes_deprecated_include_deprecated_shows_it(
+    api: ApiTestApp,
+) -> None:
+    token = _admin_token(api, subject="sub-list-audience")
+    key = _unique_key("list_audience")
+    created = _create(api, token, key).json()
+    api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+
+    default_response = api.get("/registry/properties", token=token)
+    assert default_response.status_code == 200, default_response.text
+    default_keys = {item["key"] for item in default_response.json()["items"]}
+    assert key not in default_keys
+
+    export_response = api.get(
+        "/registry/properties", token=token, params={"include_deprecated": "true"}
+    )
+    assert export_response.status_code == 200, export_response.text
+    export_keys = {item["key"] for item in export_response.json()["items"]}
+    assert key in export_keys
+
+
+# --- domain refusals ---------------------------------------------------
+
+
+@pytest.mark.req("FR-12")
+@pytest.mark.integration
+def test_create_property_with_a_duplicate_key_is_409(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-dup-key")
+    key = _unique_key("dup_key")
+    _create(api, token, key)
+
+    response = _create(api, token, key)
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_deprecate_property_twice_is_409(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-double-deprecate")
+    key = _unique_key("double_deprecate")
+    created = _create(api, token, key).json()
+    api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    refreshed = api.get(f"/registry/properties/{key}", token=token).json()
+
+    response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": refreshed["row_version"], "reason": _REASON},
+    )
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_delete_property_is_always_409(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-delete-refused")
+    key = _unique_key("delete_refused")
+    _create(api, token, key)
+
+    response = api.request("DELETE", f"/registry/properties/{key}", token=token)
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_delete_property_unknown_key_is_still_409_not_404(api: ApiTestApp) -> None:
+    """`DELETE` always refuses, uniformly, whether or not `key` names a real
+    definition - see `delete_property`'s own docstring: the caller's
+    mistake either way is asking to delete at all, not naming the wrong
+    key, so this is a 409 rather than a 404 that would imply deleting a
+    *real* definition might otherwise have worked."""
+    token = _admin_token(api, subject="sub-delete-unknown")
+
+    response = api.request("DELETE", "/registry/properties/no_such_property_key", token=token)
+
+    assert response.status_code == 409, response.text
+
+
+# A dedicated HTTP route for a property value write does not exist yet
+# (out of this issue's scope - #151 owns the frontend, and its own write
+# route is a follow-up). `test_registry_definitions.py::
+# test_save_property_values_refuses_a_write_against_a_deprecated_property`
+# is the direct service-layer proof of this guard; the end-to-end test at
+# the bottom of this module exercises the same guard from an HTTP-created
+# property and definition.
+
+
+# --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_list_properties_no_credential_is_401(api: ApiTestApp) -> None:
+    response = api.get("/registry/properties", token=None)
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_list_properties_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    token = api.token(subject="sub-list-no-permission")
+    response = api.get("/registry/properties", token=token)
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_create_property_no_credential_is_401(api: ApiTestApp) -> None:
+    response = _create(api, token=None, key=_unique_key("no_cred"))
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_create_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    token = api.token(subject="sub-create-no-permission")
+    response = _create(api, token, _unique_key("no_permission"))
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_create_property_administrator_without_mfa_gets_step_up_challenge(
+    api: ApiTestApp,
+) -> None:
+    token = _admin_token(api, subject="sub-create-no-mfa", with_mfa=False)
+    response = _create(api, token, _unique_key("no_mfa"))
+    assert response.status_code == 403, response.text
+    assert 'error="insufficient_user_authentication"' in response.headers["WWW-Authenticate"]
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_patch_property_no_credential_is_401(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-setup")
+    key = _unique_key("patch_no_cred")
+    created = _create(api, token, key).json()
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=None,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_patch_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-patch-setup-403")
+    key = _unique_key("patch_no_permission")
+    created = _create(api, admin_token, key).json()
+    token = api.token(subject="sub-patch-no-permission")
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_deprecate_property_no_credential_is_401(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-deprecate-setup")
+    key = _unique_key("deprecate_no_cred")
+    created = _create(api, admin_token, key).json()
+
+    response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=None,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_deprecate_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-deprecate-setup-403")
+    key = _unique_key("deprecate_no_permission")
+    created = _create(api, admin_token, key).json()
+    token = api.token(subject="sub-deprecate-no-permission")
+
+    response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_delete_property_no_credential_is_401(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-delete-setup")
+    key = _unique_key("delete_no_cred")
+    _create(api, admin_token, key)
+
+    response = api.request("DELETE", f"/registry/properties/{key}", token=None)
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_delete_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-delete-setup-403")
+    key = _unique_key("delete_no_permission")
+    _create(api, admin_token, key)
+    token = api.token(subject="sub-delete-no-permission")
+
+    response = api.request("DELETE", f"/registry/properties/{key}", token=token)
+    assert response.status_code == 403, response.text
+
+
+# --- end-to-end (issue #55's own worked scenario) -------------------------
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("FR-12")
+@pytest.mark.integration
+def test_end_to_end_create_record_value_deprecate_still_readable(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-e2e")
+    key = _unique_key("e2e")
+    created = _create(api, token, key).json()
+    entry = create_entry(
+        api.session, AuditContext.system(), preferred_term="FR-11 e2e entry", reason=_REASON
+    )
+    api.session.flush()
+
+    from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
+    from nptc.catalogue.property_values import PropertyValueInput, save_property_values
+    from nptc.registry.datatypes import build_builtin_handlers
+    from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
+    from nptc_shared.terminology.stub import StubTerminologyClient
+
+    registry = DatatypeRegistry(
+        build_builtin_handlers(
+            HandlerDeps(
+                terminology_client=StubTerminologyClient(),
+                local_code_lookup=DatabaseLocalCodeLookup(api.session),
+            )
+        )
+    )
+    save_property_values(
+        api.session,
+        AuditContext.system(),
+        entry=entry,
+        property_key=key,
+        values=[PropertyValueInput(value="a recorded value")],
+        reason=_REASON,
+        registry=registry,
+        expected_row_version=entry.row_version,
+    )
+    api.session.flush()
+
+    deprecate_response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert deprecate_response.status_code == 200, deprecate_response.text
+
+    # Absent from the data-entry listing, present in the export listing.
+    data_entry = api.get("/registry/properties", token=token)
+    assert key not in {item["key"] for item in data_entry.json()["items"]}
+    export = api.get("/registry/properties", token=token, params={"include_deprecated": "true"})
+    assert key in {item["key"] for item in export.json()["items"]}
+
+    # DELETE still refused.
+    delete_response = api.request("DELETE", f"/registry/properties/{key}", token=token)
+    assert delete_response.status_code == 409, delete_response.text
+
+    # Further value write refused - proven at the service layer directly,
+    # since no dedicated HTTP property-value write route exists yet.
+    from nptc.registry.definitions import DeprecatedPropertyWriteError
+
+    with pytest.raises(DeprecatedPropertyWriteError):
+        save_property_values(
+            api.session,
+            AuditContext.system(),
+            entry=entry,
+            property_key=key,
+            values=[PropertyValueInput(value="a second value")],
+            reason=_REASON,
+            registry=registry,
+            expected_row_version=entry.row_version,
+        )

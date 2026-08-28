@@ -120,6 +120,14 @@ COVERED_WRITE_ROUTES = frozenset(
             method="POST",
             path="/catalogue/entries/{business_key}/bindings/{code}/replacement",
         ),
+        # issue #55: the PropertyDefinition admin router - create, amend,
+        # deprecate, and the always-refusing DELETE (FR-11, FR-12). Each
+        # one's negative-auth coverage lives in
+        # `test_api_registry_properties.py`.
+        RouteKey(method="POST", path="/registry/properties"),
+        RouteKey(method="PATCH", path="/registry/properties/{key}"),
+        RouteKey(method="POST", path="/registry/properties/{key}/deprecation"),
+        RouteKey(method="DELETE", path="/registry/properties/{key}"),
     }
 )
 
