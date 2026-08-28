@@ -281,6 +281,31 @@ def test_delete_property_is_always_409(api: ApiTestApp) -> None:
     response = api.request("DELETE", f"/registry/properties/{key}", token=token)
 
     assert response.status_code == 409, response.text
+    assert "deprecat" in response.json()["detail"].lower()
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_deprecate_property_system_origin_is_409(api: ApiTestApp) -> None:
+    """A built-in system property (`nptc.db.bootstrap.seed_system_properties`)
+    must refuse deprecation at the HTTP layer too, not just at the service
+    layer (`test_registry_definitions.py::
+    test_deprecate_definition_refuses_a_system_property`)."""
+    from nptc.db.bootstrap import seed_system_properties
+    from nptc.db.definitions import load_definition
+
+    token = _admin_token(api, subject="sub-deprecate-system")
+    seed_system_properties(api.session)
+    api.session.flush()
+    definition = load_definition(api.session, "usage_guidance")
+
+    response = api.post(
+        f"/registry/properties/{definition.key}/deprecation",
+        token=token,
+        json={"expected_row_version": definition.row_version, "reason": _REASON},
+    )
+
+    assert response.status_code == 409, response.text
 
 
 @pytest.mark.req("FR-11")
@@ -350,6 +375,52 @@ def test_create_property_administrator_without_mfa_gets_step_up_challenge(
     response = _create(api, token, _unique_key("no_mfa"))
     assert response.status_code == 403, response.text
     assert 'error="insufficient_user_authentication"' in response.headers["WWW-Authenticate"]
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_get_property_no_credential_is_401(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-get-setup")
+    key = _unique_key("get_no_cred")
+    _create(api, admin_token, key)
+
+    response = api.get(f"/registry/properties/{key}", token=None)
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_get_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-get-setup-403")
+    key = _unique_key("get_no_permission")
+    _create(api, admin_token, key)
+    token = api.token(subject="sub-get-no-permission")
+
+    response = api.get(f"/registry/properties/{key}", token=token)
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_patch_property_records_one_audit_event(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-audit")
+    key = _unique_key("patch_audit")
+    created = _create(api, token, key).json()
+    before = _audit_event_count(api)
+
+    response = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": created["row_version"],
+            "reason": _REASON,
+            "label": "Audited label",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert _audit_event_count(api) == before + 1
 
 
 @pytest.mark.req("NFR-20")
