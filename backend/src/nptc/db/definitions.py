@@ -86,14 +86,22 @@ __all__ = [
 _UQ_PROPERTY_DEFINITION_KEY = "uq_property_definition_key"
 
 #: The only fields `amend_definition` will ever `setattr` (issue #223
-#: review finding 5). Every other mapped column is either immutable
-#: (`key`), owned by a dedicated function (`origin`, `status`,
-#: `deprecated_at`), or - `value_set_uri`/`edition`/`local_code_system_key` -
-#: not yet a field any caller (the router included) amends independently of
-#: `binding_target`, so admitting them here would be new, untested surface
-#: rather than closing the gap this finding identifies. A caller naming any
-#: other key is a service-layer contract violation, not a request the
-#: caller could have gotten right by chance.
+#: review finding 5) - trimmed, per round-2 review minor finding 1, to
+#: exactly the fields `AmendPropertyDefinitionRequest.changes()` (`nptc.api.
+#: routers.registry`) can ever populate. `cardinality`/`scope`/`strength`/
+#: `binding_target` used to be admitted here too, but the router's request
+#: model never exposed any of them - untested, service-only surface that
+#: let a direct caller reach `amend_definition(..., binding_target=None)`
+#: on a `datatype='code'` property and hit the `binding_required_for_code`
+#: database `CHECK` as an unhandled `23514` (500), because `_binding_spec`
+#: (`nptc.db.property_specs`) returns `None` silently for a `None`
+#: `binding_target` rather than validating it. Re-admit a field here only
+#: alongside the router field that exposes it, with a test for both. Every
+#: other mapped column is either immutable (`key`), owned by a dedicated
+#: function (`origin`, `status`, `deprecated_at`), or simply not yet
+#: amendable at all. A caller naming any other key is a service-layer
+#: contract violation, not a request the caller could have gotten right by
+#: chance.
 _AMENDABLE_FIELDS = frozenset(
     {
         "label",
@@ -102,10 +110,6 @@ _AMENDABLE_FIELDS = frozenset(
         "filterable",
         "display_order",
         "constraints",
-        "cardinality",
-        "scope",
-        "strength",
-        "binding_target",
     }
 )
 

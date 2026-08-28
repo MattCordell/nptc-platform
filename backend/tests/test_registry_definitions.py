@@ -126,6 +126,16 @@ def test_create_definition_refuses_a_duplicate_key(app_session: Session) -> None
     with pytest.raises(PropertyDefinitionKeyExistsError):
         _create(app_session, key=key)
 
+    # Round-2 review, finding 2: the assertion above only proved the typed
+    # error is raised, not that `create_definition`'s `session.begin_nested()`
+    # savepoint (round-1 finding 1) actually protected the caller's session
+    # from being left in a failed-transaction state. Prove recovery directly:
+    # the same session object, reused for a second, unrelated definition,
+    # must still be usable.
+    recovered = _create(app_session, key=_new_key())
+    app_session.flush()
+    assert recovered.key != key
+
 
 @pytest.mark.req("FR-77")
 @pytest.mark.integration
