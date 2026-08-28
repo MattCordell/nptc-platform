@@ -66,9 +66,10 @@ from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.errors import ConflictReport, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.property_definition import PropertyDefinition
+from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.property_specs import spec_for
+from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry, PropertyDefinitionSpec, ValidationIssue
 from nptc.registry.schema import validate_constraints, validate_values
 
@@ -310,6 +311,12 @@ def save_property_values(
     ).scalar_one_or_none()
     if definition is None:
         raise PropertyDefinitionNotFoundError(f"no property_definition with key {property_key!r}")
+    if definition.status == PropertyStatus.DEPRECATED:
+        # FR-11: a deprecated property retains its recorded values but
+        # accepts no new ones - checked before any validation runs, so a
+        # write against a deprecated property never gets as far as a
+        # cardinality/binding check whose outcome would be moot anyway.
+        raise DeprecatedPropertyWriteError(property_key)
 
     spec = spec_for(definition)
     handler = registry.get(definition.datatype)

@@ -84,6 +84,15 @@ from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, Prop
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
+from nptc.registry.definitions import (
+    DeprecatedPropertyWriteError,
+    PropertyAlreadyDeprecatedError,
+    PropertyDefinitionDeleteRefusedError,
+    PropertyDefinitionKeyExistsError,
+    PropertyKeyImmutableError,
+    PropertyReactivationRefusedError,
+    SystemPropertyDeprecationRefusedError,
+)
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
 
@@ -205,6 +214,20 @@ _DETAIL_BINDING_NOT_FOUND = "No active code binding was found for the given code
 #: both say so too; this string must not contradict them).
 _DETAIL_BINDING_WRITE_NOT_FOUND = (
     "This request could not be completed. Contact an administrator if the problem persists."
+)
+_DETAIL_PROPERTY_DEFINITION_DELETE_REFUSED = (
+    "A property definition cannot be deleted. Deprecate it instead - deprecating retains "
+    "every value already recorded against it."
+)
+_DETAIL_PROPERTY_KEY_IMMUTABLE = "A property's key cannot be changed once created."
+_DETAIL_PROPERTY_ALREADY_DEPRECATED = "This property is already deprecated."
+_DETAIL_PROPERTY_REACTIVATION_REFUSED = (
+    "A deprecated property cannot be reactivated. Create a new property definition instead."
+)
+_DETAIL_SYSTEM_PROPERTY_DEPRECATION_REFUSED = "A built-in system property cannot be deprecated."
+_DETAIL_PROPERTY_DEFINITION_KEY_EXISTS = "A property definition with this key already exists."
+_DETAIL_DEPRECATED_PROPERTY_WRITE = (
+    "This property has been deprecated and no longer accepts new values."
 )
 
 
@@ -614,4 +637,75 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.error("code binding write could not be verified: %s", exc)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_BINDING_WRITE_NOT_FOUND}
+        )
+
+    @app.exception_handler(PropertyDefinitionDeleteRefusedError)
+    async def _handle_property_definition_delete_refused(
+        _request: Request, exc: PropertyDefinitionDeleteRefusedError
+    ) -> JSONResponse:
+        _logger.info("property definition delete refused: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PROPERTY_DEFINITION_DELETE_REFUSED},
+        )
+
+    @app.exception_handler(PropertyKeyImmutableError)
+    async def _handle_property_key_immutable(
+        _request: Request, exc: PropertyKeyImmutableError
+    ) -> JSONResponse:
+        _logger.info("property key amendment refused: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_PROPERTY_KEY_IMMUTABLE}
+        )
+
+    @app.exception_handler(PropertyAlreadyDeprecatedError)
+    async def _handle_property_already_deprecated(
+        _request: Request, exc: PropertyAlreadyDeprecatedError
+    ) -> JSONResponse:
+        _logger.info("deprecate refused, already deprecated: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_PROPERTY_ALREADY_DEPRECATED}
+        )
+
+    @app.exception_handler(PropertyReactivationRefusedError)
+    async def _handle_property_reactivation_refused(
+        _request: Request, exc: PropertyReactivationRefusedError
+    ) -> JSONResponse:
+        _logger.info("reactivation refused: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PROPERTY_REACTIVATION_REFUSED},
+        )
+
+    @app.exception_handler(SystemPropertyDeprecationRefusedError)
+    async def _handle_system_property_deprecation_refused(
+        _request: Request, exc: SystemPropertyDeprecationRefusedError
+    ) -> JSONResponse:
+        _logger.info("deprecate refused, system property: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_SYSTEM_PROPERTY_DEPRECATION_REFUSED},
+        )
+
+    @app.exception_handler(PropertyDefinitionKeyExistsError)
+    async def _handle_property_definition_key_exists(
+        _request: Request, exc: PropertyDefinitionKeyExistsError
+    ) -> JSONResponse:
+        _logger.info("create refused, key already exists: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PROPERTY_DEFINITION_KEY_EXISTS},
+        )
+
+    @app.exception_handler(DeprecatedPropertyWriteError)
+    async def _handle_deprecated_property_write(
+        _request: Request, exc: DeprecatedPropertyWriteError
+    ) -> JSONResponse:
+        _logger.info("value write refused, property deprecated: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={
+                "detail": _DETAIL_DEPRECATED_PROPERTY_WRITE,
+                "property_key": exc.property_key,
+            },
         )
