@@ -1,16 +1,58 @@
-# The catalogue write API: code bindings and designations (issues #219, #224)
+# The catalogue admin API: entry read, code bindings and designations (issues #219, #224, #228)
 
-The first state-changing HTTP routes in this platform. Everything they call already
-existed and was already tested as a library - `nptc.catalogue.bindings` (issue #48),
-`nptc.catalogue.designations`/`nptc.catalogue.collisions` (issues #47, #49) - so this
-document is about the HTTP adapter: what it exposes, how it addresses a resource with no
-internal identifier on the wire, and what it deliberately leaves for later issues.
+The first state-changing HTTP routes in this platform, plus the one authenticated read
+route alongside them. Everything they call already existed and was already tested as a
+library - `nptc.catalogue.bindings` (issue #48), `nptc.catalogue.designations`/
+`nptc.catalogue.collisions` (issues #47, #49) - so this document is about the HTTP
+adapter: what it exposes, how it addresses a resource with no internal identifier on the
+wire, and what it deliberately leaves for later issues.
 
 This is not the public API [public-api.md](public-api.md) describes. It requires
 authentication and a permission (`catalogue.edit_published` for most routes;
 `validation.acknowledge` for one, described below), and it is not part of the FR-20
 external-vendor contract - it exists for this platform's own admin screens (issue #149
 onward).
+
+## Entry read, any status (issue #228)
+
+| Path | Method | Returns |
+|---|---|---|
+| `/catalogue/admin/entries/{business_key}` | `GET` | `200 EntryDetail` |
+
+`nptc.api.routers.catalogue_admin` - a router separate from `catalogue.py` (the public
+read surface) for the same reason `catalogue_bindings.py`/`catalogue_designations.py`
+stay apart from it: `test_api_public_status_filter.py`/`test_api_public_response_
+hygiene.py` both derive what they scan from `catalogue.py`'s own route table, and this
+route is deliberately not part of that table.
+
+Every catalogue entry is born `draft` (`create_entry`'s own default status), and the
+write routes below already resolve a `draft` entry fine (`load_entry_for_update` carries
+no status filter). What was missing was a read route an edit screen (#149) could call
+first to render the form: [public-api.md](public-api.md)'s `GET /catalogue/entries/
+{business_key}` only ever serves `active` - a `draft` 404s identically to a
+`business_key` that was never minted, which is FR-20's own deliberate contract, not a
+gap to close there. This route is the authenticated counterpart, at its own path rather
+than a permission-gated branch of the public one: one URL per audience, so a reviewer
+can permission-audit each route independently of who is asking.
+
+Gated on `Permission.CATALOGUE_EDIT_PUBLISHED` - the same permission the write routes
+below require, on the reasoning that the audience for "load an entry to edit it" and
+"save an edit to it" is the same audience, so it needs one credential posture, not two.
+Serves the identical `EntryDetail` shape `catalogue.py`'s own detail route does,
+assembled by the same three loaders (`queries.load_designations`, `queries.
+load_bindings`, `queries.load_property_values`); `EntryDetail` and its assembly helpers
+live in `catalogue_shared.py` so both routers stay byte-for-byte in agreement on the
+shape.
+
+### Errors (entry read)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
+| 404 | No catalogue entry, of any status, has this `business_key`. Deliberately the same generic body the public route's 404 carries (they share the same `EntryNotFoundError` handler) - this route exists so an authenticated caller can see a `draft`, not so it can distinguish "never minted" from "exists but hidden". |
+| 422 | The business key is not `NPTC-nnnnnn`. |
+| 500 | A published code binding's stored FSN is not in the form the terminology server serves (FR-83), same as the public detail route's own 500. |
 
 ## Code bindings
 
@@ -251,4 +293,6 @@ Issue #219 is what first pointed that checker at the real app - previously it on
 synthetic apps to prove itself against, because the real app had no mutating routes yet.
 Issue #224's four designation routes are added to `COVERED_WRITE_ROUTES` alongside the
 three code-binding ones, with their negative-auth coverage in
-`test_api_catalogue_designations.py`.
+`test_api_catalogue_designations.py`. Issue #228's entry-read route is a `GET`, so
+`mutating_routes` never sees it and it needs no entry in `COVERED_WRITE_ROUTES` - its
+own negative-auth coverage is `test_api_catalogue_admin_read.py`.
