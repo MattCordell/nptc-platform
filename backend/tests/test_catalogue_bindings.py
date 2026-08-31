@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import Index, event, func, select, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -472,7 +473,20 @@ def test_two_concurrent_binds_on_one_entry_are_serialised(
     loser's session through an actual failed flush - the shape
     `test_two_concurrent_acknowledgements_of_the_same_collision_are_
     serialised` in `test_catalogue_collisions.py` established for the
-    designation-collision equivalent of this bug (issue #224)."""
+    designation-collision equivalent of this bug (issue #224).
+
+    The barrier only narrows the window - it does not guarantee the
+    loser reaches the flush-time translation this test exists to
+    exercise rather than the earlier pre-check (`create_binding`'s
+    `existing_active_id` `SELECT`), which raises the same
+    `CodeBindingAlreadyActiveError` without ever touching the buggy
+    `except IntegrityError` branch. The two are told apart below by
+    whether the caught error chains from an `IntegrityError`
+    (`raise ... from exc`, only true of the flush-time branch) - a
+    `\"precheck\"` outcome fails the test loudly instead of passing
+    without having exercised the fix, matching
+    `test_a_lost_concurrent_code_race_...`'s own `assert fired` guard
+    against a vacuous pass (issue #225 review)."""
     with Session(app_engine) as setup_session:
         entry = _new_entry(setup_session, "Race bind entry")
         setup_session.commit()
@@ -498,9 +512,14 @@ def test_two_concurrent_binds_on_one_entry_are_serialised(
             )
             session.commit()
             results[key] = "ok"
-        except CodeBindingAlreadyActiveError:
+        except CodeBindingAlreadyActiveError as exc:
             session.rollback()
-            results[key] = "conflict"
+            # Distinguishes the flush-time race translation this test
+            # exists to exercise (chained `from exc` off an
+            # `IntegrityError`) from the earlier pre-check, which raises
+            # the same error type without ever reaching the buggy
+            # `except` branch - see the docstring.
+            results[key] = "race" if isinstance(exc.__cause__, IntegrityError) else "precheck"
         except BaseException as exc:  # see the docstring: surfaced below, not swallowed
             session.rollback()
             errors[key] = exc
@@ -513,6 +532,8 @@ def test_two_concurrent_binds_on_one_entry_are_serialised(
     thread_b.start()
     thread_a.join(timeout=15)
     thread_b.join(timeout=15)
+    assert not thread_a.is_alive(), "thread_a did not finish within its join timeout"
+    assert not thread_b.is_alive(), "thread_b did not finish within its join timeout"
 
     try:
         if errors:
@@ -520,7 +541,12 @@ def test_two_concurrent_binds_on_one_entry_are_serialised(
             raise AssertionError(
                 f"unexpected exception(s) in concurrent threads: {errors}"
             ) from first_exc
-        assert sorted(results.values()) == ["conflict", "ok"]
+        if "precheck" in results.values():
+            raise AssertionError(
+                "the losing thread lost at the pre-check, not the flush-time race "
+                f"translation this test exists to exercise: {results}"
+            )
+        assert sorted(results.values()) == ["ok", "race"]
 
         with Session(app_engine) as verify_session:
             active_count = verify_session.execute(
