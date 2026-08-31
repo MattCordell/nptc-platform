@@ -251,6 +251,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/admin/entries/{business_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One catalogue entry, any status, with everything attached to it
+         * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
+         *     public `read_entry`: identical assembly, no status filter. An edit
+         *     screen (#149) calls this to load a `draft` entry's current state before
+         *     the #224 write routes save changes to it.
+         */
+        get: operations["read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registry/properties": {
         parameters: {
             query?: never;
@@ -664,6 +687,12 @@ export interface components {
          *     re-fetch the lot), but the common case is "show me this entry", and
          *     four round trips for one screen is a contract that pushes latency onto
          *     every consumer.
+         *
+         *     Served by both `catalogue.py`'s public detail route (`active` only) and
+         *     `catalogue_admin.py`'s admin detail route (any status, issue #228) -
+         *     one shape, so an edit screen consuming the admin route today gets the
+         *     exact same fields a public consumer of the same entry, once published,
+         *     would see.
          */
         EntryDetail: {
             /** Business Key */
@@ -1858,6 +1887,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryDetail"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, of any status, has this business key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The business key is not `NPTC-nnnnnn`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

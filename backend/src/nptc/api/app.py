@@ -17,7 +17,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from nptc.api.dependencies import get_terminology_client
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
-from nptc.api.routers import auth, catalogue, catalogue_bindings, catalogue_designations, registry
+from nptc.api.routers import (
+    auth,
+    catalogue,
+    catalogue_admin,
+    catalogue_bindings,
+    catalogue_designations,
+    registry,
+)
 from nptc.settings import ApiSettings
 
 __all__ = ["API_PREFIX", "create_app"]
@@ -81,6 +88,12 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # acknowledgement (FR-04, FR-05). A separate router from `catalogue.py`
     # for the same reason as `catalogue_bindings` above.
     app.include_router(catalogue_designations.router, prefix=API_PREFIX)
+    # issue #228: the admin read counterpart to catalogue.py's public detail
+    # route - any status, gated on catalogue.edit_published, so an edit
+    # screen (#149) can load a draft entry before the write routes above
+    # save changes to it. A separate router for the same reason as the two
+    # write routers above.
+    app.include_router(catalogue_admin.router, prefix=API_PREFIX)
     # issue #55: PropertyDefinition admin - create/amend/deprecate, plus the
     # always-refusing DELETE (FR-11, FR-12).
     app.include_router(registry.router, prefix=API_PREFIX)
