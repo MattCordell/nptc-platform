@@ -8,9 +8,9 @@ internal identifier on the wire, and what it deliberately leaves for later issue
 
 This is not the public API [public-api.md](public-api.md) describes. It requires
 authentication and a permission (`catalogue.edit_published` for most routes;
-`validation.acknowledge` for one - see [Authorisation](#authorisation)), and it is not
-part of the FR-20 external-vendor contract - it exists for this platform's own admin
-screens (issues #149, #150, #151).
+`validation.acknowledge` for one, described below), and it is not part of the FR-20
+external-vendor contract - it exists for this platform's own admin screens (issue #149
+onward).
 
 ## Code bindings
 
@@ -203,8 +203,8 @@ not `catalogue.edit_published` - held by `Role.REVIEWER` *and* `Role.ADMINISTRAT
 unlike the Administrator-only permission the other three routes require. It is
 therefore not in `MFA_REQUIRED_PERMISSIONS`, and its `403` never carries a step-up
 challenge, for either role. Acknowledgements are insert-only at the database
-privilege level (`UPDATE`/`DELETE` revoked on `designation_collision_acknowledgement`)
-- there is no route to withdraw one.
+privilege level (`UPDATE`/`DELETE` revoked on `designation_collision_acknowledgement`),
+so there is no route to withdraw one.
 
 ### Errors (designations)
 
@@ -249,6 +249,6 @@ set, grown alongside each new mutating endpoint.
 with no declared coverage, and a covered entry naming a route that no longer exists.
 Issue #219 is what first pointed that checker at the real app - previously it only had
 synthetic apps to prove itself against, because the real app had no mutating routes yet.
-#224's four designation routes are added to `COVERED_WRITE_ROUTES` alongside the three
-code-binding ones, with their negative-auth coverage in
+Issue #224's four designation routes are added to `COVERED_WRITE_ROUTES` alongside the
+three code-binding ones, with their negative-auth coverage in
 `test_api_catalogue_designations.py`.
