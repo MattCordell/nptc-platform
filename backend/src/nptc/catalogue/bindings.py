@@ -264,15 +264,25 @@ def create_binding(
     if not sa_inspect(entry).identity:
         session.flush()
 
+    # Read into a local once, up front: reused below both for the
+    # pre-check query/message and (if the insert loses its race) inside
+    # the `except` block, where re-reading `entry.id` from the ORM
+    # instance would be the bug this guards against - a failed flush
+    # leaves every instance the session tracks expired, so touching an
+    # already-loaded attribute afterwards triggers a reload against a
+    # session that is not yet rolled back, raising `PendingRollbackError`
+    # in place of the domain error this is meant to raise (issue #225).
+    entry_id = entry.id
+
     existing_active_id = session.execute(
         select(CodeBinding.id).where(
-            CodeBinding.entry_id == entry.id,
+            CodeBinding.entry_id == entry_id,
             CodeBinding.status == str(CodeBindingStatus.ACTIVE),
         )
     ).scalar_one_or_none()
     if existing_active_id is not None:
         raise CodeBindingAlreadyActiveError(
-            f"entry {entry.id} already has an active code binding ({existing_active_id})"
+            f"entry {entry_id} already has an active code binding ({existing_active_id})"
         )
 
     # Issue #49's blocking severity: the code side of "one active binding",
@@ -292,7 +302,7 @@ def create_binding(
         )
 
     binding = CodeBinding(
-        entry_id=entry.id,
+        entry_id=entry_id,
         system=validated_system,
         code=validated_code,
         fsn=fsn,
@@ -319,7 +329,7 @@ def create_binding(
         constraint_name = unique_violation_constraint(exc)
         if constraint_name == _ONE_ACTIVE_PER_ENTRY_CONSTRAINT:
             raise CodeBindingAlreadyActiveError(
-                f"entry {entry.id} already has an active code binding"
+                f"entry {entry_id} already has an active code binding"
             ) from exc
         if constraint_name == _ONE_ACTIVE_PER_CODE_CONSTRAINT:
             raise CodeBindingCodeAlreadyBoundError(
