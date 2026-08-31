@@ -61,6 +61,13 @@ ACTIVE_FSN = "Microscopy (acid fast bacilli) (procedure)"
 ACTIVE_DISPLAY_TERM = "Microscopy (acid fast bacilli)"
 RETIRED_CODE = "71388002"
 RETIRED_FSN = "Procedure (procedure)"
+#: A third valid SCTID (also used by `test_catalogue_local_codes.py`), for
+#: the `draft` entry's own binding (issue #228) - distinct from `ACTIVE_CODE`
+#: so both can be `active` at once without tripping
+#: `ix_code_binding_one_active_entry_per_code`, which is global, not
+#: per-entry.
+DRAFT_CODE = "394596001"
+DRAFT_FSN = "Poikilocytosis (finding)"
 
 #: The canonical entry's preferred term, and the accented entry's. Both are
 #: what the search tests query against, so they live here rather than being
@@ -84,6 +91,10 @@ TIE_TERM = "Reticulocyte count tie fixture"
 #: synonyms are not searchable" test would match through that instead and
 #: prove nothing.
 RETIRED_SYNONYM = "Obsolete zarquon panel"
+#: A synonym on the `draft` entry (issue #228) - the acceptance criterion is
+#: that an Administrator sees a draft's *full* detail, which a bare entry
+#: row cannot exercise.
+DRAFT_SYNONYM = "Hb electrophoresis draft synonym"
 
 #: Deliberately small. `test_api_public_response_hygiene.py` asserts no
 #: unquoted six-or-more-digit number appears in any response body (FR-06),
@@ -212,6 +223,7 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
     session.flush()
 
     synonym_only = entries[2]
+    draft_entry = entries[5]
     session.add_all(
         [
             Designation(
@@ -249,6 +261,16 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
                 language="en-AU",
                 status=DesignationStatus.ACTIVE.value,
             ),
+            # issue #228: the `draft` entry needs real children too - the
+            # acceptance criterion is that an Administrator sees a draft's
+            # *full* detail, and a bare entry row cannot exercise that.
+            Designation(
+                entry_id=draft_entry.id,
+                term=DRAFT_SYNONYM,
+                use=DesignationUse.SYNONYM.value,
+                language="en-AU",
+                status=DesignationStatus.ACTIVE.value,
+            ),
         ]
     )
 
@@ -276,6 +298,22 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             status=CodeBindingStatus.RETIRED.value,
             retirement_reason="Concept inactivated in the July release; rebound to a successor.",
             replaced_by_binding_id=active_binding.id,
+        )
+    )
+    # issue #228: a binding on the `draft` entry too, so its admin detail
+    # exercises `_display_term`'s FR-83 strip exactly as the canonical
+    # entry's public detail does. `DRAFT_CODE` is a distinct SCTID from
+    # `ACTIVE_CODE` - `ix_code_binding_one_active_entry_per_code` is global,
+    # not per-entry, so two different entries cannot both hold the same code
+    # `active` at once.
+    session.add(
+        CodeBinding(
+            entry_id=draft_entry.id,
+            code=DRAFT_CODE,
+            fsn=DRAFT_FSN,
+            au_preferred_term=None,
+            edition_hint="int",
+            status=CodeBindingStatus.ACTIVE.value,
         )
     )
 
@@ -326,6 +364,18 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
     session.add(
         PropertyValue(
             entry_id=canonical.id,
+            property_key=seeded.volume_property_key,
+            ordinal=0,
+            value=VOLUME_VALUE,
+        )
+    )
+    # issue #228: one property value on the `draft` entry, reusing the same
+    # `PropertyDefinition` (`scope="both"` - a property definition is not
+    # itself entry-specific), so the admin detail route's `properties` list
+    # is populated too.
+    session.add(
+        PropertyValue(
+            entry_id=draft_entry.id,
             property_key=seeded.volume_property_key,
             ordinal=0,
             value=VOLUME_VALUE,
