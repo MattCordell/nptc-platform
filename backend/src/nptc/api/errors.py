@@ -20,20 +20,23 @@ detail strings below are fixed, client-facing sentences, never
 ``str(exc)`` - the exception messages are diagnostic and do mention roles
 and UUIDs, which is correct for a log and wrong for a response.
 
-**Known gap, tracked rather than silent:** issue #47's remaining designation
-constraints (malformed `use`, a duplicate active term, a second active
-preferred designation in one language, the en-AU-preferred exclusion) are
-enforced only at the database layer today (`IntegrityError`, unmapped
-here) - a malformed `language`, an already-retired designation, and
-(issue #49) a collision are the exceptions, given typed handlers below
-(`DesignationLanguageError`, `DesignationAlreadyRetiredError`,
-`DesignationCollisionError`) alongside `TermCleaningError`. Issue #219 gave
-catalogue writes their first HTTP surface (code bindings only); #149 must
-not simply reuse this module unchanged for designations - every remaining
-constraint needs either its own typed exception raised before the flush
-(matching the precedent the typed handlers below already set) or an
-explicit handler here, before that route ships, or a routine
-duplicate-synonym save 500s instead of 409/422ing. Issue #52's
+**Issue #224 closed the designation gap this paragraph used to describe.**
+Issue #47's remaining designation constraints - a duplicate active term,
+a second active preferred designation in one language - now have typed
+exceptions (`DuplicateActiveTermError`, `PreferredDesignationAlreadyActiveError`,
+raised by `nptc.catalogue.designations.add_designation`/`amend_designation`
+before the flush translates the `IntegrityError`, matching
+`nptc.catalogue.bindings.create_binding`'s own precedent) and handlers
+below. A malformed `use` and the en-AU-preferred exclusion
+(`ck_designation_no_en_au_preferred`) are `CHECK` constraints, not unique
+violations, so a constraint name alone cannot disambiguate what a caller
+should fix - both are refused as a pydantic 422 at the request-body layer
+instead (`nptc.api.routers.catalogue_designations`), before the ORM is
+ever touched, the same way `catalogue_bindings.BindCodeRequest`'s
+`_reject_blank` pre-empts `ck_code_binding_fsn_not_blank`. `acknowledge_
+collision`'s own race is likewise now a typed
+`DesignationCollisionAcknowledgementConflictError` (409) rather than an
+unmapped `IntegrityError`. Issue #52's
 `PropertyValidationError`/`PropertyDefinitionNotFoundError` handlers below
 are the same situation in reverse: the write path (`nptc.catalogue.
 property_values.save_property_values`) and its typed errors exist and are
@@ -77,8 +80,16 @@ from nptc.catalogue.bindings import (
     InvalidCodeBindingSystemError,
 )
 from nptc.catalogue.changelog import ChangelogNoteError
-from nptc.catalogue.collisions import DesignationCollisionError
-from nptc.catalogue.designations import DesignationAlreadyRetiredError
+from nptc.catalogue.collisions import (
+    DesignationCollisionAcknowledgementConflictError,
+    DesignationCollisionError,
+)
+from nptc.catalogue.designations import (
+    DesignationAlreadyRetiredError,
+    DesignationNotFoundError,
+    DuplicateActiveTermError,
+    PreferredDesignationAlreadyActiveError,
+)
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
@@ -161,6 +172,17 @@ _DETAIL_TERM_CLEANING = (
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
+_DETAIL_DESIGNATION_NOT_FOUND = "No active designation was found for the given term."
+_DETAIL_DUPLICATE_ACTIVE_TERM = (
+    "This entry already has an active designation for this term, once case, spacing "
+    "and punctuation are ignored."
+)
+_DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE = (
+    "This entry already has an active preferred term in this language."
+)
+_DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT = (
+    "This collision was just acknowledged by another request. No further action is needed."
+)
 _DETAIL_SEARCH_QUERY_EMPTY = "Enter something to search for."
 _DETAIL_SEARCH_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
@@ -464,6 +486,52 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("retire refused, already retired: %s", exc)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_ALREADY_RETIRED}
+        )
+
+    @app.exception_handler(DesignationNotFoundError)
+    async def _handle_designation_not_found(
+        _request: Request, exc: DesignationNotFoundError
+    ) -> JSONResponse:
+        # issue #224: a term already retired, or never added, is simply not
+        # addressable this way any more - not a caller mistake worth a
+        # WARNING, matching CodeBindingNotFoundError's own precedent. Logged
+        # as the class only, not `str(exc)`: the message quotes the
+        # submitted term itself, user-supplied free text (NFR-26/NFR-35).
+        _logger.info("designation not found: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_NOT_FOUND}
+        )
+
+    @app.exception_handler(DuplicateActiveTermError)
+    async def _handle_duplicate_active_term(
+        _request: Request, exc: DuplicateActiveTermError
+    ) -> JSONResponse:
+        # issue #224: logged as the class only, not `str(exc)` - the
+        # message quotes the submitted term itself, user-supplied free text
+        # exactly like a changelog note (NFR-26/NFR-35).
+        _logger.info("designation refused, duplicate active term: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_DUPLICATE_ACTIVE_TERM}
+        )
+
+    @app.exception_handler(PreferredDesignationAlreadyActiveError)
+    async def _handle_preferred_designation_already_active(
+        _request: Request, exc: PreferredDesignationAlreadyActiveError
+    ) -> JSONResponse:
+        _logger.info("designation refused, preferred already active: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE},
+        )
+
+    @app.exception_handler(DesignationCollisionAcknowledgementConflictError)
+    async def _handle_collision_acknowledgement_conflict(
+        _request: Request, exc: DesignationCollisionAcknowledgementConflictError
+    ) -> JSONResponse:
+        _logger.info("collision acknowledgement refused, concurrent winner: %s", exc)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT},
         )
 
     @app.exception_handler(PropertyValidationError)

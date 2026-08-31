@@ -19,10 +19,16 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import ChangelogNoteError
+from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import (
     DesignationAlreadyRetiredError,
+    DesignationNotFoundError,
+    DuplicateActiveTermError,
+    PreferredDesignationAlreadyActiveError,
     add_designation,
     add_synonyms,
+    amend_designation,
+    load_active_designation,
     retire_designation,
 )
 from nptc.catalogue.entries import create_entry
@@ -113,13 +119,18 @@ def test_blank_term_is_refused(app_session: Session) -> None:
 @pytest.mark.req("FR-04")
 @pytest.mark.integration
 def test_duplicate_active_synonym_is_refused_by_the_partial_unique(app_session: Session) -> None:
+    """`ix_designation_no_duplicate_active_term` is a *within-entry*
+    invariant, so `assert_no_error_collisions` (a cross-entry check, issue
+    #49) never sees this case at all - the database constraint is the only
+    thing enforcing it, and issue #224 is what gives its `IntegrityError` a
+    typed translation rather than reaching the caller raw."""
     entry = _new_entry(app_session)
     add_designation(
         app_session, AuditContext.system(), entry=entry, term="FBC", reason="First synonym add"
     )
     app_session.flush()
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(DuplicateActiveTermError):
         add_designation(
             app_session,
             AuditContext.system(),
@@ -127,7 +138,6 @@ def test_duplicate_active_synonym_is_refused_by_the_partial_unique(app_session: 
             term="FBC",
             reason="Duplicate synonym add",
         )
-        app_session.flush()
 
 
 @pytest.mark.req("FR-04")
@@ -392,3 +402,228 @@ def test_a_non_en_au_preferred_designation_is_accepted(app_session: Session) -> 
 
     assert designation.use == "preferred"
     assert designation.language == "mi-NZ"
+
+
+# --- issue #224: the load/amend surface #149's edit screen needs ----------
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_load_active_designation_resolves_by_term(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    created = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+
+    found = load_active_designation(app_session, entry_id=entry.id, term="FBC")
+
+    assert found.id == created.id
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_load_active_designation_resolves_a_case_and_punctuation_variant(
+    app_session: Session,
+) -> None:
+    """`load_active_designation` looks up by comparison key, not the raw
+    term - a caller naming a variant that folds to the same key as the
+    stored term (issue #49's own comparison fold) still resolves it."""
+    entry = _new_entry(app_session)
+    created = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="17-OHP", reason="Adding synonym"
+    )
+    app_session.flush()
+
+    found = load_active_designation(app_session, entry_id=entry.id, term="17 ohp")
+
+    assert found.id == created.id
+
+
+@pytest.mark.integration
+def test_load_active_designation_raises_when_no_active_match(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+
+    with pytest.raises(DesignationNotFoundError):
+        load_active_designation(app_session, entry_id=entry.id, term="No such term")
+
+
+@pytest.mark.integration
+def test_load_active_designation_does_not_resolve_a_retired_term(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=designation, reason="Retiring FBC synonym"
+    )
+    app_session.flush()
+
+    with pytest.raises(DesignationNotFoundError):
+        load_active_designation(app_session, entry_id=entry.id, term="FBC")
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_amend_designation_edits_the_term_in_place(app_session: Session) -> None:
+    """Edits the row rather than retiring and re-adding: the `id` and the
+    audit trail show one edit, not an unrelated-looking retire+create
+    pair (issue #224)."""
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    amended = amend_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        designation=designation,
+        new_term="Full Blood Count",
+        reason="Correcting the synonym",
+    )
+    app_session.flush()
+
+    assert amended.id == designation.id
+    assert amended.term == "Full Blood Count"
+    assert _audit_event_count(app_session) == before + 1
+
+
+@pytest.mark.integration
+def test_amend_designation_to_the_same_term_is_a_no_op(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    amend_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        designation=designation,
+        new_term="FBC",
+        reason="Re-saving the same synonym",
+    )
+
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.integration
+def test_amend_a_retired_designation_is_refused(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=designation, reason="Retiring FBC synonym"
+    )
+    app_session.flush()
+
+    with pytest.raises(DesignationAlreadyRetiredError):
+        amend_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=designation,
+            new_term="Full Blood Count",
+            reason="Correcting a retired synonym",
+        )
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_amend_designation_still_runs_the_error_collision_check(app_session: Session) -> None:
+    """Amending is not exempt from FR-05: renaming a synonym to match
+    another live entry's preferred term is exactly the same ordering
+    hazard as adding it fresh."""
+    other_entry = _new_entry(app_session, preferred_term="Adrenal Ab")
+    entry = _new_entry(app_session, preferred_term="21-Hydroxylase Ab")
+    designation = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Some other synonym",
+        reason="Adding an unrelated synonym",
+    )
+    app_session.flush()
+
+    with pytest.raises(DesignationCollisionError):
+        amend_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=designation,
+            new_term="Adrenal Ab",
+            reason="Renaming to the colliding term",
+        )
+
+    assert other_entry.preferred_term == "Adrenal Ab"
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_amend_designation_onto_another_active_term_on_the_same_entry_is_refused(
+    app_session: Session,
+) -> None:
+    """The within-entry duplicate case (`ix_designation_no_duplicate_
+    active_term`), same as `test_duplicate_active_synonym_is_refused_by_
+    the_partial_unique` above but reached via an amendment rather than a
+    second add."""
+    entry = _new_entry(app_session)
+    add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC"
+    )
+    app_session.flush()
+    other = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="CBC", reason="Adding CBC"
+    )
+    app_session.flush()
+
+    with pytest.raises(DuplicateActiveTermError):
+        amend_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=other,
+            new_term="FBC",
+            reason="Renaming CBC onto the existing FBC synonym",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_second_active_preferred_designation_in_one_language_is_refused(
+    app_session: Session,
+) -> None:
+    """`ix_designation_one_active_preferred_per_entry_language` (issue #47)
+    - a within-entry invariant `assert_no_error_collisions` never sees
+    (that check is cross-entry only), so this is the database constraint's
+    own `IntegrityError` translated by issue #224."""
+    entry = _new_entry(app_session)
+    add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Panui toto katoa",
+        use=str(DesignationUse.PREFERRED),
+        language="mi-NZ",
+        reason="Adding a non-en-AU preferred term",
+    )
+    app_session.flush()
+
+    with pytest.raises(PreferredDesignationAlreadyActiveError):
+        add_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            term="Tetahi atu kupu",
+            use=str(DesignationUse.PREFERRED),
+            language="mi-NZ",
+            reason="Adding a second preferred term in the same language",
+        )

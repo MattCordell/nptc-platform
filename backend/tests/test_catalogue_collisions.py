@@ -25,6 +25,7 @@ from nptc.auth.permissions import Role, permissions_for_roles
 from nptc.auth.principal import Principal
 from nptc.catalogue.collisions import (
     CollisionSeverity,
+    DesignationCollisionAcknowledgementConflictError,
     DesignationCollisionError,
     acknowledge_collision,
     warning_collisions,
@@ -33,6 +34,9 @@ from nptc.catalogue.designations import add_designation, add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.designation_collision_acknowledgement import (
+    DesignationCollisionAcknowledgement,
+)
 from nptc_shared.similarity import collision_key
 
 _NBSP = chr(0x00A0)
@@ -676,4 +680,92 @@ def test_add_synonyms_batches_do_not_deadlock_on_opposite_lock_order(
                 text(
                     "DELETE FROM catalogue_entry WHERE preferred_term LIKE 'Deadlock test entry %'"
                 )
+            )
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_two_concurrent_acknowledgements_of_the_same_collision_are_serialised(
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
+) -> None:
+    """`acknowledge_collision`'s own docstring records that it is *not*
+    given a `pg_advisory_xact_lock` the way `assert_no_error_collisions`
+    is: the select-first is still read-then-write, so two genuinely
+    concurrent acknowledgements of one `(entry, term_key, language)` can
+    both read "no existing row" before either commits. Unlike the
+    advisory-lock case, nothing here blocks the two selects from racing -
+    what serialises the outcome is Postgres's own unique-index insert
+    locking (the second `INSERT` blocks on the first transaction, then
+    re-evaluates the constraint once it commits), and issue #224 is what
+    turns the loser's `IntegrityError` into
+    `DesignationCollisionAcknowledgementConflictError` (409) rather than
+    an unmapped 500."""
+    racing_term_key = f"race-ack-term-{uuid.uuid4()}"
+    with Session(app_engine) as setup_session:
+        entry = _new_entry(setup_session, f"Race ack entry {racing_term_key}")
+        setup_session.commit()
+        entry_id = entry.id
+
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+    errors: dict[str, BaseException] = {}
+
+    def _acknowledge(key: str) -> None:
+        session = Session(app_engine)
+        try:
+            entry_in_session = session.get(CatalogueEntry, entry_id)
+            assert entry_in_session is not None
+            reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+            barrier.wait(timeout=5)
+            acknowledge_collision(
+                session,
+                AuditContext.system(),
+                acknowledger=reviewer,
+                entry=entry_in_session,
+                term_key=racing_term_key,
+                language="en-AU",
+                reason=f"Concurrent acknowledgement attempt {key}",
+            )
+            session.commit()
+            results[key] = "ok"
+        except DesignationCollisionAcknowledgementConflictError:
+            session.rollback()
+            results[key] = "conflict"
+        except BaseException as exc:  # see the docstring: surfaced below, not swallowed
+            session.rollback()
+            errors[key] = exc
+        finally:
+            session.close()
+
+    thread_a = threading.Thread(target=_acknowledge, args=("a",))
+    thread_b = threading.Thread(target=_acknowledge, args=("b",))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=15)
+    thread_b.join(timeout=15)
+
+    try:
+        if errors:
+            _first_key, first_exc = next(iter(errors.items()))
+            raise AssertionError(
+                f"unexpected exception(s) in concurrent threads: {errors}"
+            ) from first_exc
+        assert sorted(results.values()) == ["conflict", "ok"]
+
+        with Session(app_engine) as verify_session:
+            surviving = verify_session.execute(
+                select(func.count())
+                .select_from(DesignationCollisionAcknowledgement)
+                .where(DesignationCollisionAcknowledgement.term_key == racing_term_key)
+            ).scalar_one()
+        assert surviving == 1
+    finally:
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM designation_collision_acknowledgement WHERE term_key = :key"),
+                {"key": racing_term_key},
+            )
+            connection.execute(
+                text("DELETE FROM catalogue_entry WHERE id = :entry_id"),
+                {"entry_id": entry_id},
             )

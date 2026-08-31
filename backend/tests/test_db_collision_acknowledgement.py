@@ -13,6 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from nptc.db.errors import unique_violation_constraint
+
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
 _INSUFFICIENT_PRIVILEGE = "42501"
@@ -97,6 +99,14 @@ def test_duplicate_acknowledgement_for_the_same_entry_term_and_language_is_refus
         _insert_ack(db, entry_id=entry_id)
 
     assert exc_info.value.orig.sqlstate == _UNIQUE_VIOLATION  # type: ignore[union-attr]
+    # Pins the literal constraint name `nptc.catalogue.collisions.
+    # acknowledge_collision` matches against (issue #224) - a rename here
+    # with no matching update there would silently turn a genuine
+    # concurrent-acknowledgement race back into an unmapped 500.
+    assert (
+        unique_violation_constraint(exc_info.value)
+        == "ix_designation_collision_ack_entry_term_language"
+    )
 
 
 @pytest.mark.req("FR-05")

@@ -66,6 +66,7 @@ __all__ = [
     "list_entries",
     "load_bindings",
     "load_designations",
+    "load_designations_for_write",
     "load_property_values",
 ]
 
@@ -92,8 +93,18 @@ class EntryPage:
 class DesignationRow:
     """A catalogue-authored synonym or non-en-AU preferred variant (ADR-0022
     - the catalogue's own en-AU preferred term is never a `designation` row,
-    it is `catalogue_entry.preferred_term`)."""
+    it is `catalogue_entry.preferred_term`).
 
+    `id` is this row's own primary key - an internal detail, never put on
+    the public `Designation` response model. It exists on this row type
+    only so a write route can re-read the exact row it just wrote
+    (issue #224, matching `BindingRow.id`'s own rationale):
+    `(entry_id, term_key, language)` is unique only among *active*
+    designations, so a term added, retired, and re-added leaves two
+    retired rows sharing a `term_key`, and only `id` still tells them
+    apart."""
+
+    id: uuid.UUID
     entry_id: uuid.UUID
     term: str
     use: str
@@ -230,6 +241,43 @@ def load_designations(
     ).scalars()
     return tuple(
         DesignationRow(
+            id=row.id,
+            entry_id=row.entry_id,
+            term=row.term,
+            use=row.use,
+            language=row.language,
+            status=row.status,
+            length=row.length,
+        )
+        for row in rows
+    )
+
+
+def load_designations_for_write(
+    session: Session, entry_ids: Iterable[uuid.UUID]
+) -> tuple[DesignationRow, ...]:
+    """Every designation for the given entries, active *and* retired
+    (issue #224) - unlike `load_designations` above, which is the FR-20
+    public read surface and omits retired rows on purpose (see its own
+    docstring).
+
+    An admin write route needs the retired case too: re-reading the exact
+    row a retirement or amendment just wrote (by `id`, matching
+    `nptc.catalogue.bindings`'s own `_row_to_binding` precedent) has to
+    find it whether it ended up active or retired. Not exposed to the
+    public API - callers outside `nptc.api.routers.catalogue_designations`
+    should not have a reason to see a retired designation."""
+    ids = tuple(entry_ids)
+    if not ids:
+        return ()
+    rows = session.execute(
+        select(Designation)
+        .where(Designation.entry_id.in_(ids))
+        .order_by(Designation.use, Designation.language, Designation.term)
+    ).scalars()
+    return tuple(
+        DesignationRow(
+            id=row.id,
             entry_id=row.entry_id,
             term=row.term,
             use=row.use,
