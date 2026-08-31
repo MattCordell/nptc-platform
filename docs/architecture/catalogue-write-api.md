@@ -1,17 +1,18 @@
-# The catalogue write API: code bindings (issue #219)
+# The catalogue write API: code bindings and designations (issues #219, #224)
 
 The first state-changing HTTP routes in this platform. Everything they call already
-existed and was already tested as a library - `nptc.catalogue.bindings` (issue #48) - so
-this document is about the HTTP adapter: what it exposes, how it addresses a resource
-with no internal identifier on the wire, and what it deliberately leaves for later
-issues.
+existed and was already tested as a library - `nptc.catalogue.bindings` (issue #48),
+`nptc.catalogue.designations`/`nptc.catalogue.collisions` (issues #47, #49) - so this
+document is about the HTTP adapter: what it exposes, how it addresses a resource with no
+internal identifier on the wire, and what it deliberately leaves for later issues.
 
 This is not the public API [public-api.md](public-api.md) describes. It requires
-authentication and the `catalogue.edit_published` permission, and it is not part of the
-FR-20 external-vendor contract - it exists for this platform's own admin screens
-(issues #149, #150, #151), starting with code bindings.
+authentication and a permission (`catalogue.edit_published` for most routes;
+`validation.acknowledge` for one - see [Authorisation](#authorisation)), and it is not
+part of the FR-20 external-vendor contract - it exists for this platform's own admin
+screens (issues #149, #150, #151).
 
-## Endpoints
+## Code bindings
 
 All under `/api/v1/catalogue`, same path space as the public read routes.
 
@@ -34,7 +35,7 @@ client wanting the binding it just created already has it in the response body; 
 exists so the response also names the resource it changed, and names one that actually
 resolves.
 
-## Addressing a binding: by `code`, never an id
+### Addressing a binding: by `code`, never an id
 
 The public `Binding` model deliberately carries no `id` or `entry_id` -
 [public-api.md](public-api.md#what-is-published-and-what-is-not) explains why. A client
@@ -61,7 +62,7 @@ row's own `id` instead - an internal detail that never itself reaches a response
 the only system in use today; the model and the unique index already key on
 `(system, code)`, so exposing a second system later is additive, not a breaking change.
 
-## Replacement is one request, not three
+### Replacement is one request, not three
 
 `nptc.catalogue.bindings`' own module docstring explains why replacing a binding is a
 three-step sequence at the service layer - retire the predecessor, create the successor,
@@ -85,7 +86,7 @@ self-supersession check compares row *identity*, not code, so a same-code replac
 would otherwise retire and re-bind one code in a single request and leave the response
 unable to tell the two rows apart by code.
 
-## Authorisation
+### Authorisation (code bindings)
 
 Every route requires `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44) - held only by
 `Role.ADMINISTRATOR`, and therefore in `MFA_REQUIRED_PERMISSIONS` (NFR-06). An
@@ -94,7 +95,7 @@ administrator who has not completed the MFA step-up gets the RFC 9470 challenge
 the same as any other MFA-gated permission - see
 [permissions.md](permissions.md).
 
-## Errors
+### Errors (code bindings)
 
 | Status | When |
 |---|---|
@@ -125,22 +126,118 @@ read `exc.http_status`, never echo `str(exc)` into the response body (an excepti
 message may name an internal id, for the log only - NFR-04/NFR-26), and log at `INFO`
 for a routine, expected refusal.
 
-## What this issue does not cover
+## Designations
 
-- Designation and property write routes - #149 and #151's own obligation, though they
-  are expected to follow this router's shape (request/response models declared
-  in-router, `Final` error-response dicts, no `response_model=`, no try/except in a route
-  body).
-- Entry-level `PATCH` and FR-38 optimistic locking on the wire. A code binding is a child
-  row with no `row_version` of its own; an entry-level write will need one, and the
-  public `EntryDetail`/`EntrySummary` models deliberately omit `row_version` today. Two
-  administrators editing one entry's bindings concurrently is the routine case this
-  leaves genuinely unguarded against - the "Concurrency" note above only prevents *data
-  corruption* (two active bindings, a code bound twice), not one admin's edit silently
-  overwriting context the other was working from with no version check at all.
-- The remaining unhandled designation `IntegrityError` constraints `nptc.api.errors`'
-  own module docstring names (malformed `use`, a duplicate active term, a second active
-  preferred designation in one language) - #149's obligation, not made any worse here.
+All under `/api/v1/catalogue`, in `nptc.api.routers.catalogue_designations` - a router
+separate from both `catalogue.py` (the public read surface) and `catalogue_bindings.py`,
+for the same reason those two stay apart from each other.
+
+| Path | Method | Body | Returns |
+|---|---|---|---|
+| `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason}` | `201 {designations: [Designation], warnings: [CollisionWarning]}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, reason}` | `200 {designation: Designation, warnings: [CollisionWarning]}` |
+| `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason}` | `200 Designation` |
+| `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
+
+`business_key` accepts any status, the same as the code binding routes, via the same
+`load_entry_for_update` loader.
+
+### Addressing a designation: by term in the body, never a path segment or an id
+
+The public `Designation` model carries no `id` (NFR-04/NFR-26, the same rule
+`Binding` follows) - but unlike a SNOMED CT code, a term is free text an editor typed,
+and can contain a `/` (`"CD4/CD8 ratio"`). FastAPI decodes a path segment before
+routing, so a term with a slash in a `{term}` path parameter would either 404 against
+the wrong route or need a client-side double-encoding scheme nobody should have to
+reason about. Every route above therefore takes its target term in the request body.
+
+`nptc.catalogue.designations.load_active_designation(session, entry_id=..., term=...,
+language=...)` resolves it, mirroring `load_active_binding`: looked up by *comparison
+key* (`nptc_shared.similarity.collision_key` over the cleaned term), not the raw
+string, since `ix_designation_no_duplicate_active_term` is itself keyed on `term_key` -
+a caller naming a case or punctuation variant of the stored term still resolves the
+same row. `use` is deliberately not part of the address: that index has no `use`
+column, so `(entry_id, term_key, language)` already identifies at most one active row.
+A term already retired, or never added, is a `404` - not addressable this way any
+more, not a conflicting state - matching code bindings' own `404`-not-`409` reasoning
+for a retired code.
+
+Re-reading a just-written row (to build the response) is by the row's own `id`, not by
+term, for the same reason `_row_to_binding` avoids a code-keyed re-read: `(entry_id,
+term_key, language)` is unique only among *active* rows, so a term retired and re-added
+would leave two retired rows sharing a `term_key`, and only `id` still tells them apart.
+`nptc.catalogue.queries.load_designations_for_write` is the retired-inclusive loader
+this needs - `load_designations` (the FR-20 public read path) stays active-only.
+
+### Editing in place, not retire-and-re-add
+
+`amend_designation` mutates `designation.term` directly rather than retiring the old
+row and creating a new one. The row keeps its identity (`id`), and the audit log shows
+one `designation.amended` edit rather than a retirement paired with an
+unrelated-looking creation - the same "one editorial decision, one audit trail" posture
+`/replacement`'s single request takes for code bindings.
+
+### Preferred term is out of scope here
+
+ADR-0022 keeps the catalogue's own en-AU preferred term on
+`catalogue_entry.preferred_term`, never a `designation` row
+(`ck_designation_no_en_au_preferred`) - every route above only ever touches
+`designation` rows. Amending the entry's own preferred term needs FR-38's optimistic
+locking on the wire, which the public `EntryDetail`/`EntrySummary` models do not carry
+yet (the same gap #219's own "What this issue does not cover" named) - a follow-up, not
+folded in here.
+
+### Warning-severity collisions ride back on the write response
+
+`nptc.catalogue.collisions.warning_collisions` never raises - a warning permits the
+save by construction (FR-05). `add_designations`/`amend_designation` call it after
+their own write and return whatever it finds as `warnings` on the same response,
+rather than exposing it as a separate `GET` endpoint under `/catalogue` that
+`test_api_public_response_hygiene.py`'s GET scanner would otherwise discover and
+attempt to exercise without a credential.
+
+### Acknowledging a collision needs a different permission
+
+`POST .../designations/acknowledgement` is gated on `Permission.VALIDATION_ACKNOWLEDGE`,
+not `catalogue.edit_published` - held by `Role.REVIEWER` *and* `Role.ADMINISTRATOR`,
+unlike the Administrator-only permission the other three routes require. It is
+therefore not in `MFA_REQUIRED_PERMISSIONS`, and its `403` never carries a step-up
+challenge, for either role. Acknowledgements are insert-only at the database
+privilege level (`UPDATE`/`DELETE` revoked on `designation_collision_acknowledgement`)
+- there is no route to withdraw one.
+
+### Errors (designations)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing the route's required permission, or (for `catalogue.edit_published` routes only) holding it without MFA. |
+| 404 | No catalogue entry with this `business_key`, or no *active* designation for this `term`/`language`. |
+| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. |
+| 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`), more than one preferred term in one batch, or a changelog note that fails FR-37. |
+
+Every exception `nptc.catalogue.designations`/`nptc.catalogue.collisions` raises is
+mapped in `nptc.api.errors` the same way the `CodeBinding*` family is: read
+`exc.http_status`, never echo `str(exc)`, log at `INFO`. Closing this mapping (four
+constraints were previously unmapped `IntegrityError`s - see
+`nptc.api.errors`'s own former "Known gap" note) is this issue's own contribution, not
+inherited from #219.
+
+## What these issues do not cover
+
+- Entry-level `PATCH` and FR-38 optimistic locking on the wire, for either resource.
+  Neither a code binding nor a designation is a row with its own `row_version`; an
+  entry-level write (including amending the catalogue's own preferred term) will need
+  the entry's `row_version` on the wire, and the public `EntryDetail`/`EntrySummary`
+  models deliberately omit it today. Two administrators editing one entry's bindings or
+  designations concurrently is the routine case this leaves genuinely unguarded against
+  - the "Concurrency" notes above only prevent *data corruption* (two active bindings, a
+  duplicate term), not one admin's edit silently overwriting context the other was
+  working from with no version check at all.
+- Property write routes - #151's own obligation, expected to follow the same shape.
+- A read endpoint for a designation's `warning_collisions` on its own, independent of a
+  write - see "Warning-severity collisions ride back on the write response" above for
+  why that is deliberate for now, not merely deferred.
 
 ## Route-table inventory (issues #44, #165)
 
@@ -150,5 +247,8 @@ table recursively (an included router's routes are not flattened into `app.route
 set, grown alongside each new mutating endpoint.
 `test_the_real_app_has_no_uncovered_mutating_route` fails in both directions: a route
 with no declared coverage, and a covered entry naming a route that no longer exists.
-This issue is what first pointed that checker at the real app - previously it only had
+Issue #219 is what first pointed that checker at the real app - previously it only had
 synthetic apps to prove itself against, because the real app had no mutating routes yet.
+#224's four designation routes are added to `COVERED_WRITE_ROUTES` alongside the three
+code-binding ones, with their negative-auth coverage in
+`test_api_catalogue_designations.py`.

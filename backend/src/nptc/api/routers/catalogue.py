@@ -59,7 +59,15 @@ from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue_shared import Binding, BindingList, BusinessKeyPath, _binding
+from nptc.api.routers.catalogue_shared import (
+    Binding,
+    BindingList,
+    BusinessKeyPath,
+    Designation,
+    DesignationList,
+    _binding,
+    _designation,
+)
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
@@ -207,25 +215,6 @@ class EntrySummary(BaseModel):
     updated_at: datetime
 
 
-class Designation(BaseModel):
-    """A catalogue-authored synonym, or a preferred variant in a language
-    other than en-AU.
-
-    The catalogue's own en-AU preferred term is **not** here - it is
-    `EntrySummary.preferred_term`, and ADR-0022 makes its absence from
-    `designation` a database invariant rather than a convention. A client
-    building a term list needs both: `preferred_term`, plus these.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    term: str
-    use: str
-    language: str
-    status: str
-    length: int
-
-
 class PropertyValue(BaseModel):
     """One property value, rendered by its datatype's own handler.
 
@@ -272,12 +261,6 @@ class EntryPage(BaseModel):
 
     items: list[EntrySummary]
     next_cursor: str | None
-
-
-class DesignationList(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: list[Designation]
 
 
 class PropertyList(BaseModel):
@@ -344,16 +327,6 @@ def _summary(entry: CatalogueEntry) -> EntrySummary:
             entry.specimen_unconstrained,
             entry.updated_at,
         )
-    )
-
-
-def _designation(row: queries.DesignationRow) -> Designation:
-    return Designation(
-        term=row.term,
-        use=row.use,
-        language=row.language,
-        status=row.status,
-        length=row.length,
     )
 
 

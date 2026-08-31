@@ -94,6 +94,15 @@ _CATALOGUE_SCHEMA_NAMES = (
     "RetireBindingRequest",
     "ReplaceBindingRequest",
     "ReplacementSuccessor",
+    # issue #224's write surface, same reasoning.
+    "AddDesignationsRequest",
+    "DesignationWriteResult",
+    "AmendDesignationRequest",
+    "AmendDesignationResult",
+    "RetireDesignationRequest",
+    "AcknowledgeCollisionRequest",
+    "CollisionAcknowledgementResponse",
+    "CollisionWarning",
 )
 
 

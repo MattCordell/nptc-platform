@@ -1,13 +1,14 @@
 """Response models and helpers shared between the public read router
-(`routers/catalogue.py`, FR-20) and the authenticated write router
-(`routers/catalogue_bindings.py`, issue #219).
+(`routers/catalogue.py`, FR-20) and the authenticated write routers
+(`routers/catalogue_bindings.py`, issue #219;
+`routers/catalogue_designations.py`, issue #224).
 
-Both routers deliberately stay separate modules - `catalogue.py`'s own
-docstring explains why a POST cannot fold into the public surface - but a
-binding written by one has to come back out looking exactly like a binding
-read by the other, so `Binding`/`BindingList`/`_binding`/`BusinessKeyPath`
-live here rather than being duplicated or imported private-to-private
-between the two routers.
+Every write router deliberately stays a separate module -
+`catalogue.py`'s own docstring explains why a POST cannot fold into the
+public surface - but a row written by one has to come back out looking
+exactly like the same row read by the other, so the response models and
+their row-to-model assemblers live here rather than being duplicated or
+imported private-to-private between routers.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ __all__ = [
     "Binding",
     "BindingList",
     "BusinessKeyPath",
+    "Designation",
+    "DesignationList",
 ]
 
 #: Shared by every route addressing an entry by its public identifier. A
@@ -96,4 +99,43 @@ def _binding(row: queries.BindingRow) -> Binding:
         status=row.status,
         retirement_reason=row.retirement_reason,
         replaced_by_code=row.replaced_by_code,
+    )
+
+
+class Designation(BaseModel):
+    """A catalogue-authored synonym, or a preferred variant in a language
+    other than en-AU.
+
+    The catalogue's own en-AU preferred term is **not** here - it is
+    `EntrySummary.preferred_term`, and ADR-0022 makes its absence from
+    `designation` a database invariant rather than a convention. A client
+    building a term list needs both: `preferred_term`, plus these.
+
+    No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's
+    write router addresses a designation by term in the request body, not
+    an internal identifier - see that router's own module docstring.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    term: str
+    use: str
+    language: str
+    status: str
+    length: int
+
+
+class DesignationList(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[Designation]
+
+
+def _designation(row: queries.DesignationRow) -> Designation:
+    return Designation(
+        term=row.term,
+        use=row.use,
+        language=row.language,
+        status=row.status,
+        length=row.length,
     )
