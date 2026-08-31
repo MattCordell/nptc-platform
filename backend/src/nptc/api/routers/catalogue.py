@@ -50,7 +50,6 @@ package is the only place that dispatch is allowed to exist
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query
@@ -60,13 +59,16 @@ from sqlalchemy.orm import Session
 from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
-    Binding,
     BindingList,
     BusinessKeyPath,
-    Designation,
     DesignationList,
-    _binding,
-    _designation,
+    EntryDetail,
+    EntrySummary,
+    PropertyValue,
+    binding_from_row,
+    designation_from_row,
+    entry_summary_fields,
+    property_value_from_row,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
@@ -74,7 +76,7 @@ from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.search import search_entries
 from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
+from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 
@@ -190,68 +192,6 @@ CursorQuery = Annotated[
 ]
 
 
-class EntrySummary(BaseModel):
-    """An entry as it appears in a list or a search result.
-
-    `length` is FR-85's published figure - the character count of the
-    catalogue's own preferred term, computed by `CatalogueEntry.length` and
-    never stored, so it cannot drift from the term it describes.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    business_key: str
-    preferred_term: str
-    length: int
-    status: str
-    #: FR-89: `true` means "this test accepts any specimen", which is a
-    #: different statement from "no specimen property has been recorded" -
-    #: the ambiguity this core column exists to destroy.
-    specimen_unconstrained: bool
-    #: A real `datetime`, not a pre-formatted string: that is what puts
-    #: `format: date-time` in `docs/api/openapi.json`, so #147's generated
-    #: client parses it as a date rather than handing the caller a string to
-    #: guess at.
-    updated_at: datetime
-
-
-class PropertyValue(BaseModel):
-    """One property value, rendered by its datatype's own handler.
-
-    `value` is whatever that handler's `serialise(..., JSON)` returns, so a
-    new datatype (FR-77) appears here correctly without this module
-    changing. `ordinal` is meaningful for a multi-valued property: it is the
-    position of this value among that property's values, zero-based.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-    label: str
-    datatype: str
-    cardinality: str
-    ordinal: int
-    value: Any
-    justification: str | None
-
-
-class EntryDetail(EntrySummary):
-    """A summary plus everything attached to the entry.
-
-    One response rather than making a client fetch four: the sub-resources
-    are also served individually (a client refreshing one panel should not
-    re-fetch the lot), but the common case is "show me this entry", and
-    four round trips for one screen is a contract that pushes latency onto
-    every consumer.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    designations: list[Designation]
-    bindings: list[Binding]
-    properties: list[PropertyValue]
-
-
 class EntryPage(BaseModel):
     """`next_cursor` is `null` on the last page - which is the *only*
     reliable signal that paging is finished. A client must not infer the end
@@ -293,33 +233,15 @@ class SearchPage(BaseModel):
 
 # --- assembling the response models from query rows -----------------------
 #
-# Free functions rather than model methods: `nptc.catalogue.queries`'
-# row types are the read layer's vocabulary and these models are the HTTP
-# contract, and a classmethod on the model would make the contract import
-# the read layer's shapes into its own definition.
-
-
-def _entry_summary_fields(
-    business_key: str,
-    preferred_term: str,
-    length: int,
-    status: str,
-    specimen_unconstrained: bool,
-    updated_at: datetime,
-) -> dict[str, Any]:
-    return {
-        "business_key": business_key,
-        "preferred_term": preferred_term,
-        "length": length,
-        "status": status,
-        "specimen_unconstrained": specimen_unconstrained,
-        "updated_at": updated_at,
-    }
+# `entry_summary_fields` and `property_value_from_row` live in
+# `catalogue_shared.py` now (issue #228) - `catalogue_admin.py`'s detail
+# route needs them too, and duplicating them here would let the two detail
+# routes' shapes drift apart by accident.
 
 
 def _summary(entry: CatalogueEntry) -> EntrySummary:
     return EntrySummary(
-        **_entry_summary_fields(
+        **entry_summary_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,
@@ -327,19 +249,6 @@ def _summary(entry: CatalogueEntry) -> EntrySummary:
             entry.specimen_unconstrained,
             entry.updated_at,
         )
-    )
-
-
-def _property_value(row: queries.PropertyValueRow, registry: DatatypeRegistry) -> PropertyValue:
-    handler = registry.get(row.datatype)
-    return PropertyValue(
-        key=row.property_key,
-        label=row.label,
-        datatype=row.datatype,
-        cardinality=row.cardinality,
-        ordinal=row.ordinal,
-        value=handler.serialise(row.value, SerialisationTarget.JSON),
-        justification=row.justification,
     )
 
 
@@ -412,7 +321,7 @@ def search(
     return SearchPage(
         items=[
             SearchHit(
-                **_entry_summary_fields(
+                **entry_summary_fields(
                     hit.business_key,
                     hit.preferred_term,
                     # The same FR-85 computation `CatalogueEntry.length`
@@ -447,7 +356,7 @@ def read_entry(
     entry = queries.get_entry(session, business_key)
     entry_ids = (entry.id,)
     return EntryDetail(
-        **_entry_summary_fields(
+        **entry_summary_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,
@@ -455,10 +364,12 @@ def read_entry(
             entry.specimen_unconstrained,
             entry.updated_at,
         ),
-        designations=[_designation(row) for row in queries.load_designations(session, entry_ids)],
-        bindings=[_binding(row) for row in queries.load_bindings(session, entry_ids)],
+        designations=[
+            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
+        ],
+        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
         properties=[
-            _property_value(row, registry)
+            property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
     )
@@ -476,7 +387,7 @@ def read_designations(
 ) -> DesignationList:
     entry = queries.get_entry(session, business_key)
     return DesignationList(
-        items=[_designation(row) for row in queries.load_designations(session, (entry.id,))]
+        items=[designation_from_row(row) for row in queries.load_designations(session, (entry.id,))]
     )
 
 
@@ -494,7 +405,9 @@ def read_bindings(
     has been inactivated learns so here, together with the reason and any
     successor code."""
     entry = queries.get_entry(session, business_key)
-    return BindingList(items=[_binding(row) for row in queries.load_bindings(session, (entry.id,))])
+    return BindingList(
+        items=[binding_from_row(row) for row in queries.load_bindings(session, (entry.id,))]
+    )
 
 
 @router.get(
@@ -511,7 +424,7 @@ def read_properties(
     entry = queries.get_entry(session, business_key)
     return PropertyList(
         items=[
-            _property_value(row, registry)
+            property_value_from_row(row, registry)
             for row in queries.load_property_values(session, (entry.id,))
         ]
     )

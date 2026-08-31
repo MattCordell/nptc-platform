@@ -122,6 +122,13 @@ def _catalogue_paths(api: ApiTestApp, seeded: SeededCatalogue) -> list[str]:
             # hygiene test below instead, since a GET-only scanner cannot
             # fill their `{code}` parameter or supply a request body.
             continue
+        if "catalogue-admin" in methods["get"].get("tags", ()):
+            # issue #228's admin read route is a GET under this same prefix,
+            # but - unlike the public routes this scanner exists to cover -
+            # it 401s an anonymous caller by design. Its own hygiene
+            # coverage is `test_admin_entry_response_contains_no_uuid_and_
+            # no_unquoted_code` below, which authenticates first.
+            continue
         path = template[len(API_PREFIX) :].replace("{business_key}", seeded.canonical)
         unfilled = re.findall(r"\{([^}]+)\}", path)
         assert not unfilled, f"{template}: no fixture value for path parameter(s) {unfilled}"
@@ -399,3 +406,75 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
         assert response.status_code in (200, 201), response.text
         found_uuid = _UUID_RE.search(response.text)
         assert found_uuid is None, f"{response.request.url}: {found_uuid and found_uuid.group()}"
+
+
+# --- issue #228's admin read route: the same two invariants, on a draft --
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.req("FR-06")
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTestApp) -> None:
+    """`_catalogue_paths` above deliberately excludes this route (it 401s
+    an anonymous caller by design), so it needs its own authenticated
+    coverage of the same two acceptance criteria the public routes get -
+    on a `draft` entry specifically, which is the whole point of issue
+    #228: a replaced binding's `replaced_by_binding_id` *is* a UUID in the
+    database whether the entry is published or not, and this route is the
+    first place that column is ever rendered for an unpublished entry."""
+    token = api.token(subject="sub-admin-read-hygiene")
+    api.get("/auth/me", token=token)
+    user = api.session.query(User).order_by(User.created_at.desc()).first()
+    assert user is not None
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    admin_token = api.token(subject="sub-admin-read-hygiene", extra_claims={"acr": "2"})
+
+    business_key = create_entry(
+        api.session,
+        AuditContext.system(),
+        preferred_term="Admin read hygiene fixture",
+        reason="Created for issue #228 hygiene test",
+    ).business_key
+    api.session.flush()
+
+    api.post(
+        f"/catalogue/entries/{business_key}/bindings",
+        token=admin_token,
+        json={
+            "code": _seed.ACTIVE_CODE,
+            "fsn": _seed.ACTIVE_FSN,
+            "reason": "Bound for the admin-read hygiene test.",
+        },
+    )
+    api.post(
+        f"/catalogue/entries/{business_key}/bindings/{_seed.ACTIVE_CODE}/replacement",
+        token=admin_token,
+        json={
+            "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
+            "reason": "Replaced for the admin-read hygiene test.",
+        },
+    )
+
+    response = api.get(f"/catalogue/admin/entries/{business_key}", token=admin_token)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # Still a draft: the whole reason this route exists is to serve an
+    # entry the public route would 404.
+    assert body["status"] == "draft"
+
+    found_uuid = _UUID_RE.search(response.text)
+    assert found_uuid is None, f"response body contains a UUID: {found_uuid and found_uuid.group()}"
+    found_number = _UNQUOTED_LONG_NUMBER_RE.search(response.text)
+    assert found_number is None, (
+        f"response body contains an unquoted long number "
+        f"{found_number and found_number.group()!r} - a code serialised as a JSON number (FR-06)"
+    )
+    assert f'"{_seed.RETIRED_CODE}"' in response.text

@@ -1282,6 +1282,95 @@
         }
       }
     },
+    "/api/v1/catalogue/admin/entries/{business_key}": {
+      "get": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "One catalogue entry, any status, with everything attached to it",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `read_entry`: identical assembly, no status filter. An edit\nscreen (#149) calls this to load a `draft` entry's current state before\nthe #224 write routes save changes to it.",
+        "operationId": "read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, of any status, has this business key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The business key is not `NPTC-nnnnnn`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/registry/properties": {
       "get": {
         "tags": [
@@ -2430,7 +2519,7 @@
           "properties"
         ],
         "title": "EntryDetail",
-        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer."
+        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status, issue #228) -\none shape, so an edit screen consuming the admin route today gets the\nexact same fields a public consumer of the same entry, once published,\nwould see."
       },
       "EntryPage": {
         "properties": {

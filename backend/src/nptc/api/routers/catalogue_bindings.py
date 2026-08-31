@@ -54,7 +54,12 @@ from sqlalchemy.orm import Session
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue_shared import Binding, BindingList, BusinessKeyPath, _binding
+from nptc.api.routers.catalogue_shared import (
+    Binding,
+    BindingList,
+    BusinessKeyPath,
+    binding_from_row,
+)
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
 from nptc.catalogue.bindings import (
@@ -330,8 +335,8 @@ def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.U
     directly - that is what resolves `replaced_by_binding_id` to the
     successor's *code* (`catalogue_shared.py`'s own rule: no internal id
     ever reaches a response model) and computes `display_term` via
-    `_binding`, the same function the read routes use, so a bound code
-    renders identically whether it was just written or freshly read.
+    `binding_from_row`, the same function the read routes use, so a bound
+    code renders identically whether it was just written or freshly read.
 
     Keyed on `binding_id`, not `code`: `(entry_id, code)` is unique only
     among *active* bindings (the partial indexes exempt retired ones), so a
@@ -339,7 +344,7 @@ def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.U
     ambiguous between two retired rows (issue #219 review)."""
     for row in queries.load_bindings(session, (entry_id,)):
         if row.id == binding_id:
-            return _binding(row)
+            return binding_from_row(row)
     raise CodeBindingWriteNotFoundError(
         f"just-written code binding {binding_id} not found on re-read"
     )

@@ -136,7 +136,7 @@
   phase: p1
   title: "Exact-code lookup MUST be unambiguous and MUST be reachable by direct URL: /catalogue/{business_key} and /catalogue/code/{system_token}/{code}"
   status: planned
-  notes: ""
+  notes: "Issue #228 adds the authenticated business_key lookup's admin counterpart - GET /catalogue/admin/entries/{business_key}, any status, gated on Permission.CATALOGUE_EDIT_PUBLISHED - so an edit screen (#149) can load a draft entry by its unambiguous business_key. The exact-code half (/catalogue/code/{system_token}/{code}) and its lookup?system=&code= alias are #140's own scope and remain planned."
 - id: "FR-18"
   priority: SHOULD
   phase: p1
@@ -250,7 +250,7 @@
   phase: p1
   title: "Administrators can create, amend and deprecate catalogue entries directly, including codings, designations, preferred term, and all registry properties"
   status: in-progress
-  notes: "Issue #219 delivers the first slice - HTTP write routes over code bindings only (bind/retire/replace, gated on Permission.CATALOGUE_EDIT_PUBLISHED), the first state-changing routes this API has. See backend/src/nptc/api/routers/catalogue_bindings.py and backend/tests/test_api_catalogue_bindings.py. Issue #224 adds designations (add/amend/retire, plus collision acknowledgement) - backend/src/nptc/api/routers/catalogue_designations.py, backend/tests/test_api_catalogue_designations.py. Amending the catalogue's own preferred term directly (as distinct from a designation row, ADR-0022) needs FR-38's row_version on the wire first and remains planned, as does registry properties (#151)."
+  notes: "Issue #219 delivers the first slice - HTTP write routes over code bindings only (bind/retire/replace, gated on Permission.CATALOGUE_EDIT_PUBLISHED), the first state-changing routes this API has. See backend/src/nptc/api/routers/catalogue_bindings.py and backend/tests/test_api_catalogue_bindings.py. Issue #224 adds designations (add/amend/retire, plus collision acknowledgement) - backend/src/nptc/api/routers/catalogue_designations.py, backend/tests/test_api_catalogue_designations.py. Issue #228 adds the read side an edit screen needs before it can save anything - GET /catalogue/admin/entries/{business_key}, any status, same permission and the same EntryDetail shape the public route serves - backend/src/nptc/api/routers/catalogue_admin.py, backend/tests/test_api_catalogue_admin_read.py. Amending the catalogue's own preferred term directly (as distinct from a designation row, ADR-0022) needs FR-38's row_version on the wire first and remains planned, as does registry properties (#151)."
 - id: "FR-37"
   priority: MUST
   phase: p1
