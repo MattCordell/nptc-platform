@@ -34,7 +34,12 @@ from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.collisions import assert_no_error_collisions
-from nptc.catalogue.term_hygiene import TermCleaningError, clean_term, preferred_term_length
+from nptc.catalogue.term_hygiene import (
+    TermCleaningError,
+    clean_term,
+    preferred_term_length,
+    validate_language_tag,
+)
 from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc_shared.language import DEFAULT_LANGUAGE
@@ -154,22 +159,30 @@ def load_active_designation(
 
     `use` is deliberately not a filter parameter: the index above has no
     `use` column, so `(entry_id, term_key, language)` already identifies
-    at most one *active* row regardless of use."""
+    at most one *active* row regardless of use.
+
+    `language` is canonicalised before the query (`nptc.catalogue.
+    term_hygiene.validate_language_tag`) - a stored designation's own
+    `language` column was canonicalised the same way by `Designation`'s
+    `@validates` hook when it was written, so a caller naming `en-au`
+    still resolves a row stored as `en-AU` (issue #224 review finding 2)."""
     from nptc.db.models.designation import Designation as _Designation
     from nptc.db.models.designation import DesignationStatus
 
     key = collision_key(clean_term(term))
+    canonical_language = validate_language_tag(language)
     designation = session.execute(
         select(_Designation).where(
             _Designation.entry_id == entry_id,
             _Designation.term_key == key,
-            _Designation.language == language,
+            _Designation.language == canonical_language,
             _Designation.status == str(DesignationStatus.ACTIVE),
         )
     ).scalar_one_or_none()
     if designation is None:
         raise DesignationNotFoundError(
-            f"entry {entry_id} has no active designation for term {term!r} in language {language!r}"
+            f"entry {entry_id} has no active designation for term {term!r} "
+            f"in language {canonical_language!r}"
         )
     return designation
 
@@ -209,14 +222,25 @@ def add_designation(
     afterwards - even one already loaded - triggers a reload against a
     session that is not yet rolled back, raising `PendingRollbackError`
     in place of the domain error this is meant to raise (issue #224
-    review)."""
+    review).
+
+    `language` is canonicalised before the collision check runs, not only
+    by `Designation`'s own `@validates` hook when the row is constructed
+    below: `assert_no_error_collisions`'s `language == DEFAULT_LANGUAGE`
+    branching would otherwise silently take the wrong path for a
+    caller-supplied `en-au` (issue #224 review finding 2)."""
     from nptc.db.models.designation import Designation
 
     validated_reason = validate_changelog_note(reason)
     cleaned_term = clean_term(term)
-    assert_no_error_collisions(session, entry=entry, term=cleaned_term, language=language, use=use)
+    canonical_language = validate_language_tag(language)
+    assert_no_error_collisions(
+        session, entry=entry, term=cleaned_term, language=canonical_language, use=use
+    )
     entry_id = entry.id
-    designation = Designation(entry_id=entry_id, term=cleaned_term, use=use, language=language)
+    designation = Designation(
+        entry_id=entry_id, term=cleaned_term, use=use, language=canonical_language
+    )
     session.add(designation)
     try:
         record_change(
@@ -232,12 +256,12 @@ def add_designation(
         if constraint_name == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
             raise DuplicateActiveTermError(
                 f"entry {entry_id} already has an active designation for term "
-                f"{cleaned_term!r} in language {language!r}"
+                f"{cleaned_term!r} in language {canonical_language!r}"
             ) from exc
         if constraint_name == _ONE_ACTIVE_PREFERRED_PER_LANGUAGE_CONSTRAINT:
             raise PreferredDesignationAlreadyActiveError(
                 f"entry {entry_id} already has an active preferred designation "
-                f"in language {language!r}"
+                f"in language {canonical_language!r}"
             ) from exc
         raise
     return designation

@@ -1755,14 +1755,14 @@
     "schemas": {
       "AcknowledgeCollisionRequest": {
         "properties": {
-          "term": {
-            "type": "string",
-            "title": "Term"
-          },
           "language": {
             "type": "string",
             "title": "Language",
             "default": "en-AU"
+          },
+          "term": {
+            "type": "string",
+            "title": "Term"
           },
           "reason": {
             "type": "string",
@@ -1779,22 +1779,23 @@
       },
       "AddDesignationsRequest": {
         "properties": {
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en-AU"
+          },
           "terms": {
             "items": {
               "type": "string"
             },
             "type": "array",
+            "maxItems": 100,
             "minItems": 1,
             "title": "Terms"
           },
           "use": {
             "$ref": "#/components/schemas/DesignationUse",
             "default": "synonym"
-          },
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
           },
           "reason": {
             "type": "string",
@@ -1807,10 +1808,15 @@
           "reason"
         ],
         "title": "AddDesignationsRequest",
-        "description": "The body of `POST /catalogue/entries/{business_key}/designations`.\n\n`use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s\nown precedent in `catalogue_bindings.py`), so an unrecognised value is a\npydantic 422 before any row is touched, rather than an unmapped\n`ck_designation_use` `IntegrityError`. `terms` is a batch - the common\ncase is pasting a delimiter-corrupted synonym cell (FR-04) - but a\npreferred variant permits at most one, since at most one can ever be\nactive per `(entry, language)`."
+        "description": "The body of `POST /catalogue/entries/{business_key}/designations`.\n\n`use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s\nown precedent in `catalogue_bindings.py`), so an unrecognised value is a\npydantic 422 before any row is touched, rather than an unmapped\n`ck_designation_use` `IntegrityError`. `terms` is a batch - the common\ncase is pasting a delimiter-corrupted synonym cell (FR-04) - but a\npreferred variant permits at most one, since at most one can ever be\nactive per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each\nterm holds a `pg_advisory_xact_lock` until commit and costs its own\ncollision-check flush (`add_synonyms`'s own docstring), so an unbounded\nbatch is an unbounded amount of lock contention for one request (issue\n#224 review finding 4)."
       },
       "AmendDesignationRequest": {
         "properties": {
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en-AU"
+          },
           "term": {
             "type": "string",
             "title": "Term"
@@ -1819,11 +1825,6 @@
             "type": "string",
             "minLength": 1,
             "title": "New Term"
-          },
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
           },
           "reason": {
             "type": "string",
@@ -2113,15 +2114,20 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
           }
         },
         "type": "object",
         "required": [
           "language",
-          "reason"
+          "reason",
+          "created"
         ],
         "title": "CollisionAcknowledgementResponse",
-        "description": "Confirms an acknowledgement was recorded. No internal id, no\n`entry_id`, and deliberately no `acknowledged_by_user_id` either\n(NFR-04/NFR-26) - which administrator or reviewer acknowledged a\ncollision is an audit-log fact, not a public response field."
+        "description": "Confirms an acknowledgement was recorded. No internal id, no\n`entry_id`, and deliberately no `acknowledged_by_user_id` either\n(NFR-04/NFR-26) - which administrator or reviewer acknowledged a\ncollision is an audit-log fact, not a public response field.\n\n`created` distinguishes \"this call recorded it\" (`True`) from \"this\nexact `(entry, term, language)` was already acknowledged, by an earlier\ncall\" (`False`) - `acknowledge_collision` is idempotent (see its own\ndocstring), and without this flag a caller cannot tell those two cases\napart, nor notice that `reason` below is the *original* note rather\nthan the one this call just submitted (issue #224 review finding 5)."
       },
       "CollisionWarning": {
         "properties": {
@@ -2826,14 +2832,14 @@
       },
       "RetireDesignationRequest": {
         "properties": {
-          "term": {
-            "type": "string",
-            "title": "Term"
-          },
           "language": {
             "type": "string",
             "title": "Language",
             "default": "en-AU"
+          },
+          "term": {
+            "type": "string",
+            "title": "Term"
           },
           "reason": {
             "type": "string",

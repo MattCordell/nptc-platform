@@ -327,13 +327,13 @@ export interface components {
          *     that folds to the same key silences the same warning.
          */
         AcknowledgeCollisionRequest: {
-            /** Term */
-            term: string;
             /**
              * Language
              * @default en-AU
              */
             language: string;
+            /** Term */
+            term: string;
             /** Reason */
             reason: string;
         };
@@ -347,18 +347,22 @@ export interface components {
          *     `ck_designation_use` `IntegrityError`. `terms` is a batch - the common
          *     case is pasting a delimiter-corrupted synonym cell (FR-04) - but a
          *     preferred variant permits at most one, since at most one can ever be
-         *     active per `(entry, language)`.
+         *     active per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each
+         *     term holds a `pg_advisory_xact_lock` until commit and costs its own
+         *     collision-check flush (`add_synonyms`'s own docstring), so an unbounded
+         *     batch is an unbounded amount of lock contention for one request (issue
+         *     #224 review finding 4).
          */
         AddDesignationsRequest: {
-            /** Terms */
-            terms: string[];
-            /** @default synonym */
-            use: components["schemas"]["DesignationUse"];
             /**
              * Language
              * @default en-AU
              */
             language: string;
+            /** Terms */
+            terms: string[];
+            /** @default synonym */
+            use: components["schemas"]["DesignationUse"];
             /** Reason */
             reason: string;
         };
@@ -370,15 +374,15 @@ export interface components {
          *     amend_designation`'s own choice - see that function's docstring.
          */
         AmendDesignationRequest: {
-            /** Term */
-            term: string;
-            /** New Term */
-            new_term: string;
             /**
              * Language
              * @default en-AU
              */
             language: string;
+            /** Term */
+            term: string;
+            /** New Term */
+            new_term: string;
             /** Reason */
             reason: string;
         };
@@ -506,12 +510,21 @@ export interface components {
          *     `entry_id`, and deliberately no `acknowledged_by_user_id` either
          *     (NFR-04/NFR-26) - which administrator or reviewer acknowledged a
          *     collision is an audit-log fact, not a public response field.
+         *
+         *     `created` distinguishes "this call recorded it" (`True`) from "this
+         *     exact `(entry, term, language)` was already acknowledged, by an earlier
+         *     call" (`False`) - `acknowledge_collision` is idempotent (see its own
+         *     docstring), and without this flag a caller cannot tell those two cases
+         *     apart, nor notice that `reason` below is the *original* note rather
+         *     than the one this call just submitted (issue #224 review finding 5).
          */
         CollisionAcknowledgementResponse: {
             /** Language */
             language: string;
             /** Reason */
             reason: string;
+            /** Created */
+            created: boolean;
         };
         /**
          * CollisionWarning
@@ -846,13 +859,13 @@ export interface components {
         };
         /** RetireDesignationRequest */
         RetireDesignationRequest: {
-            /** Term */
-            term: string;
             /**
              * Language
              * @default en-AU
              */
             language: string;
+            /** Term */
+            term: string;
             /** Reason */
             reason: string;
         };

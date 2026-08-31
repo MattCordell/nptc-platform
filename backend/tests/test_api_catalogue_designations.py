@@ -353,6 +353,23 @@ def test_adding_an_en_au_preferred_designation_is_422_not_500(api: ApiTestApp) -
 
 @pytest.mark.req("FR-04")
 @pytest.mark.integration
+def test_adding_a_lowercase_en_au_preferred_designation_is_422_not_201(api: ApiTestApp) -> None:
+    """`en-au` must be caught by the same ADR-0022 exclusion as `en-AU` -
+    the request's `language` field is canonicalised before this check runs
+    (`_WithLanguage`), so a caller cannot bypass it with a differently-cased
+    tag (issue #224 review finding 2)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-en-au-preferred-lowercase")
+
+    response = _add(
+        api, business_key, token, terms=["Full blood count"], use="preferred", language="en-au"
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
 def test_adding_more_than_one_preferred_term_at_once_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-preferred-batch")
@@ -395,6 +412,20 @@ def test_add_a_blank_term_is_422_not_500(api: ApiTestApp) -> None:
     token = _admin_token(api, subject="sub-blank-term")
 
     response = _add(api, business_key, token, terms=["   "])
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_adding_more_than_the_batch_limit_of_terms_is_422(api: ApiTestApp) -> None:
+    """Each term in the batch holds a `pg_advisory_xact_lock` until commit
+    (`add_synonyms`'s own docstring) - an unbounded batch is unbounded lock
+    contention for one request (issue #224 review finding 4)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-batch-limit")
+
+    response = _add(api, business_key, token, terms=[f"Term {i}" for i in range(101)])
 
     assert response.status_code == 422, response.text
 
@@ -542,6 +573,51 @@ def test_a_reviewer_can_acknowledge_a_collision(api: ApiTestApp) -> None:
     )
 
     assert response.status_code == 200, response.text
+    assert response.json()["created"] is True
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_acknowledging_the_same_collision_twice_returns_created_false_the_second_time(
+    api: ApiTestApp,
+) -> None:
+    """Distinguishes "this call recorded it" from "already recorded" - a
+    caller re-submitting the same acknowledgement should not read a `200`
+    as proof its own note was kept (issue #224 review finding 5)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-ack-repeat")
+    _add(api, business_key, token, terms=["ADA2"])
+    ack_url = f"/catalogue/entries/{business_key}/designations/acknowledgement"
+
+    first = api.post(ack_url, token=token, json={"term": "ADA2", "reason": _REASON})
+    second = api.post(
+        ack_url, token=token, json={"term": "ADA2", "reason": "A different reason entirely"}
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["created"] is True
+    assert second.json()["created"] is False
+    assert second.json()["reason"] == _REASON
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_acknowledge_with_a_malformed_language_tag_is_422_not_500(api: ApiTestApp) -> None:
+    """Unlike `Designation`, `designation_collision_acknowledgement` has no
+    `@validates("language")` hook - without the request-level check this
+    reached the table's `CHECK` constraint as an unmapped `IntegrityError`
+    (issue #224 review finding 1)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-ack-bad-language")
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/designations/acknowledgement",
+        token=token,
+        json={"term": "ADA2", "reason": _REASON, "language": "not a bcp47 tag"},
+    )
+
+    assert response.status_code == 422, response.text
 
 
 # --- response hygiene (NFR-04, NFR-26) ------------------------------------

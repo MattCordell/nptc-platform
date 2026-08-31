@@ -65,6 +65,7 @@ __all__ = [
     "get_entry",
     "list_entries",
     "load_bindings",
+    "load_designation_by_id",
     "load_designations",
     "load_designations_for_write",
     "load_property_values",
@@ -286,6 +287,27 @@ def load_designations_for_write(
             length=row.length,
         )
         for row in rows
+    )
+
+
+def load_designation_by_id(session: Session, designation_id: uuid.UUID) -> DesignationRow | None:
+    """The one designation with this primary key, active or retired, or
+    `None` - a point lookup for a write route re-reading the exact row it
+    just amended or retired (issue #224 review finding 3), rather than
+    `load_designations_for_write` reloading and filtering *every*
+    designation on the entry (unbounded for an entry with a long retired
+    history) to find the one row by `id`."""
+    row = session.get(Designation, designation_id)
+    if row is None:
+        return None
+    return DesignationRow(
+        id=row.id,
+        entry_id=row.entry_id,
+        term=row.term,
+        use=row.use,
+        language=row.language,
+        status=row.status,
+        length=row.length,
     )
 
 

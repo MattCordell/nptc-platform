@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from nptc_shared.language import is_well_formed_language_tag
+from nptc_shared.language import canonicalize_language_tag, is_well_formed_language_tag
 from nptc_shared.text import escape_invisible, find_invisible_characters, normalise_for_comparison
 
 
@@ -96,10 +96,21 @@ def clean_term(term: str) -> str:
 def validate_language_tag(language: str) -> str:
     """Raises `DesignationLanguageError` unless `language` is a
     well-formed BCP-47 tag (`nptc_shared.language.
-    is_well_formed_language_tag`); otherwise returns it unchanged."""
+    is_well_formed_language_tag`); otherwise returns it *canonicalised*
+    (`nptc_shared.language.canonicalize_language_tag`) - `en-au` and
+    `en-AU` must resolve to the one stored/compared form, or every
+    string-equality check downstream (`DEFAULT_LANGUAGE`, the two
+    designation partial unique indexes, `ck_designation_no_en_au_preferred`)
+    silently treats them as different languages (issue #224 review finding
+    2). This is the one function `Designation`'s own `@validates("language")`
+    hook calls, so every write path that constructs a `Designation` gets
+    this for free; a caller acting on a caller-supplied `language` before
+    a `Designation` is ever constructed (`nptc.catalogue.designations.
+    load_active_designation`, `nptc.catalogue.collisions.
+    acknowledge_collision`) must call this itself first."""
     if not is_well_formed_language_tag(language):
         raise DesignationLanguageError(f"{language!r} is not a well-formed BCP-47 language tag")
-    return language
+    return canonicalize_language_tag(language)
 
 
 def preferred_term_length(term: str) -> int:

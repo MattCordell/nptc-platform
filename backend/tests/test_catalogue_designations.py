@@ -298,6 +298,34 @@ def test_malformed_language_tag_is_refused_before_the_database_check(
         )
 
 
+@pytest.mark.integration
+def test_a_lowercase_language_tag_is_stored_canonicalised(app_session: Session) -> None:
+    """`en-au` and `en-AU` must resolve to the one stored language - every
+    string-equality comparison this codebase makes against a language tag
+    (`ix_designation_one_active_preferred_per_entry_language`, `assert_
+    no_error_collisions`'s `DEFAULT_LANGUAGE` branching) would otherwise
+    silently treat them as two different languages (issue #224 review
+    finding 2)."""
+    entry = _new_entry(app_session)
+
+    designation = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Panui toto katoa",
+        use="preferred",
+        language="mi-nz",
+        reason="Adding a lowercase-tagged preferred variant",
+    )
+
+    assert designation.language == "mi-NZ"
+
+    resolved = load_active_designation(
+        app_session, entry_id=entry.id, term="Panui toto katoa", language="MI-NZ"
+    )
+    assert resolved.id == designation.id
+
+
 # --- FR-37 negative path: a rejected note leaves no audit event -------------
 
 
