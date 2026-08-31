@@ -71,10 +71,10 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
     EntryDetail,
-    _binding,
-    _designation,
-    _entry_summary_fields,
-    _property_value,
+    binding_from_row,
+    designation_from_row,
+    entry_summary_fields,
+    property_value_from_row,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
@@ -108,10 +108,12 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "The business key is not `NPTC-nnnnnn`.",
 }
-#: Only this route can raise it (it renders a `display_term`, matching
-#: `catalogue.py`'s own `_RESPONSE_500_DISPLAY_TERM`) - a published binding
-#: whose stored FSN is not in the form the terminology server serves is a
-#: server-side data fault, not a fault in the request.
+#: Documented (not merely a possible framework error) because the route
+#: genuinely can produce it: it renders a `display_term`, matching
+#: `catalogue.py`'s own `_RESPONSE_500_DISPLAY_TERM` on its equivalent
+#: route - a published binding whose stored FSN is not in the form the
+#: terminology server serves is a server-side data fault, not a fault in
+#: the request.
 _RESPONSE_500_DISPLAY_TERM: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -153,7 +155,7 @@ def read_entry_any_status(
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
     return EntryDetail(
-        **_entry_summary_fields(
+        **entry_summary_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,
@@ -161,10 +163,12 @@ def read_entry_any_status(
             entry.specimen_unconstrained,
             entry.updated_at,
         ),
-        designations=[_designation(row) for row in queries.load_designations(session, entry_ids)],
-        bindings=[_binding(row) for row in queries.load_bindings(session, entry_ids)],
+        designations=[
+            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
+        ],
+        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
         properties=[
-            _property_value(row, registry)
+            property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
     )

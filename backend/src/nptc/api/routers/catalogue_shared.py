@@ -17,6 +17,16 @@ moved here from `catalogue.py` when `catalogue_admin.py` was added (issue
 #228): `catalogue_admin.py`'s detail route serves the identical shape
 `catalogue.py`'s own detail route does, and reaching into another router's
 private helpers is exactly what this module exists to avoid.
+
+**`binding_from_row`/`designation_from_row`/`entry_summary_fields`/
+`property_value_from_row` carry no leading underscore, unlike every other
+free function in this module.** They are this module's actual
+cross-router contract - imported by all three of `catalogue.py`,
+`catalogue_admin.py` and (the designation one) `catalogue_designations.py`
+- so a leading underscore on them would misrepresent an intentional,
+`__all__`-listed API as a private implementation detail a future reader
+might "clean up" by inlining. `_display_term` keeps its underscore: it is
+never imported anywhere outside this file.
 """
 
 from __future__ import annotations
@@ -42,6 +52,10 @@ __all__ = [
     "EntryDetail",
     "EntrySummary",
     "PropertyValue",
+    "binding_from_row",
+    "designation_from_row",
+    "entry_summary_fields",
+    "property_value_from_row",
 ]
 
 #: Shared by every route addressing an entry by its public identifier. A
@@ -101,7 +115,7 @@ def _display_term(fsn: str) -> str:
         raise StoredFSNNotRenderableError(str(exc)) from exc
 
 
-def _binding(row: queries.BindingRow) -> Binding:
+def binding_from_row(row: queries.BindingRow) -> Binding:
     return Binding(
         system=row.system,
         code=row.code,
@@ -191,7 +205,7 @@ class EntryDetail(EntrySummary):
 # the read layer's shapes into its own definition.
 
 
-def _entry_summary_fields(
+def entry_summary_fields(
     business_key: str,
     preferred_term: str,
     length: int,
@@ -209,7 +223,9 @@ def _entry_summary_fields(
     }
 
 
-def _property_value(row: queries.PropertyValueRow, registry: DatatypeRegistry) -> PropertyValue:
+def property_value_from_row(
+    row: queries.PropertyValueRow, registry: DatatypeRegistry
+) -> PropertyValue:
     handler = registry.get(row.datatype)
     return PropertyValue(
         key=row.property_key,
@@ -251,7 +267,7 @@ class DesignationList(BaseModel):
     items: list[Designation]
 
 
-def _designation(row: queries.DesignationRow) -> Designation:
+def designation_from_row(row: queries.DesignationRow) -> Designation:
     return Designation(
         term=row.term,
         use=row.use,

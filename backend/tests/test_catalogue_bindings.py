@@ -572,9 +572,9 @@ _ALLOWED_REFERENCES = frozenset(
         # consumer stays a deliberate, reviewed entry rather than an open
         # category - the double-strip hazard is precisely a second caller
         # stripping again. Lives in `catalogue_shared.py`, not
-        # `catalogue.py`, since issue #219 moved `Binding`/`_binding` there
-        # so the write router could reuse them without importing the read
-        # router's internals.
+        # `catalogue.py`, since issue #219 moved `Binding`/`binding_from_row`
+        # there so the write router could reuse them without importing the
+        # read router's internals.
         REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py",
     }
 )

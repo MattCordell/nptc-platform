@@ -19,6 +19,7 @@ The negative case is the point (CLAUDE.md): every authorisation refusal
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,6 +29,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
+from nptc.api.prefix import API_PREFIX
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
@@ -146,6 +148,43 @@ def test_a_drafts_full_detail_is_populated_not_a_bare_summary(
     assert body["properties"], "expected the seeded draft property value"
     assert {d["term"] for d in body["designations"]} == {_seed.DRAFT_SYNONYM}
     assert {b["code"] for b in body["bindings"]} == {_seed.DRAFT_CODE}
+
+
+# --- the gate that makes the hygiene-scan skip safe (issue #228 review) ----
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_every_catalogue_admin_get_route_401s_anonymously(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`test_api_public_response_hygiene.py`'s anonymous endpoint scan
+    skips every `catalogue-admin`-tagged GET, because this one 401s by
+    design and would otherwise fail that scan. That skip is only safe if
+    every route under that tag genuinely does require a credential - a
+    future admin GET added under the same tag but missing its permission
+    dependency would then be scanned by nothing (excluded here) and gated
+    by nothing (`test_authz_inventory.py`'s inventory covers mutating
+    routes only, and this is a GET).
+
+    Checked structurally against the OpenAPI document, the same way
+    `test_api_public_response_hygiene.py::_catalogue_paths` discovers the
+    public routes, rather than by naming this one route - so a route added
+    later is covered on the day it is added, not the day someone remembers
+    to extend a list.
+    """
+    checked = 0
+    for template, methods in api.app.openapi()["paths"].items():
+        get_op = methods.get("get")
+        if get_op is None or "catalogue-admin" not in get_op.get("tags", ()):
+            continue
+        path = template[len(API_PREFIX) :].replace("{business_key}", seeded.draft)
+        unfilled = re.findall(r"\{([^}]+)\}", path)
+        assert not unfilled, f"{template}: no fixture value for path parameter(s) {unfilled}"
+        response = api.get(path, token=None)
+        assert response.status_code == 401, f"{template}: {response.status_code} {response.text}"
+        checked += 1
+    assert checked >= 1, "expected at least one catalogue-admin GET route to check"
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) ----------------------------------

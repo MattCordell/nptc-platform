@@ -65,10 +65,10 @@ from nptc.api.routers.catalogue_shared import (
     EntryDetail,
     EntrySummary,
     PropertyValue,
-    _binding,
-    _designation,
-    _entry_summary_fields,
-    _property_value,
+    binding_from_row,
+    designation_from_row,
+    entry_summary_fields,
+    property_value_from_row,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
@@ -233,15 +233,15 @@ class SearchPage(BaseModel):
 
 # --- assembling the response models from query rows -----------------------
 #
-# `_entry_summary_fields` and `_property_value` live in `catalogue_shared.py`
-# now (issue #228) - `catalogue_admin.py`'s detail route needs them too, and
-# duplicating them here would let the two detail routes' shapes drift apart
-# by accident.
+# `entry_summary_fields` and `property_value_from_row` live in
+# `catalogue_shared.py` now (issue #228) - `catalogue_admin.py`'s detail
+# route needs them too, and duplicating them here would let the two detail
+# routes' shapes drift apart by accident.
 
 
 def _summary(entry: CatalogueEntry) -> EntrySummary:
     return EntrySummary(
-        **_entry_summary_fields(
+        **entry_summary_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,
@@ -321,7 +321,7 @@ def search(
     return SearchPage(
         items=[
             SearchHit(
-                **_entry_summary_fields(
+                **entry_summary_fields(
                     hit.business_key,
                     hit.preferred_term,
                     # The same FR-85 computation `CatalogueEntry.length`
@@ -356,7 +356,7 @@ def read_entry(
     entry = queries.get_entry(session, business_key)
     entry_ids = (entry.id,)
     return EntryDetail(
-        **_entry_summary_fields(
+        **entry_summary_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,
@@ -364,10 +364,12 @@ def read_entry(
             entry.specimen_unconstrained,
             entry.updated_at,
         ),
-        designations=[_designation(row) for row in queries.load_designations(session, entry_ids)],
-        bindings=[_binding(row) for row in queries.load_bindings(session, entry_ids)],
+        designations=[
+            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
+        ],
+        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
         properties=[
-            _property_value(row, registry)
+            property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
     )
@@ -385,7 +387,7 @@ def read_designations(
 ) -> DesignationList:
     entry = queries.get_entry(session, business_key)
     return DesignationList(
-        items=[_designation(row) for row in queries.load_designations(session, (entry.id,))]
+        items=[designation_from_row(row) for row in queries.load_designations(session, (entry.id,))]
     )
 
 
@@ -403,7 +405,9 @@ def read_bindings(
     has been inactivated learns so here, together with the reason and any
     successor code."""
     entry = queries.get_entry(session, business_key)
-    return BindingList(items=[_binding(row) for row in queries.load_bindings(session, (entry.id,))])
+    return BindingList(
+        items=[binding_from_row(row) for row in queries.load_bindings(session, (entry.id,))]
+    )
 
 
 @router.get(
@@ -420,7 +424,7 @@ def read_properties(
     entry = queries.get_entry(session, business_key)
     return PropertyList(
         items=[
-            _property_value(row, registry)
+            property_value_from_row(row, registry)
             for row in queries.load_property_values(session, (entry.id,))
         ]
     )

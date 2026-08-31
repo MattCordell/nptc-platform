@@ -62,7 +62,7 @@ from sqlalchemy.orm import Session
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue_shared import BusinessKeyPath, Designation, _designation
+from nptc.api.routers.catalogue_shared import BusinessKeyPath, Designation, designation_from_row
 from nptc.auth.permissions import Permission
 from nptc.auth.principal import Principal
 from nptc.catalogue import queries
@@ -414,7 +414,7 @@ def add_designations(
         )
     )
     return DesignationWriteResult(
-        designations=[_designation(row) for row in rows],
+        designations=[designation_from_row(row) for row in rows],
         warnings=[_collision_warning(warning) for warning in warnings],
     )
 
@@ -456,7 +456,7 @@ def amend_designation_route(
         else warning_collisions(session, entry=entry, terms=[amended.term], language=body.language)
     )
     return AmendDesignationResult(
-        designation=_designation(row),
+        designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
     )
 
@@ -483,7 +483,7 @@ def retire_designation_route(
     row = queries.load_designation_by_id(session, designation_id)
     if row is None:
         raise RuntimeError(f"designation {designation_id} not found immediately after retirement")
-    return _designation(row)
+    return designation_from_row(row)
 
 
 @router.post(

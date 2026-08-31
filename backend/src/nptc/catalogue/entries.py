@@ -228,7 +228,17 @@ def load_entry_for_update(session: Session, business_key: str) -> CatalogueEntry
     Public (not `_load_for_update`) so a write route elsewhere in the
     `nptc.catalogue`/`nptc.api` write surface (issue #219) can resolve the
     same entry this module's own `save_entry`/`save_entries` do, rather than
-    re-querying `CatalogueEntry` by hand."""
+    re-querying `CatalogueEntry` by hand.
+
+    A plain `select()`, deliberately - no `.with_for_update()`. That stays
+    true even though the name suggests a write-path-only helper: issue
+    #228's `catalogue_admin` read route also resolves the entry through
+    this function (the same status-unfiltered lookup a write needs, wanted
+    here for a `GET`), so adding a row lock here to serve some future write
+    caller would silently make every admin *read* hold that lock for the
+    request's lifetime too. A write that genuinely needs `SELECT ... FOR
+    UPDATE` should add it at its own call site, not here.
+    """
     entry = session.execute(
         select(CatalogueEntry).where(CatalogueEntry.business_key == business_key)
     ).scalar_one_or_none()
