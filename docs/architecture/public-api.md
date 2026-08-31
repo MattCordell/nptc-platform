@@ -13,10 +13,10 @@ the API *does*.
 ## Endpoints
 
 Every path is under `/api/v1`. Every one below is `GET` and requires no credential.
-There is a separate, authenticated write surface over code bindings (issue #219) - see
-[catalogue-write-api.md](catalogue-write-api.md) - which lives under this same
-`/catalogue` path but is documented on its own, since it is not part of the public,
-unauthenticated contract this document describes.
+There is a separate, authenticated write surface over code bindings (issue #219) and
+designations (issue #224) - see [catalogue-write-api.md](catalogue-write-api.md) -
+which lives under this same `/catalogue` path but is documented on its own, since it
+is not part of the public, unauthenticated contract this document describes.
 
 | Path | Query parameters | Response |
 |---|---|---|

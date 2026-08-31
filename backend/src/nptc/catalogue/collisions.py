@@ -82,6 +82,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -90,6 +91,8 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Permission
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.catalogue.term_hygiene import TermCleaningError, validate_language_tag
+from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
 from nptc.db.models.designation_collision_acknowledgement import (
@@ -101,11 +104,18 @@ from nptc_shared.similarity import collision_key
 __all__ = [
     "Collision",
     "CollisionSeverity",
+    "DesignationCollisionAcknowledgementConflictError",
     "DesignationCollisionError",
     "acknowledge_collision",
     "assert_no_error_collisions",
     "warning_collisions",
 ]
+
+#: `ix_designation_collision_ack_entry_term_language`'s own literal name
+#: (issue #49) - matched against `unique_violation_constraint(exc)` the
+#: same way `nptc.catalogue.designations.add_designation` matches its own
+#: constraint names.
+_COLLISION_ACK_CONSTRAINT = "ix_designation_collision_ack_entry_term_language"
 
 if TYPE_CHECKING:
     from nptc.auth.principal import Principal
@@ -165,6 +175,18 @@ class DesignationCollisionError(ValueError):
             f"{len(collisions)} error-severity collision(s) against {business_keys} (FR-05)"
         )
         self.collisions = collisions
+
+
+class DesignationCollisionAcknowledgementConflictError(ValueError):
+    """Raised when two truly concurrent `acknowledge_collision` calls for
+    the same `(entry, term_key, language)` race past the select-first
+    check and both reach the `INSERT` (issue #224 closes the gap this
+    function's own docstring named as unmapped). The loser 409s rather
+    than 500ing; re-reading the collision (or simply re-submitting) finds
+    the winner's row already in place, since the two calls were
+    recording the same editorial decision."""
+
+    http_status: ClassVar[int] = 409
 
 
 def _matching_entries(
@@ -282,6 +304,12 @@ def assert_no_error_collisions(
             session.flush()
         exclude_entry_id = entry.id
 
+    # Canonicalised defensively here too, not only by each call site
+    # (`add_designation`/`amend_designation` already canonicalise before
+    # calling this): every `language == DEFAULT_LANGUAGE` branch below
+    # would otherwise silently disagree with a caller-supplied `en-au`
+    # (issue #224 review finding 2).
+    language = validate_language_tag(language)
     key = collision_key(term)
     # See the module docstring's "Concurrency" note - serialises exactly
     # the transactions contending for this key, before either's snapshot
@@ -414,7 +442,7 @@ def acknowledge_collision(
     term_key: str,
     language: str,
     reason: str,
-) -> DesignationCollisionAcknowledgement:
+) -> tuple[DesignationCollisionAcknowledgement, bool]:
     """Records that `acknowledger` has seen and accepted the warning-
     severity collision on `entry` for `(term_key, language)` - FR-05's "it
     MUST be resolvable to an acknowledged state so the same warning does
@@ -438,19 +466,48 @@ def acknowledge_collision(
     re-acknowledging the same thing twice is not a caller error worth
     surfacing).
 
-    **Deliberately unprotected against two truly concurrent
+    Returns `(acknowledgement, created)`: `created` is `False` for the
+    idempotent repeat above, so a caller can tell "I just recorded this"
+    from "this was already recorded, with whatever `reason` was given the
+    first time" - the returned `acknowledgement.reason` is always the
+    *stored* note, not necessarily the one just submitted (issue #224
+    review finding 5).
+
+    `language` is canonicalised (`nptc.catalogue.term_hygiene.
+    validate_language_tag`) and `term_key` is checked non-blank before
+    anything else runs: unlike `Designation`, this table's model has no
+    `@validates` hook of its own, so either would otherwise reach the
+    `CHECK` constraints below as an unmapped `IntegrityError` - a `23514`
+    (check violation), which `unique_violation_constraint` does not
+    recognise, so the `except IntegrityError` further down would simply
+    re-raise it as an unmapped 500 (issue #224 review finding 1). The
+    router's own `term_key = collision_key(clean_term(body.term))` can
+    never actually produce a blank `term_key` (`clean_term` already refuses
+    a term that is blank after normalisation, and `collision_key`'s
+    fallback for a tokeniser-empty term casefolds that same non-blank
+    normalised string, which cannot casefold to nothing) - this guard is
+    for a caller reaching this function directly with an arbitrary
+    `term_key`, not a gap in the HTTP surface.
+
+    `reason` is validated *before* the idempotent-repeat lookup below, not
+    after: validating only on the branch that actually inserts would make
+    whether an invalid note is rejected depend on whether someone already
+    acknowledged this collision first - the same precondition-before-
+    mutation posture every other write path in this package uses (issue
+    #224 review finding 5).
+
+    **Not given a `pg_advisory_xact_lock` against two truly concurrent
     acknowledgements of the same `(entry, term_key, language)`** - the
-    select-first above is still read-then-write, and two transactions
-    that both read "no existing row" before either commits will still
-    have one of them hit the `UNIQUE` index's `IntegrityError` at flush,
-    unmapped in `nptc.api.errors` today. Unlike `assert_no_error_
-    collisions`'s own race (see the module docstring's "Concurrency"
-    note), this is not given a `pg_advisory_xact_lock`: the failure mode
-    of losing this race is an occasional 500 on a rare double-click, not
-    a safety-relevant false negative, and #149/#150's own HTTP layer is
-    the right place to give that `IntegrityError` a typed 409 if it turns
-    out to matter in practice, rather than pre-emptively adding a lock no
-    caller has yet demonstrated needing.
+    select-first above is still read-then-write, so two transactions that
+    both read "no existing row" before either commits will still have one
+    of them hit the `UNIQUE` index's `IntegrityError` at flush. Unlike
+    `assert_no_error_collisions`'s own race (see the module docstring's
+    "Concurrency" note), that loser is translated to
+    `DesignationCollisionAcknowledgementConflictError` (409) rather than
+    given a lock (issue #224): the failure mode of losing this race is an
+    occasional 409 on a rare double-click, not a safety-relevant false
+    negative, so a typed refusal the caller can retry is proportionate -
+    a lock would only add contention no caller has demonstrated needing.
 
     Deliberately does not check that `(term_key, language)` is currently
     a live `warning_collisions` finding for `entry` - acknowledging ahead
@@ -466,31 +523,56 @@ def acknowledge_collision(
             f"permission {Permission.VALIDATION_ACKNOWLEDGE.value!r} is required"
         )
 
+    language = validate_language_tag(language)
+    if not term_key:
+        raise TermCleaningError(
+            "a term with no significant characters after comparison-key folding "
+            "cannot be acknowledged (FR-63)"
+        )
+    validated_reason = validate_changelog_note(reason)
+
+    # Read into a local once, up front: reused below both for the query
+    # and (if the insert loses its race) inside the `except` block, where
+    # re-reading `entry.id` from the ORM instance would be the bug this
+    # guards against - a failed flush leaves every instance the session
+    # tracks expired, so touching an already-loaded attribute afterwards
+    # triggers a reload against a session that is not yet rolled back,
+    # raising `PendingRollbackError` in place of the domain error this is
+    # meant to raise (issue #224 review).
+    entry_id = entry.id
+
     existing = session.execute(
         select(DesignationCollisionAcknowledgement).where(
-            DesignationCollisionAcknowledgement.entry_id == entry.id,
+            DesignationCollisionAcknowledgement.entry_id == entry_id,
             DesignationCollisionAcknowledgement.term_key == term_key,
             DesignationCollisionAcknowledgement.language == language,
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return existing
+        return existing, False
 
-    validated_reason = validate_changelog_note(reason)
     acknowledgement = DesignationCollisionAcknowledgement(
-        entry_id=entry.id,
+        entry_id=entry_id,
         term_key=term_key,
         language=language,
         acknowledged_by_user_id=acknowledger.user_id,
         reason=validated_reason,
     )
     session.add(acknowledgement)
-    record_change(
-        session,
-        ctx,
-        action="designation_collision.acknowledged",
-        instance=acknowledgement,
-        kind=ChangeKind.CREATED,
-        reason=validated_reason,
-    )
-    return acknowledgement
+    try:
+        record_change(
+            session,
+            ctx,
+            action="designation_collision.acknowledged",
+            instance=acknowledgement,
+            kind=ChangeKind.CREATED,
+            reason=validated_reason,
+        )
+    except IntegrityError as exc:
+        if unique_violation_constraint(exc) == _COLLISION_ACK_CONSTRAINT:
+            raise DesignationCollisionAcknowledgementConflictError(
+                f"entry {entry_id} was already acknowledged for "
+                f"({term_key!r}, {language!r}) by a concurrent request"
+            ) from exc
+        raise
+    return acknowledgement, True

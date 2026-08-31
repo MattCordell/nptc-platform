@@ -112,7 +112,8 @@ export interface paths {
         /** An entry's active synonyms and non-en-AU preferred variants */
         get: operations["read_designations_api_v1_catalogue_entries__business_key__designations_get"];
         put?: never;
-        post?: never;
+        /** Add one or more synonyms, or a non-en-AU preferred term, to a catalogue entry */
+        post: operations["add_designations_api_v1_catalogue_entries__business_key__designations_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -199,6 +200,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/entries/{business_key}/designations/amendment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Edit an entry's active designation in place */
+        post: operations["amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalogue/entries/{business_key}/designations/retirement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire an entry's active designation */
+        post: operations["retire_designation_route_api_v1_catalogue_entries__business_key__designations_retirement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalogue/entries/{business_key}/designations/acknowledgement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge a warning-severity collision on this entry */
+        post: operations["acknowledge_designation_collision_api_v1_catalogue_entries__business_key__designations_acknowledgement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registry/properties": {
         parameters: {
             query?: never;
@@ -265,6 +317,81 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AcknowledgeCollisionRequest
+         * @description The body of `POST .../designations/acknowledgement`. `term` is the
+         *     surface form the caller is acknowledging a warning for - resolved to a
+         *     comparison key here (`nptc.catalogue.designations.clean_term` then
+         *     `nptc_shared.similarity.collision_key`), matching what
+         *     `warning_collisions` itself keys on, so acknowledging any surface form
+         *     that folds to the same key silences the same warning.
+         */
+        AcknowledgeCollisionRequest: {
+            /**
+             * Language
+             * @default en-AU
+             */
+            language: string;
+            /** Term */
+            term: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * AddDesignationsRequest
+         * @description The body of `POST /catalogue/entries/{business_key}/designations`.
+         *
+         *     `use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s
+         *     own precedent in `catalogue_bindings.py`), so an unrecognised value is a
+         *     pydantic 422 before any row is touched, rather than an unmapped
+         *     `ck_designation_use` `IntegrityError`. `terms` is a batch - the common
+         *     case is pasting a delimiter-corrupted synonym cell (FR-04) - but a
+         *     preferred variant permits at most one, since at most one can ever be
+         *     active per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each
+         *     term holds a `pg_advisory_xact_lock` until commit and costs its own
+         *     collision-check flush (`add_synonyms`'s own docstring), so an unbounded
+         *     batch is an unbounded amount of lock contention for one request (issue
+         *     #224 review finding 4).
+         */
+        AddDesignationsRequest: {
+            /**
+             * Language
+             * @default en-AU
+             */
+            language: string;
+            /** Terms */
+            terms: string[];
+            /** @default synonym */
+            use: components["schemas"]["DesignationUse"];
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * AmendDesignationRequest
+         * @description The body of `POST .../designations/amendment`. `term` addresses the
+         *     designation to edit; `new_term` is what it becomes. Editing in place
+         *     (rather than retire-and-re-add) is `nptc.catalogue.designations.
+         *     amend_designation`'s own choice - see that function's docstring.
+         */
+        AmendDesignationRequest: {
+            /**
+             * Language
+             * @default en-AU
+             */
+            language: string;
+            /** Term */
+            term: string;
+            /** New Term */
+            new_term: string;
+            /** Reason */
+            reason: string;
+        };
+        /** AmendDesignationResult */
+        AmendDesignationResult: {
+            designation: components["schemas"]["Designation"];
+            /** Warnings */
+            warnings: components["schemas"]["CollisionWarning"][];
+        };
         /**
          * AmendPropertyDefinitionRequest
          * @description The body of `PATCH /registry/properties/{key}`. Deliberately carries
@@ -378,6 +505,43 @@ export interface components {
          */
         CodeBindingEditionHint: "au" | "int" | "unknown";
         /**
+         * CollisionAcknowledgementResponse
+         * @description Confirms an acknowledgement was recorded. No internal id, no
+         *     `entry_id`, and deliberately no `acknowledged_by_user_id` either
+         *     (NFR-04/NFR-26) - which administrator or reviewer acknowledged a
+         *     collision is an audit-log fact, not a public response field.
+         *
+         *     `created` distinguishes "this call recorded it" (`True`) from "this
+         *     exact `(entry, term, language)` was already acknowledged, by an earlier
+         *     call" (`False`) - `acknowledge_collision` is idempotent (see its own
+         *     docstring), and without this flag a caller cannot tell those two cases
+         *     apart, nor notice that `reason` below is the *original* note rather
+         *     than the one this call just submitted (issue #224 review finding 5).
+         */
+        CollisionAcknowledgementResponse: {
+            /** Language */
+            language: string;
+            /** Reason */
+            reason: string;
+            /** Created */
+            created: boolean;
+        };
+        /**
+         * CollisionWarning
+         * @description One warning-severity collision (FR-05): the same term active on
+         *     another live entry. Names that entry's public identifier and preferred
+         *     term, never its internal id (NFR-04/NFR-26) - the same shape the 409
+         *     handler for the *error*-severity case already returns.
+         */
+        CollisionWarning: {
+            /** Term */
+            term: string;
+            /** Business Key */
+            business_key: string;
+            /** Preferred Term */
+            preferred_term: string;
+        };
+        /**
          * CreatePropertyDefinitionRequest
          * @description The body of `POST /registry/properties`. Every property created
          *     through this route is `origin = 'admin'` - there is no field to
@@ -457,6 +621,10 @@ export interface components {
          *     `EntrySummary.preferred_term`, and ADR-0022 makes its absence from
          *     `designation` a database invariant rather than a convention. A client
          *     building a term list needs both: `preferred_term`, plus these.
+         *
+         *     No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's
+         *     write router addresses a designation by term in the request body, not
+         *     an internal identifier - see that router's own module docstring.
          */
         Designation: {
             /** Term */
@@ -474,6 +642,18 @@ export interface components {
         DesignationList: {
             /** Items */
             items: components["schemas"]["Designation"][];
+        };
+        /**
+         * DesignationUse
+         * @enum {string}
+         */
+        DesignationUse: "preferred" | "synonym";
+        /** DesignationWriteResult */
+        DesignationWriteResult: {
+            /** Designations */
+            designations: components["schemas"]["Designation"][];
+            /** Warnings */
+            warnings: components["schemas"]["CollisionWarning"][];
         };
         /**
          * EntryDetail
@@ -674,6 +854,18 @@ export interface components {
         };
         /** RetireBindingRequest */
         RetireBindingRequest: {
+            /** Reason */
+            reason: string;
+        };
+        /** RetireDesignationRequest */
+        RetireDesignationRequest: {
+            /**
+             * Language
+             * @default en-AU
+             */
+            language: string;
+            /** Term */
+            term: string;
             /** Reason */
             reason: string;
         };
@@ -1022,6 +1214,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    add_designations_api_v1_catalogue_entries__business_key__designations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddDesignationsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesignationWriteResult"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1378,6 +1642,222 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AmendDesignationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AmendDesignationResult"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retire_designation_route_api_v1_catalogue_entries__business_key__designations_retirement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetireDesignationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Designation"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acknowledge_designation_collision_api_v1_catalogue_entries__business_key__designations_acknowledgement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcknowledgeCollisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollisionAcknowledgementResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `validation.acknowledge`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
         };

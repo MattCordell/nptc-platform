@@ -23,16 +23,22 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Role, permissions_for_roles
 from nptc.auth.principal import Principal
+from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import (
     CollisionSeverity,
+    DesignationCollisionAcknowledgementConflictError,
     DesignationCollisionError,
     acknowledge_collision,
     warning_collisions,
 )
 from nptc.catalogue.designations import add_designation, add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
+from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.designation_collision_acknowledgement import (
+    DesignationCollisionAcknowledgement,
+)
 from nptc_shared.similarity import collision_key
 
 _NBSP = chr(0x00A0)
@@ -373,7 +379,7 @@ def test_acknowledged_warning_does_not_recur_for_that_entry(app_session: Session
     # exercise the FK: `acknowledged_by_user_id` is nullable for exactly
     # this reason (see the model's own docstring).
     reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
-    acknowledge_collision(
+    _, created = acknowledge_collision(
         app_session,
         AuditContext.system(),
         acknowledger=reviewer,
@@ -382,6 +388,7 @@ def test_acknowledged_warning_does_not_recur_for_that_entry(app_session: Session
         language="en-AU",
         reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
     )
+    assert created is True
     app_session.flush()
 
     assert warning_collisions(app_session, entry=blood, terms=["ADA2"]) == ()
@@ -409,7 +416,7 @@ def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session)
     app_session.flush()
     reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
 
-    first = acknowledge_collision(
+    first, first_created = acknowledge_collision(
         app_session,
         AuditContext.system(),
         acknowledger=reviewer,
@@ -418,10 +425,11 @@ def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session)
         language="en-AU",
         reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
     )
+    assert first_created is True
     app_session.flush()
     before = _audit_event_count(app_session)
 
-    second = acknowledge_collision(
+    second, second_created = acknowledge_collision(
         app_session,
         AuditContext.system(),
         acknowledger=reviewer,
@@ -433,7 +441,133 @@ def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session)
     app_session.flush()
 
     assert second.id == first.id
+    assert second_created is False
+    # The repeat's reason is not kept - `second.reason` is still the first
+    # call's note (issue #224 review finding 5).
+    assert second.reason == "Genuinely ambiguous abbreviation, disambiguated by specimen"
     assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_acknowledging_with_an_invalid_reason_is_rejected_even_on_the_idempotent_repeat(
+    app_session: Session,
+) -> None:
+    """FR-37's changelog note check must run before the idempotent-repeat
+    lookup, not only on the branch that actually inserts - otherwise
+    whether an invalid note is rejected depends on whether someone already
+    acknowledged this collision first (issue #224 review finding 5)."""
+    entry = _new_entry(app_session, "Adenosine deaminase")
+    app_session.flush()
+    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+
+    acknowledge_collision(
+        app_session,
+        AuditContext.system(),
+        acknowledger=reviewer,
+        entry=entry,
+        term_key=collision_key("ADA2"),
+        language="en-AU",
+        reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
+    )
+    app_session.flush()
+
+    with pytest.raises(ChangelogNoteError):
+        acknowledge_collision(
+            app_session,
+            AuditContext.system(),
+            acknowledger=reviewer,
+            entry=entry,
+            term_key=collision_key("ADA2"),
+            language="en-AU",
+            reason="",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_acknowledge_with_a_malformed_language_tag_raises_a_typed_error_not_an_integrity_error(
+    app_session: Session,
+) -> None:
+    """`designation_collision_acknowledgement` has no `@validates("language")`
+    hook the way `Designation` does, so without this check a malformed tag
+    would reach the table's own `CHECK` constraint as an unmapped
+    `IntegrityError` (issue #224 review finding 1)."""
+    entry = _new_entry(app_session, "Adenosine deaminase")
+    app_session.flush()
+    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+
+    with pytest.raises(DesignationLanguageError):
+        acknowledge_collision(
+            app_session,
+            AuditContext.system(),
+            acknowledger=reviewer,
+            entry=entry,
+            term_key=collision_key("ADA2"),
+            language="not a bcp47 tag",
+            reason="Attempting to acknowledge with a malformed language tag",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_acknowledge_with_a_blank_term_key_raises_a_typed_error_not_an_integrity_error(
+    app_session: Session,
+) -> None:
+    """`term_key` cannot actually come out blank via the HTTP router
+    (`clean_term` refuses a blank term, and `collision_key`'s fallback
+    casefolds that same non-blank string, which cannot casefold to
+    nothing) - this is defence-in-depth for a caller reaching this
+    function directly with an arbitrary `term_key`, so it still cannot
+    reach `designation_collision_acknowledgement`'s `term_key_not_blank`
+    `CHECK` as an unmapped `IntegrityError` (issue #224 review finding 1)."""
+    entry = _new_entry(app_session, "Adenosine deaminase")
+    app_session.flush()
+    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+
+    with pytest.raises(TermCleaningError):
+        acknowledge_collision(
+            app_session,
+            AuditContext.system(),
+            acknowledger=reviewer,
+            entry=entry,
+            term_key="",
+            language="en-AU",
+            reason="Attempting to acknowledge with a blank comparison key",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_acknowledge_canonicalises_a_lowercase_language_tag(app_session: Session) -> None:
+    """`en-au` and `en-AU` must resolve to the one stored language - a
+    caller acknowledging with `en-au` still silences the warning recorded
+    against `en-AU` by `add_designation` (issue #224 review finding 2)."""
+    blood = _new_entry(app_session, "Adenosine deaminase")
+    csf = _new_entry(app_session, "Adenosine deaminase CSF")
+    add_designation(
+        app_session, AuditContext.system(), entry=blood, term="ADA2", reason="First ADA2 synonym"
+    )
+    add_designation(
+        app_session, AuditContext.system(), entry=csf, term="ADA2", reason="Second ADA2 synonym"
+    )
+    app_session.flush()
+    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+
+    acknowledgement, created = acknowledge_collision(
+        app_session,
+        AuditContext.system(),
+        acknowledger=reviewer,
+        entry=blood,
+        term_key=collision_key("ADA2"),
+        language="en-au",
+        reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
+    )
+    app_session.flush()
+
+    assert created is True
+    assert acknowledgement.language == "en-AU"
+    assert warning_collisions(app_session, entry=blood, terms=["ADA2"]) == ()
 
 
 @pytest.mark.req("FR-44")
@@ -676,4 +810,92 @@ def test_add_synonyms_batches_do_not_deadlock_on_opposite_lock_order(
                 text(
                     "DELETE FROM catalogue_entry WHERE preferred_term LIKE 'Deadlock test entry %'"
                 )
+            )
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_two_concurrent_acknowledgements_of_the_same_collision_are_serialised(
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
+) -> None:
+    """`acknowledge_collision`'s own docstring records that it is *not*
+    given a `pg_advisory_xact_lock` the way `assert_no_error_collisions`
+    is: the select-first is still read-then-write, so two genuinely
+    concurrent acknowledgements of one `(entry, term_key, language)` can
+    both read "no existing row" before either commits. Unlike the
+    advisory-lock case, nothing here blocks the two selects from racing -
+    what serialises the outcome is Postgres's own unique-index insert
+    locking (the second `INSERT` blocks on the first transaction, then
+    re-evaluates the constraint once it commits), and issue #224 is what
+    turns the loser's `IntegrityError` into
+    `DesignationCollisionAcknowledgementConflictError` (409) rather than
+    an unmapped 500."""
+    racing_term_key = f"race-ack-term-{uuid.uuid4()}"
+    with Session(app_engine) as setup_session:
+        entry = _new_entry(setup_session, f"Race ack entry {racing_term_key}")
+        setup_session.commit()
+        entry_id = entry.id
+
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+    errors: dict[str, BaseException] = {}
+
+    def _acknowledge(key: str) -> None:
+        session = Session(app_engine)
+        try:
+            entry_in_session = session.get(CatalogueEntry, entry_id)
+            assert entry_in_session is not None
+            reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
+            barrier.wait(timeout=5)
+            acknowledge_collision(
+                session,
+                AuditContext.system(),
+                acknowledger=reviewer,
+                entry=entry_in_session,
+                term_key=racing_term_key,
+                language="en-AU",
+                reason=f"Concurrent acknowledgement attempt {key}",
+            )
+            session.commit()
+            results[key] = "ok"
+        except DesignationCollisionAcknowledgementConflictError:
+            session.rollback()
+            results[key] = "conflict"
+        except BaseException as exc:  # see the docstring: surfaced below, not swallowed
+            session.rollback()
+            errors[key] = exc
+        finally:
+            session.close()
+
+    thread_a = threading.Thread(target=_acknowledge, args=("a",))
+    thread_b = threading.Thread(target=_acknowledge, args=("b",))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=15)
+    thread_b.join(timeout=15)
+
+    try:
+        if errors:
+            _first_key, first_exc = next(iter(errors.items()))
+            raise AssertionError(
+                f"unexpected exception(s) in concurrent threads: {errors}"
+            ) from first_exc
+        assert sorted(results.values()) == ["conflict", "ok"]
+
+        with Session(app_engine) as verify_session:
+            surviving = verify_session.execute(
+                select(func.count())
+                .select_from(DesignationCollisionAcknowledgement)
+                .where(DesignationCollisionAcknowledgement.term_key == racing_term_key)
+            ).scalar_one()
+        assert surviving == 1
+    finally:
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM designation_collision_acknowledgement WHERE term_key = :key"),
+                {"key": racing_term_key},
+            )
+            connection.execute(
+                text("DELETE FROM catalogue_entry WHERE id = :entry_id"),
+                {"entry_id": entry_id},
             )

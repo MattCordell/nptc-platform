@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from nptc_shared.language import DEFAULT_LANGUAGE, is_well_formed_language_tag
+from nptc_shared.language import (
+    DEFAULT_LANGUAGE,
+    canonicalize_language_tag,
+    is_well_formed_language_tag,
+)
 
 WELL_FORMED = (
     "en",
@@ -48,3 +52,29 @@ def test_default_language_is_well_formed() -> None:
     silent contradiction between the constant and the column CHECK it backs."""
     assert is_well_formed_language_tag(DEFAULT_LANGUAGE)
     assert DEFAULT_LANGUAGE == "en-AU"
+
+
+@pytest.mark.parametrize(
+    ("tag", "canonical"),
+    [
+        ("en", "en"),
+        ("en-AU", "en-AU"),
+        ("en-au", "en-AU"),
+        ("EN-AU", "en-AU"),
+        ("mi-nz", "mi-NZ"),
+        ("zh-hans-cn", "zh-Hans-CN"),
+        ("zh-Hans-CN", "zh-Hans-CN"),
+        ("fr-ca", "fr-CA"),
+    ],
+)
+def test_canonicalize_folds_to_bcp47_canonical_casing(tag: str, canonical: str) -> None:
+    """`en-au` and `en-AU` must resolve to the one stored/compared form -
+    every string-equality check this catalogue makes against a language tag
+    (`DEFAULT_LANGUAGE`, the designation partial unique indexes,
+    `ck_designation_no_en_au_preferred`) relies on this having already run
+    once, at the write boundary (issue #224 review finding 2)."""
+    assert canonicalize_language_tag(tag) == canonical
+
+
+def test_canonicalize_is_idempotent() -> None:
+    assert canonicalize_language_tag(canonicalize_language_tag("en-au")) == "en-AU"

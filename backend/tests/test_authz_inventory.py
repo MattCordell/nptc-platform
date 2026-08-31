@@ -120,6 +120,22 @@ COVERED_WRITE_ROUTES = frozenset(
             method="POST",
             path="/catalogue/entries/{business_key}/bindings/{code}/replacement",
         ),
+        # issue #224: the designation write router - add, amend, retire,
+        # plus collision acknowledgement (FR-04, FR-05). Negative-auth
+        # coverage lives in `test_api_catalogue_designations.py`.
+        RouteKey(method="POST", path="/catalogue/entries/{business_key}/designations"),
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/designations/amendment",
+        ),
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/designations/retirement",
+        ),
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/designations/acknowledgement",
+        ),
         # issue #55: the PropertyDefinition admin router - create, amend,
         # deprecate, and the always-refusing DELETE (FR-11, FR-12). Each
         # one's negative-auth coverage lives in

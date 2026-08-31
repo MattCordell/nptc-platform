@@ -333,3 +333,69 @@ def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
         assert found_number is None, (
             f"{response.request.url}: unquoted long number {found_number and found_number.group()!r}"
         )
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
+    """The designation analogue of the binding test above (issue #224).
+    No `_UNQUOTED_LONG_NUMBER_RE` check here - a designation carries no
+    SNOMED CT code, so that half of the binding test's assertion has
+    nothing to scan for."""
+    token = api.token(subject="sub-designation-write-hygiene")
+    api.get("/auth/me", token=token)
+    user = api.session.query(User).order_by(User.created_at.desc()).first()
+    assert user is not None
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    admin_token = api.token(subject="sub-designation-write-hygiene", extra_claims={"acr": "2"})
+
+    business_key = create_entry(
+        api.session,
+        AuditContext.system(),
+        preferred_term="Designation write hygiene fixture",
+        reason="Created for issue #224 hygiene test",
+    ).business_key
+    api.session.flush()
+
+    add_response = api.post(
+        f"/catalogue/entries/{business_key}/designations",
+        token=admin_token,
+        json={"terms": ["FBC"], "reason": "Added for the designation write-hygiene test."},
+    )
+    amend_response = api.post(
+        f"/catalogue/entries/{business_key}/designations/amendment",
+        token=admin_token,
+        json={
+            "term": "FBC",
+            "new_term": "Full Blood Count",
+            "reason": "Amended for the designation write-hygiene test.",
+        },
+    )
+    retire_response = api.post(
+        f"/catalogue/entries/{business_key}/designations/retirement",
+        token=admin_token,
+        json={
+            "term": "Full Blood Count",
+            "reason": "Retired for the designation write-hygiene test.",
+        },
+    )
+    ack_response = api.post(
+        f"/catalogue/entries/{business_key}/designations/acknowledgement",
+        token=admin_token,
+        json={
+            "term": "Full Blood Count",
+            "reason": "Acknowledged for the designation write-hygiene test.",
+        },
+    )
+
+    for response in (add_response, amend_response, retire_response, ack_response):
+        assert response.status_code in (200, 201), response.text
+        found_uuid = _UUID_RE.search(response.text)
+        assert found_uuid is None, f"{response.request.url}: {found_uuid and found_uuid.group()}"

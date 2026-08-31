@@ -51,6 +51,34 @@ def is_well_formed_language_tag(tag: str) -> bool:
     both match) - BCP-47 recommends but does not require canonical casing,
     and rejecting a syntactically fine tag over casing alone would be a
     stricter check than any requirement here asks for. A caller wanting
-    canonical form should apply one separately.
+    canonical form should apply ``canonicalize_language_tag`` separately.
     """
     return bool(LANGUAGE_TAG_PATTERN.fullmatch(tag))
+
+
+def canonicalize_language_tag(tag: str) -> str:
+    """Folds ``tag`` to BCP-47's canonical casing: the primary subtag
+    lowercase, a two-letter region subtag uppercase, a four-letter script
+    subtag title-cased, every other subtag lowercase.
+
+    Callers must check ``is_well_formed_language_tag`` first - this makes
+    no attempt to validate shape, only to normalise the casing of a tag
+    already known to have one.
+
+    Exists so every string-equality comparison this catalogue makes against
+    a language tag (``DEFAULT_LANGUAGE``, ``designation``'s two partial
+    unique indexes, ``ck_designation_no_en_au_preferred``) can rely on
+    having already run this once, at the write boundary, rather than
+    ``en-au`` and ``en-AU`` silently being treated as two different
+    languages (issue #224 review finding 2).
+    """
+    subtags = tag.split("-")
+    canonical = [subtags[0].lower()]
+    for subtag in subtags[1:]:
+        if len(subtag) == 2 and subtag.isalpha():
+            canonical.append(subtag.upper())
+        elif len(subtag) == 4 and subtag.isalpha():
+            canonical.append(subtag.capitalize())
+        else:
+            canonical.append(subtag.lower())
+    return "-".join(canonical)
