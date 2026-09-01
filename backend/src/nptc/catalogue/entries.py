@@ -13,9 +13,11 @@ SQL string construction.
 
 **Two layers of conflict detection, not one.** `save_entry` first checks
 `expected_row_version` against the freshly loaded row *before* mutating
-anything - this is the path that can build a useful `ConflictReport`,
-because both the caller's stale view and the current row are in hand
-uncorrupted. `version_id_col` is the backstop for the genuine race: two
+anything (`assert_entry_row_version`, public since issue #227 so a write
+against something *attached to* an entry can take the same lock without
+inventing a second counter) - this is the path that can build a useful
+`ConflictReport`, because both the caller's stale view and the current row
+are in hand uncorrupted. `version_id_col` is the backstop for the genuine race: two
 callers who both pass that first check and then interleave between load
 and flush. That second case surfaces as SQLAlchemy's own `StaleDataError`
 at `session.flush()` time, wrapped inside a `session.begin_nested()`
@@ -52,6 +54,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
@@ -304,6 +307,123 @@ def _build_conflict_report(
     )
 
 
+def _would_change(entry: CatalogueEntry, changes: EntryChanges) -> bool:
+    """Whether applying `changes` to `entry` would actually alter anything.
+
+    `preferred_term` is compared *cleaned*, because that is what would be
+    stored: `CatalogueEntry`'s own `@validates` hook runs `clean_term` on
+    assignment, so a submitted term differing only by a normalisable space
+    (PRD Appendix A.1) is the same string once stored, and treating it as a
+    change would write an audit event saying nothing changed.
+
+    `clean_term` can raise `TermCleaningError` on a term with no single
+    correct repair (FR-63). That is deliberately not caught: the caller
+    submitted an unstorable term, and refusing it here - before the
+    savepoint, like every other precondition in this module - is the same
+    answer they would have got a few lines later.
+    """
+    submitted = changes.as_dict()
+    if "preferred_term" in submitted:
+        submitted["preferred_term"] = clean_term(str(submitted["preferred_term"]))
+    return any(getattr(entry, name) != value for name, value in submitted.items())
+
+
+def _has_pending_audit_changes(entry: CatalogueEntry) -> bool:
+    """Whether `entry` already carries an unflushed change to a field
+    `record_change` would audit - a mutation made by the caller directly on
+    the loaded instance, rather than declared through `EntryChanges`.
+
+    `_would_change` alone cannot see one. It compares against the entry's
+    *current* attribute values, which a direct mutation has already moved,
+    so a caller who set `entry.status` by hand and then passed a
+    coincidentally-matching `EntryChanges` would look like a no-op and have
+    that mutation flushed with no audit event (NFR-08).
+
+    **Net history, not `sa_inspect(entry).modified`** (issue #227 review).
+    `modified` is a set-*event* flag: SQLAlchemy raises it on any
+    assignment, including one that writes the value already there - and
+    `CatalogueEntry`'s own `@validates("preferred_term")` hook assigns
+    `preferred_term_key` as well, so one assignment trips it twice. Gating
+    on it would send an identical re-assignment straight back to
+    `record_change`, into the empty diff and unmapped `AuditNoOpError` this
+    short-circuit exists to prevent. `load_history().has_changes()` is the
+    net question, and returns `False` for a same-value assignment (verified:
+    such a value lands in the history's `unchanged`, not `added`/`deleted`).
+
+    Scoped to the fields the audit policy actually diffs, matching
+    `nptc.audit.diffing.diff_instance`'s own iteration, so this and the diff
+    it is predicting cannot disagree about which fields count.
+
+    What this buys is a *loud* failure rather than a silent one. It does not
+    make a pre-mutated instance saveable: `save_entry` cannot build a
+    correct diff for one, because opening its savepoint flushes the pending
+    change and clears the history `record_change` reads, so the caller gets
+    `AuditNoOpError` - which names exactly that case and calls it a bug.
+    Short-circuiting instead would return successfully having written the
+    mutation with no audit row at all, and that is the NFR-08 failure worth
+    preventing. `save_entry` is the sole sanctioned mutator of the instance
+    it loads; this is what enforces it rather than assuming it.
+
+    Reachable only with autoflush suppressed: normally
+    `load_entry_for_update`'s own `SELECT` flushes a pending mutation before
+    `save_entry` reaches this point, which bumps `row_version` and makes the
+    save a version conflict instead.
+    """
+    policy = policy_for(CatalogueEntry)
+    state = sa_inspect(entry)
+    return any(
+        state.attrs[name].load_history().has_changes()
+        for name in policy.auditable | policy.withheld
+    )
+
+
+def assert_entry_row_version(
+    session: Session,
+    entry: CatalogueEntry,
+    expected_row_version: int,
+    *,
+    changes: EntryChanges | None = None,
+) -> None:
+    """FR-38's first layer, on its own: raises `EntryVersionConflictError`
+    with a full `ConflictReport` if `entry.row_version` has moved past
+    `expected_row_version`, and does nothing at all otherwise.
+
+    Extracted from `save_entry` (issue #227) so a write that changes
+    something *attached to* an entry can take the same lock the entry's own
+    writes take, against the same counter, without going through
+    `save_entry` - which would insist on an `EntryChanges` it has nothing to
+    put in. `nptc.catalogue.property_values.save_property_values` already
+    established that `catalogue_entry.row_version` is the one optimistic
+    lock a caller tracks per entry, covering more than `catalogue_entry`'s
+    own columns; this is that argument applied to `designation`.
+
+    `changes` is only ever used to populate `ConflictReport.conflicts` -
+    the fields the caller submitted whose stored value has since moved. A
+    caller with no entry-level changes to declare (the designation case)
+    omits it and gets `conflicts=()`, which is exactly the
+    non-overlapping-field conflict `ConflictReport`'s own docstring
+    describes: still rejected, because the version is the contract
+    regardless, and still carrying `current_row_version`/`changed_by`/
+    `changed_at` so the caller is never left with nothing to show.
+
+    This is layer *one* only. `save_entry` keeps its own `StaleDataError`
+    backstop for the genuine load-to-flush race, which no precondition
+    check can see - see the module docstring.
+    """
+    if entry.row_version == expected_row_version:
+        return
+    changed_by, changed_at = _latest_change_attribution(session, entry.id)
+    raise EntryVersionConflictError(
+        _build_conflict_report(
+            entry,
+            expected_row_version=expected_row_version,
+            changes=changes if changes is not None else EntryChanges(),
+            changed_by=changed_by,
+            changed_at=changed_at,
+        )
+    )
+
+
 def save_entry(
     session: Session,
     ctx: AuditContext,
@@ -326,17 +446,29 @@ def save_entry(
     validated_reason = validate_changelog_note(reason)
     entry = load_entry_for_update(session, business_key)
 
-    if entry.row_version != expected_row_version:
-        changed_by, changed_at = _latest_change_attribution(session, entry.id)
-        raise EntryVersionConflictError(
-            _build_conflict_report(
-                entry,
-                expected_row_version=expected_row_version,
-                changes=changes,
-                changed_by=changed_by,
-                changed_at=changed_at,
-            )
-        )
+    assert_entry_row_version(session, entry, expected_row_version, changes=changes)
+
+    # A no-op save (the same values resubmitted) returns before anything is
+    # touched - `nptc.catalogue.property_values.save_property_values` makes
+    # the same check for the same reasons, and `nptc.catalogue.designations.
+    # amend_designation` does for a term resubmitted unchanged.
+    #
+    # Deliberately *after* the row-version check above, not before: a stale
+    # caller whose submitted values happen to coincide with the current ones
+    # is still refused, because the version is the contract regardless
+    # (`test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
+    # have_matched_still_reports_zero_conflicts`).
+    #
+    # Without this, `record_change` raises `AuditNoOpError` on the empty
+    # diff - an unmapped error, so an editor re-saving a form without having
+    # changed the term got a 500 (found reviewing issue #227's own new
+    # route, where a `preferred_term` differing only by a normalisable space
+    # cleans to the stored value and reaches exactly this path). A no-op
+    # resubmission is not a caller mistake, and `row_version` must not move
+    # for one: doing so would invalidate a concurrent editor's still-current
+    # token for no actual change.
+    if not _would_change(entry, changes) and not _has_pending_audit_changes(entry):
+        return entry
 
     if changes.preferred_term is not None:
         # FR-05: checked after the row_version precondition (a stale

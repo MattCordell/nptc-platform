@@ -251,6 +251,26 @@ REQUIRED_PUBLIC_FIELDS = frozenset(
 )
 
 
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_the_public_detail_carries_row_version_too(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`EntryDetail` is one shape across the public route and the #228 admin
+    one, and issue #227 put `row_version` on it. Asserted *here*, on the
+    public route, and not only on the admin one: if someone later narrows
+    the public model to hide the field, that invariant is what breaks, and
+    this is the test that should say so.
+
+    It is deliberately published (see `catalogue.py`'s own module rule and
+    `docs/architecture/public-api.md`): FR-38's counter names no row, so it
+    is not the class of internal identifier that rule excludes. A read-only
+    consumer can ignore it."""
+    body = api.get(f"/catalogue/entries/{seeded.canonical}").json()
+
+    assert body["row_version"] >= 1
+
+
 @pytest.mark.req("FR-20")
 @pytest.mark.integration
 def test_the_detail_response_carries_every_field_the_public_ui_needs(

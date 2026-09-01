@@ -55,6 +55,7 @@ __all__ = [
     "add_synonyms",
     "amend_designation",
     "clean_term",
+    "find_active_designation",
     "load_active_designation",
     "preferred_term_length",
     "retire_designation",
@@ -139,6 +140,44 @@ class PreferredDesignationAlreadyActiveError(ValueError):
     http_status: ClassVar[int] = 409
 
 
+def find_active_designation(
+    session: Session,
+    *,
+    entry_id: uuid.UUID,
+    term: str,
+    language: str = DEFAULT_LANGUAGE,
+) -> Designation | None:
+    """`load_active_designation` without the refusal: `None` where that
+    function would raise `DesignationNotFoundError`. See its docstring for
+    the lookup itself - this is the same query, and that is the one both
+    callers share.
+
+    Exists because a caller can legitimately need "is there one?" as a
+    *question* rather than as a precondition. Issue #227's
+    dispatch inside `POST .../designations/amendment` is the case: the
+    catalogue's own en-AU preferred term lives on
+    `catalogue_entry.preferred_term`, never a `designation` row (ADR-0022),
+    so that route has to distinguish "no such designation, but this is the
+    entry's own preferred term" from "no such designation at all". Doing
+    that by catching `DesignationNotFoundError` would put a `try`/`except`
+    in a route body, which `nptc.api.routers.catalogue_designations`' own
+    module docstring forbids.
+    """
+    from nptc.db.models.designation import Designation as _Designation
+    from nptc.db.models.designation import DesignationStatus
+
+    key = collision_key(clean_term(term))
+    canonical_language = validate_language_tag(language)
+    return session.execute(
+        select(_Designation).where(
+            _Designation.entry_id == entry_id,
+            _Designation.term_key == key,
+            _Designation.language == canonical_language,
+            _Designation.status == str(DesignationStatus.ACTIVE),
+        )
+    ).scalar_one_or_none()
+
+
 def load_active_designation(
     session: Session,
     *,
@@ -165,21 +204,18 @@ def load_active_designation(
     term_hygiene.validate_language_tag`) - a stored designation's own
     `language` column was canonicalised the same way by `Designation`'s
     `@validates` hook when it was written, so a caller naming `en-au`
-    still resolves a row stored as `en-AU` (issue #224 review finding 2)."""
-    from nptc.db.models.designation import Designation as _Designation
-    from nptc.db.models.designation import DesignationStatus
+    still resolves a row stored as `en-AU` (issue #224 review finding 2).
 
-    key = collision_key(clean_term(term))
-    canonical_language = validate_language_tag(language)
-    designation = session.execute(
-        select(_Designation).where(
-            _Designation.entry_id == entry_id,
-            _Designation.term_key == key,
-            _Designation.language == canonical_language,
-            _Designation.status == str(DesignationStatus.ACTIVE),
-        )
-    ).scalar_one_or_none()
+    The query itself is `find_active_designation`'s (issue #227), so the two
+    can never disagree about what "the active designation for this address"
+    means; all this adds is the refusal."""
+    designation = find_active_designation(session, entry_id=entry_id, term=term, language=language)
     if designation is None:
+        # Canonicalised once, into a local, rather than inline in the
+        # f-string: the miss path would otherwise run `validate_language_tag`
+        # a second time over a value `find_active_designation` has already
+        # canonicalised (issue #227 review).
+        canonical_language = validate_language_tag(language)
         raise DesignationNotFoundError(
             f"entry {entry_id} has no active designation for term {term!r} "
             f"in language {canonical_language!r}"

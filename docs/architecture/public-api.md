@@ -27,9 +27,20 @@ is not part of the public, unauthenticated contract this document describes.
 | `/catalogue/entries/{business_key}/properties` | — | `{items: [PropertyValue]}` |
 | `/catalogue/search` | `q` (required), `limit`, `after` | `{items: [SearchHit], next_cursor}` |
 
-`EntryDetail` is an `EntrySummary` plus `designations`, `bindings` and `properties`, so
-one request renders an entry page. The sub-resources are also served individually, for
-a client refreshing one panel.
+`EntryDetail` is an `EntrySummary` plus `designations`, `bindings`, `properties` and
+`row_version`, so one request renders an entry page. The sub-resources are also served
+individually, for a client refreshing one panel.
+
+`row_version` (issue #227) is FR-38's optimistic-locking token. It is not an identifier
+and a read-only consumer can ignore it: `business_key` is still the only thing that
+names an entry, and this counter addresses nothing - it exists so an *editing* client
+(the admin API's `/amendment`, see
+[catalogue-write-api.md](catalogue-write-api.md#expected_row_version-required-on-one-branch-honoured-on-both))
+can prove it is not overwriting a change it never saw. It is on `EntryDetail` and not
+`EntrySummary` deliberately: the detail is what an edit screen loads before it can edit
+anything, whereas a list or a search result is not an editing context, and putting the
+token on the summary would publish a per-row counter on every page to serve a case that
+does not exist yet.
 
 ## Authentication
 

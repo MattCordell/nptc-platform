@@ -56,10 +56,12 @@ catalogue_bindings` a route to raise them from.
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
+from datetime import datetime
+from typing import Any, ClassVar
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from nptc.api.dependencies import CredentialRequiredError, MalformedAuthorizationError
 from nptc.auth.errors import TokenError
@@ -112,6 +114,85 @@ from nptc_shared.terminology import TerminologyConfigError
 _logger = logging.getLogger(__name__)
 
 
+# --- the two 409 bodies that carry more than `detail` ----------------------
+#
+# Most refusals this module makes are an `ErrorResponse`: one sentence, and
+# deliberately nothing else. Two are not, because a bare sentence would
+# withhold exactly what the requirement exists to give the caller - FR-38's
+# conflicting values, FR-05's colliding entry.
+#
+# Declared as models, and *constructed* by the handlers below rather than
+# merely documented alongside them (issue #227 review): a router naming one
+# of these in its `responses=` puts the real shape in
+# `docs/api/openapi.json`, so #147's generated client can read the payload
+# instead of typing the branch as `{detail}` and dropping it. Building the
+# response through the model is what stops the declared schema and the
+# emitted body from drifting - the failure mode a hand-written `content`
+# block next to a hand-built `dict` invites.
+
+
+class FieldConflictItem(BaseModel):
+    """One field whose stored value moved under a caller between their read
+    and their write. `submitted`/`current` are whatever that field holds -
+    a term, a status, a flag - so they are deliberately untyped here."""
+
+    model_config = ConfigDict(frozen=True)
+
+    field: str
+    submitted: Any
+    current: Any
+
+
+class VersionConflictResponse(BaseModel):
+    """FR-38's 409 body: a stale `expected_row_version` on an entry-level
+    write.
+
+    FR-38's rationale rejects silent last-write-wins "because it produces an
+    audit trail that records a change that was immediately and invisibly
+    discarded", so the refusal has to let the caller *reconcile* rather than
+    retry blind. `conflicts` is empty where the caller's submitted values do
+    not themselves overlap what moved - still a refusal, because the version
+    is the contract regardless - which is why `current_row_version` and
+    `changed_by`/`changed_at` are populated even then.
+
+    `changed_by` is a display name, never the actor's internal id
+    (NFR-04/NFR-26), and is `null` for a system-initiated change or an
+    account since pseudonymised on closure (NFR-17)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    business_key: str
+    expected_row_version: int
+    current_row_version: int
+    conflicts: list[FieldConflictItem]
+    changed_by: str | None
+    changed_at: datetime | None
+
+
+class CollisionItem(BaseModel):
+    """One FR-05 collision: the live entry a submitted term collides with,
+    named by its public identifier and preferred term - never its internal
+    id (NFR-04/NFR-26)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    severity: str
+    business_key: str
+    preferred_term: str
+
+
+class DesignationCollisionResponse(BaseModel):
+    """FR-05's 409 body. PRD SS17.2 item 5 is explicit that the refusal names
+    the colliding entry rather than returning a bare status, so an editor
+    can go and look at it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    collisions: list[CollisionItem]
+
+
 class StoredFSNNotRenderableError(Exception):
     """A *read* path found a stored FSN it could not render (FR-83).
 
@@ -139,6 +220,29 @@ class StoredFSNNotRenderableError(Exception):
     http_status: ClassVar[int] = 500
 
 
+class PreferredTermVersionRequiredError(Exception):
+    """`POST .../designations/amendment` was asked to amend the catalogue's
+    own en-AU preferred term, but carried no `expected_row_version`
+    (issue #227, FR-38).
+
+    Defined here rather than in `nptc.catalogue`, and raised rather than
+    validated: the service layer has no such state - `save_entry` simply
+    takes `expected_row_version` as a required argument, and there is no
+    call it could reject. This is purely a fact about one HTTP request
+    body, on the one route where the field is conditionally required.
+
+    It cannot be a pydantic `model_validator` on the request either, which
+    is where every other cross-field refusal on that route lives: whether
+    the submitted term is the entry's own preferred term or a `designation`
+    row is a database question (ADR-0022 splits the two storage homes), and
+    a validator runs before the route body has a session. 422 all the same,
+    so a caller sees the same status a missing required field would have
+    produced had the requirement been expressible in the schema.
+    """
+
+    http_status: ClassVar[int] = 422
+
+
 #: RFC 9470 step-up challenge - pre-specified in
 #: docs/architecture/permissions.md. `acr_values` names the LoA the realm's
 #: `nptc loa-2 condition` maps to, which is also what
@@ -162,6 +266,11 @@ _DETAIL_VERSION_CONFLICT = (
     "conflicting changes and try again."
 )
 _DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
+_DETAIL_PREFERRED_TERM_VERSION_REQUIRED = (
+    "This term is the entry's own preferred term, so changing it needs the entry "
+    "version you loaded. Reload the entry and send its `expected_row_version` with "
+    "the amendment."
+)
 _DETAIL_CHANGELOG_NOTE = (
     "A changelog note is required and must describe the change. It becomes the "
     'published History text, so single words like "update" or "fix" are not accepted.'
@@ -320,24 +429,40 @@ def register_exception_handlers(app: FastAPI) -> None:
         # event, not an anomaly, but still worth a trace for support.
         _logger.info("stale row_version save refused: %s", exc)
         report = exc.report
+        body = VersionConflictResponse(
+            detail=_DETAIL_VERSION_CONFLICT,
+            business_key=report.business_key,
+            expected_row_version=report.expected_row_version,
+            current_row_version=report.current_row_version,
+            conflicts=[
+                FieldConflictItem(
+                    field=conflict.field,
+                    submitted=conflict.submitted,
+                    current=conflict.current,
+                )
+                for conflict in report.conflicts
+            ],
+            changed_by=report.changed_by,
+            changed_at=report.changed_at,
+        )
         return JSONResponse(
             status_code=EntryVersionConflictError.http_status,
-            content={
-                "detail": _DETAIL_VERSION_CONFLICT,
-                "business_key": report.business_key,
-                "expected_row_version": report.expected_row_version,
-                "current_row_version": report.current_row_version,
-                "conflicts": [
-                    {
-                        "field": conflict.field,
-                        "submitted": conflict.submitted,
-                        "current": conflict.current,
-                    }
-                    for conflict in report.conflicts
-                ],
-                "changed_by": report.changed_by,
-                "changed_at": report.changed_at.isoformat() if report.changed_at else None,
-            },
+            # `mode="json"` is what keeps `changed_at` an ISO-8601 string
+            # rather than a `datetime` `JSONResponse` cannot encode - the
+            # same serialisation the declared schema promises.
+            content=body.model_dump(mode="json"),
+        )
+
+    @app.exception_handler(PreferredTermVersionRequiredError)
+    async def _handle_preferred_term_version_required(
+        _request: Request, exc: PreferredTermVersionRequiredError
+    ) -> JSONResponse:
+        # Logged as the class only: the message names the entry's own
+        # preferred term, which is user-supplied free text (NFR-26/NFR-35).
+        _logger.info("preferred-term amendment without a row version: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_PREFERRED_TERM_VERSION_REQUIRED},
         )
 
     @app.exception_handler(EntryNotFoundError)
@@ -590,20 +715,18 @@ def register_exception_handlers(app: FastAPI) -> None:
             "designation collision refused against %s",
             [c.business_key for c in exc.collisions],
         )
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={
-                "detail": _DETAIL_DESIGNATION_COLLISION,
-                "collisions": [
-                    {
-                        "severity": c.severity.value,
-                        "business_key": c.business_key,
-                        "preferred_term": c.preferred_term,
-                    }
-                    for c in exc.collisions
-                ],
-            },
+        body = DesignationCollisionResponse(
+            detail=_DETAIL_DESIGNATION_COLLISION,
+            collisions=[
+                CollisionItem(
+                    severity=c.severity.value,
+                    business_key=c.business_key,
+                    preferred_term=c.preferred_term,
+                )
+                for c in exc.collisions
+            ],
         )
+        return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
 
     @app.exception_handler(InvalidSCTIDError)
     async def _handle_invalid_sctid(_request: Request, exc: InvalidSCTIDError) -> JSONResponse:

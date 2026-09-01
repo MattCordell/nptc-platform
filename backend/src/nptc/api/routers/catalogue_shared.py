@@ -192,6 +192,23 @@ class EntryDetail(EntrySummary):
 
     model_config = ConfigDict(frozen=True)
 
+    #: FR-38's optimistic-locking token (issue #227), and the reason this
+    #: model carries a field `EntrySummary` does not. A write route that
+    #: touches the entry itself requires the caller's `expected_row_version`
+    #: (`nptc.catalogue.entries.save_entry`), so an editing client has to be
+    #: able to read the current one - and the *detail* is what an edit
+    #: screen loads before it can edit anything. A list or a search result
+    #: is not an editing context: putting the token on `EntrySummary` would
+    #: publish a per-row counter on every page of the public catalogue to
+    #: serve a case that does not exist yet (a bulk save straight from a
+    #: list, FR-39/#63), so it stays here until it does.
+    #:
+    #: Not an internal identifier, despite the module-level ban `catalogue.py`
+    #: states: `business_key` is still the only thing that *names* an entry,
+    #: and this counter addresses nothing. It is opaque to a read-only
+    #: consumer and meaningful only as the value handed straight back on the
+    #: next write.
+    row_version: int
     designations: list[Designation]
     bindings: list[Binding]
     properties: list[PropertyValue]

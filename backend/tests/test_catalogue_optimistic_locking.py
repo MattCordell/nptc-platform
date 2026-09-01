@@ -13,6 +13,7 @@ from sqlalchemy import event, func, select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
+from nptc.audit.recording import AuditNoOpError
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.entries import (
     EntryChanges,
@@ -137,6 +138,135 @@ def test_a_stale_save_that_would_have_matched_still_reports_zero_conflicts(
         )
 
     assert exc_info.value.report.conflicts == ()
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_no_op_save_writes_nothing_and_does_not_move_the_row_version(
+    app_session: Session,
+) -> None:
+    """Resubmitting the values an entry already holds is not a change, and
+    must not be recorded as one: `record_change` raises `AuditNoOpError` on
+    an empty diff, so without the short-circuit this was an unmapped error
+    rather than a quiet success (found reviewing issue #227's own new HTTP
+    route, where re-saving an unchanged edit form reaches exactly here).
+
+    `row_version` must not move either. Bumping it for a no-op would
+    invalidate a *concurrent* editor's own still-current token over a change
+    that never happened - the same reasoning
+    `save_property_values` records for its own no-op check."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Full blood count",
+        reason="Created for the no-op save test",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    saved = save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        # A trailing normalisable space (PRD Appendix A.1): `clean_term`
+        # collapses it on assignment, so this is the stored value already -
+        # comparing the raw submitted string would miss it.
+        changes=EntryChanges(preferred_term="Full blood count "),
+        reason="Re-saving the form without having changed anything",
+    )
+
+    assert saved.preferred_term == "Full blood count"
+    assert saved.row_version == 1
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_direct_mutation_fails_loudly_rather_than_skipping_its_audit_event(
+    app_session: Session,
+) -> None:
+    """The no-op short-circuit must not *silently* swallow a change the
+    caller made on the loaded instance rather than declaring it through
+    `EntryChanges` (issue #227 review).
+
+    `_would_change` alone cannot see one: it compares against the entry's
+    *current* values, which the direct mutation has already moved, so this
+    save looks like a no-op from that angle - and short-circuiting would
+    return having written the mutation (the savepoint's own autoflush lands
+    it) with no audit event at all. That is the NFR-08 failure. Gating
+    additionally on net attribute history is what stops it.
+
+    What the caller gets instead is `AuditNoOpError`, and that is the right
+    answer rather than a shortfall: `save_entry` cannot produce a correct
+    diff for a pre-mutated instance, because opening its savepoint flushes
+    the pending change and clears the history `record_change` reads. That
+    error names both this and the plain no-op case and calls them "both
+    bugs" - a loud refusal, not a missing audit row. `save_entry` is the
+    sole sanctioned mutator of the instance it loads, and this is the test
+    that says so.
+
+    Held inside `no_autoflush` because with autoflush on -- the normal
+    configuration -- `load_entry_for_update`'s own `SELECT` flushes the
+    mutation before the version check, making it a version conflict."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Full blood count",
+        reason="Created for the direct-mutation test",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+    expected_row_version = entry.row_version
+
+    with app_session.no_autoflush, pytest.raises(AuditNoOpError):
+        entry.specimen_unconstrained = True
+        save_entry(
+            app_session,
+            AuditContext.system(),
+            business_key=entry.business_key,
+            expected_row_version=expected_row_version,
+            # Declares nothing that differs from what the entry now holds.
+            changes=EntryChanges(specimen_unconstrained=True),
+            reason="Saving a change made directly on the instance",
+        )
+
+    # The point of the guard: no audit event, and no *silent* success either.
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_an_identical_direct_assignment_is_still_a_no_op(app_session: Session) -> None:
+    """The other side of the guard above, and why it reads net attribute
+    *history* rather than `sa_inspect(entry).modified` (issue #227 review).
+
+    `modified` is a set-event flag: SQLAlchemy raises it on any assignment,
+    including one writing the value already there. Gating on it would send
+    this save through to `record_change`, into the empty diff and unmapped
+    `AuditNoOpError` the short-circuit exists to prevent - a 500 for a
+    caller who changed nothing."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Full blood count",
+        reason="Created for the identical-assignment test",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    entry.preferred_term = "Full blood count"
+    saved = save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        changes=EntryChanges(preferred_term="Full blood count"),
+        reason="Re-saving with nothing actually changed",
+    )
+
+    assert saved.row_version == 1
+    assert _audit_event_count(app_session) == before
 
 
 @pytest.mark.req("FR-38")

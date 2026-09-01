@@ -17,6 +17,7 @@ its own test here, not just the happy path.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -475,6 +476,571 @@ def test_no_entry_for_the_given_business_key_is_404(api: ApiTestApp) -> None:
     response = _add(api, "NPTC-999999", token)
 
     assert response.status_code == 404, response.text
+
+
+# --- the entry's own preferred term (issue #227, FR-36, FR-38) ------------
+#
+# ADR-0022 keeps the catalogue's own en-AU preferred term on
+# `catalogue_entry.preferred_term`, never a `designation` row, so
+# `/amendment` dispatches between two storage homes. These are also the
+# first HTTP-level tests of `EntryVersionConflictError` anywhere in the
+# repo - the 409 handler has existed since #46 with no route able to reach
+# it (`backend/tests/test_catalogue_optimistic_locking.py` covers the
+# service layer).
+
+#: Same pattern `test_api_catalogue_bindings.py`'s own
+#: `test_conflict_response_names_no_internal_identifier` builds inline: the
+#: 409 below carries an *attribution*, and NFR-04/NFR-26 make that a display
+#: name rather than the actor's UUID.
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+
+def _row_version(api: ApiTestApp, business_key: str, token: str) -> int:
+    """The entry's current `row_version`, read the way a client has to read
+    it: `EntryDetail` from the #228 admin route (issue #227 put the field
+    there). Never poked out of the ORM - a test that read it another way
+    would pass even if the field never reached the wire at all."""
+    response = api.get(f"/catalogue/admin/entries/{business_key}", token=token)
+    assert response.status_code == 200, response.text
+    return int(response.json()["row_version"])
+
+
+def _amend(api: ApiTestApp, business_key: str, token: str | None, **overrides: object) -> Any:
+    body: dict[str, object] = {
+        "term": "Full blood count",
+        "new_term": "Full blood count, automated",
+        "reason": "Aligning with the current SPIA edition.",
+    }
+    body.update(overrides)
+    return api.post(
+        f"/catalogue/entries/{business_key}/designations/amendment", token=token, json=body
+    )
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_amending_the_entrys_own_preferred_term_saves_the_entry(api: ApiTestApp) -> None:
+    """FR-36's "including ... preferred term" over HTTP. The result comes
+    back shaped as a `Designation` even though no `designation` row was
+    touched - one mental model, two storage homes."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-happy")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["term"] == "Full blood count, automated"
+    assert body["designation"]["use"] == "preferred"
+    assert body["designation"]["language"] == "en-AU"
+    assert body["designation"]["status"] == "active"
+    assert body["warnings"] == []
+    # The token moved, and moved to what the response says it did - so a
+    # client can save again from this response alone, with no re-read.
+    assert body["row_version"] == version + 1
+    assert _row_version(api, business_key, token) == body["row_version"]
+    assert _audit_event_count(api) == before + 1
+
+
+@pytest.mark.req("FR-85")
+@pytest.mark.integration
+def test_amending_the_preferred_term_republishes_its_computed_length(api: ApiTestApp) -> None:
+    """FR-85's published `Length` is computed from the entry's preferred
+    term, so amending that term has to move it (ADR-0022 - this is the
+    figure `CatalogueEntry.length` produces, not a designation's own)."""
+    business_key = _seed_entry(api, preferred_term="Iron")
+    token = _admin_token(api, subject="sub-pt-length")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api, business_key, token, term="Iron", new_term="Iron studies", expected_row_version=version
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["length"] == len("Iron studies")
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Iron studies"
+    assert detail["length"] == len("Iron studies")
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_length_submitted_on_an_amendment_is_ignored_not_stored(api: ApiTestApp) -> None:
+    """FR-24: the computed field is never an editable input. A caller
+    round-tripping a `Designation` (which *carries* `length`) straight back
+    into the request must not be able to set it - the published figure stays
+    the character count of the term actually stored."""
+    business_key = _seed_entry(api, preferred_term="Iron")
+    token = _admin_token(api, subject="sub-pt-length-input")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Iron",
+        new_term="Iron studies",
+        expected_row_version=version,
+        length=999,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["length"] == len("Iron studies")
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["length"] == len("Iron studies")
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_amending_the_preferred_term_without_a_row_version_is_422(api: ApiTestApp) -> None:
+    """The entry is a versioned row, so it cannot be written blind. The
+    field is optional in the schema because it is required on only this one
+    branch - hence a typed 422 from the route, not a pydantic one."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-no-version")
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token)
+
+    assert response.status_code == 422, response.text
+    assert "expected_row_version" in response.json()["detail"]
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_stale_row_version_is_409_naming_the_conflicting_values(api: ApiTestApp) -> None:
+    """FR-38's rationale is explicit that silent last-write-wins is
+    unacceptable, so the refusal has to let the caller reconcile: the
+    submitted value, the current one, and who moved it - not a bare 409."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-stale")
+    stale = _row_version(api, business_key, token)
+    first = _amend(api, business_key, token, expected_row_version=stale)
+    assert first.status_code == 200, first.text
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Full blood count, automated",
+        new_term="Full blood examination",
+        expected_row_version=stale,
+    )
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["business_key"] == business_key
+    assert body["expected_row_version"] == stale
+    assert body["current_row_version"] == stale + 1
+    conflict = next(c for c in body["conflicts"] if c["field"] == "preferred_term")
+    assert conflict["submitted"] == "Full blood examination"
+    assert conflict["current"] == "Full blood count, automated"
+    # NFR-04/NFR-26: attribution is a display name, never the actor's UUID.
+    assert body["changed_by"] is not None
+    assert _UUID_RE.search(response.text) is None
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_rejected_preferred_term_save_leaves_no_audit_event(api: ApiTestApp) -> None:
+    """The principal failure mode. `save_entry` checks the version before
+    mutating anything, so a refusal must leave the row and the audit chain
+    exactly as they were - a 409 that had already written an event would
+    record a change that never happened."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-no-audit")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, expected_row_version=version + 7)
+
+    assert response.status_code == 409, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert detail["row_version"] == version
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_preferred_term_colliding_with_another_live_entry_is_409(api: ApiTestApp) -> None:
+    """The preferred-term branch inherits `save_entry`'s own FR-05 check,
+    which runs after the version check and before anything is mutated."""
+    business_key = _seed_entry(api, preferred_term="Adrenal Ab")
+    other = _seed_entry(api, preferred_term="21-Hydroxylase Ab")
+    token = _admin_token(api, subject="sub-pt-collision")
+    version = _row_version(api, other, token)
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api,
+        other,
+        token,
+        term="21-Hydroxylase Ab",
+        new_term="Adrenal Ab",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 409, response.text
+    collisions = response.json()["collisions"]
+    assert collisions[0]["business_key"] == business_key
+    assert collisions[0]["preferred_term"] == "Adrenal Ab"
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_a_case_variant_of_the_preferred_term_still_addresses_it(api: ApiTestApp) -> None:
+    """Addressing folds the same way it does for a designation
+    (`preferred_term_key` is written by the same `collision_key` fold), so a
+    caller naming a variant is not silently 404ed."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-variant")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api, business_key, token, term="FULL  BLOOD COUNT", expected_row_version=version
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["term"] == "Full blood count, automated"
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
+    api: ApiTestApp,
+) -> None:
+    """The dispatch is designation-first, and this is why: nothing forbids a
+    synonym whose comparison key equals its own entry's preferred term
+    (`ix_designation_no_duplicate_active_term` is designation-vs-designation
+    only). Resolving the preferred term first would make that synonym
+    unreachable for editing - a silent change to a route shipped in #224."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-shadow")
+    added = _add(api, business_key, token, terms=["Full blood count"])
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # The synonym moved; the preferred term did not.
+    assert body["designation"]["use"] == "synonym"
+    assert body["row_version"] == version
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
+    api: ApiTestApp,
+) -> None:
+    """The other half of the shadowing case (issue #227 review), and the
+    reason `use` exists at all. Designation-first is right for an unqualified
+    request, but on its own it would leave the preferred term *permanently*
+    unreachable once such a synonym exists - and this route creates that
+    state itself. `use="preferred"` says which one was meant."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-preferred")
+    added = _add(api, business_key, token, terms=["Full blood count"])
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, use="preferred", expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["use"] == "preferred"
+    assert body["designation"]["term"] == "Full blood count, automated"
+    assert body["row_version"] == version + 1
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count, automated"
+    # The shadowing synonym is untouched - one write, one term.
+    assert {d["term"] for d in detail["designations"]} == {"Full blood count"}
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
+    """The disambiguator has to work in both directions, or it is only half
+    a fix: a caller who says `synonym` and names a term that is only the
+    entry's preferred term must get a 404, not a silent entry-level write.
+    `expected_row_version` is supplied, so nothing but the `use` check stands
+    between this and a 200."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-synonym")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="synonym", expected_row_version=version)
+
+    assert response.status_code == 404, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
+    api: ApiTestApp,
+) -> None:
+    """`use` narrows which storage home to look in; it does not excuse the
+    caller from naming the term (issue #227 review). `term` is required and
+    its documented job here is to address the thing being edited, so a
+    mistyped one alongside `use="preferred"` must 404 rather than rename the
+    preferred term to `new_term`.
+
+    This costs the escape hatch nothing: a shadowing synonym folds to the
+    same comparison key as the preferred term by definition, so a caller
+    reaching past one always names a matching term anyway."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-wrong-term")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        use="preferred",
+        term="Not this entry's term at all",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 404, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert detail["row_version"] == version
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_preferred_in_another_language_still_means_a_designation_row(
+    api: ApiTestApp,
+) -> None:
+    """`use="preferred"` only diverts to the entry when the language is
+    en-AU. ADR-0022 permits a preferred variant in another language as a
+    real `designation` row, and `ck_designation_no_en_au_preferred` is
+    exactly what guarantees there is no en-AU row to confuse it with."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-mi-nz")
+    added = _add(
+        api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
+    )
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        use="preferred",
+        language="mi-NZ",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["language"] == "mi-NZ"
+    assert response.json()["row_version"] == version
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_use_preferred_still_requires_a_row_version(api: ApiTestApp) -> None:
+    """The disambiguator does not bypass the lock: reaching the entry by
+    stating `use` rather than by term is still an entry-level write."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-no-version")
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="preferred")
+
+    assert response.status_code == 422, response.text
+    assert "expected_row_version" in response.json()["detail"]
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_stale_row_version_on_a_designation_amendment_is_409(api: ApiTestApp) -> None:
+    """`expected_row_version` is optional on the designation branch, but a
+    caller who sends one has opted into the lock and must not have it
+    silently discarded.
+
+    The realistic shape of the race, and the only way to construct it: one
+    administrator renames the entry's preferred term while another is part
+    way through editing a synonym from a view loaded before that. Amending a
+    designation does not itself bump `catalogue_entry.row_version`, so a
+    second designation edit could never go stale on its own.
+
+    `conflicts` is empty here - this caller declared no entry-level change -
+    which is exactly `ConflictReport`'s documented non-overlapping-field
+    case: still refused, because the version is the contract regardless."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-desig-stale")
+    _add(api, business_key, token)
+    stale = _row_version(api, business_key, token)
+    renamed = _amend(api, business_key, token, expected_row_version=stale)
+    assert renamed.status_code == 200, renamed.text
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="FBC",
+        new_term="Full Blood Count",
+        expected_row_version=stale,
+    )
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["expected_row_version"] == stale
+    assert body["current_row_version"] == stale + 1
+    assert body["conflicts"] == []
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_designation_amendment_without_a_row_version_still_succeeds(api: ApiTestApp) -> None:
+    """The other direction, and the compatibility guarantee: omitting the
+    field is exactly the behaviour this route shipped with in #224, so
+    making it required would have broken every existing client."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-desig-no-version")
+    _add(api, business_key, token)
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, term="FBC", new_term="Full Blood Count")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["term"] == "Full Blood Count"
+    # Amending a designation does not bump the entry's own version.
+    assert body["row_version"] == version
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_a_term_that_is_neither_a_designation_nor_the_preferred_term_is_404(
+    api: ApiTestApp,
+) -> None:
+    """The dispatch must not turn an unresolvable term into a preferred-term
+    write. `expected_row_version` is supplied, so a branch that ignored the
+    term entirely would 200 here."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-desig-unknown")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api, business_key, token, term="Nothing like this", expected_row_version=version
+    )
+
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_a_non_en_au_preferred_variant_is_not_the_entrys_own_preferred_term(
+    api: ApiTestApp,
+) -> None:
+    """The dispatch is gated on en-AU, not on `use='preferred'` alone: a
+    preferred variant in another language *is* a designation row (ADR-0022
+    permits those), and must keep being edited as one."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-mi-nz")
+    added = _add(
+        api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
+    )
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, language="mi-NZ", expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["language"] == "mi-NZ"
+    assert body["row_version"] == version
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_resubmitting_the_preferred_term_unchanged_is_a_no_op_not_a_500(
+    api: ApiTestApp,
+) -> None:
+    """An administrator re-saving an edit form without having changed the
+    term is the most ordinary request there is, and it must not be an
+    error. Before `save_entry` grew its no-op short-circuit this was a 500:
+    `record_change` raised `AuditNoOpError` on the empty diff, which nothing
+    maps.
+
+    The term here differs only by a trailing space - a normalisable one
+    (PRD Appendix A.1), which `clean_term` collapses on assignment - so the
+    comparison has to be against the *cleaned* value, not the raw string a
+    caller submitted."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-noop")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api, business_key, token, new_term="Full blood count ", expected_row_version=version
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["term"] == "Full blood count"
+    # No audit event for a change that did not happen, and the token must
+    # not move: bumping it would invalidate a concurrent editor's own
+    # still-current version for no actual change.
+    assert _audit_event_count(api) == before
+    assert response.json()["row_version"] == version
+    assert _row_version(api, business_key, token) == version
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
+    api: ApiTestApp,
+) -> None:
+    """The no-op short-circuit sits *after* the version check, not before:
+    the version is the contract regardless of whether the submitted values
+    happen to coincide (the HTTP counterpart of
+    `test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
+    have_matched_still_reports_zero_conflicts`)."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-noop-stale")
+    stale = _row_version(api, business_key, token)
+    first = _amend(api, business_key, token, expected_row_version=stale)
+    assert first.status_code == 200, first.text
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Full blood count, automated",
+        new_term="Full blood count, automated",
+        expected_row_version=stale,
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["conflicts"] == []
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------

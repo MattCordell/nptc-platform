@@ -150,6 +150,25 @@ def test_a_drafts_full_detail_is_populated_not_a_bare_summary(
     assert {b["code"] for b in body["bindings"]} == {_seed.DRAFT_CODE}
 
 
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_the_detail_carries_the_row_version_a_write_will_demand(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """Issue #227: this route is where an edit screen gets FR-38's
+    optimistic-locking token, so the token has to be *on the wire* - a write
+    route requires `expected_row_version` and there is nowhere else to read
+    it from. A positive integer, not merely present: `row_version` starts at
+    1, so a field that serialised as null or 0 would still satisfy a bare
+    key check."""
+    token = _admin_token(api, subject="sub-admin-row-version")
+
+    response = _admin_read(api, seeded.draft, token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["row_version"] >= 1
+
+
 # --- the gate that makes the hygiene-scan skip safe (issue #228 review) ----
 
 

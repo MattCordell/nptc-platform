@@ -442,11 +442,19 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DesignationCollisionResponse"
+                    }
+                  ],
+                  "title": "Response 409 Add Designations Api V1 Catalogue Entries  Business Key  Designations Post"
                 }
               }
             }
@@ -972,7 +980,8 @@
         "tags": [
           "catalogue-admin"
         ],
-        "summary": "Edit an entry's active designation in place",
+        "summary": "Edit an entry's active designation, or its own preferred term, in place",
+        "description": "One route, two storage homes (issue #227).\n\n`use=\"preferred\"` with the default `en-AU` addresses the entry's own\npreferred term outright. Otherwise `term` resolves against an active\n`designation` row first, falling back to the preferred term only where\nthere is no such row - see the module docstring for why that fallback\norder is designation-first, and why the explicit `use` exists at all.",
         "operationId": "amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post",
         "parameters": [
           {
@@ -1043,17 +1052,28 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DesignationCollisionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Amend Designation Route Api V1 Catalogue Entries  Business Key  Designations Amendment Post"
                 }
               }
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1918,6 +1938,28 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "use": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DesignationUse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_row_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Row Version"
           }
         },
         "type": "object",
@@ -1927,7 +1969,7 @@
           "reason"
         ],
         "title": "AmendDesignationRequest",
-        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring."
+        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* en-AU preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires."
       },
       "AmendDesignationResult": {
         "properties": {
@@ -1940,14 +1982,20 @@
             },
             "type": "array",
             "title": "Warnings"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
           }
         },
         "type": "object",
         "required": [
           "designation",
-          "warnings"
+          "warnings",
+          "row_version"
         ],
-        "title": "AmendDesignationResult"
+        "title": "AmendDesignationResult",
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. On\nthe designation branch it is unchanged by the write: a `designation`\nrow has no version of its own, and amending one does not bump the\nentry's (see the module docstring on what taking the entry's lock here\ndoes and does not buy)."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -2218,6 +2266,30 @@
         "title": "CollisionAcknowledgementResponse",
         "description": "Confirms an acknowledgement was recorded. No internal id, no\n`entry_id`, and deliberately no `acknowledged_by_user_id` either\n(NFR-04/NFR-26) - which administrator or reviewer acknowledged a\ncollision is an audit-log fact, not a public response field.\n\n`created` distinguishes \"this call recorded it\" (`True`) from \"this\nexact `(entry, term, language)` was already acknowledged, by an earlier\ncall\" (`False`) - `acknowledge_collision` is idempotent (see its own\ndocstring), and without this flag a caller cannot tell those two cases\napart, nor notice that `reason` below is the *original* note rather\nthan the one this call just submitted (issue #224 review finding 5)."
       },
+      "CollisionItem": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "business_key",
+          "preferred_term"
+        ],
+        "title": "CollisionItem",
+        "description": "One FR-05 collision: the live entry a submitted term collides with,\nnamed by its public identifier and preferred term - never its internal\nid (NFR-04/NFR-26)."
+      },
       "CollisionWarning": {
         "properties": {
           "term": {
@@ -2409,6 +2481,28 @@
         "title": "Designation",
         "description": "A catalogue-authored synonym, or a preferred variant in a language\nother than en-AU.\n\nThe catalogue's own en-AU preferred term is **not** here - it is\n`EntrySummary.preferred_term`, and ADR-0022 makes its absence from\n`designation` a database invariant rather than a convention. A client\nbuilding a term list needs both: `preferred_term`, plus these.\n\nNo `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's\nwrite router addresses a designation by term in the request body, not\nan internal identifier - see that router's own module docstring."
       },
+      "DesignationCollisionResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "collisions": {
+            "items": {
+              "$ref": "#/components/schemas/CollisionItem"
+            },
+            "type": "array",
+            "title": "Collisions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "collisions"
+        ],
+        "title": "DesignationCollisionResponse",
+        "description": "FR-05's 409 body. PRD SS17.2 item 5 is explicit that the refusal names\nthe colliding entry rather than returning a bare status, so an editor\ncan go and look at it."
+      },
       "DesignationList": {
         "properties": {
           "items": {
@@ -2484,6 +2578,10 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
           "designations": {
             "items": {
               "$ref": "#/components/schemas/Designation"
@@ -2514,6 +2612,7 @@
           "status",
           "specimen_unconstrained",
           "updated_at",
+          "row_version",
           "designations",
           "bindings",
           "properties"
@@ -2603,6 +2702,28 @@
         ],
         "title": "ErrorResponse",
         "description": "Every refusal this API makes has this shape - one sentence saying\nwhat to do next, and deliberately nothing else. It never names a role,\na permission or an internal identifier (FR-44, NFR-04)."
+      },
+      "FieldConflictItem": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "submitted": {
+            "title": "Submitted"
+          },
+          "current": {
+            "title": "Current"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "submitted",
+          "current"
+        ],
+        "title": "FieldConflictItem",
+        "description": "One field whose stored value moved under a caller between their read\nand their write. `submitted`/`current` are whatever that field holds -\na term, a status, a flag - so they are deliberately untyped here."
       },
       "HTTPValidationError": {
         "properties": {
@@ -3151,6 +3272,68 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VersionConflictResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "title": "Expected Row Version"
+          },
+          "current_row_version": {
+            "type": "integer",
+            "title": "Current Row Version"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/FieldConflictItem"
+            },
+            "type": "array",
+            "title": "Conflicts"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By"
+          },
+          "changed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "business_key",
+          "expected_row_version",
+          "current_row_version",
+          "conflicts",
+          "changed_by",
+          "changed_at"
+        ],
+        "title": "VersionConflictResponse",
+        "description": "FR-38's 409 body: a stale `expected_row_version` on an entry-level\nwrite.\n\nFR-38's rationale rejects silent last-write-wins \"because it produces an\naudit trail that records a change that was immediately and invisibly\ndiscarded\", so the refusal has to let the caller *reconcile* rather than\nretry blind. `conflicts` is empty where the caller's submitted values do\nnot themselves overlap what moved - still a refusal, because the version\nis the contract regardless - which is why `current_row_version` and\n`changed_by`/`changed_at` are populated even then.\n\n`changed_by` is a display name, never the actor's internal id\n(NFR-04/NFR-26), and is `null` for a system-initiated change or an\naccount since pseudonymised on closure (NFR-17)."
       }
     }
   }

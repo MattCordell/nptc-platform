@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, code bindings and designations (issues #219, #224, #228)
+# The catalogue admin API: entry read, code bindings and designations (issues #219, #224, #228, #227)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -43,6 +43,11 @@ assembled by the same three loaders (`queries.load_designations`, `queries.
 load_bindings`, `queries.load_property_values`); `EntryDetail` and its assembly helpers
 live in `catalogue_shared.py` so both routers stay byte-for-byte in agreement on the
 shape.
+
+This is also where an edit screen reads FR-38's `EntryDetail.row_version` (issue #227) -
+the token `/amendment` requires before it will save the entry's own preferred term. See
+"`expected_row_version`" below, and [public-api.md](public-api.md) for why the field is
+on `EntryDetail` rather than `EntrySummary`.
 
 ### Errors (entry read)
 
@@ -177,7 +182,7 @@ for the same reason those two stay apart from each other.
 | Path | Method | Body | Returns |
 |---|---|---|---|
 | `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason}` | `201 {designations: [Designation], warnings: [CollisionWarning]}` |
-| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, reason}` | `200 {designation: Designation, warnings: [CollisionWarning]}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version?, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason}` | `200 Designation` |
 | `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
 
@@ -219,15 +224,100 @@ one `designation.amended` edit rather than a retirement paired with an
 unrelated-looking creation - the same "one editorial decision, one audit trail" posture
 `/replacement`'s single request takes for code bindings.
 
-### Preferred term is out of scope here
+### `/amendment` writes to two storage homes (issue #227)
 
 ADR-0022 keeps the catalogue's own en-AU preferred term on
 `catalogue_entry.preferred_term`, never a `designation` row
-(`ck_designation_no_en_au_preferred`) - every route above only ever touches
-`designation` rows. Amending the entry's own preferred term needs FR-38's optimistic
-locking on the wire, which the public `EntryDetail`/`EntrySummary` models do not carry
-yet (the same gap #219's own "What this issue does not cover" named) - a follow-up, not
-folded in here.
+(`ck_designation_no_en_au_preferred`). Rather than expose that split as a second
+endpoint, `/amendment` resolves `term` against both: an active `designation` row if
+there is one, otherwise the entry's own preferred term, saved through
+`nptc.catalogue.entries.save_entry`. Every term the catalogue holds is a designation as
+far as this API is concerned - one route, one mental model, two storage homes - and the
+preferred-term branch returns its result shaped as a `Designation`
+(`use: "preferred"`, `language: "en-AU"`, with FR-85's computed `length`), so a client
+never has to model where a term happens to live.
+
+**Rejected: a dedicated `POST .../preferred-term` route.** Its request and response
+would be honest about the split - no conditionally-required field, no dispatch - but it
+pushes ADR-0022's storage decision onto every client, and onto the edit screen most of
+all: #149 renders one list of terms and would have to route each edit by which table
+the platform happens to keep it in. That is the coupling this API exists to hide.
+
+**Designation-first, and the order is load-bearing.** Nothing forbids an entry from
+carrying an active en-AU synonym whose `term_key` equals its own `preferred_term_key`:
+`ix_designation_no_duplicate_active_term` is designation-vs-designation only, and
+`assert_no_error_collisions` compares against *other* live entries. Resolving the
+preferred term first would therefore make such a synonym unreachable for editing -
+silently changing what a route shipped in #224 does. Taking the designation first means
+the new branch only ever claims what this route already 404s on.
+
+**`use` says which one you meant, when the term alone cannot.** Designation-first is the
+right default, but on its own it leaves the mirror-image problem: once a shadowing
+synonym exists - and `POST .../designations` will create one - the entry's preferred term
+becomes permanently unreachable, and a caller asking for it silently moves the synonym
+instead. For #149's screen, which renders both in one list, that is an ambiguous click
+with a silent wrong outcome. The optional `use` on the request resolves it:
+
+| `use` | `language` | Resolves to |
+|---|---|---|
+| unset | any | An active `designation` row; the entry's own preferred term only if there is none and `term` names it. |
+| `preferred` | `en-AU` | The entry's own preferred term, if `term` names it. No designation lookup runs - ADR-0022 guarantees there is no such row, and skipping it is what reaches past a shadowing synonym. |
+| `preferred` | anything else | A `designation` row. A non-en-AU preferred variant is a real row, and `ck_designation_no_en_au_preferred` is what keeps the two unambiguous. |
+| `synonym` | any | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
+
+**`use` narrows which storage home to look in; it never excuses the caller from naming
+the term.** `term` is required, and its job on this route is to address the thing being
+edited, so `use="preferred"` with a term that is not the preferred term is a 404 rather
+than a rename - the same silent-wrong-target class `use` exists to close. This costs the
+escape hatch nothing: a shadowing synonym folds to the *same* comparison key as the
+preferred term by definition, so a caller reaching past one always names a matching term
+anyway.
+
+Addressing folds the same way on both branches: `preferred_term_key` is written by
+`CatalogueEntry`'s own `@validates` hook from the same `collision_key(clean_term(...))`
+composition `load_active_designation` looks a designation up by, so a caller naming a
+case or punctuation variant resolves either one.
+
+### `expected_row_version`: required on one branch, honoured on both
+
+`catalogue_entry` is a row with FR-38 optimistic locking, so a write to it cannot be
+accepted without the caller's version. `designation` has no version of its own. The
+field is therefore optional in the schema and conditionally required in fact:
+
+| `term` resolves to | `expected_row_version` |
+|---|---|
+| the entry's own preferred term | **Required.** 422 without it. |
+| an active `designation` row | Optional. Checked against `catalogue_entry.row_version` whenever supplied. |
+
+Optional rather than required outright, because making it required would break every
+client of the designation branch this route has shipped with since #224. Enforced
+whenever supplied rather than ignored on the branch that does not demand it, because
+silently discarding a caller's lock token is worse than either honouring it or refusing
+it - a client that sent one believes it is protected.
+
+The missing-token refusal is `nptc.api.errors.PreferredTermVersionRequiredError`, raised
+in the route rather than validated on the request model: which storage home a term lives
+in is a database question, and a pydantic validator runs before the route body has a
+session.
+
+Callers read the current version from `EntryDetail.row_version` (issue #227 put it
+there; `EntrySummary` deliberately does not carry it - see
+[public-api.md](public-api.md)), and get the new one back on the write response, so a
+save never has to be followed by a re-read. On the designation branch that value is
+unchanged by the write.
+
+A stale version is a 409 carrying `business_key`, `expected_row_version`,
+`current_row_version`, `conflicts[]` (each `field`/`submitted`/`current`) and
+`changed_by`/`changed_at` - FR-38's rationale is explicit that the caller must be able
+to reconcile rather than retry blind. `conflicts` is empty on the designation branch,
+which declared no entry-level change: that is `ConflictReport`'s documented
+non-overlapping-field case, still refused because the version is the contract
+regardless.
+
+This is a partial answer to the concurrency gap "What these issues do not cover" names
+below, not a complete one: it is opt-in, and amending a designation does not itself bump
+the entry's version, so two administrators editing different designations still do not
+conflict with each other.
 
 ### Warning-severity collisions ride back on the write response
 
@@ -254,9 +344,25 @@ so there is no route to withdraw one.
 |---|---|
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing the route's required permission, or (for `catalogue.edit_published` routes only) holding it without MFA. |
-| 404 | No catalogue entry with this `business_key`, or no *active* designation for this `term`/`language`. |
-| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. |
-| 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`), more than one preferred term in one batch, or a changelog note that fails FR-37. |
+| 404 | No catalogue entry with this `business_key`, or a `term` that is neither an *active* designation for this `language` nor (on `/amendment`) the entry's own en-AU preferred term. |
+| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. On `/amendment` only, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
+| 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation to `POST .../designations` (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`; amend it through `/amendment` instead), more than one preferred term in one batch, or a changelog note that fails FR-37. On `/amendment` only, also amending the entry's own preferred term with no `expected_row_version`. |
+
+**Two 409 bodies carry more than `detail`, and are declared as such.** Most refusals are
+an `ErrorResponse` - one sentence, and deliberately nothing else. FR-05's collision and
+FR-38's version conflict are not, because a bare sentence withholds exactly what those
+requirements exist to give the caller: the colliding entry (PRD §17.2 item 5), and the
+conflicting values to reconcile against. Both are declared response models
+(`DesignationCollisionResponse`, `VersionConflictResponse` in `nptc.api.errors`) rather
+than prose, `anyOf`-ed with `ErrorResponse`, so #147's generated client can read the
+payload instead of typing the branch as `{detail}` and dropping it. The models are
+constructed by the handlers that emit them, so the declared schema and the real body
+cannot drift.
+
+They are declared only where they can occur: `POST .../designations` and `/amendment`
+call service functions that run `assert_no_error_collisions`; only `/amendment` writes an
+entry. Retirement and acknowledgement can produce neither, and a documented body a route
+cannot emit is a branch a generated client can never exercise.
 
 Every exception `nptc.catalogue.designations`/`nptc.catalogue.collisions` raises is
 mapped in `nptc.api.errors` the same way the `CodeBinding*` family is: read
@@ -267,15 +373,18 @@ inherited from #219.
 
 ## What these issues do not cover
 
-- Entry-level `PATCH` and FR-38 optimistic locking on the wire, for either resource.
-  Neither a code binding nor a designation is a row with its own `row_version`; an
-  entry-level write (including amending the catalogue's own preferred term) will need
-  the entry's `row_version` on the wire, and the public `EntryDetail`/`EntrySummary`
-  models deliberately omit it today. Two administrators editing one entry's bindings or
-  designations concurrently is the routine case this leaves genuinely unguarded against
-  - the "Concurrency" notes above only prevent *data corruption* (two active bindings, a
-  duplicate term), not one admin's edit silently overwriting context the other was
-  working from with no version check at all.
+- Entry-level writes other than the preferred term. `EntryChanges` also carries `status`
+  and `specimen_unconstrained`, and neither has a route: issue #227 wired only
+  `preferred_term`, through `/amendment`. Publishing or withdrawing an entry over HTTP
+  is still unbuilt.
+- FR-38 optimistic locking on the code-binding routes. Issue #227 put `row_version` on
+  the wire and `expected_row_version` on `/amendment` only; `catalogue_bindings.py`'s
+  three routes take no version at all. Two administrators editing one entry's bindings
+  concurrently therefore remains unguarded - the "Concurrency" notes above only prevent
+  *data corruption* (two active bindings, a duplicate term), not one admin's edit
+  silently overwriting context the other was working from. The same is true of two
+  administrators editing different *designations* on one entry, since a designation
+  write does not bump the entry's version.
 - Property write routes - #151's own obligation, expected to follow the same shape.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
