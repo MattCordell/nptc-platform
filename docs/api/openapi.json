@@ -972,7 +972,8 @@
         "tags": [
           "catalogue-admin"
         ],
-        "summary": "Edit an entry's active designation in place",
+        "summary": "Edit an entry's active designation, or its own preferred term, in place",
+        "description": "One route, two storage homes (issue #227). If `term` resolves to an\nactive `designation` row, that row is amended. If it resolves to\nnothing but names the entry's own en-AU preferred term, the entry\nitself is saved instead, under FR-38's optimistic lock. See the module\ndocstring for why the order is designation-first.",
         "operationId": "amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post",
         "parameters": [
           {
@@ -1043,7 +1044,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. Also a stale `expected_row_version` when `term` names the entry's own preferred term (FR-38). That body carries more than `detail`: `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1053,7 +1054,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1918,6 +1919,18 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "expected_row_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Row Version"
           }
         },
         "type": "object",
@@ -1927,7 +1940,7 @@
           "reason"
         ],
         "title": "AmendDesignationRequest",
-        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring."
+        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* en-AU preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires."
       },
       "AmendDesignationResult": {
         "properties": {
@@ -1940,14 +1953,20 @@
             },
             "type": "array",
             "title": "Warnings"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
           }
         },
         "type": "object",
         "required": [
           "designation",
-          "warnings"
+          "warnings",
+          "row_version"
         ],
-        "title": "AmendDesignationResult"
+        "title": "AmendDesignationResult",
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. On\nthe designation branch it is unchanged by the write: a `designation`\nrow has no version of its own, and amending one does not bump the\nentry's (see the module docstring on what taking the entry's lock here\ndoes and does not buy)."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -2484,6 +2503,10 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
           "designations": {
             "items": {
               "$ref": "#/components/schemas/Designation"
@@ -2514,6 +2537,7 @@
           "status",
           "specimen_unconstrained",
           "updated_at",
+          "row_version",
           "designations",
           "bindings",
           "properties"

@@ -209,7 +209,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Edit an entry's active designation in place */
+        /**
+         * Edit an entry's active designation, or its own preferred term, in place
+         * @description One route, two storage homes (issue #227). If `term` resolves to an
+         *     active `designation` row, that row is amended. If it resolves to
+         *     nothing but names the entry's own en-AU preferred term, the entry
+         *     itself is saved instead, under FR-38's optimistic lock. See the module
+         *     docstring for why the order is designation-first.
+         */
         post: operations["amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post"];
         delete?: never;
         options?: never;
@@ -395,6 +402,10 @@ export interface components {
          *     designation to edit; `new_term` is what it becomes. Editing in place
          *     (rather than retire-and-re-add) is `nptc.catalogue.designations.
          *     amend_designation`'s own choice - see that function's docstring.
+         *
+         *     `term` also addresses the entry's *own* en-AU preferred term, which is
+         *     not a designation row at all (ADR-0022) - see the module docstring for
+         *     the dispatch and `expected_row_version` for the lock it requires.
          */
         AmendDesignationRequest: {
             /**
@@ -408,12 +419,35 @@ export interface components {
             new_term: string;
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version?: number | null;
         };
-        /** AmendDesignationResult */
+        /**
+         * AmendDesignationResult
+         * @description The amended term, plus the entry's version after the write.
+         *
+         *     `designation` is the same shape on both branches, including the one
+         *     that did not touch a `designation` row at all: the catalogue's own
+         *     en-AU preferred term comes back rendered as
+         *     `use="preferred", language="en-AU"`. That is this API's whole premise -
+         *     every term the catalogue holds is a designation, and ADR-0022's split
+         *     between two storage homes is not something a client should have to
+         *     model (issue #224's own module docstring).
+         *
+         *     `row_version` is the entry's, on both branches, and is what a client
+         *     sends back as `expected_row_version` on its next write - so a save
+         *     never has to be followed by a re-fetch just to learn the new token. On
+         *     the designation branch it is unchanged by the write: a `designation`
+         *     row has no version of its own, and amending one does not bump the
+         *     entry's (see the module docstring on what taking the entry's lock here
+         *     does and does not buy).
+         */
         AmendDesignationResult: {
             designation: components["schemas"]["Designation"];
             /** Warnings */
             warnings: components["schemas"]["CollisionWarning"][];
+            /** Row Version */
+            row_version: number;
         };
         /**
          * AmendPropertyDefinitionRequest
@@ -710,6 +744,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Row Version */
+            row_version: number;
             /** Designations */
             designations: components["schemas"]["Designation"][];
             /** Bindings */
@@ -1727,7 +1763,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. Also a stale `expected_row_version` when `term` names the entry's own preferred term (FR-38). That body carries more than `detail`: `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1736,7 +1772,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express. */
             422: {
                 headers: {
                     [name: string]: unknown;

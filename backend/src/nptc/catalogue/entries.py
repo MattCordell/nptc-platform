@@ -13,9 +13,11 @@ SQL string construction.
 
 **Two layers of conflict detection, not one.** `save_entry` first checks
 `expected_row_version` against the freshly loaded row *before* mutating
-anything - this is the path that can build a useful `ConflictReport`,
-because both the caller's stale view and the current row are in hand
-uncorrupted. `version_id_col` is the backstop for the genuine race: two
+anything (`assert_entry_row_version`, public since issue #227 so a write
+against something *attached to* an entry can take the same lock without
+inventing a second counter) - this is the path that can build a useful
+`ConflictReport`, because both the caller's stale view and the current row
+are in hand uncorrupted. `version_id_col` is the backstop for the genuine race: two
 callers who both pass that first check and then interleave between load
 and flush. That second case surfaces as SQLAlchemy's own `StaleDataError`
 at `session.flush()` time, wrapped inside a `session.begin_nested()`
@@ -304,6 +306,53 @@ def _build_conflict_report(
     )
 
 
+def assert_entry_row_version(
+    session: Session,
+    entry: CatalogueEntry,
+    expected_row_version: int,
+    *,
+    changes: EntryChanges | None = None,
+) -> None:
+    """FR-38's first layer, on its own: raises `EntryVersionConflictError`
+    with a full `ConflictReport` if `entry.row_version` has moved past
+    `expected_row_version`, and does nothing at all otherwise.
+
+    Extracted from `save_entry` (issue #227) so a write that changes
+    something *attached to* an entry can take the same lock the entry's own
+    writes take, against the same counter, without going through
+    `save_entry` - which would insist on an `EntryChanges` it has nothing to
+    put in. `nptc.catalogue.property_values.save_property_values` already
+    established that `catalogue_entry.row_version` is the one optimistic
+    lock a caller tracks per entry, covering more than `catalogue_entry`'s
+    own columns; this is that argument applied to `designation`.
+
+    `changes` is only ever used to populate `ConflictReport.conflicts` -
+    the fields the caller submitted whose stored value has since moved. A
+    caller with no entry-level changes to declare (the designation case)
+    omits it and gets `conflicts=()`, which is exactly the
+    non-overlapping-field conflict `ConflictReport`'s own docstring
+    describes: still rejected, because the version is the contract
+    regardless, and still carrying `current_row_version`/`changed_by`/
+    `changed_at` so the caller is never left with nothing to show.
+
+    This is layer *one* only. `save_entry` keeps its own `StaleDataError`
+    backstop for the genuine load-to-flush race, which no precondition
+    check can see - see the module docstring.
+    """
+    if entry.row_version == expected_row_version:
+        return
+    changed_by, changed_at = _latest_change_attribution(session, entry.id)
+    raise EntryVersionConflictError(
+        _build_conflict_report(
+            entry,
+            expected_row_version=expected_row_version,
+            changes=changes if changes is not None else EntryChanges(),
+            changed_by=changed_by,
+            changed_at=changed_at,
+        )
+    )
+
+
 def save_entry(
     session: Session,
     ctx: AuditContext,
@@ -326,17 +375,7 @@ def save_entry(
     validated_reason = validate_changelog_note(reason)
     entry = load_entry_for_update(session, business_key)
 
-    if entry.row_version != expected_row_version:
-        changed_by, changed_at = _latest_change_attribution(session, entry.id)
-        raise EntryVersionConflictError(
-            _build_conflict_report(
-                entry,
-                expected_row_version=expected_row_version,
-                changes=changes,
-                changed_by=changed_by,
-                changed_at=changed_at,
-            )
-        )
+    assert_entry_row_version(session, entry, expected_row_version, changes=changes)
 
     if changes.preferred_term is not None:
         # FR-05: checked after the row_version precondition (a stale
