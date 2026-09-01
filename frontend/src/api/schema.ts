@@ -211,11 +211,13 @@ export interface paths {
         put?: never;
         /**
          * Edit an entry's active designation, or its own preferred term, in place
-         * @description One route, two storage homes (issue #227). If `term` resolves to an
-         *     active `designation` row, that row is amended. If it resolves to
-         *     nothing but names the entry's own en-AU preferred term, the entry
-         *     itself is saved instead, under FR-38's optimistic lock. See the module
-         *     docstring for why the order is designation-first.
+         * @description One route, two storage homes (issue #227).
+         *
+         *     `use="preferred"` with the default `en-AU` addresses the entry's own
+         *     preferred term outright. Otherwise `term` resolves against an active
+         *     `designation` row first, falling back to the preferred term only where
+         *     there is no such row - see the module docstring for why that fallback
+         *     order is designation-first, and why the explicit `use` exists at all.
          */
         post: operations["amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post"];
         delete?: never;
@@ -419,6 +421,7 @@ export interface components {
             new_term: string;
             /** Reason */
             reason: string;
+            use?: components["schemas"]["DesignationUse"] | null;
             /** Expected Row Version */
             expected_row_version?: number | null;
         };
@@ -584,6 +587,20 @@ export interface components {
             created: boolean;
         };
         /**
+         * CollisionItem
+         * @description One FR-05 collision: the live entry a submitted term collides with,
+         *     named by its public identifier and preferred term - never its internal
+         *     id (NFR-04/NFR-26).
+         */
+        CollisionItem: {
+            /** Severity */
+            severity: string;
+            /** Business Key */
+            business_key: string;
+            /** Preferred Term */
+            preferred_term: string;
+        };
+        /**
          * CollisionWarning
          * @description One warning-severity collision (FR-05): the same term active on
          *     another live entry. Names that entry's public identifier and preferred
@@ -695,6 +712,18 @@ export interface components {
             /** Length */
             length: number;
         };
+        /**
+         * DesignationCollisionResponse
+         * @description FR-05's 409 body. PRD SS17.2 item 5 is explicit that the refusal names
+         *     the colliding entry rather than returning a bare status, so an editor
+         *     can go and look at it.
+         */
+        DesignationCollisionResponse: {
+            /** Detail */
+            detail: string;
+            /** Collisions */
+            collisions: components["schemas"]["CollisionItem"][];
+        };
         /** DesignationList */
         DesignationList: {
             /** Items */
@@ -799,6 +828,20 @@ export interface components {
         ErrorResponse: {
             /** Detail */
             detail: string;
+        };
+        /**
+         * FieldConflictItem
+         * @description One field whose stored value moved under a caller between their read
+         *     and their write. `submitted`/`current` are whatever that field holds -
+         *     a term, a status, a flag - so they are deliberately untyped here.
+         */
+        FieldConflictItem: {
+            /** Field */
+            field: string;
+            /** Submitted */
+            submitted: unknown;
+            /** Current */
+            current: unknown;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1029,6 +1072,39 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * VersionConflictResponse
+         * @description FR-38's 409 body: a stale `expected_row_version` on an entry-level
+         *     write.
+         *
+         *     FR-38's rationale rejects silent last-write-wins "because it produces an
+         *     audit trail that records a change that was immediately and invisibly
+         *     discarded", so the refusal has to let the caller *reconcile* rather than
+         *     retry blind. `conflicts` is empty where the caller's submitted values do
+         *     not themselves overlap what moved - still a refusal, because the version
+         *     is the contract regardless - which is why `current_row_version` and
+         *     `changed_by`/`changed_at` are populated even then.
+         *
+         *     `changed_by` is a display name, never the actor's internal id
+         *     (NFR-04/NFR-26), and is `null` for a system-initiated change or an
+         *     account since pseudonymised on closure (NFR-17).
+         */
+        VersionConflictResponse: {
+            /** Detail */
+            detail: string;
+            /** Business Key */
+            business_key: string;
+            /** Expected Row Version */
+            expected_row_version: number;
+            /** Current Row Version */
+            current_row_version: number;
+            /** Conflicts */
+            conflicts: components["schemas"]["FieldConflictItem"][];
+            /** Changed By */
+            changed_by: string | null;
+            /** Changed At */
+            changed_at: string | null;
         };
     };
     responses: never;
@@ -1335,13 +1411,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"];
                 };
             };
             /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
@@ -1763,13 +1839,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. Also a stale `expected_row_version` when `term` names the entry's own preferred term (FR-38). That body carries more than `detail`: `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express. */

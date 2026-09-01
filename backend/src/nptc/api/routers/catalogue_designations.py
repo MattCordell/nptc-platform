@@ -88,7 +88,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
-from nptc.api.errors import PreferredTermVersionRequiredError
+from nptc.api.errors import (
+    DesignationCollisionResponse,
+    PreferredTermVersionRequiredError,
+    VersionConflictResponse,
+)
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import BusinessKeyPath, Designation, designation_from_row
@@ -97,6 +101,7 @@ from nptc.auth.principal import Principal
 from nptc.catalogue import queries
 from nptc.catalogue.collisions import Collision, acknowledge_collision, warning_collisions
 from nptc.catalogue.designations import (
+    DesignationNotFoundError,
     add_designation,
     add_synonyms,
     amend_designation,
@@ -187,20 +192,41 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     },
 }
 
-#: `/amendment` alone can write `catalogue_entry` rather than `designation`
-#: (issue #227), so it alone can produce FR-38's conflict and FR-38's
-#: missing-token refusal. Its own two dicts, rather than widening the shared
-#: ones above: a documented status a route cannot actually produce gives
-#: #147's generated client a branch it can never exercise, and "on
-#: `/amendment`, also..." appearing in the retirement route's own 409 is
-#: exactly that. This is the deliberate divergence `_RESPONSES_WRITE`'s
-#: comment below anticipates.
-_RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
+#: Not every 409 below is an `ErrorResponse`. Two carry a payload, because a
+#: bare sentence would withhold exactly what the requirement exists to give
+#: the caller: FR-05 names the colliding entry (PRD SS17.2 item 5), and FR-38
+#: names the conflicting values so the caller can reconcile rather than retry
+#: blind. Declaring only `"model": ErrorResponse` types those branches as
+#: `{detail}` for #147's generated client, which then drops the payload
+#: entirely - the same defect `_RESPONSE_422` above already fixed for its own
+#: second body shape (issue #223 review finding 2, and issue #227 review).
+#:
+#: `model` takes a union so *both* members are registered in
+#: `components/schemas` and the document gets an `anyOf`; a hand-written
+#: `content` block with `$ref`s would name schemas nothing else registers.
+#: The models live in `nptc.api.errors` next to the handlers that build
+#: them, so the declared shape and the emitted body cannot drift.
+#:
+#: Scoped per route rather than folded into `_RESPONSE_409`: only
+#: `add_designations` and `amend_designation_route` call a service function
+#: that runs `assert_no_error_collisions`, and only `/amendment` can write
+#: `catalogue_entry`. Retirement and acknowledgement can produce neither, and
+#: a documented body a route cannot emit is a branch #147's client can never
+#: exercise - this module's own rule.
+_RESPONSE_409_COLLISION: Final[dict[str, Any]] = {
+    **_RESPONSE_409,
+    "model": ErrorResponse | DesignationCollisionResponse,
     "description": (
-        f"{_RESPONSE_409['description']} Also a stale `expected_row_version` when "
-        "`term` names the entry's own preferred term (FR-38). That body carries "
-        "more than `detail`: `business_key`, `expected_row_version`, "
+        f"{_RESPONSE_409['description']} An error-severity collision carries "
+        "`collisions[]` alongside `detail`, naming each colliding entry (FR-05)."
+    ),
+}
+_RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
+    **_RESPONSE_409_COLLISION,
+    "model": ErrorResponse | DesignationCollisionResponse | VersionConflictResponse,
+    "description": (
+        f"{_RESPONSE_409_COLLISION['description']} A stale `expected_row_version` "
+        "(FR-38) carries `business_key`, `expected_row_version`, "
         "`current_row_version`, `conflicts[]` (each with `field`, `submitted` and "
         "`current`) and `changed_by`/`changed_at`, so the caller can reconcile "
         "rather than retry blind."
@@ -227,6 +253,12 @@ _RESPONSES_WRITE: Final[dict[int | str, dict[str, Any]]] = {
     409: _RESPONSE_409,
     422: _RESPONSE_422,
 }
+#: Add: can collide (FR-05), cannot version-conflict.
+_RESPONSES_ADD: Final[dict[int | str, dict[str, Any]]] = {
+    **_RESPONSES_WRITE,
+    409: _RESPONSE_409_COLLISION,
+}
+#: Amend: can do both, and is the only route here that writes an entry.
 _RESPONSES_AMEND: Final[dict[int | str, dict[str, Any]]] = {
     **_RESPONSES_WRITE,
     409: _RESPONSE_409_AMENDMENT,
@@ -364,7 +396,22 @@ class AmendDesignationRequest(_WithLanguage):
     term: str
     new_term: str = Field(min_length=1)
     reason: str
-    #: FR-38's optimistic-locking token, read from `EntryDetail.row_version`
+    #: Which of the two storage homes `term` means, when it could mean
+    #: either (issue #227 review). Left unset, the dispatch resolves an
+    #: active `designation` row first and falls back to the entry's own
+    #: preferred term - which is unambiguous until an entry holds a synonym
+    #: whose comparison key equals its own preferred term. Nothing forbids
+    #: that state and `POST .../designations` will create it, so without a
+    #: disambiguator the preferred term would be unreachable for editing
+    #: from then on, and a caller asking for it would silently move the
+    #: synonym instead.
+    #:
+    #: `preferred` + `en-AU` therefore addresses `catalogue_entry.
+    #: preferred_term` directly, never a designation - ADR-0022 guarantees
+    #: there is no such row to confuse it with. `preferred` in any other
+    #: language, and `synonym` in any language, address a `designation` row
+    #: and never fall back to the entry.
+    use: DesignationUse | None = None
     #: (issue #227). Optional in the schema and conditionally required in
     #: fact: mandatory when `term` addresses the entry's own preferred term
     #: (a 422 without it - `nptc.api.errors.
@@ -463,7 +510,7 @@ AcknowledgerDep = Annotated[Principal, Depends(permission_dep(Permission.VALIDAT
     "/entries/{business_key}/designations",
     summary="Add one or more synonyms, or a non-en-AU preferred term, to a catalogue entry",
     status_code=201,
-    responses=_RESPONSES_WRITE,
+    responses=_RESPONSES_ADD,
     dependencies=[_EDIT],
 )
 def add_designations(
@@ -528,27 +575,44 @@ def add_designations(
     )
 
 
-def _addresses_own_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest) -> bool:
-    """Whether `body.term` names the entry's *own* en-AU preferred term
+def _targets_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest) -> bool:
+    """Whether this request means the entry's *own* en-AU preferred term
     rather than one of its `designation` rows (ADR-0022's other storage
     home).
 
-    Compared against the stored, indexed `preferred_term_key` column rather
-    than recomputing a key from `entry.preferred_term`: that column is
-    written by `CatalogueEntry`'s own `@validates("preferred_term")` hook
-    from the same `collision_key(clean_term(...))` composition used here, so
-    it cannot drift, and `nptc.catalogue.collisions`' module docstring makes
-    "never recompute a key for something already stored" this package's
-    rule. The fold means a caller naming a case or punctuation variant
-    resolves the preferred term exactly as it would resolve a designation
+    Only ever true for `en-AU`: a `preferred` designation in another
+    language is a real row, and `ck_designation_no_en_au_preferred` is what
+    guarantees there is no en-AU one to be confused with.
+
+    With `use` unset this is a question about the *term*, compared against
+    the stored, indexed `preferred_term_key` column rather than a key
+    recomputed from `entry.preferred_term`. That column is written by
+    `CatalogueEntry`'s own `@validates("preferred_term")` hook from the same
+    `collision_key(clean_term(...))` composition used here, so it cannot
+    drift, and `nptc.catalogue.collisions`' module docstring makes "never
+    recompute a key for something already stored" this package's rule. The
+    fold means a caller naming a case or punctuation variant resolves the
+    preferred term exactly as it would resolve a designation
     (`load_active_designation` keys on `term_key` for the same reason).
+
+    With `use="preferred"` it is a question about the caller's *stated
+    intent*, and the term is not consulted at all - the point of the
+    disambiguator is to reach a preferred term that a shadowing synonym
+    would otherwise hide, and an entry has exactly one, so naming it adds
+    nothing. A caller who says `preferred` and quotes the wrong term still
+    gets the preferred term, the way `POST .../designations` with
+    `use=preferred` does not ask which preferred term it means either.
 
     `body.language` has already been canonicalised by `_WithLanguage`, so
     `en-au` is matched here too, not only `en-AU`.
     """
-    return body.language == DEFAULT_LANGUAGE and entry.preferred_term_key == collision_key(
-        clean_term(body.term)
-    )
+    if body.language != DEFAULT_LANGUAGE:
+        return False
+    if body.use is DesignationUse.PREFERRED:
+        return True
+    if body.use is not None:
+        return False
+    return entry.preferred_term_key == collision_key(clean_term(body.term))
 
 
 def _preferred_term_as_designation(entry: CatalogueEntry) -> Designation:
@@ -578,17 +642,26 @@ def amend_designation_route(
     business_key: BusinessKeyPath,
     body: Annotated[AmendDesignationRequest, Body()],
 ) -> AmendDesignationResult:
-    """One route, two storage homes (issue #227). If `term` resolves to an
-    active `designation` row, that row is amended. If it resolves to
-    nothing but names the entry's own en-AU preferred term, the entry
-    itself is saved instead, under FR-38's optimistic lock. See the module
-    docstring for why the order is designation-first."""
+    """One route, two storage homes (issue #227).
+
+    `use="preferred"` with the default `en-AU` addresses the entry's own
+    preferred term outright. Otherwise `term` resolves against an active
+    `designation` row first, falling back to the preferred term only where
+    there is no such row - see the module docstring for why that fallback
+    order is designation-first, and why the explicit `use` exists at all.
+    """
     entry = load_entry_for_update(session, business_key)
-    designation = find_active_designation(
-        session, entry_id=entry.id, term=body.term, language=body.language
+    designation = (
+        None
+        if body.use is DesignationUse.PREFERRED and body.language == DEFAULT_LANGUAGE
+        # ADR-0022: there is no en-AU preferred designation row to find, so
+        # the lookup is skipped rather than run and discarded.
+        else find_active_designation(
+            session, entry_id=entry.id, term=body.term, language=body.language
+        )
     )
 
-    if designation is None and _addresses_own_preferred_term(entry, body):
+    if designation is None and _targets_preferred_term(entry, body):
         if body.expected_row_version is None:
             raise PreferredTermVersionRequiredError(
                 f"amending {business_key}'s own preferred term requires expected_row_version"
@@ -614,11 +687,14 @@ def amend_designation_route(
 
     if designation is None:
         # The 404 this route has always given an unresolvable term. Raised
-        # by `load_active_designation` rather than directly, so the message
-        # stays that function's, in one place - it always raises here, and
-        # the assignment is what narrows the type for the rest of the body.
-        designation = load_active_designation(
-            session, entry_id=entry.id, term=body.term, language=body.language
+        # here rather than by calling `load_active_designation` for its
+        # refusal, which would re-run the identical `SELECT` purely to fail
+        # (issue #227 review). The message is for the log only - the handler
+        # never echoes `str(exc)` - so it says what this route actually
+        # checked, which is more than that function would know.
+        raise DesignationNotFoundError(
+            f"entry {entry.id} has no active designation for term {body.term!r} in "
+            f"language {body.language!r}, and it is not the entry's own preferred term"
         )
 
     if body.expected_row_version is not None:

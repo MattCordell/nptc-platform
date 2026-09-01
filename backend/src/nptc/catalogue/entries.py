@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
@@ -417,7 +418,16 @@ def save_entry(
     # resubmission is not a caller mistake, and `row_version` must not move
     # for one: doing so would invalidate a concurrent editor's still-current
     # token for no actual change.
-    if not _would_change(entry, changes):
+    # `sa_inspect(...).modified` as well as the declared changes, because
+    # `record_change` diffs the whole instance, not just what `changes`
+    # named (issue #227 review). A caller that mutated the loaded `entry`
+    # directly and then called this with coincidentally-unchanged `changes`
+    # would otherwise have those pending mutations flushed with no audit
+    # event - NFR-08 says every state-changing write emits one, so the
+    # short-circuit has to be conditional on the instance being genuinely
+    # clean, not merely on `changes` being a no-op. No caller does this
+    # today; `load_entry_for_update` is shared enough to make one plausible.
+    if not _would_change(entry, changes) and not sa_inspect(entry).modified:
         return entry
 
     if changes.preferred_term is not None:

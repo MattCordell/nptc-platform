@@ -103,6 +103,16 @@ _CATALOGUE_SCHEMA_NAMES = (
     "AcknowledgeCollisionRequest",
     "CollisionAcknowledgementResponse",
     "CollisionWarning",
+    # issue #227: the two 409 bodies that carry more than `detail`. Declared
+    # response models rather than prose, so #147's generated client can read
+    # FR-05's colliding entry and FR-38's conflicting values instead of
+    # typing both branches as `{detail}` and dropping the payload. They are
+    # part of the catalogue surface and so are held to the same
+    # no-internal-identifier assertion as everything above.
+    "DesignationCollisionResponse",
+    "CollisionItem",
+    "VersionConflictResponse",
+    "FieldConflictItem",
 )
 
 

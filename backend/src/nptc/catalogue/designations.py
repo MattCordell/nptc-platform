@@ -211,9 +211,14 @@ def load_active_designation(
     means; all this adds is the refusal."""
     designation = find_active_designation(session, entry_id=entry_id, term=term, language=language)
     if designation is None:
+        # Canonicalised once, into a local, rather than inline in the
+        # f-string: the miss path would otherwise run `validate_language_tag`
+        # a second time over a value `find_active_designation` has already
+        # canonicalised (issue #227 review).
+        canonical_language = validate_language_tag(language)
         raise DesignationNotFoundError(
             f"entry {entry_id} has no active designation for term {term!r} "
-            f"in language {validate_language_tag(language)!r}"
+            f"in language {canonical_language!r}"
         )
     return designation
 

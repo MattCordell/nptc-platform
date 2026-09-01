@@ -740,6 +740,105 @@ def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
     assert detail["preferred_term"] == "Full blood count"
 
 
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
+    api: ApiTestApp,
+) -> None:
+    """The other half of the shadowing case (issue #227 review), and the
+    reason `use` exists at all. Designation-first is right for an unqualified
+    request, but on its own it would leave the preferred term *permanently*
+    unreachable once such a synonym exists - and this route creates that
+    state itself. `use="preferred"` says which one was meant."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-preferred")
+    added = _add(api, business_key, token, terms=["Full blood count"])
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, use="preferred", expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["use"] == "preferred"
+    assert body["designation"]["term"] == "Full blood count, automated"
+    assert body["row_version"] == version + 1
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count, automated"
+    # The shadowing synonym is untouched - one write, one term.
+    assert {d["term"] for d in detail["designations"]} == {"Full blood count"}
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
+    """The disambiguator has to work in both directions, or it is only half
+    a fix: a caller who says `synonym` and names a term that is only the
+    entry's preferred term must get a 404, not a silent entry-level write.
+    `expected_row_version` is supplied, so nothing but the `use` check stands
+    between this and a 200."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-synonym")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="synonym", expected_row_version=version)
+
+    assert response.status_code == 404, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_use_preferred_in_another_language_still_means_a_designation_row(
+    api: ApiTestApp,
+) -> None:
+    """`use="preferred"` only diverts to the entry when the language is
+    en-AU. ADR-0022 permits a preferred variant in another language as a
+    real `designation` row, and `ck_designation_no_en_au_preferred` is
+    exactly what guarantees there is no en-AU row to confuse it with."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-mi-nz")
+    added = _add(
+        api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
+    )
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        use="preferred",
+        language="mi-NZ",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["language"] == "mi-NZ"
+    assert response.json()["row_version"] == version
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_use_preferred_still_requires_a_row_version(api: ApiTestApp) -> None:
+    """The disambiguator does not bypass the lock: reaching the entry by
+    stating `use` rather than by term is still an entry-level write."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-no-version")
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="preferred")
+
+    assert response.status_code == 422, response.text
+    assert "expected_row_version" in response.json()["detail"]
+    assert _audit_event_count(api) == before
+
+
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_a_stale_row_version_on_a_designation_amendment_is_409(api: ApiTestApp) -> None:

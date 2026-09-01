@@ -182,7 +182,7 @@ for the same reason those two stay apart from each other.
 | Path | Method | Body | Returns |
 |---|---|---|---|
 | `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason}` | `201 {designations: [Designation], warnings: [CollisionWarning]}` |
-| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, expected_row_version?, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version?, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason}` | `200 Designation` |
 | `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
 
@@ -250,6 +250,24 @@ carrying an active en-AU synonym whose `term_key` equals its own `preferred_term
 preferred term first would therefore make such a synonym unreachable for editing -
 silently changing what a route shipped in #224 does. Taking the designation first means
 the new branch only ever claims what this route already 404s on.
+
+**`use` says which one you meant, when the term alone cannot.** Designation-first is the
+right default, but on its own it leaves the mirror-image problem: once a shadowing
+synonym exists - and `POST .../designations` will create one - the entry's preferred term
+becomes permanently unreachable, and a caller asking for it silently moves the synonym
+instead. For #149's screen, which renders both in one list, that is an ambiguous click
+with a silent wrong outcome. The optional `use` on the request resolves it:
+
+| `use` | `language` | Resolves to |
+|---|---|---|
+| unset | any | An active `designation` row; the entry's own preferred term only if there is none. |
+| `preferred` | `en-AU` | The entry's own preferred term, always. No designation lookup runs - ADR-0022 guarantees there is no such row. |
+| `preferred` | anything else | A `designation` row. A non-en-AU preferred variant is a real row, and `ck_designation_no_en_au_preferred` is what keeps the two unambiguous. |
+| `synonym` | any | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
+
+With `use="preferred"` the submitted `term` is not consulted: an entry has exactly one
+preferred term, so naming it adds nothing, matching how `POST .../designations` with
+`use=preferred` does not ask which one either.
 
 Addressing folds the same way on both branches: `preferred_term_key` is written by
 `CatalogueEntry`'s own `@validates` hook from the same `collision_key(clean_term(...))`
@@ -325,6 +343,22 @@ so there is no route to withdraw one.
 | 404 | No catalogue entry with this `business_key`, or a `term` that is neither an *active* designation for this `language` nor (on `/amendment`) the entry's own en-AU preferred term. |
 | 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. On `/amendment` only, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
 | 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation to `POST .../designations` (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`; amend it through `/amendment` instead), more than one preferred term in one batch, or a changelog note that fails FR-37. On `/amendment` only, also amending the entry's own preferred term with no `expected_row_version`. |
+
+**Two 409 bodies carry more than `detail`, and are declared as such.** Most refusals are
+an `ErrorResponse` - one sentence, and deliberately nothing else. FR-05's collision and
+FR-38's version conflict are not, because a bare sentence withholds exactly what those
+requirements exist to give the caller: the colliding entry (PRD §17.2 item 5), and the
+conflicting values to reconcile against. Both are declared response models
+(`DesignationCollisionResponse`, `VersionConflictResponse` in `nptc.api.errors`) rather
+than prose, `anyOf`-ed with `ErrorResponse`, so #147's generated client can read the
+payload instead of typing the branch as `{detail}` and dropping it. The models are
+constructed by the handlers that emit them, so the declared schema and the real body
+cannot drift.
+
+They are declared only where they can occur: `POST .../designations` and `/amendment`
+call service functions that run `assert_no_error_collisions`; only `/amendment` writes an
+entry. Retirement and acknowledgement can produce neither, and a documented body a route
+cannot emit is a branch a generated client can never exercise.
 
 Every exception `nptc.catalogue.designations`/`nptc.catalogue.collisions` raises is
 mapped in `nptc.api.errors` the same way the `CodeBinding*` family is: read
