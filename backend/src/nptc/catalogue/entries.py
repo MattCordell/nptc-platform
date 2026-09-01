@@ -306,6 +306,27 @@ def _build_conflict_report(
     )
 
 
+def _would_change(entry: CatalogueEntry, changes: EntryChanges) -> bool:
+    """Whether applying `changes` to `entry` would actually alter anything.
+
+    `preferred_term` is compared *cleaned*, because that is what would be
+    stored: `CatalogueEntry`'s own `@validates` hook runs `clean_term` on
+    assignment, so a submitted term differing only by a normalisable space
+    (PRD Appendix A.1) is the same string once stored, and treating it as a
+    change would write an audit event saying nothing changed.
+
+    `clean_term` can raise `TermCleaningError` on a term with no single
+    correct repair (FR-63). That is deliberately not caught: the caller
+    submitted an unstorable term, and refusing it here - before the
+    savepoint, like every other precondition in this module - is the same
+    answer they would have got a few lines later.
+    """
+    submitted = changes.as_dict()
+    if "preferred_term" in submitted:
+        submitted["preferred_term"] = clean_term(str(submitted["preferred_term"]))
+    return any(getattr(entry, name) != value for name, value in submitted.items())
+
+
 def assert_entry_row_version(
     session: Session,
     entry: CatalogueEntry,
@@ -376,6 +397,28 @@ def save_entry(
     entry = load_entry_for_update(session, business_key)
 
     assert_entry_row_version(session, entry, expected_row_version, changes=changes)
+
+    # A no-op save (the same values resubmitted) returns before anything is
+    # touched - `nptc.catalogue.property_values.save_property_values` makes
+    # the same check for the same reasons, and `nptc.catalogue.designations.
+    # amend_designation` does for a term resubmitted unchanged.
+    #
+    # Deliberately *after* the row-version check above, not before: a stale
+    # caller whose submitted values happen to coincide with the current ones
+    # is still refused, because the version is the contract regardless
+    # (`test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
+    # have_matched_still_reports_zero_conflicts`).
+    #
+    # Without this, `record_change` raises `AuditNoOpError` on the empty
+    # diff - an unmapped error, so an editor re-saving a form without having
+    # changed the term got a 500 (found reviewing issue #227's own new
+    # route, where a `preferred_term` differing only by a normalisable space
+    # cleans to the stored value and reaches exactly this path). A no-op
+    # resubmission is not a caller mistake, and `row_version` must not move
+    # for one: doing so would invalidate a concurrent editor's still-current
+    # token for no actual change.
+    if not _would_change(entry, changes):
+        return entry
 
     if changes.preferred_term is not None:
         # FR-05: checked after the row_version precondition (a stale

@@ -139,6 +139,47 @@ def test_a_stale_save_that_would_have_matched_still_reports_zero_conflicts(
     assert exc_info.value.report.conflicts == ()
 
 
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_no_op_save_writes_nothing_and_does_not_move_the_row_version(
+    app_session: Session,
+) -> None:
+    """Resubmitting the values an entry already holds is not a change, and
+    must not be recorded as one: `record_change` raises `AuditNoOpError` on
+    an empty diff, so without the short-circuit this was an unmapped error
+    rather than a quiet success (found reviewing issue #227's own new HTTP
+    route, where re-saving an unchanged edit form reaches exactly here).
+
+    `row_version` must not move either. Bumping it for a no-op would
+    invalidate a *concurrent* editor's own still-current token over a change
+    that never happened - the same reasoning
+    `save_property_values` records for its own no-op check."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Full blood count",
+        reason="Created for the no-op save test",
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    saved = save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        # A trailing normalisable space (PRD Appendix A.1): `clean_term`
+        # collapses it on assignment, so this is the stored value already -
+        # comparing the raw submitted string would miss it.
+        changes=EntryChanges(preferred_term="Full blood count "),
+        reason="Re-saving the form without having changed anything",
+    )
+
+    assert saved.preferred_term == "Full blood count"
+    assert saved.row_version == 1
+    assert _audit_event_count(app_session) == before
+
+
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_a_rejected_save_writes_no_audit_event_and_leaves_the_entry_untouched(

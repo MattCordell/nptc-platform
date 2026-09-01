@@ -846,6 +846,69 @@ def test_a_non_en_au_preferred_variant_is_not_the_entrys_own_preferred_term(
     assert detail["preferred_term"] == "Full blood count"
 
 
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_resubmitting_the_preferred_term_unchanged_is_a_no_op_not_a_500(
+    api: ApiTestApp,
+) -> None:
+    """An administrator re-saving an edit form without having changed the
+    term is the most ordinary request there is, and it must not be an
+    error. Before `save_entry` grew its no-op short-circuit this was a 500:
+    `record_change` raised `AuditNoOpError` on the empty diff, which nothing
+    maps.
+
+    The term here differs only by a trailing space - a normalisable one
+    (PRD Appendix A.1), which `clean_term` collapses on assignment - so the
+    comparison has to be against the *cleaned* value, not the raw string a
+    caller submitted."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-noop")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api, business_key, token, new_term="Full blood count ", expected_row_version=version
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["term"] == "Full blood count"
+    # No audit event for a change that did not happen, and the token must
+    # not move: bumping it would invalidate a concurrent editor's own
+    # still-current version for no actual change.
+    assert _audit_event_count(api) == before
+    assert response.json()["row_version"] == version
+    assert _row_version(api, business_key, token) == version
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
+    api: ApiTestApp,
+) -> None:
+    """The no-op short-circuit sits *after* the version check, not before:
+    the version is the contract regardless of whether the submitted values
+    happen to coincide (the HTTP counterpart of
+    `test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
+    have_matched_still_reports_zero_conflicts`)."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-noop-stale")
+    stale = _row_version(api, business_key, token)
+    first = _amend(api, business_key, token, expected_row_version=stale)
+    assert first.status_code == 200, first.text
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Full blood count, automated",
+        new_term="Full blood count, automated",
+        expected_row_version=stale,
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["conflicts"] == []
+
+
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
 
 
