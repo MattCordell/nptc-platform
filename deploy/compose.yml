@@ -37,7 +37,7 @@ services:
       - nptc
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.2-1
+    image: quay.io/keycloak/keycloak:26.7.3-0
     restart: unless-stopped
     # start-dev, no volume: the realm below (ADR-0014) is imported fresh on
     # every container start, so reproducibility is by construction and any
