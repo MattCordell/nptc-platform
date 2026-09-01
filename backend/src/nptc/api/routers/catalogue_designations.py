@@ -584,9 +584,9 @@ def _targets_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest
     language is a real row, and `ck_designation_no_en_au_preferred` is what
     guarantees there is no en-AU one to be confused with.
 
-    With `use` unset this is a question about the *term*, compared against
-    the stored, indexed `preferred_term_key` column rather than a key
-    recomputed from `entry.preferred_term`. That column is written by
+    `term` always has to name it, `use` or no `use`. The comparison is
+    against the stored, indexed `preferred_term_key` column rather than a
+    key recomputed from `entry.preferred_term`: that column is written by
     `CatalogueEntry`'s own `@validates("preferred_term")` hook from the same
     `collision_key(clean_term(...))` composition used here, so it cannot
     drift, and `nptc.catalogue.collisions`' module docstring makes "never
@@ -595,22 +595,32 @@ def _targets_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest
     preferred term exactly as it would resolve a designation
     (`load_active_designation` keys on `term_key` for the same reason).
 
-    With `use="preferred"` it is a question about the caller's *stated
-    intent*, and the term is not consulted at all - the point of the
-    disambiguator is to reach a preferred term that a shadowing synonym
-    would otherwise hide, and an entry has exactly one, so naming it adds
-    nothing. A caller who says `preferred` and quotes the wrong term still
-    gets the preferred term, the way `POST .../designations` with
-    `use=preferred` does not ask which preferred term it means either.
+    **`use="preferred"` narrows which storage home to look in; it does not
+    excuse the caller from naming the term** (issue #227 review). `term` is
+    a required field whose documented job on this route is to address the
+    thing being edited, and a branch that quietly disregarded it would be
+    the same silent-wrong-target defect `use` was added to close - a
+    mistyped `term` alongside `use="preferred"` would rename the preferred
+    term rather than 404. Requiring the match costs the escape hatch
+    nothing: in the case `use` exists for, the shadowing synonym folds to
+    the *same* `collision_key` as the preferred term by definition - that is
+    what makes it a shadow - so a caller reaching past it always names a
+    matching term anyway. What `use` actually buys is skipping the
+    designation lookup, which is what lets the preferred term be reached at
+    all once a synonym shadows it.
+
+    (An earlier revision skipped the comparison here, reasoning that an
+    entry has exactly one preferred term so naming it adds nothing, by
+    analogy with `POST .../designations` under `use=preferred`. The analogy
+    does not hold: there `term` is the *new value*, here it is the
+    *address*.)
 
     `body.language` has already been canonicalised by `_WithLanguage`, so
     `en-au` is matched here too, not only `en-AU`.
     """
     if body.language != DEFAULT_LANGUAGE:
         return False
-    if body.use is DesignationUse.PREFERRED:
-        return True
-    if body.use is not None:
+    if body.use is DesignationUse.SYNONYM:
         return False
     return entry.preferred_term_key == collision_key(clean_term(body.term))
 

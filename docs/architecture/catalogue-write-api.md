@@ -260,14 +260,18 @@ with a silent wrong outcome. The optional `use` on the request resolves it:
 
 | `use` | `language` | Resolves to |
 |---|---|---|
-| unset | any | An active `designation` row; the entry's own preferred term only if there is none. |
-| `preferred` | `en-AU` | The entry's own preferred term, always. No designation lookup runs - ADR-0022 guarantees there is no such row. |
+| unset | any | An active `designation` row; the entry's own preferred term only if there is none and `term` names it. |
+| `preferred` | `en-AU` | The entry's own preferred term, if `term` names it. No designation lookup runs - ADR-0022 guarantees there is no such row, and skipping it is what reaches past a shadowing synonym. |
 | `preferred` | anything else | A `designation` row. A non-en-AU preferred variant is a real row, and `ck_designation_no_en_au_preferred` is what keeps the two unambiguous. |
 | `synonym` | any | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
 
-With `use="preferred"` the submitted `term` is not consulted: an entry has exactly one
-preferred term, so naming it adds nothing, matching how `POST .../designations` with
-`use=preferred` does not ask which one either.
+**`use` narrows which storage home to look in; it never excuses the caller from naming
+the term.** `term` is required, and its job on this route is to address the thing being
+edited, so `use="preferred"` with a term that is not the preferred term is a 404 rather
+than a rename - the same silent-wrong-target class `use` exists to close. This costs the
+escape hatch nothing: a shadowing synonym folds to the *same* comparison key as the
+preferred term by definition, so a caller reaching past one always names a matching term
+anyway.
 
 Addressing folds the same way on both branches: `preferred_term_key` is written by
 `CatalogueEntry`'s own `@validates` hook from the same `collision_key(clean_term(...))`

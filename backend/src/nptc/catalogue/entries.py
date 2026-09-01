@@ -328,6 +328,55 @@ def _would_change(entry: CatalogueEntry, changes: EntryChanges) -> bool:
     return any(getattr(entry, name) != value for name, value in submitted.items())
 
 
+def _has_pending_audit_changes(entry: CatalogueEntry) -> bool:
+    """Whether `entry` already carries an unflushed change to a field
+    `record_change` would audit - a mutation made by the caller directly on
+    the loaded instance, rather than declared through `EntryChanges`.
+
+    `_would_change` alone cannot see one. It compares against the entry's
+    *current* attribute values, which a direct mutation has already moved,
+    so a caller who set `entry.status` by hand and then passed a
+    coincidentally-matching `EntryChanges` would look like a no-op and have
+    that mutation flushed with no audit event (NFR-08).
+
+    **Net history, not `sa_inspect(entry).modified`** (issue #227 review).
+    `modified` is a set-*event* flag: SQLAlchemy raises it on any
+    assignment, including one that writes the value already there - and
+    `CatalogueEntry`'s own `@validates("preferred_term")` hook assigns
+    `preferred_term_key` as well, so one assignment trips it twice. Gating
+    on it would send an identical re-assignment straight back to
+    `record_change`, into the empty diff and unmapped `AuditNoOpError` this
+    short-circuit exists to prevent. `load_history().has_changes()` is the
+    net question, and returns `False` for a same-value assignment (verified:
+    such a value lands in the history's `unchanged`, not `added`/`deleted`).
+
+    Scoped to the fields the audit policy actually diffs, matching
+    `nptc.audit.diffing.diff_instance`'s own iteration, so this and the diff
+    it is predicting cannot disagree about which fields count.
+
+    What this buys is a *loud* failure rather than a silent one. It does not
+    make a pre-mutated instance saveable: `save_entry` cannot build a
+    correct diff for one, because opening its savepoint flushes the pending
+    change and clears the history `record_change` reads, so the caller gets
+    `AuditNoOpError` - which names exactly that case and calls it a bug.
+    Short-circuiting instead would return successfully having written the
+    mutation with no audit row at all, and that is the NFR-08 failure worth
+    preventing. `save_entry` is the sole sanctioned mutator of the instance
+    it loads; this is what enforces it rather than assuming it.
+
+    Reachable only with autoflush suppressed: normally
+    `load_entry_for_update`'s own `SELECT` flushes a pending mutation before
+    `save_entry` reaches this point, which bumps `row_version` and makes the
+    save a version conflict instead.
+    """
+    policy = policy_for(CatalogueEntry)
+    state = sa_inspect(entry)
+    return any(
+        state.attrs[name].load_history().has_changes()
+        for name in policy.auditable | policy.withheld
+    )
+
+
 def assert_entry_row_version(
     session: Session,
     entry: CatalogueEntry,
@@ -418,16 +467,7 @@ def save_entry(
     # resubmission is not a caller mistake, and `row_version` must not move
     # for one: doing so would invalidate a concurrent editor's still-current
     # token for no actual change.
-    # `sa_inspect(...).modified` as well as the declared changes, because
-    # `record_change` diffs the whole instance, not just what `changes`
-    # named (issue #227 review). A caller that mutated the loaded `entry`
-    # directly and then called this with coincidentally-unchanged `changes`
-    # would otherwise have those pending mutations flushed with no audit
-    # event - NFR-08 says every state-changing write emits one, so the
-    # short-circuit has to be conditional on the instance being genuinely
-    # clean, not merely on `changes` being a no-op. No caller does this
-    # today; `load_entry_for_update` is shared enough to make one plausible.
-    if not _would_change(entry, changes) and not sa_inspect(entry).modified:
+    if not _would_change(entry, changes) and not _has_pending_audit_changes(entry):
         return entry
 
     if changes.preferred_term is not None:

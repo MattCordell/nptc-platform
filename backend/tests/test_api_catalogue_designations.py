@@ -792,6 +792,41 @@ def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> 
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
+def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
+    api: ApiTestApp,
+) -> None:
+    """`use` narrows which storage home to look in; it does not excuse the
+    caller from naming the term (issue #227 review). `term` is required and
+    its documented job here is to address the thing being edited, so a
+    mistyped one alongside `use="preferred"` must 404 rather than rename the
+    preferred term to `new_term`.
+
+    This costs the escape hatch nothing: a shadowing synonym folds to the
+    same comparison key as the preferred term by definition, so a caller
+    reaching past one always names a matching term anyway."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = _admin_token(api, subject="sub-pt-use-wrong-term")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        use="preferred",
+        term="Not this entry's term at all",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 404, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert detail["row_version"] == version
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
 def test_use_preferred_in_another_language_still_means_a_designation_row(
     api: ApiTestApp,
 ) -> None:
