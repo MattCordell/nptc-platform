@@ -163,6 +163,7 @@ def read_entry_any_status(
             entry.specimen_unconstrained,
             entry.updated_at,
         ),
+        row_version=entry.row_version,
         designations=[
             designation_from_row(row) for row in queries.load_designations(session, entry_ids)
         ],

@@ -25,9 +25,10 @@ new `if` in six route bodies. A *bad* token still 401s, because
 `current_principal` raises rather than degrading to anonymous.
 
 **What is deliberately absent from every response model here.** No `id`, no
-`entry_id`, no `*_binding_id`, no `row_version`. `business_key` is the only
+`entry_id`, no `*_binding_id`. `business_key` is the only
 identifier a caller ever sees (PRD SS6.2), the same boundary
 `nptc.auth.identity.UserRef` draws around `app_user.id`.
+
 `nptc.catalogue.queries` resolves `replaced_by_binding_id` to the
 successor's code before this module ever sees a row, so there is no
 internal id in scope here to leak by accident.
@@ -35,6 +36,17 @@ internal id in scope here to leak by accident.
 raw response *text* of every route under this prefix, whole-body, rather
 than field by field on a parsed model - the point being to catch a field
 nobody thought to write an assertion for.
+
+The one thing this rule does *not* exclude is `EntryDetail.row_version`
+(issue #227). The ban is on internal **identifiers** - values that name a
+row, and so let a caller address or correlate one outside the public
+vocabulary. FR-38's version counter names nothing; it is opaque to a
+read-only consumer and meaningful only as the value handed straight back on
+the next write. It is on `EntryDetail` and not `EntrySummary`, so it appears
+on the two detail routes rather than on every row of every page - see that
+model's own field comment. Keeping it on the shared `EntryDetail` rather
+than an admin-only subclass preserves issue #228's invariant that the public
+and admin detail routes serve one shape.
 
 **Codes are strings (FR-06).** `Binding.code` is `str`, and so is every
 value that reaches it. This is the defect class the platform exists to
@@ -364,6 +376,7 @@ def read_entry(
             entry.specimen_unconstrained,
             entry.updated_at,
         ),
+        row_version=entry.row_version,
         designations=[
             designation_from_row(row) for row in queries.load_designations(session, entry_ids)
         ],
