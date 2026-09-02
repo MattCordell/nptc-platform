@@ -1,9 +1,12 @@
 import { useParams } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import { useAdminEntryDetail } from "../api/queries.ts";
 import { ApiError } from "../api/unwrap.ts";
 import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
+import { LiveRegion } from "../components/live-region.tsx";
+import { useAnnounce } from "../components/use-announce.ts";
 
 /**
  * The catalogue entry editing screen (issue #149; FR-36).
@@ -16,14 +19,43 @@ import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
  * bindings) and #151 (registry properties) add sibling sections below it.
  */
 
+/**
+ * A refresh that failed over an entry already on screen. One string, because
+ * it is both shown and announced and the two must not drift.
+ */
+function staleWarning(businessKey: string): string {
+  return (
+    `${businessKey} could not be refreshed just now, so what follows may be out of ` +
+    "date. Sign in again, or reload the page, before making further changes."
+  );
+}
+
 export function AdminCatalogueEditPage() {
   const { businessKey } = useParams({
     from: "/authenticated/admin/catalogue/$businessKey/edit",
   });
   const entry = useAdminEntryDetail(businessKey);
+  const { message, politeness, announce } = useAnnounce();
+
+  // `isError` with data is a *refresh* that failed, which is announced rather
+  // than rendered into a live region as it appears: `LiveRegion` is mounted
+  // and empty from the first render for the reason its own docstring gives -
+  // a screen reader reliably reports a text change inside a region that was
+  // already there, and not an element created and filled in the same tick
+  // (#148). This banner's whole job is telling an editor that what they are
+  // reading may be stale, so the reader who cannot see it appear is the one
+  // who most needs it (PR #238 review).
+  const staleData = entry.isError && entry.data !== undefined;
+  useEffect(() => {
+    if (staleData) {
+      announce(staleWarning(businessKey));
+    }
+  }, [staleData, businessKey, announce]);
 
   return (
     <section aria-labelledby="edit-entry-heading">
+      <LiveRegion message={message} politeness={politeness} />
+
       <h1 id="edit-entry-heading">
         {entry.data ? entry.data.preferred_term : `Edit ${businessKey}`}
       </h1>
@@ -42,12 +74,7 @@ export function AdminCatalogueEditPage() {
         <LoadFailure businessKey={businessKey} error={entry.error} />
       )}
 
-      {entry.isError && entry.data !== undefined && (
-        <p role="status">
-          {businessKey} could not be refreshed just now, so what follows may be out of
-          date. Your last save is unaffected.
-        </p>
-      )}
+      {staleData && <p>{staleWarning(businessKey)}</p>}
 
       {entry.data && (
         <>

@@ -138,6 +138,19 @@ function readsOf(calls: { method: string; path: string }[]) {
 }
 
 /**
+ * Everything the page's live regions currently say. There are two - the page
+ * owns one for a failed refresh, the panel one for the outcome of a write -
+ * and both are mounted from the first render, which is the point of
+ * `LiveRegion`. A test cares what was announced, not which region carried it.
+ */
+function announced(): string {
+  return screen
+    .getAllByRole("status")
+    .map((region) => region.textContent ?? "")
+    .join(" ");
+}
+
+/**
  * Queries scoped to the open dialog. The page's own "Add synonyms" form stays
  * mounted behind a dialog, so an unscoped `getByLabelText(/Changelog note/)`
  * legitimately matches two fields - which is the layout working, not a bug.
@@ -258,6 +271,10 @@ describe("the entry it loads", () => {
       },
     });
     await renderLoaded();
+    // Captured after the load, which is two reads under StrictMode, so the
+    // assertion below is about the refetch and not about the load (PR #238
+    // review).
+    const readsBefore = readsOf(calls).length;
 
     await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
     await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
@@ -267,11 +284,15 @@ describe("the entry it loads", () => {
       await screen.findByText(/could not be refreshed just now/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Sign out and sign in again/)).not.toBeInTheDocument();
+    // Announced, not just shown: the reader who cannot see the banner appear
+    // is the one it exists for. `LiveRegion` is the always-mounted region, so
+    // the sentence is a text change inside it rather than a new element.
+    await waitFor(() => expect(announced()).toMatch(/could not be refreshed just now/));
     expect(
       screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
     ).toBeInTheDocument();
     // The refetch the conflict asked for actually went out.
-    expect(readsOf(calls).length).toBeGreaterThan(1);
+    expect(readsOf(calls).length).toBeGreaterThan(readsBefore);
   });
 });
 
@@ -606,9 +627,7 @@ describe("a warning-severity collision", () => {
     await addWarnedTerm(user);
 
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "1 term added. 1 possible duplicate to review.",
-      ),
+      expect(announced()).toContain("1 term added. 1 possible duplicate to review."),
     );
   });
 

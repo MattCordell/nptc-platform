@@ -139,5 +139,5 @@ authentication at the top of this page.
 
 **"... could not be refreshed just now, so what follows may be out of date."** The entry
 loaded, but a later refresh was refused - usually a sign-in that has expired while the
-screen was open. What you have already saved is unaffected. Sign in again and reopen the
-entry before making further changes.
+screen was open. The terms you can see may no longer be current. Sign in again and reopen
+the entry before making further changes.
