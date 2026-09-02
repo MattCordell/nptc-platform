@@ -627,6 +627,34 @@ def test_a_comma_space_is_still_a_valid_synonym_delimiter() -> None:
     assert split_synonyms("ADA RBC, ADA red cells") == ("ADA RBC", "ADA red cells")
 
 
+@pytest.mark.req("FR-04")
+def test_stripping_covers_the_codepoints_javascript_and_python_disagree_on() -> None:
+    """The shared fixture behind ADR-0030's mirror of this function.
+
+    `frontend/src/catalogue/split-synonyms.ts` splits the same cells in the
+    browser, and the two `strip` implementations are not the same set:
+    `str.strip()` removes U+0085 (NEL) and U+001C-U+001F, which
+    `String.prototype.trim()` leaves; `trim()` removes U+FEFF, which
+    `str.strip()` leaves. Those are precisely PRD Appendix A.1 characters, so
+    a divergence would be invisible in exactly the input class this platform
+    exists to catch. Asserting the boundary here and on the identical strings
+    in `split-synonyms.test.ts` makes a drift fail on a named codepoint.
+    """
+    # Escapes, never the characters themselves - the rule
+    # `split-synonyms.ts` states and follows. A fixture whose job is to pin a
+    # codepoint boundary is exactly the one an editor's strip-invisibles or a
+    # paste through a review UI can silently turn into a space, leaving a test
+    # that passes while asserting nothing (PR #238 review).
+    nel, fs, bom = "\x85", "\x1c", "\ufeff"
+    assert split_synonyms(f"{nel}Ferritin{nel};{fs}Serum ferritin{fs}") == (
+        "Ferritin",
+        "Serum ferritin",
+    )
+    # Not stripped: U+FEFF has no single correct repair, so it survives the
+    # split and is refused downstream rather than silently swallowed here.
+    assert split_synonyms(f"{bom}Ferritin") == (f"{bom}Ferritin",)
+
+
 @pytest.mark.req("FR-88")
 def test_specimen_detection_agrees_with_emission_on_an_interior_invisible_character(
     tmp_path: Path,
