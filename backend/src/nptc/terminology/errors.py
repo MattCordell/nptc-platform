@@ -12,6 +12,11 @@ Two conditions in FR-26's error table need no new type here: a malformed
 or Verhoeff-failing SCTID is `nptc_shared.sctid.InvalidSCTIDError`, already
 mapped to 422 by `nptc.api.errors`, and a malformed `NPTC_TX_*` value is
 `nptc_shared.terminology.TerminologyConfigError`, already mapped to 500.
+The latter claim holds only because `resolve_concept` re-raises a
+`TerminologyConfigError` before it ever reaches the classification that
+produces the three types below - it is itself a `TerminologyError`
+subclass, and without that carve-out it would be folded into
+`TerminologyUpstreamError`'s 502 catch-all instead.
 """
 
 from __future__ import annotations

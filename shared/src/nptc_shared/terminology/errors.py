@@ -106,6 +106,26 @@ class TerminologyProtocolError(TerminologyError):
     """
 
 
+class TerminologyOutcomeError(TerminologyProtocolError):
+    """A 2xx response whose body is an ``OperationOutcome``.
+
+    Distinct from ``TerminologyStatusError`` because this is precisely the
+    case that, parsed leniently as if it were the expected resource, would
+    yield an empty ``Expansion`` and read as "nothing matched" instead of
+    "the server refused this request" (FR-54's hazard).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: Operation | None = None,
+        issues: tuple[OperationOutcomeIssue, ...] = (),
+    ) -> None:
+        super().__init__(message, operation=operation)
+        self.issues = issues
+
+
 #: ``OperationOutcome`` issue codes that mean "this code is not in this
 #: edition" rather than "this request failed" - see ``is_concept_absence``.
 NOT_FOUND_ISSUE_CODES = frozenset({"not-found", "code-invalid", "invalid-code"})
@@ -136,23 +156,3 @@ def is_concept_absence(exc: TerminologyError) -> bool:
     return exc.status_code == 404 or any(
         issue.code in NOT_FOUND_ISSUE_CODES for issue in exc.issues
     )
-
-
-class TerminologyOutcomeError(TerminologyProtocolError):
-    """A 2xx response whose body is an ``OperationOutcome``.
-
-    Distinct from ``TerminologyStatusError`` because this is precisely the
-    case that, parsed leniently as if it were the expected resource, would
-    yield an empty ``Expansion`` and read as "nothing matched" instead of
-    "the server refused this request" (FR-54's hazard).
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        operation: Operation | None = None,
-        issues: tuple[OperationOutcomeIssue, ...] = (),
-    ) -> None:
-        super().__init__(message, operation=operation)
-        self.issues = issues

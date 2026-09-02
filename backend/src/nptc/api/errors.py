@@ -56,6 +56,7 @@ catalogue_bindings` a route to raise them from.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -968,7 +969,19 @@ def register_exception_handlers(app: FastAPI) -> None:
         # not routine. FR-54: nothing here degrades a result, it only tells
         # the caller the live check could not run this time.
         _logger.warning("terminology lookup refused, server unavailable: %s", exc)
-        headers = {"Retry-After": str(int(exc.retry_after))} if exc.retry_after else None
+        # `is not None`, not truthiness: a server-supplied `retry_after` of
+        # `0.0` is a real value ("retry immediately"), not "none given" -
+        # truthiness would silently drop the header for it. `ceil` rounds
+        # up rather than `int`'s truncate-toward-zero, so a sub-second value
+        # (e.g. `0.4`) is never rounded down to `Retry-After: 0`, and
+        # `max(1, ...)` is the floor RFC 9110 implies for a delay worth
+        # sending at all - it also guards against an ever-negative value
+        # producing an invalid header.
+        headers = (
+            {"Retry-After": str(max(1, math.ceil(exc.retry_after)))}
+            if exc.retry_after is not None
+            else None
+        )
         return JSONResponse(
             status_code=TerminologyUnavailableError.http_status,
             content={"detail": _DETAIL_TERMINOLOGY_UNAVAILABLE},

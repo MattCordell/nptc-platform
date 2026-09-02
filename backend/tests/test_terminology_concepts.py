@@ -10,6 +10,8 @@ themselves, one exception family at a time.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import pytest
 
 from nptc.terminology.concepts import resolve_concept
@@ -24,10 +26,12 @@ from nptc_shared.terminology import (
     SNOMED_CT_AU,
     SNOMED_SYSTEM,
     Designation,
+    Edition,
     LookupResult,
     Operation,
     StubConcept,
     StubTerminologyClient,
+    TerminologyConfigError,
     TerminologyOutcomeError,
     TerminologyRateLimitError,
     TerminologyStatusError,
@@ -38,6 +42,43 @@ from nptc_shared.terminology import (
 _CODE = "391483001"
 _FSN = "Microscopy (acid fast bacilli) (procedure)"
 _AU_PREFERRED_TERM = "Acid fast bacilli microscopy"
+_RESOLVED_VERSION = "http://snomed.info/sct/32506021000036107/version/20260531"
+
+
+@dataclass
+class _RecordingClient:
+    """A minimal `TerminologyClient` double that records exactly what
+    `resolve_concept` passed to `lookup`.
+
+    `StubTerminologyClient`'s own request log (`StubRequest`) records only
+    `(operation, code)` (`stub.py`), which cannot tell "called with
+    `display_language=AU_LANGUAGE_TAG`" apart from "called with
+    `display_language=None`" - and `stub.py`'s own `_display_for` falls
+    back to `AU_LANGUAGE_TAG` when `display_language is None`, so deleting
+    that argument from `resolve_concept` entirely would leave every
+    `StubTerminologyClient`-based test in this module green. This double
+    exists to pin the argument itself, not just its accidental effect."""
+
+    result: LookupResult
+    calls: list[dict[str, object]] = field(default_factory=list)
+
+    def lookup(
+        self,
+        code: str,
+        *,
+        edition: Edition,
+        properties: tuple[str, ...] = (),
+        display_language: str | None = None,
+    ) -> LookupResult:
+        self.calls.append(
+            {
+                "code": code,
+                "edition": edition,
+                "properties": properties,
+                "display_language": display_language,
+            }
+        )
+        return self.result
 
 
 def _client_with_concept(*, active: bool = True) -> StubTerminologyClient:
@@ -65,6 +106,58 @@ def test_resolves_fsn_with_tag_intact_and_au_preferred_term() -> None:
     assert resolved.fsn == _FSN
     assert resolved.au_preferred_term == _AU_PREFERRED_TERM
     assert resolved.edition == "au"
+
+
+@pytest.mark.req("FR-82")
+def test_resolve_concept_passes_the_editions_display_language_to_lookup() -> None:
+    """Pins FR-82's central rule against silent deletion (issue #240
+    review): see `_RecordingClient`'s own docstring for why
+    `StubTerminologyClient`'s request log cannot catch this on its own."""
+    client = _RecordingClient(
+        result=LookupResult(code=_CODE, system=SNOMED_SYSTEM, display=_AU_PREFERRED_TERM)
+    )
+
+    resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["display_language"] == AU_LANGUAGE_TAG
+    assert client.calls[0]["properties"] == ("inactive",)
+
+
+@pytest.mark.req("FR-48")
+def test_resolved_version_threads_through_from_the_lookup_result() -> None:
+    """FR-48. `StubConcept`/`add_concept` never populates
+    `resolved_version` (there is no argument for it) - only a seeded
+    `StubTerminologyClient(resolved_version=...)` or a raw `LookupResult`
+    can reach a non-null value, so this is the only way to prove the field
+    is threaded through rather than always `null` (issue #240 review)."""
+    client = StubTerminologyClient(resolved_version={"au": _RESOLVED_VERSION})
+    client.add_concept(
+        StubConcept(code=_CODE, fsn=_FSN, preferred_terms={AU_LANGUAGE_TAG: _AU_PREFERRED_TERM})
+    )
+
+    resolved = resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
+
+    assert resolved.resolved_version == _RESOLVED_VERSION
+
+
+@pytest.mark.req("FR-74")
+def test_resolved_system_is_the_servers_own_value() -> None:
+    """issue #240 review: `resolve_concept` must report what the server
+    actually said, not a locally-held constant that could silently
+    disagree with it (and would also be a second copy of a URI
+    `nptc_shared.terminology.SNOMED_SYSTEM` already carries)."""
+    client = StubTerminologyClient()
+    client.seed_lookup(
+        _CODE,
+        LookupResult(
+            code=_CODE, system="http://example.test/a-different-system", display=_AU_PREFERRED_TERM
+        ),
+    )
+
+    resolved = resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
+
+    assert resolved.system == "http://example.test/a-different-system"
 
 
 @pytest.mark.req("FR-26")
@@ -203,6 +296,20 @@ def test_unseeded_stub_raises_terminology_upstream_not_not_found() -> None:
     client = StubTerminologyClient()  # nothing seeded at all
 
     with pytest.raises(TerminologyUpstreamError):
+        resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
+
+
+@pytest.mark.req("FR-54")
+def test_terminology_config_error_propagates_unchanged() -> None:
+    """A malformed `NPTC_TX_*` value is already mapped to 500 by
+    `nptc.api.errors` - `resolve_concept` must never fold it into
+    `_classify`'s own 4xx/5xx types, since `TerminologyConfigError` is
+    itself a `TerminologyError` subclass and would otherwise land in the
+    502 catch-all (issue #240 review)."""
+    client = StubTerminologyClient()
+    client.seed_error(Operation.LOOKUP, TerminologyConfigError("bad config"))
+
+    with pytest.raises(TerminologyConfigError):
         resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
 
 

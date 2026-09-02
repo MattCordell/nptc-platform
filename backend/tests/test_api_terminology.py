@@ -103,7 +103,7 @@ def _seed_concept(api: ApiTestApp, *, code: str = _CODE, active: bool = True) ->
     )
 
 
-def _get(api: ApiTestApp, token: str, code: str = _CODE) -> Any:
+def _get(api: ApiTestApp, token: str | None, code: str = _CODE) -> Any:
     return api.get(f"/terminology/concepts/{code}", token=token)
 
 
@@ -146,6 +146,38 @@ def test_lookup_18_digit_code_round_trips_exactly_as_a_string(api: ApiTestApp) -
     assert response.status_code == 200, response.text
     assert f'"code":"{code}"' in response.text.replace(" ", "")
     assert response.json()["code"] == code
+
+
+@pytest.mark.req("FR-48")
+@pytest.mark.integration
+def test_lookup_response_carries_the_resolved_version_the_server_reported(
+    api: ApiTestApp,
+) -> None:
+    """FR-48: which release actually answered. `StubConcept`/`add_concept`
+    never populates `resolved_version` (there is no argument for it), so
+    this seeds a raw `LookupResult` directly - the only way to reach a
+    non-null value against the stub, and proof the field is actually wired
+    through rather than always serving `null` regardless of what the
+    "client" returned."""
+    api.terminology.seed_lookup(
+        _CODE,
+        LookupResult(
+            code=_CODE,
+            system=SNOMED_SYSTEM,
+            display=_AU_PREFERRED_TERM,
+            resolved_version=_RESOLVED_VERSION,
+            designations=(
+                Designation(value=_FSN, use_system=SNOMED_SYSTEM, use_code="900000000000003001"),
+            ),
+            properties=(),
+        ),
+    )
+    token = _role_token(api, subject="sub-lookup-resolved-version", role=Role.PROVISIONAL)
+
+    response = _get(api, token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["resolved_version"] == _RESOLVED_VERSION
 
 
 @pytest.mark.req("FR-82")
@@ -270,19 +302,53 @@ def test_lookup_transport_failure_is_503(api: ApiTestApp) -> None:
 
 @pytest.mark.req("FR-54")
 @pytest.mark.integration
-def test_lookup_persisted_rate_limit_is_503_with_retry_after(api: ApiTestApp) -> None:
+@pytest.mark.parametrize(
+    ("retry_after", "expected_header"),
+    [
+        pytest.param(30.0, "30", id="whole-number"),
+        # ceil, not int(): a sub-second wait must never round down to "0",
+        # which HTTP clients would read as "retry immediately" rather than
+        # "wait about a second" (issue #240 review).
+        pytest.param(0.4, "1", id="sub-second-rounds-up"),
+        # `is not None`, not truthiness: a server-supplied `0.0` is a real
+        # "retry immediately" answer and must still produce a header, not
+        # silently be treated the same as "no retry_after at all".
+        pytest.param(0.0, "1", id="zero-still-emits-a-header"),
+    ],
+)
+def test_lookup_persisted_rate_limit_is_503_with_retry_after(
+    api: ApiTestApp, retry_after: float, expected_header: str
+) -> None:
     api.terminology.seed_error(
         Operation.LOOKUP,
-        TerminologyRateLimitError("rate limited", status_code=429, retry_after=30.0),
+        TerminologyRateLimitError("rate limited", status_code=429, retry_after=retry_after),
         key=_CODE,
     )
-    token = _role_token(api, subject="sub-lookup-rate-limit", role=Role.PROVISIONAL)
+    token = _role_token(
+        api, subject=f"sub-lookup-rate-limit-{expected_header}", role=Role.PROVISIONAL
+    )
 
     response = _get(api, token)
 
     assert response.status_code == 503, response.text
-    assert response.headers["Retry-After"] == "30"
+    assert response.headers["Retry-After"] == expected_header
     assert set(response.json()) == {"detail"}
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.integration
+def test_lookup_rate_limit_with_no_retry_after_omits_the_header(api: ApiTestApp) -> None:
+    api.terminology.seed_error(
+        Operation.LOOKUP,
+        TerminologyRateLimitError("rate limited", status_code=429, retry_after=None),
+        key=_CODE,
+    )
+    token = _role_token(api, subject="sub-lookup-rate-limit-none", role=Role.PROVISIONAL)
+
+    response = _get(api, token)
+
+    assert response.status_code == 503, response.text
+    assert "Retry-After" not in response.headers
 
 
 @pytest.mark.req("FR-54")

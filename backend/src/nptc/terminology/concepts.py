@@ -37,13 +37,21 @@ as "not found" would let an unseeded stub answer every lookup with a
 clean-looking absence instead of the test-authoring defect it actually is,
 reproducing inside the suite the exact hazard `stub.py`'s own module
 docstring exists to prevent.
+
+**`TerminologyConfigError` never reaches `_classify` at all.** It is a
+`TerminologyError` subclass (a malformed `NPTC_TX_*` value), and `_classify`
+would otherwise fold it into the 502 catch-all - contradicting
+`nptc.terminology.errors`'s own claim that a config fault is "already
+mapped to 500" by `nptc.api.errors`. `resolve_concept` re-raises it
+unchanged before the generic `except TerminologyError`, so that mapping
+holds regardless of which `TerminologyClient` implementation raises it and
+from where.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nptc.db.models.code_binding import SNOMED_CT_SYSTEM
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -54,6 +62,7 @@ from nptc_shared.terminology import (
     SNOMED_CT_AU,
     Edition,
     TerminologyClient,
+    TerminologyConfigError,
     TerminologyError,
     TerminologyRateLimitError,
     TerminologyTransportError,
@@ -106,12 +115,21 @@ def resolve_concept(
             properties=_LOOKUP_PROPERTIES,
             display_language=edition.display_language,
         )
+    except TerminologyConfigError:
+        # Already mapped to 500 by nptc.api.errors - see this module's own
+        # docstring for why this must never reach _classify below.
+        raise
     except TerminologyError as exc:
         raise _classify(code, exc) from exc
 
     inactive = result.inactive
     return ResolvedConcept(
-        system=SNOMED_CT_SYSTEM,
+        # The server's own answer, not a locally-held constant - see issue
+        # #240 review: a hardcoded system here would silently disagree with
+        # a server that ever answered something else, and it would be a
+        # second copy of a URI `nptc_shared.terminology.SNOMED_SYSTEM`
+        # already carries (FR-74).
+        system=result.system,
         code=code,
         fsn=result.fully_specified_name,
         au_preferred_term=result.display,
