@@ -153,15 +153,26 @@ def test_a_padded_query_still_reaches_the_exact_band(api: ApiTestApp, example: A
     one while its `similarity()` is 1.0. The hit is returned either way, so
     presence proves nothing here - it would simply be scored as fuzzy, and an
     exact synonym match on a *different* entry would outrank the entry the
-    user pasted the name of. Asserting the band is what detects that."""
-    assert _keys(api, q=f"  {_seed.WORKED_EXAMPLE_CODE}  ")[:1] == [example.acth]
+    user pasted the name of. Asserting the band is what detects that.
 
-    padded = _hits(api, q=f"  {_seed.WORKED_EXAMPLE_TERM}  ")
-    assert padded[0]["business_key"] == example.acth, padded
-    assert padded[0]["score"] == pytest.approx(EXACT_PREFERRED_TERM_SCORE, abs=1e-6), (
-        "a padded preferred term scored below the exact band - the equality "
-        "comparison is no longer trimming"
-    )
+    The padding is parametrised over more than spaces because the first fix
+    was too narrow (second review round): a single cell copied out of a
+    spreadsheet arrives as a value ending in a carriage return and a newline,
+    and SQL's `btrim(text)` trims
+    spaces only. The trim is now Python's `str.strip()`, applied to the query
+    side before binding, which is why a tab and a newline belong in this
+    list."""
+    for padding in ("  ", "\t", "\r\n", " \t\r\n "):
+        assert _keys(api, q=f"{padding}{_seed.WORKED_EXAMPLE_CODE}{padding}")[:1] == [
+            example.acth
+        ], repr(padding)
+
+        padded = _hits(api, q=f"{padding}{_seed.WORKED_EXAMPLE_TERM}{padding}")
+        assert padded[0]["business_key"] == example.acth, padded
+        assert padded[0]["score"] == pytest.approx(EXACT_PREFERRED_TERM_SCORE, abs=1e-6), (
+            f"a preferred term padded with {padding!r} scored below the exact "
+            "band - the equality comparison is no longer trimming"
+        )
 
 
 @pytest.mark.req("FR-14")
@@ -184,6 +195,16 @@ def test_a_query_that_excludes_every_word_does_not_return_the_catalogue(
     guard is `NOT ('' :: tsvector @@ nptc_search_query(:q))`, which asks the
     question directly.
 
+    The fourth case is that guard being deliberately *wider* than "every word
+    was excluded" (second review round). `zymogen or -kinase` lexes to
+    `'zymogen' | !'kinas'`, and a disjunction with one negated branch is still
+    satisfied by absence - the `!'kinas'` half alone would return the
+    catalogue - so it is pruned, and the positive word loses its full-text
+    route with it. That is a documented degradation rather than a bug:
+    trigram is unguarded, so `zymogen` is still matched by similarity. A
+    conjunction such as `vitamin -d` still requires a lexeme and is correctly
+    left alone.
+
     Trigram is unaffected and deliberately still runs, so these queries are
     not refused - they are searched, by similarity, for the literal string
     typed. That is why this asserts nothing comes back for text nothing in
@@ -191,7 +212,7 @@ def test_a_query_that_excludes_every_word_does_not_return_the_catalogue(
     assert _keys(api, q=_seed.WORKED_EXAMPLE_TERM) != [], (
         "the fixtures are not seeded - an empty result below would prove nothing"
     )
-    for query in ("-zymogen", "-zymogen -kinase", "the -zymogen"):
+    for query in ("-zymogen", "-zymogen -kinase", "the -zymogen", "zymogen or -kinase"):
         assert _keys(api, q=query, limit=100) == [], query
 
 

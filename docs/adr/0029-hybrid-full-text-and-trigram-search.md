@@ -172,10 +172,11 @@ threshold, and no nonsense-query test detects it because a nonsense *word* still
 a positive lexeme.
 
 Each full-text branch therefore carries `NOT ('' :: tsvector @@ nptc_search_query(:q))`. A
-tsquery matches the empty document exactly when it has no required positive lexeme, so
-this tests the condition itself rather than scanning the input for `-`; the predicate
+tsquery matches the empty document exactly when nothing positive is *required* of a row,
+so this tests the condition itself rather than scanning the input for `-`; the predicate
 depends only on `:q`, so the planner resolves it once and prunes the branch
-(`One-Time Filter: false`) rather than evaluating it per row.
+(`One-Time Filter: false`) rather than evaluating it per row. The condition is wider than
+"every word was excluded" - see the Consequences section on the disjunction case.
 
 Rewriting the query inside `nptc_search_query` was rejected: the function would then
 return a `tsquery` that is not what the caller asked for, and the guard belongs where the
@@ -186,13 +187,21 @@ interpretation is degenerate.
 
 ### The SNOMED code is matched by equality
 
-A btree index on `code`, partial on `status = 'active'`, and `cb.code = btrim(:q)`. The
-four label equality comparisons `btrim` for the same reason (PR #237 review):
+A btree index on `code`, partial on `status = 'active'`, and `cb.code = :q_exact`.
+
+All five exact comparisons read `:q_exact` rather than `:q` (PR #237 review):
 `nptc_search_text` folds case and diacritics but does not trim, so a term pasted with
 surrounding whitespace has a `similarity()` of `1.0` yet is not `=` to the stored value,
-and would be scored as fuzzy - beneath an exact synonym hit on a different entry.
-Trimming in the comparison rather than inside `nptc_search_text` avoids rebuilding the
-four trigram indexes for a difference `similarity()` cannot see.
+and would be scored as fuzzy - beneath an exact synonym hit on a different entry. The
+trim is Python's `str.strip()` rather than SQL's `btrim(text)`, which trims **spaces
+only**: a single cell copied out of a spreadsheet ends in a carriage return and a newline,
+so the first, SQL-side fix was too narrow. Trimming the query in Python rather than inside
+`nptc_search_text` also avoids rebuilding the four trigram indexes for a difference
+`similarity()` cannot see.
+
+Only the query side is trimmed. A *stored* label carrying surrounding whitespace is a data
+defect to fix where it is written - masking it on read would hide it from the export and
+the published ValueSet as well.
 
 `ix_code_binding_one_active_entry_per_code` cannot serve this despite indexing the same
 column: `code` is its second column behind `system`, and the search box has no `system`
@@ -302,6 +311,35 @@ this one, not a larger.
   threshold only against observed noise needs a production query log that does not exist
   yet. The remedy, when it does, is a rank floor on the full-text branches, tuned the same
   way and in the same direction as the similarity threshold.
+- **The rescale and the unbounded full-text recall above are coupled, and were argued
+  separately.** Raising the full-text floor from around `0.02` to
+  `SIMILARITY_THRESHOLD x weight` (`0.225`-`0.27`) is what makes an inflected-only match
+  rank sensibly - but the half of recall it lifts is the *unbounded* half, so a common
+  domain word now injects a wide set of entries level with genuine weak trigram hits
+  (similarity `0.30`-`0.45` x weight, so `0.23`-`0.40`) rather than beneath them. Strong
+  matches are unaffected and page one is unchanged, so this is a ranking-fairness
+  consequence rather than a wrong answer, and it is the deliberate price of not burying a
+  real lexeme match under every typo in the catalogue. The two are one problem for tuning
+  purposes: a rank floor on the full-text branches would bound the recall *and* narrow
+  what the rescale lifts, and neither should move without the query log both are waiting
+  on.
+- **The negation guard prunes more than "every word was excluded".** A tsquery is caught
+  whenever it can be satisfied by absence alone, which includes a disjunction with a
+  negated branch: `zymogen or -kinase` lexes to `'zymogen' | !'kinas'` and is pruned, so
+  the positive `zymogen` loses its full-text route even though it was probeable. Pruning
+  is still right - the `!'kinas'` disjunct alone would return the catalogue - and trigram
+  is unguarded, so the word is still matched by similarity. A conjunction such as
+  `vitamin -d` still requires a lexeme and is not pruned. The behaviour is pinned by
+  `test_a_query_that_excludes_every_word_does_not_return_the_catalogue`, which carries
+  the disjunction case, so it reads as documented rather than as a bug.
+- **`nptc_search_query` is noisy on stopword-only input.** `websearch_to_tsquery` raises
+  a `NOTICE` each time it returns an empty query, and `_SEARCH_SQL` names it twelve times,
+  so `q=the` produces twelve identical notices from one request. Nothing consumes them
+  today - psycopg discards notices unless a handler is registered, and the server's
+  `log_min_messages` defaults above `NOTICE` - so they are left alone rather than
+  suppressed with a transaction-scoped `client_min_messages`, which would also hide
+  notices a future statement in the same transaction might genuinely need. Recorded so
+  that anyone attaching a notice handler sets that GUC first.
 - **Callers now have query syntax they did not have before.** `websearch_to_tsquery`
   brings quoted phrases, `or`, and `-` negation with it, which is part of the public
   contract whether or not it was asked for - documented in the `q` parameter description

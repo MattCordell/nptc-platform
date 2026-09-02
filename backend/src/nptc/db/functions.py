@@ -247,16 +247,29 @@ DROP_SEARCH_DOCUMENT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS public.nptc_search_
 #: the trigram branches still answer the query. That is the correct
 #: degradation and it needs no special case in ``_SEARCH_SQL``.
 #:
-#: A ``tsquery`` with **no surviving positive lexeme** is the opposite case
-#: and does need one. ``websearch_to_tsquery`` reads ``-`` as NOT, so
+#: A ``tsquery`` that can be satisfied by **absence alone** is the opposite
+#: case and does need one. ``websearch_to_tsquery`` reads ``-`` as NOT, so
 #: ``-glucose`` lexes to ``!'glucos'``, which ``@@`` satisfies for every row
 #: with nothing for GIN to probe - the whole catalogue, by sequential scan.
-#: That is not repaired here, because rewriting a user's query inside this
-#: function would make the returned ``tsquery`` disagree with what they
-#: typed; ``_SEARCH_SQL`` guards each FTS branch with
+#: So does ``zymogen or -kinase``, whose negated disjunct alone matches
+#: nearly everything. That is not repaired here, because rewriting a user's
+#: query inside this function would make the returned ``tsquery`` disagree
+#: with what they typed; ``_SEARCH_SQL`` guards each FTS branch with
 #: ``NOT ('' :: tsvector @@ nptc_search_query(:q))`` instead, which is a
 #: precise test of the condition and costs a one-time filter. See
 #: ``nptc.catalogue.search``'s module docstring.
+#:
+#: **This function is noisy on stopword-only input.** ``websearch_to_tsquery``
+#: raises a ``NOTICE`` ("contains only stop words or doesn't contain
+#: lexemes") each time it returns an empty query, and ``_SEARCH_SQL`` names
+#: it twelve times, so ``q=the`` produces twelve identical notices from one
+#: request (PR #237 review, measured). Nothing consumes them today - psycopg
+#: discards notices unless a handler is registered, and the server's own
+#: ``log_min_messages`` defaults above ``NOTICE`` - so this is deliberately
+#: left alone rather than suppressed with a transaction-scoped
+#: ``client_min_messages``, which would also hide notices a future statement
+#: in the same transaction might genuinely need. Anyone attaching a notice
+#: handler should set that GUC first.
 #:
 #: Not ``STRICT``-dependent in practice - ``nptc.catalogue.search`` refuses a
 #: blank ``q`` before any SQL runs - but marked ``STRICT`` anyway so the pair

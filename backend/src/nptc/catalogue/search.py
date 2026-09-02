@@ -37,22 +37,33 @@ so in practice a full-text contribution sits near its floor and orders only
 log to calibrate against (ADR-0029), which does not exist yet.
 
 **Negation, and why every full-text branch is guarded.** `websearch_to_tsquery`
-gives callers `-` for NOT, and a query with no surviving positive lexeme -
-`-glucose`, but also `a -b`, where the positive half is a stopword - lexes to
-`!'glucos'`. That matches every row: `@@` is satisfied by the *absence* of a
-lexeme, GIN has no positive key to probe, and the branch degrades to a
+gives callers `-` for NOT, and a tsquery that can be satisfied by *absence
+alone* matches every row: `@@` is true wherever the excluded lexeme is
+missing, GIN has no positive key to probe, and the branch degrades to a
 sequential scan returning the entire catalogue at a floor score. That is the
 "matching everything" failure this module's threshold discipline exists to
 prevent, reachable from one character on an unauthenticated endpoint, and no
 nonsense-query test catches it because a nonsense *word* still has a positive
-lexeme. Each full-text branch therefore carries
-`NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))`: a tsquery matches the
-empty document exactly when it has no required positive lexeme, so this is a
-precise test of the condition rather than a scan for `-`. It depends only on
-`:q`, so the planner resolves it to `One-Time Filter: false` and skips the
-branch entirely rather than evaluating it per row. The trigram branches need
-no guard - `%` has no negation - so such a query still searches, by
-similarity, for the string the user actually typed.
+lexeme.
+
+Each full-text branch therefore carries
+`NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))`. A tsquery matches the
+empty document exactly when nothing positive is *required* of a row, which is
+the condition itself rather than a scan for `-`, and it is deliberately wider
+than "every word was excluded": `-glucose` lexes to `!'glucos'` and so does
+`a -b`, whose positive half is a stopword, but so is `zymogen or -kinase`
+(`'zymogen' | !'kinas'`) caught - a disjunction only one branch of which is
+positive is still satisfied by absence, so the `!'kinas'` half alone would
+return the catalogue. `vitamin -d` (`'vitamin' & !'d'`) is *not* caught,
+correctly: the conjunction still requires a lexeme. The predicate depends only
+on `:q`, so the planner resolves it to `One-Time Filter: false` and skips the
+branch rather than evaluating it per row.
+
+The trigram branches need no guard - `%` has no negation - so any of these
+queries still searches, by similarity, for the string the user actually typed.
+That is what makes over-pruning a degradation rather than a failure: the
+positive word in `zymogen or -kinase` is still matched, by the other
+mechanism.
 
 **All five of FR-14's fields, in one query field.** The catalogue's own
 preferred term, its active synonyms, the stored `fsn`, the stored
@@ -272,15 +283,25 @@ _SET_THRESHOLD_SQL = text(
 #: needs a production query log this platform does not have yet. ADR-0029
 #: records it as an open consequence rather than leaving it implied.
 #:
-#: **`btrim` on the four exact-match comparisons.** `nptc_search_text`
-#: lowercases and unaccents but does not trim, so a preferred term pasted
-#: with surrounding whitespace is not equal to the stored one while its
-#: `similarity()` is 1.0 - the exact band would be missed and the hit would
-#: score as fuzzy, beneath an exact synonym match on a *different* entry.
-#: Trimming here rather than inside `nptc_search_text` is deliberate: that
-#: function is the four trigram indexes' own expression, so changing it would
-#: require rebuilding them for a difference `similarity()` does not notice.
-#: The code branch has always done this (`btrim(:q)`); these four now agree.
+#: **`:q_exact`, and why the exact comparisons do not use `:q`.**
+#: `nptc_search_text` lowercases and unaccents but does not trim, so a
+#: preferred term pasted with surrounding whitespace is not equal to the
+#: stored one while its `similarity()` is 1.0 - the exact band would be
+#: missed and the hit would score as fuzzy, beneath an exact synonym match
+#: on a *different* entry. All five exact comparisons therefore read
+#: `:q_exact`, which `search_entries` strips in Python.
+#:
+#: Not `btrim(:q)` in SQL, which is what the code branch used to do:
+#: `btrim(text)` trims **spaces only**, and a single cell copied out of a
+#: spreadsheet ends in a carriage return and a newline (PR #237 review).
+#: Not inside `nptc_search_text` either - that function is the four trigram
+#: indexes' own expression, so changing it would mean rebuilding them for a
+#: difference `similarity()` cannot see.
+#:
+#: Only the query side is trimmed. A *stored* label with surrounding
+#: whitespace is a data defect to fix where it is written, not something to
+#: mask on every read, and masking it here would hide it from the export
+#: and the ValueSet as well.
 #:
 #: **The status literals.** `d.status = 'active'` and `cb.status = 'active'`
 #: are written as literals, matching the partial-index predicates on
@@ -330,7 +351,7 @@ WITH matches AS (
         similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
             AS trigram_score,
         CASE
-            WHEN btrim(nptc_search_text(entry.preferred_term)) = btrim(nptc_search_text(:q))
+            WHEN nptc_search_text(entry.preferred_term) = nptc_search_text(:q_exact)
                 THEN CAST(:exact_preferred_term_score AS real)
             ELSE similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
                  * CAST(:preferred_term_weight AS real)
@@ -354,7 +375,7 @@ WITH matches AS (
         d.entry_id,
         similarity(nptc_search_text(d.term), nptc_search_text(:q)),
         CASE
-            WHEN btrim(nptc_search_text(d.term)) = btrim(nptc_search_text(:q))
+            WHEN nptc_search_text(d.term) = nptc_search_text(:q_exact)
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(d.term), nptc_search_text(:q))
                  * CAST(:designation_weight AS real)
@@ -378,7 +399,7 @@ WITH matches AS (
         cb.entry_id,
         similarity(nptc_search_text(cb.fsn), nptc_search_text(:q)),
         CASE
-            WHEN btrim(nptc_search_text(cb.fsn)) = btrim(nptc_search_text(:q))
+            WHEN nptc_search_text(cb.fsn) = nptc_search_text(:q_exact)
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(cb.fsn), nptc_search_text(:q))
                  * CAST(:binding_label_weight AS real)
@@ -402,7 +423,7 @@ WITH matches AS (
         cb.entry_id,
         similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q)),
         CASE
-            WHEN btrim(nptc_search_text(cb.au_preferred_term)) = btrim(nptc_search_text(:q))
+            WHEN nptc_search_text(cb.au_preferred_term) = nptc_search_text(:q_exact)
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q))
                  * CAST(:binding_label_weight AS real)
@@ -428,7 +449,7 @@ WITH matches AS (
         CAST(:exact_code_score AS real)
     FROM code_binding AS cb
     WHERE cb.status = 'active'
-      AND cb.code = btrim(:q)
+      AND cb.code = :q_exact
 ), scored AS (
     SELECT
         m.entry_id AS entry_id,
@@ -615,6 +636,15 @@ def search_entries(session: Session, *, q: str, limit: int, after: str | None = 
         _SEARCH_SQL,
         {
             "q": q,
+            # The exact-match half of `q`, trimmed. Python's `str.strip()`
+            # rather than SQL's `btrim(text)`, which trims spaces *only*: a
+            # cell copied out of a spreadsheet ends in a carriage return and
+            # a newline, and either would defeat every exact band while
+            # `similarity()` went on scoring the same value 1.0 (PR #237
+            # review). Bound separately rather than replacing `q` - the
+            # trigram and full-text branches, and the cursor digest, all use
+            # the string the caller actually sent.
+            "q_exact": q.strip(),
             "statuses": list(PUBLIC_STATUSES),
             "threshold": SIMILARITY_THRESHOLD,
             # Bound, not interpolated, for the same reason every other value

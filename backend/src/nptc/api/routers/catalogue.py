@@ -320,9 +320,10 @@ def search(
                 "by full-text search, whichever scores the entry higher. The "
                 "full-text half accepts web-search syntax - a quoted phrase, "
                 "`or` between alternatives, and a leading `-` to exclude a "
-                "word - which applies to that half only: a query whose every "
-                "word is excluded is still searched by similarity, as the "
-                "literal text it is, rather than matching the whole catalogue."
+                "word - which applies to that half only. A query that can be "
+                "satisfied by exclusion alone is dropped from that half rather "
+                "than matching the whole catalogue, and is still searched by "
+                "similarity as the literal text it is."
             ),
         ),
     ],

@@ -374,6 +374,7 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
         str(search._SEARCH_SQL),
         {
             "q": term,
+            "q_exact": term.strip(),
             "statuses": ["active"],
             "threshold": search.SIMILARITY_THRESHOLD,
             "exact_code_score": search.EXACT_CODE_SCORE,
@@ -438,6 +439,7 @@ def test_a_negation_only_query_plans_away_the_full_text_branches(db: Connection)
         str(search._SEARCH_SQL),
         {
             "q": "-glucose",
+            "q_exact": "-glucose",
             "statuses": ["active"],
             "threshold": search.SIMILARITY_THRESHOLD,
             "exact_code_score": search.EXACT_CODE_SCORE,

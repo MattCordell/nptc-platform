@@ -50,7 +50,7 @@ supported by its own index:
 | FSN, full-text | `ix_code_binding_fsn_fts` | as above |
 | AU preferred term, trigram | `ix_code_binding_au_preferred_term_trgm` | as above |
 | AU preferred term, full-text | `ix_code_binding_au_preferred_term_fts` | as above |
-| code, equality | `ix_code_binding_code` | `code = btrim(:q)` |
+| code, equality | `ix_code_binding_code` | `code = :q_exact` |
 
 An entry matched several ways is collapsed to one row by `GROUP BY` and keeps its **best**
 score, so a well-bound entry is one result rather than six.
@@ -90,13 +90,25 @@ What that does **not** buy is a well-spread full-text ranking: `ts_rank_cd`'s ou
 dense near zero, so in practice a full-text contribution sits near its floor and orders
 only within the full-text branch. Calibrating it properly needs a production query log.
 
-**Negation is guarded.** `websearch_to_tsquery` reads `-` as NOT, so a query with no
-surviving positive lexeme (`-glucose`, and also `a -b`, whose positive half is a stopword)
-lexes to `!'glucos'` - which `@@` satisfies for every row, with nothing for GIN to probe.
-Each full-text branch therefore carries `NOT ('' :: tsvector @@ nptc_search_query(:q))`,
-a direct test of that condition, which the planner resolves once and uses to prune the
+**Negation is guarded.** `websearch_to_tsquery` reads `-` as NOT, and a tsquery that can be
+satisfied by *absence alone* matches every row with nothing for GIN to probe. Each
+full-text branch therefore carries `NOT ('' :: tsvector @@ nptc_search_query(:q))`, a
+direct test of that condition, which the planner resolves once and uses to prune the
 branch. Trigram is unaffected and still runs, so such a query is searched for the literal
 text typed rather than refused.
+
+The condition is wider than "every word was excluded", deliberately:
+
+| Query | tsquery | Full-text branches |
+|---|---|---|
+| `-glucose` | `!'glucos'` | pruned |
+| `a -b` (positive half is a stopword) | `!'b'` | pruned |
+| `zymogen or -kinase` | `'zymogen' \| !'kinas'` | pruned - the negated disjunct alone would return the catalogue |
+| `vitamin -d` | `'vitamin' & !'d'` | kept - the conjunction still requires a lexeme |
+
+The third row costs `zymogen` its full-text route even though it was probeable. That is a
+degradation rather than a fault: trigram is unguarded, so the word is still matched by
+similarity.
 
 ### Normalisation
 
@@ -120,13 +132,16 @@ A query that lexes to nothing (`the`, say - `english` drops stopwords) yields an
 `tsquery`, which matches nothing rather than everything. The full-text branches simply
 contribute no rows and the trigram branches still answer.
 
-`nptc_search_text` folds case and diacritics but does **not** trim. The four exact-match
-comparisons therefore apply `btrim` themselves, as the code branch already did: a
-preferred term pasted with surrounding whitespace has a `similarity()` of `1.0` but is not
-`=` to the stored value, so without it a pasted term is scored as fuzzy and can be
-outranked by an exact synonym hit on a different entry. Trimming here rather than inside
-`nptc_search_text` avoids rebuilding four trigram indexes for a difference `similarity()`
-does not notice.
+`nptc_search_text` folds case and diacritics but does **not** trim. All five exact-match
+comparisons therefore read `:q_exact`, which is `q` stripped in Python: a preferred term
+pasted with surrounding whitespace has a `similarity()` of `1.0` but is not `=` to the
+stored value, so without it a pasted term is scored as fuzzy and can be outranked by an
+exact synonym hit on a different entry. Python's `str.strip()` rather than SQL's
+`btrim(text)`, which trims spaces only - a cell copied out of a spreadsheet ends in a
+carriage return and a newline. Trimming the query rather than changing `nptc_search_text`
+avoids rebuilding four trigram indexes for a difference `similarity()` does not notice,
+and only the query side is trimmed: whitespace on a *stored* label is a data defect to fix
+where it is written.
 
 ### The similarity threshold
 

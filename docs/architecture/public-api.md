@@ -162,12 +162,13 @@ which field and how the scores are combined.
 - **`q` must contain a non-whitespace character.** A blank query is a 422, not the whole
   catalogue.
 - **Surrounding whitespace does not change the answer.** A code or a term pasted out of a
-  spreadsheet with padding still counts as an exact match, rather than dropping to a fuzzy
-  score.
+  spreadsheet still counts as an exact match, rather than dropping to a fuzzy score -
+  including the trailing carriage return and newline a single copied cell carries.
 - **`q` accepts web-search syntax, on the full-text half only.** A quoted `"phrase"`, `or`
-  between alternatives, and a leading `-` to exclude a word. Excluding every word in the
-  query does not return the catalogue: the full-text half of such a query contributes
-  nothing, and the trigram half searches for the literal text typed.
+  between alternatives, and a leading `-` to exclude a word. A query that can be satisfied
+  by exclusion alone - `-glucose`, and also `zymogen or -kinase`, whose negated half would
+  match nearly everything on its own - is dropped from that half rather than returning the
+  catalogue, and is still searched by similarity as the literal text typed.
 
 `score` is a relevance score between 0 and 1, combining trigram similarity, full-text
 rank and how the entry was matched - an exact hit on the code or the preferred term
