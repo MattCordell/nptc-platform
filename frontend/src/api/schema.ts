@@ -1208,7 +1208,7 @@ export interface operations {
     search_api_v1_catalogue_search_get: {
         parameters: {
             query: {
-                /** @description Free text. Matched against each entry's preferred term and its active synonyms, insensitive to case and to diacritics, and tolerant of typographical error (FR-15). */
+                /** @description Free text, or a SNOMED CT code. Matched against the entry's preferred term, its active synonyms, and the fully specified name, AU preferred term and code of its active binding (FR-14) - insensitive to case and to diacritics, tolerant of typographical error and of word order (FR-15). A code is matched exactly; everything else is matched by similarity and by full-text search, whichever scores the entry higher. */
                 q: string;
                 /** @description Maximum entries in this page. */
                 limit?: number;

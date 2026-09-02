@@ -1089,6 +1089,69 @@ expression does, and must match with the `%` operator - a GIN trigram index cann
 accelerate a comparison against a `similarity()` result. Both spellings return identical
 answers, so `backend/tests/test_db_search_index.py` `EXPLAIN`s the real statement and
 asserts an `Index Cond` on each trigram index; nothing else in the suite would notice.
+
+## The full-text half and the remaining search fields (issue #138, FR-14, FR-15)
+
+Migration `0015_hybrid_search_indexes.py` adds no table and no column either - two more
+functions and seven more indexes, bringing FR-14's remaining three fields into the query
+and adding a full-text scan alongside each trigram one. See
+[ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md) for the decision record,
+[`search.md`](search.md) for how the scans combine and rank, and
+[`upgrade.md`](../operations/upgrade.md#0015_hybrid_search_indexespy) for the two standing
+`REINDEX` obligations.
+
+```
+nptc_search_document(value text) RETURNS tsvector
+  = to_tsvector('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+
+nptc_search_query(value text) RETURNS tsquery
+  = websearch_to_tsquery('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+```
+
+Both `LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE`. They are the third and fourth database
+functions in the schema and, like `nptc_search_text` and unlike `nptc_sctid_is_valid`, they
+decide nothing - they normalise.
+
+The same three load-bearing details as `nptc_search_text`, for the same reasons, plus one
+of their own:
+
+- **`IMMUTABLE` requires the two-argument `to_tsvector`/`websearch_to_tsquery`.** The
+  one-argument forms resolve the configuration through `default_text_search_config`, a
+  GUC, and so are only `STABLE`.
+- **Every object is schema-qualified**, including the nested `public.nptc_search_text`
+  call - these functions are inlined into index expressions, which Postgres evaluates
+  under the secure `pg_catalog, pg_temp` path.
+- **`STRICT`**, so a `NULL` `au_preferred_term` indexes as `NULL` rather than as an empty
+  `tsvector` shared with every other unbound row.
+- **They are a pair, and the configuration is named once.** A document lexed as `english`
+  and a query lexed as `simple` share no stems and match nothing - a failure invisible in
+  the index definition, visible only as a search that silently under-returns.
+
+| Index | Table | Expression | Partial |
+|---|---|---|---|
+| `ix_catalogue_entry_preferred_term_fts` | `catalogue_entry` | `nptc_search_document(preferred_term)` | No - as for the trigram index above |
+| `ix_designation_term_fts` | `designation` | `nptc_search_document(term)` | `WHERE status = 'active'` |
+| `ix_code_binding_fsn_trgm` | `code_binding` | `nptc_search_text(fsn) gin_trgm_ops` | `WHERE status = 'active'` |
+| `ix_code_binding_fsn_fts` | `code_binding` | `nptc_search_document(fsn)` | `WHERE status = 'active'` |
+| `ix_code_binding_au_preferred_term_trgm` | `code_binding` | `nptc_search_text(au_preferred_term) gin_trgm_ops` | `WHERE status = 'active'` |
+| `ix_code_binding_au_preferred_term_fts` | `code_binding` | `nptc_search_document(au_preferred_term)` | `WHERE status = 'active'` |
+| `ix_code_binding_code` | `code_binding` | `code` (btree) | `WHERE status = 'active'` |
+
+Every `code_binding` index is partial for the same reason `ix_designation_term_trgm` is: a
+retired binding is history, never a way into the catalogue.
+
+`ix_code_binding_code` is a btree because the code is matched by equality.
+`ix_code_binding_one_active_entry_per_code` cannot serve that lookup despite covering the
+same column - `code` is its *second* column behind `system`, and the search box has no
+`system` to supply as a leading qualifier.
+
+**The full-text indexes declare no `postgresql_ops`, and that is the opposite of the
+trigram indexes for the same underlying reason.** `tsvector_ops` is GIN's default operator
+class for `tsvector`, and Postgres omits a default class from `indexdef`; naming it in the
+model would make the declaration and the reflected index disagree on every autogenerate
+run. The trigram indexes must name `gin_trgm_ops` because it is *not* the default and does
+appear in `indexdef`. Both spellings exist to keep `compare_metadata` comparing rather than
+skipping.
 **`discipline`/`subgroup` name the local code systems #56 lands below.** `nptc.db.bootstrap`'s
 `key="discipline"`/`key="subgroup"` rows set `binding_target = BindingTarget.LOCAL_CODE_SYSTEM`
 with `local_code_system_key` set to `"discipline"`/`"subgroup"` respectively - #51 left this

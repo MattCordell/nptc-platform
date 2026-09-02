@@ -14,6 +14,10 @@
 - [public-api.md](public-api.md) — the FR-20 public read API (issue #142): the endpoint
   table, the active-only visibility rule, the keyset paging contract, the search
   behaviour, and which test enforces each no-leak invariant.
+- [search.md](search.md) — catalogue search (issues #142 and #138): which of FR-14's five
+  fields are indexed and how, why both trigram and full-text scans run over each text
+  column, the normalisation function trio, the similarity threshold discipline, and the
+  score bands that make FR-14's ranking rule hold for every input.
 - [catalogue-write-api.md](catalogue-write-api.md) — the catalogue admin API: entry read
   regardless of status (issue #228), code bindings (issue #219) and designations (issue
   #224). The endpoint tables, addressing a resource by its natural key (a binding's code,

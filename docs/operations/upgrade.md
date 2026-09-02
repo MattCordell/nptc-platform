@@ -53,6 +53,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0012_catalogue_search_indexes.py`](../../backend/migrations/versions/0012_catalogue_search_indexes.py) | `nptc_search_text`, two GIN trigram indexes | See [below](#0012_catalogue_search_indexespy) - a standing `REINDEX` obligation if the `unaccent` dictionary ever changes |
 | [`0013_property_definition_local_code_system_key.py`](../../backend/migrations/versions/0013_property_definition_local_code_system_key.py) | `property_definition.local_code_system_key` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | See [below](#0013_property_definition_local_code_system_keypy) - backfills the new column on any database that already ran `seed_system_properties` before adding the `NOT NULL`-when-bound `CHECK` |
 | [`0014_numeric_or_null_function.py`](../../backend/migrations/versions/0014_numeric_or_null_function.py) | `nptc_numeric_or_null` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0014_numeric_or_null_functionpy) - downgrading past it requires no reconciler-built numeric-shaped index to still exist |
+| [`0015_hybrid_search_indexes.py`](../../backend/migrations/versions/0015_hybrid_search_indexes.py) | `nptc_search_document`, `nptc_search_query`, four GIN full-text indexes, two GIN trigram indexes, one btree | See [below](#0015_hybrid_search_indexespy) - a second standing `REINDEX` obligation, this one on the `english` text search configuration |
 
 ## Provisioning the app role's login
 
@@ -218,6 +219,11 @@ REINDEX INDEX CONCURRENTLY ix_catalogue_entry_preferred_term_trgm;
 REINDEX INDEX CONCURRENTLY ix_designation_term_trgm;
 ```
 
+Since `0015`, **four more indexes are built over the same `unaccent` dictionary** and
+must be reindexed at the same time - see
+[`0015_hybrid_search_indexes.py`](#0015_hybrid_search_indexespy) for the full list and
+for the second, independent obligation that migration introduces.
+
 `CONCURRENTLY` so search stays available while it runs; drop it if the maintenance
 window allows an exclusive lock. Nothing detects a stale index automatically - which is
 exactly why this obligation is written down here rather than left implicit in the
@@ -257,6 +263,64 @@ Unlike `0012`'s own indexes, these are not migration-managed, so this migration 
 them itself before dropping the function. Before downgrading past `0014`, reconcile every
 numeric-shaped filterable property back to `filterable = false` (or drop the generated
 index by hand) first.
+
+## `0015_hybrid_search_indexes.py`
+
+Adds the `nptc_search_document`/`nptc_search_query` function pair and the seven indexes
+that bring the stored `fsn`, the stored `au_preferred_term` and the SNOMED code into the
+search, alongside the full-text half of the ranking (issue #138 - see
+[`search.md`](../architecture/search.md) and
+[ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md)). No table, no column, no
+grant changes, and nothing to backfill: `upgrade head` is all that is required.
+
+**Expect a longer `upgrade head` than the migrations before it.** Seven indexes are
+built over four expression-indexed columns on tables that already hold data, and the four
+GIN full-text indexes are the slowest of them. On an empty or freshly-seeded database
+this is seconds; on a populated catalogue, budget for it and take the maintenance window
+rather than running it against live traffic. The indexes are created non-concurrently
+(an Alembic migration runs in a transaction, and `CREATE INDEX CONCURRENTLY` cannot),
+so each takes a lock that blocks writes to its table for the duration.
+
+**A second standing operator obligation**, independent of `0012`'s. `nptc_search_document`
+is declared `IMMUTABLE`, which is honest only for a *fixed* `english` text search
+configuration - its stemmer (the `english_stem` Snowball dictionary) and its stopword
+list. The four full-text indexes store lexemes produced by that configuration, so if it
+changes underneath a running database the stored entries stop corresponding to what the
+function now returns, and search silently starts missing rows rather than failing. The
+realistic triggers are:
+
+- a PostgreSQL major upgrade shipping a revised Snowball stemmer or stopword file, or
+- a deployment altering the configuration (`ALTER TEXT SEARCH CONFIGURATION english ...`,
+  or a replaced `english.stop`).
+
+After either, reindex the four full-text indexes:
+
+```sql
+REINDEX INDEX CONCURRENTLY ix_catalogue_entry_preferred_term_fts;
+REINDEX INDEX CONCURRENTLY ix_designation_term_fts;
+REINDEX INDEX CONCURRENTLY ix_code_binding_fsn_fts;
+REINDEX INDEX CONCURRENTLY ix_code_binding_au_preferred_term_fts;
+```
+
+**The `unaccent` obligation from `0012` now covers six indexes, not two.** Both function
+families normalise through `nptc_search_text`, so a change to the `unaccent` dictionary
+invalidates the two new trigram indexes and all four full-text indexes as well as
+`0012`'s original pair. After an `unaccent` change, reindex `0012`'s two plus:
+
+```sql
+REINDEX INDEX CONCURRENTLY ix_code_binding_fsn_trgm;
+REINDEX INDEX CONCURRENTLY ix_code_binding_au_preferred_term_trgm;
+```
+
+...and the four full-text indexes above. The two obligations are separate because their
+triggers are separate: a stemmer change does not touch the trigram indexes, and an
+`unaccent` change touches everything.
+
+`ix_code_binding_code` is a plain btree over a stored column and is unaffected by either.
+
+`downgrade()` drops all seven indexes and then the two functions, in that order (the
+reverse of `upgrade()`), since four of the index expressions depend on
+`nptc_search_document`.
 
 ## Testcontainers and Docker
 
