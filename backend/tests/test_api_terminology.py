@@ -128,6 +128,26 @@ def test_lookup_resolves_fsn_with_tag_and_au_preferred_term(api: ApiTestApp) -> 
     assert body["edition"] == "au"
 
 
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+def test_lookup_18_digit_code_round_trips_exactly_as_a_string(api: ApiTestApp) -> None:
+    """The failure mode FR-06 exists to eliminate: an SCTID long enough to
+    lose precision or leading-zero semantics if it were ever coerced to a
+    number (`nptc_shared.sctid`'s own module docstring) - a 6-18 digit code
+    at the long end of that range, asserted against the raw response text,
+    not just the parsed JSON `code` field `isinstance` would already accept
+    silently if it were a number by the time this test saw it."""
+    code = "123456789012345605"
+    _seed_concept(api, code=code)
+    token = _role_token(api, subject="sub-lookup-18-digit", role=Role.PROVISIONAL)
+
+    response = _get(api, token, code=code)
+
+    assert response.status_code == 200, response.text
+    assert f'"code":"{code}"' in response.text.replace(" ", "")
+    assert response.json()["code"] == code
+
+
 @pytest.mark.req("FR-82")
 @pytest.mark.integration
 def test_lookup_active_property_not_reported_serves_active_null(api: ApiTestApp) -> None:
