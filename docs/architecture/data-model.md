@@ -1100,12 +1100,12 @@ and adding a full-text scan alongside each trigram one. See
 [`upgrade.md`](../operations/upgrade.md#0015_hybrid_search_indexespy) for the two standing
 `REINDEX` obligations.
 
-```
-nptc_search_document(value text) RETURNS tsvector
-  = to_tsvector('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+```sql
+-- nptc_search_document(value text) RETURNS tsvector
+SELECT to_tsvector('pg_catalog.english'::regconfig, public.nptc_search_text(value));
 
-nptc_search_query(value text) RETURNS tsquery
-  = websearch_to_tsquery('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+-- nptc_search_query(value text) RETURNS tsquery
+SELECT websearch_to_tsquery('pg_catalog.english'::regconfig, public.nptc_search_text(value));
 ```
 
 Both `LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE`. They are the third and fourth database

@@ -170,9 +170,9 @@ ordering is), and is not a quality rating of the entry. The bands are documented
 by it rather than threshold on it.
 
 **Not here:** exact-code lookup as its own addressable endpoint is FR-17's, owned by
-#140 - typing a code into `q` works, but a stable per-code URL is separate. Faceted
-filtering over `filterable` properties (FR-16) is a separate child of epic #57. See
-[ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md).
+issue #140 - typing a code into `q` works, but a stable per-code URL is separate.
+Faceted filtering over `filterable` properties (FR-16) is a separate child of epic #57.
+See [ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md).
 
 ## Errors
 
