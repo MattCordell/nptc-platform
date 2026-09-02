@@ -1,6 +1,13 @@
 # ADR-0024: Catalogue search with `pg_trgm`, and keyset pagination throughout
 
-**Status:** Accepted
+**Status:** Accepted; the `tsvector`/`tsquery` rejected alternative is superseded by
+[ADR-0029](0029-hybrid-full-text-and-trigram-search.md) (issue #138), which adds
+full-text search alongside - not instead of - trigram, and extends the query to FR-14's
+remaining three fields. Everything else here stands: the trigram mechanism, the
+threshold discipline, the keyset cursor, and the refusal of a second datastore. The
+sections below are left as the historical record of what was decided in August 2026 and
+why; in particular the "FR-14 is only partly served" consequence and the deferral of the
+FSN and AU preferred term describe the state ADR-0029 changes.
 **Date:** 2026-08-24
 
 ## Context
@@ -229,3 +236,15 @@ surface's job (#141), where it is the subject rather than a footnote.
   `SIMILARITY_THRESHOLD` to make some query match is therefore the change to be most
   suspicious of, and `test_a_query_below_the_threshold_matches_nothing` exists to make
   it fail loudly.
+
+## Amendments
+
+- 2026-09-02: the "FR-14 is only partly served" Consequence above said "FR-16's faceted
+  filtering over `filterable` properties is untouched by this issue and remains #138's".
+  The first half is right; the attribution is not. Issue #138 scopes itself to
+  FR-14/FR-15 (search ranking), and epic #57 splits faceted filtering into a separate
+  child. `docs/requirements/requirements.yaml` had inherited the same error and is
+  corrected alongside. This is a correction of a stated fact about issue ownership, not a
+  reversal of anything decided here, so it is recorded in place. The supersession of this
+  ADR's `tsvector` rejection is a genuine reversal and is handled the other way, by
+  [ADR-0029](0029-hybrid-full-text-and-trigram-search.md) and the `Status` line above.

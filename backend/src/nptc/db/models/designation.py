@@ -183,6 +183,17 @@ class Designation(Base):
             postgresql_ops={"nptc_search_text(term)": "gin_trgm_ops"},
             postgresql_where=text("status = 'active'"),
         ),
+        # FR-14/FR-15, issue #138: the full-text half over the same rows.
+        # See `CatalogueEntry`'s own FTS index for why both index types are
+        # needed and why no `postgresql_ops` is declared. Partial on
+        # `status = 'active'` for the same reason as the trigram index
+        # immediately above.
+        Index(
+            "ix_designation_term_fts",
+            text("nptc_search_document(term)"),
+            postgresql_using="gin",
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

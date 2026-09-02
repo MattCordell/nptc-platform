@@ -7,7 +7,7 @@ import { splitSynonyms } from "./split-synonyms.ts";
  * verbatim from `backend/tests/test_catalogue_designations.py`'s
  * `test_sample_defect_strings_become_individual_rows_with_no_empty_row`.
  * That is the point: this module is a mirror of
- * `nptc_transform.cell_defects.split_synonyms` (ADR-0029), and sharing the
+ * `nptc_transform.cell_defects.split_synonyms` (ADR-0030), and sharing the
  * fixtures is what makes a divergence show up here as a failure on a
  * recognisable string rather than as silent drift.
  */
@@ -65,7 +65,7 @@ describe("splitSynonyms", () => {
     // U+001C-U+001F, and removes U+FEFF - and every one of those is a PRD
     // Appendix A.1 character, so the platform default would drift from the
     // Python in exactly the input class the mirror exists to handle
-    // (ADR-0029).
+    // (ADR-0030).
     const nel = "\u0085";
     const fs = "\u001c";
     const bom = "\ufeff";

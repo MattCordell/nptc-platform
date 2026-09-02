@@ -109,7 +109,7 @@ type AcknowledgeCollisionBody = components["schemas"]["AcknowledgeCollisionReque
  *
  * `terms` is a batch because the case this exists for is a pasted,
  * delimiter-corrupted synonym cell - split by `catalogue/split-synonyms.ts`
- * before it gets here (ADR-0029).
+ * before it gets here (ADR-0030).
  */
 export function useAddDesignations(businessKey: string) {
   const client = useApiClient();

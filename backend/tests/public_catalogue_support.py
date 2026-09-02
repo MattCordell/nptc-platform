@@ -417,6 +417,131 @@ def corrupt_stored_fsn(session: Session, business_key: str) -> None:
     session.flush()
 
 
+# --- FR-14's worked example (issue #138) ----------------------------------
+
+#: PRD FR-14 names four strings and requires all four to reach one entry:
+#: `49466006`, `ACTH`, `Adrenocorticotropic hormone` and `Corticotropin`.
+#: These are that entry, and they are not invented - `49466006` is a real,
+#: Verhoeff-valid SCTID (the `code` CHECK would reject anything else) whose
+#: real FSN and AU preferred term are below, and whose real SNOMED synonyms
+#: include both `ACTH measurement` and `Corticotropin measurement`. Keeping
+#: them honest matters because the worked example is the requirement's own
+#: acceptance test, and a fixture that quietly reshaped the data to suit the
+#: query would prove nothing about the catalogue this platform maintains.
+#:
+#: The four strings deliberately reach the entry by four *different* routes -
+#: the code by equality, the preferred term by the entry's own column, and
+#: the two abbreviations by designation rows - so a search that had lost any
+#: one of the four scans fails this fixture rather than passing on the
+#: strength of the other three.
+WORKED_EXAMPLE_CODE = "49466006"
+WORKED_EXAMPLE_TERM = "Adrenocorticotropic hormone"
+WORKED_EXAMPLE_SYNONYMS = ("ACTH", "Corticotropin")
+WORKED_EXAMPLE_FSN = "Adrenocorticotropic hormone measurement (procedure)"
+WORKED_EXAMPLE_AU_PREFERRED_TERM = "Adrenocorticotropic hormone measurement"
+
+#: A second entry, for FR-98's "both tag forms reach the entry" criterion in
+#: isolation. Its preferred term and its synonym share no word with its FSN,
+#: and its binding carries **no** `au_preferred_term` - so the stored `fsn`
+#: is the only route to it, and a query for the FSN with or without its
+#: semantic tag can only be answered by the FSN index. On the worked-example
+#: entry above the same two queries would also match through
+#: `au_preferred_term`, which would make the tag assertion pass without the
+#: FSN scan running at all.
+FSN_ONLY_CODE = "26604007"
+FSN_ONLY_TERM = "Unrelated haematology placeholder"
+FSN_ONLY_FSN = "Full blood count (procedure)"
+FSN_ONLY_FSN_WITHOUT_TAG = "Full blood count"
+
+#: A retired binding, for the "a retired binding is not a way in" case. Its
+#: FSN shares no word with any other string this fixture seeds, and that is
+#: the whole design - `RETIRED_SYNONYM` above already records the same lesson
+#: for designations. A retired FSN that overlapped a live one (as
+#: `RETIRED_FSN`'s `Procedure (procedure)` overlaps `ACTIVE_FSN`'s trailing
+#: tag) would let the query reach the entry through the *active* binding, and
+#: the test would pass while proving nothing at all about binding status.
+#:
+#: `394596001` is also `DRAFT_CODE` in `seed_public_catalogue`, where it is
+#: active. That is safe rather than an oversight: this binding is retired,
+#: and `ix_code_binding_one_active_entry_per_code` is partial on
+#: `status = 'active'`, so both fixtures can be seeded in one test.
+FSN_ONLY_RETIRED_CODE = "394596001"
+FSN_ONLY_RETIRED_FSN = "Poikilocytosis (finding)"
+FSN_ONLY_RETIRED_WORD = "Poikilocytosis"
+
+
+@dataclass(frozen=True)
+class SeededWorkedExample:
+    """Handles for `seed_worked_example`'s two entries."""
+
+    acth: str
+    fsn_only: str
+
+
+def seed_worked_example(session: Session) -> SeededWorkedExample:
+    """Seeds FR-14's worked example and the FSN-only tag case.
+
+    Separate from `seed_public_catalogue` rather than folded into it: that
+    fixture's `active_in_key_order` is asserted verbatim by the paging tests,
+    so adding entries to it would couple every one of those to a change made
+    for search ranking. Allocated from its own random nine-digit block for
+    the same reason that one is - no assertion here depends on an absolute
+    row count or on being the only writer.
+    """
+    base = random.randrange(100_000_000, 999_000_000)
+    seeded = SeededWorkedExample(acth=f"NPTC-{base}", fsn_only=f"NPTC-{base + 1}")
+
+    acth = _entry(seeded.acth, WORKED_EXAMPLE_TERM, CatalogueEntryStatus.ACTIVE.value)
+    fsn_only = _entry(seeded.fsn_only, FSN_ONLY_TERM, CatalogueEntryStatus.ACTIVE.value)
+    session.add_all([acth, fsn_only])
+    session.flush()
+
+    session.add_all(
+        [
+            Designation(
+                entry_id=acth.id,
+                term=term,
+                use=DesignationUse.SYNONYM.value,
+                language="en-AU",
+                status=DesignationStatus.ACTIVE.value,
+            )
+            for term in WORKED_EXAMPLE_SYNONYMS
+        ]
+    )
+    session.add_all(
+        [
+            CodeBinding(
+                entry_id=acth.id,
+                code=WORKED_EXAMPLE_CODE,
+                fsn=WORKED_EXAMPLE_FSN,
+                au_preferred_term=WORKED_EXAMPLE_AU_PREFERRED_TERM,
+                edition_hint="au",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            CodeBinding(
+                entry_id=fsn_only.id,
+                code=FSN_ONLY_CODE,
+                fsn=FSN_ONLY_FSN,
+                # None on purpose - see `FSN_ONLY_CODE`'s note.
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            CodeBinding(
+                entry_id=fsn_only.id,
+                code=FSN_ONLY_RETIRED_CODE,
+                fsn=FSN_ONLY_RETIRED_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.RETIRED.value,
+                retirement_reason="Superseded in a later release; retained for the search test.",
+            ),
+        ]
+    )
+    session.flush()
+    return seeded
+
+
 def unused_business_key() -> str:
     """A well-formed `business_key` no entry holds - for the 404 case.
 

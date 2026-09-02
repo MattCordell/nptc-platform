@@ -1,4 +1,4 @@
-# ADR-0029: Domain logic at the browser boundary - mirror the function, share the fixtures
+# ADR-0030: Domain logic at the browser boundary - mirror the function, share the fixtures
 
 **Status:** Accepted
 **Date:** 2026-09-02

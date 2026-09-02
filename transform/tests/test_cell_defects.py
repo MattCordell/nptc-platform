@@ -629,7 +629,7 @@ def test_a_comma_space_is_still_a_valid_synonym_delimiter() -> None:
 
 @pytest.mark.req("FR-04")
 def test_stripping_covers_the_codepoints_javascript_and_python_disagree_on() -> None:
-    """The shared fixture behind ADR-0029's mirror of this function.
+    """The shared fixture behind ADR-0030's mirror of this function.
 
     `frontend/src/catalogue/split-synonyms.ts` splits the same cells in the
     browser, and the two `strip` implementations are not the same set:

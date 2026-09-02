@@ -2,7 +2,7 @@
  * Splitting a pasted synonym cell into individual terms (FR-04).
  *
  * A deliberate, tested mirror of `transform/src/nptc_transform/cell_defects.py`'s
- * `split_synonyms` - see `docs/adr/0029-domain-logic-at-the-browser-boundary.md`
+ * `split_synonyms` - see `docs/adr/0030-domain-logic-at-the-browser-boundary.md`
  * for why this is duplicated rather than shared, and what keeps the two honest.
  *
  * `POST /catalogue/entries/{business_key}/designations` takes `terms` already
@@ -26,7 +26,7 @@ const SYNONYM_FALLBACK_DELIMITER = ", ";
  *
  * `String.prototype.trim()` is *not* that set, and the difference is entirely
  * inside PRD Appendix A.1's own subject matter, which is the one place this
- * mirror could not afford to drift (ADR-0029, review finding 5). Python strips
+ * mirror could not afford to drift (ADR-0030, review finding 5). Python strips
  * U+0085 and U+001C-U+001F; JavaScript does not. JavaScript trims U+FEFF;
  * Python does not - so the platform default would silently repair a
  * zero-width no-break space that the catalogue is meant to refuse, and leave a
