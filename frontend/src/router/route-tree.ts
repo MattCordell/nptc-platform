@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react-router";
 
 import { HomePage } from "../pages/home.tsx";
+import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
@@ -307,7 +308,7 @@ const adminCatalogueNewRoute = createRoute({
 const adminCatalogueEditRoute = createRoute({
   getParentRoute: () => adminCatalogueRoute,
   path: "$businessKey/edit",
-  component: createPlaceholderPage({ title: "Edit catalogue entry", issue: 149 }),
+  component: AdminCatalogueEditPage,
   head: titled("Edit catalogue entry"),
 });
 
