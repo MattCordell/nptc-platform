@@ -239,6 +239,7 @@ def test_lookup_code_not_on_server_is_404(api: ApiTestApp) -> None:
     response = _get(api, token)
 
     assert response.status_code == 404, response.text
+    assert set(response.json()) == {"detail"}
     assert response.json()["detail"]
 
 
@@ -251,6 +252,7 @@ def test_lookup_timeout_is_503(api: ApiTestApp) -> None:
     response = _get(api, token)
 
     assert response.status_code == 503, response.text
+    assert set(response.json()) == {"detail"}
 
 
 @pytest.mark.req("FR-54")
@@ -280,6 +282,7 @@ def test_lookup_persisted_rate_limit_is_503_with_retry_after(api: ApiTestApp) ->
 
     assert response.status_code == 503, response.text
     assert response.headers["Retry-After"] == "30"
+    assert set(response.json()) == {"detail"}
 
 
 @pytest.mark.req("FR-54")
@@ -293,6 +296,7 @@ def test_lookup_operation_outcome_body_is_502(api: ApiTestApp) -> None:
     response = _get(api, token)
 
     assert response.status_code == 502, response.text
+    assert set(response.json()) == {"detail"}
 
 
 @pytest.mark.req("FR-54")
@@ -336,6 +340,9 @@ def test_lookup_authenticated_without_registry_read_is_403(api: ApiTestApp) -> N
     response = _get(api, token)
 
     assert response.status_code == 403, response.text
+    # The 401-vs-403 pair endpoints most reliably get backwards: a 403 must
+    # never carry the challenge, since the credential itself was fine here.
+    assert "WWW-Authenticate" not in response.headers
 
 
 @pytest.mark.req("FR-23")
