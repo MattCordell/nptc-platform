@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { asVersionConflict } from "./conflicts.ts";
 import type { components } from "./schema.ts";
 import { unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
@@ -25,7 +26,9 @@ import { useApiClient } from "./use-api-client.ts";
  *   is what scopes the invalidation, and it does not change between calls.
  * - **Failures are thrown, not returned.** `unwrap` gates on `response.ok` and
  *   throws `ApiError`, so a refusal reaches the caller's `onError`/`error`
- *   with its parsed body intact for `./conflicts.ts` to narrow.
+ *   with its parsed body intact for `./conflicts.ts` to narrow. The one
+ *   failure that also invalidates is FR-38's version conflict - see
+ *   `useAmendDesignation`.
  */
 
 export interface EntriesListParams {
@@ -151,6 +154,18 @@ export function useAmendDesignation(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // A version conflict is the one failure that also has to refetch. The
+    // refusal tells the editor the entry moved under them; without this the
+    // cached `row_version` stays stale, so every retry from the open dialog
+    // fails identically and the only way out is a browser reload (review
+    // finding 3). Refetching here is what makes "save again" true advice.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 

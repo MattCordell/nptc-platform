@@ -88,7 +88,14 @@ function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
           </ul>
         </>
       )}
-      <p>Reload the entry to pick up their change, then make yours again.</p>
+      {/* Not "reload the page": `useAmendDesignation` refetches the entry on
+          this refusal, so by the time this is read the screen behind the
+          dialog already holds their change (review finding 3). Advice the
+          screen does not carry out is worse than no advice. */}
+      <p>
+        The entry has been reloaded with their change. Check yours is still needed, then
+        save it again.
+      </p>
     </div>
   );
 }

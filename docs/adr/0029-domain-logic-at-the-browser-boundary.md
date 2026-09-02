@@ -51,12 +51,21 @@ also meet:
    indexes, `assert_no_error_collisions`); a browser that skipped the split entirely would
    produce a worse experience, not an unsafe one.
 
-Where the two languages genuinely differ, the difference is noted at the mirror rather
-than papered over. `String.prototype.trim()` and Python's `str.strip()` agree on `U+00A0`,
-but JavaScript also trims `U+FEFF`, which Python's `str.isspace()` excludes. It does not
-matter here - `clean_term` rejects a zero-width character outright, so a term that survives
-one trim and not the other is refused server-side either way - but the class of difference
-is real and the next mirror should check for it.
+Where the two languages genuinely differ, the mirror closes the gap explicitly rather
+than inheriting a platform default. `String.prototype.trim()` is not `str.strip()`: Python
+strips `U+0085` and `U+001C`-`U+001F`, which JavaScript leaves; JavaScript trims `U+FEFF`,
+which Python's `str.isspace()` excludes. Every one of those is a PRD Appendix A.1
+character, so the platform default would have diverged in exactly the input class the
+mirror exists to handle - the one place the drift would have been invisible.
+`split-synonyms.ts` therefore spells the Python whitespace set out as its own character
+class, and the fixture naming those codepoints is asserted on both sides of the wire.
+
+Two general points fall out of that, for the mirrors still to come. A shared fixture set
+has to include the *boundary* cases and not only the representative ones, because the
+representative cases are precisely the ones two implementations agree on by accident. And
+"the same standard-library function exists in both languages" is a claim to check rather
+than assume - `trim`/`strip`, `toLowerCase`/`casefold` and `normalize`/`unicodedata.
+normalize` all differ in ways that matter to terminology work.
 
 ## Rejected alternatives
 

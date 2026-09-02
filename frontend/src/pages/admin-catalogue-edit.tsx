@@ -48,7 +48,11 @@ export function AdminCatalogueEditPage() {
             <dd>{new Date(entry.data.updated_at).toLocaleString()}</dd>
           </dl>
 
-          <DesignationsPanel entry={entry.data} />
+          {/* Keyed on the entry so its panel state - the warnings from the
+              last write, and any open dialog - cannot survive navigation from
+              one entry's edit screen to another's, which re-renders this same
+              route component rather than remounting it (review finding 4). */}
+          <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
         </>
       )}
     </section>

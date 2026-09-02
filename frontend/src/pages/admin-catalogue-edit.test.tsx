@@ -34,7 +34,18 @@ const ENTRY = {
       status: "active",
       length: 14,
     },
-    { term: "Old name", use: "synonym", language: "en-AU", status: "retired", length: 8 },
+    // A non-en-AU preferred *designation*, which is a shape the read route
+    // documents ("an entry's active synonyms and non-en-AU preferred
+    // variants") and which the panel must not amend as a synonym. There is no
+    // retired row here: both read routes build `designations` from
+    // `queries.load_designations`, which omits them.
+    {
+      term: "Ferritine",
+      use: "preferred",
+      language: "fr-FR",
+      status: "active",
+      length: 9,
+    },
   ],
   bindings: [],
   properties: [],
@@ -100,6 +111,13 @@ async function renderLoaded() {
 
 function callsTo(calls: { method: string; path: string; body: unknown }[], path: string) {
   return calls.filter((call) => call.method === "POST" && call.path.endsWith(path));
+}
+
+/** Reads of the entry, for asserting that something refetched it. */
+function readsOf(calls: { method: string; path: string }[]) {
+  return calls.filter(
+    (call) => call.method === "GET" && call.path.endsWith(READ_OK.path),
+  );
 }
 
 /**
@@ -200,7 +218,22 @@ describe("the terms table", () => {
     expect(within(rows[2] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
       "Serum ferritin",
     );
-    expect(within(rows[3] as HTMLElement).getByText("retired")).toBeInTheDocument();
+    expect(within(rows[3] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
+      "Ferritine",
+    );
+  });
+
+  it("has no Status column, because every row it can hold is active", async () => {
+    // `queries.load_designations` omits retired designations and
+    // `catalogue_entry.preferred_term` is NOT NULL, so a Status column could
+    // only ever render the same literal on every row (review finding 2).
+    stubApi([READ_OK]);
+
+    await renderLoaded();
+
+    expect(
+      screen.queryByRole("columnheader", { name: "Status" }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not offer to retire the entry's own preferred term", async () => {
@@ -217,15 +250,6 @@ describe("the terms table", () => {
     expect(
       within(rows[2] as HTMLElement).getByRole("button", { name: /^Retire/ }),
     ).toBeInTheDocument();
-  });
-
-  it("offers no actions on a retired term", async () => {
-    stubApi([READ_OK]);
-
-    await renderLoaded();
-
-    const retiredRow = screen.getAllByRole("row")[3] as HTMLElement;
-    expect(within(retiredRow).queryAllByRole("button")).toHaveLength(0);
   });
 
   it("tells two rows apart when a synonym shadows the preferred term", async () => {
@@ -263,17 +287,16 @@ describe("the terms table", () => {
   });
 
   it("keeps the preferred term editable on a draft entry", async () => {
-    // Found in review. A designation is active or retired; an entry is
-    // draft/active/deprecated/withdrawn. Putting the entry's status in the
-    // term's Status column - which the row actions key on - took the Edit
-    // action away from every unpublished entry, which is precisely the kind
-    // this screen exists to edit (#228).
+    // Found in review. An entry's own lifecycle
+    // (draft/active/deprecated/withdrawn) is not a fact about any of its
+    // terms, and once it reached the row actions it took the Edit action away
+    // from every unpublished entry - precisely the kind this screen exists to
+    // edit (#228).
     stubApi([READ_OK]);
 
     await renderLoaded();
 
     const preferredRow = screen.getAllByRole("row")[1] as HTMLElement;
-    expect(within(preferredRow).getByText("active")).toBeInTheDocument();
     expect(
       within(preferredRow).getByRole("button", { name: "Edit Ferritin (preferred)" }),
     ).toBeInTheDocument();
@@ -370,6 +393,26 @@ describe("adding synonyms", () => {
     // And the summary's link reaches the field it names, rather than a dead id.
     await user.click(screen.getByRole("link", { name: /changelog note/i }));
     expect(screen.getByLabelText(/Changelog note/)).toHaveFocus();
+  });
+  it("refuses a paste over the server's batch cap, saying by how much", async () => {
+    // `_MAX_TERMS_PER_BATCH` is 100 and a 422 for it carries FastAPI's
+    // `ValidationError` array, which `refusalDetail` cannot turn into a
+    // sentence - so without this the editor sees "check the details and try
+    // again" beside a preview boasting 101 terms (review finding 6).
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    const cell = Array.from({ length: 101 }, (_, index) => `Term ${index}`).join(";");
+    await user.click(screen.getByLabelText("Synonyms"));
+    await user.paste(cell);
+    await user.type(screen.getByLabelText(/Changelog note/), "Bulk import of synonyms");
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+    expect(
+      await screen.findAllByText(/This adds 101 terms, and at most 100/),
+    ).toHaveLength(2);
+    expect(callsTo(calls, ADD_PATH)).toHaveLength(0);
   });
 });
 
@@ -658,7 +701,7 @@ describe("amending a term", () => {
 
     expect(await screen.findByText(/A Curator/)).toBeInTheDocument();
     expect(screen.getByText(/Ferritin \(S\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Reload the entry/)).toBeInTheDocument();
+    expect(screen.getByText(/The entry has been reloaded/)).toBeInTheDocument();
   });
 
   it("reads correctly when the concurrent edit touched a different field", async () => {
@@ -696,7 +739,120 @@ describe("amending a term", () => {
       await screen.findByText(/Someone else changed this entry/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/What you sent/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Reload the entry/)).toBeInTheDocument();
+    expect(screen.getByText(/The entry has been reloaded/)).toBeInTheDocument();
+  });
+
+  it("refetches the entry on a version conflict, so a retry can succeed", async () => {
+    // The refusal says the entry has been reloaded. `invalidateQueries` runs
+    // on success only by default, so without the mutation's `onError` the
+    // cached `row_version` would stay stale and every retry from this dialog
+    // would fail identically - advice the screen does not carry out (review
+    // finding 3).
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 409,
+        body: {
+          detail: "This entry was changed by someone else since you loaded it.",
+          business_key: BUSINESS_KEY,
+          expected_row_version: 3,
+          current_row_version: 4,
+          conflicts: [],
+          changed_by: "A Curator",
+          changed_at: "2026-09-02T01:00:00Z",
+        },
+      },
+    ]);
+    await renderLoaded();
+    const readsBefore = readsOf(calls).length;
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Disambiguate from plasma",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    await screen.findByText(/The entry has been reloaded/);
+    await waitFor(() => expect(readsOf(calls).length).toBeGreaterThan(readsBefore));
+  });
+
+  it("does not refetch when the amendment is refused for a collision", async () => {
+    // The other side of the conflict refetch: a collision means nothing moved,
+    // so re-reading would only discard what the editor typed for no gain.
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 409,
+        body: {
+          detail: "This term is already in use on another entry.",
+          collisions: [
+            {
+              term: "Iron studies",
+              business_key: "NPTC-000900",
+              preferred_term: "Iron studies",
+            },
+          ],
+        },
+      },
+    ]);
+    await renderLoaded();
+    const readsBefore = readsOf(calls).length;
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    expect(await screen.findByText(/Nothing has been saved/)).toBeInTheDocument();
+    expect(readsOf(calls)).toHaveLength(readsBefore);
+  });
+
+  it("amends a non-en-AU preferred variant as preferred, not as a synonym", async () => {
+    // The read route serves "an entry's active synonyms and non-en-AU
+    // preferred variants", so `use` has to come off the row. Hardcoding
+    // "synonym" for every row that is not the entry's own term mis-addresses
+    // exactly the designation `use` exists to reach (review finding 1).
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 200,
+        body: {
+          designation: {
+            term: "Ferritine serique",
+            use: "preferred",
+            language: "fr-FR",
+            status: "active",
+            length: 17,
+          },
+          warnings: [],
+          row_version: 3,
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritine (preferred)" }));
+    const term = inDialog().getByLabelText("Term");
+    await user.clear(term);
+    await user.type(term, "Ferritine serique");
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Correct the French");
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    await waitFor(() => expect(callsTo(calls, AMEND_PATH)).toHaveLength(1));
+    expect(callsTo(calls, AMEND_PATH)[0]?.body).toMatchObject({
+      language: "fr-FR",
+      term: "Ferritine",
+      use: "preferred",
+    });
   });
 
   it("renders a conflicting value that is not a string", async () => {
@@ -789,6 +945,68 @@ describe("retiring a term", () => {
       term: "Serum ferritin",
       reason: "Superseded by the new wording",
     });
+  });
+
+  it("drops a warning about the term it just retired", async () => {
+    // The warning names a term the entry no longer has, and its Acknowledge
+    // button would write an acknowledgement for it (review finding 4).
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: ADD_PATH,
+        status: 201,
+        body: {
+          designations: [
+            {
+              term: "Ferritin assay",
+              use: "synonym",
+              language: "en-AU",
+              status: "active",
+              length: 14,
+            },
+          ],
+          warnings: [
+            {
+              term: "Serum ferritin",
+              business_key: "NPTC-000900",
+              preferred_term: "Iron studies",
+            },
+          ],
+        },
+      },
+      {
+        method: "POST",
+        path: RETIRE_PATH,
+        status: 200,
+        body: {
+          term: "Serum ferritin",
+          use: "synonym",
+          language: "en-AU",
+          status: "retired",
+          length: 14,
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
+    await user.type(screen.getByLabelText(/Changelog note/), "Add the assay wording");
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+    await screen.findByRole("button", { name: "Acknowledge Serum ferritin" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+    );
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Retire the duplicate");
+    await user.click(inDialog().getByRole("button", { name: "Retire term" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Acknowledge Serum ferritin" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("refuses to retire without a reason", async () => {

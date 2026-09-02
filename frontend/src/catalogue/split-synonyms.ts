@@ -21,6 +21,36 @@ const SYNONYM_DELIMITER = ";";
 const SYNONYM_FALLBACK_DELIMITER = ", ";
 
 /**
+ * Exactly the characters Python's `str.strip()` removes - the set `str.isspace()`
+ * is true for.
+ *
+ * `String.prototype.trim()` is *not* that set, and the difference is entirely
+ * inside PRD Appendix A.1's own subject matter, which is the one place this
+ * mirror could not afford to drift (ADR-0029, review finding 5). Python strips
+ * U+0085 and U+001C-U+001F; JavaScript does not. JavaScript trims U+FEFF;
+ * Python does not - so the platform default would silently repair a
+ * zero-width no-break space that the catalogue is meant to refuse, and leave a
+ * NEL that the transform would have removed. Spelling the set out keeps both
+ * sides answering the same question, and the shared fixtures in
+ * `split-synonyms.test.ts` name the codepoints that used to separate them.
+ */
+const PYTHON_SPACE_CLASS =
+  "[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a" +
+  "\u2028\u2029\u202f\u205f\u3000]";
+// Written as escapes, never as the characters themselves: a source file that
+// contains an invisible character is the defect class this platform exists to
+// eliminate.
+const PYTHON_WHITESPACE = new RegExp(
+  `^${PYTHON_SPACE_CLASS}+|${PYTHON_SPACE_CLASS}+$`,
+  "gu",
+);
+
+/** `str.strip()`, not `trim()`. See `PYTHON_WHITESPACE`. */
+function strip(part: string): string {
+  return part.replace(PYTHON_WHITESPACE, "");
+}
+
+/**
  * The individual terms a pasted synonym cell holds, in the order given.
  *
  * Empty parts are dropped rather than reported: a doubled delimiter
@@ -36,6 +66,6 @@ export function splitSynonyms(text: string): string[] {
     : SYNONYM_FALLBACK_DELIMITER;
   return text
     .split(delimiter)
-    .map((part) => part.trim())
+    .map((part) => strip(part))
     .filter((part) => part.length > 0);
 }

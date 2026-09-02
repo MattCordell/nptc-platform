@@ -57,6 +57,28 @@ describe("splitSynonyms", () => {
     ]);
   });
 
+  it("strips the codepoints JavaScript and Python disagree on", () => {
+    // The other half of a shared fixture: the identical strings are asserted
+    // in `transform/tests/test_cell_defects.py`'s
+    // `test_stripping_covers_the_codepoints_javascript_and_python_disagree_on`.
+    // `String.prototype.trim()` is not `str.strip()` - it leaves U+0085 and
+    // U+001C-U+001F, and removes U+FEFF - and every one of those is a PRD
+    // Appendix A.1 character, so the platform default would drift from the
+    // Python in exactly the input class the mirror exists to handle
+    // (ADR-0029).
+    const nel = "\u0085";
+    const fs = "\u001c";
+    const bom = "\ufeff";
+    expect(splitSynonyms(`${nel}Ferritin${nel};${fs}Serum ferritin${fs}`)).toEqual([
+      "Ferritin",
+      "Serum ferritin",
+    ]);
+    // Not stripped, matching Python: U+FEFF has no single correct repair, so
+    // it survives the split and is refused by the server rather than being
+    // silently swallowed in the browser.
+    expect(splitSynonyms(`${bom}Ferritin`)).toEqual([`${bom}Ferritin`]);
+  });
+
   it("preserves the order the cell gave, and does not deduplicate", () => {
     // Deduplication is the server's, on the comparison key `collision_key`
     // folds - `add_synonyms` dedupes and re-orders by that key. Doing either

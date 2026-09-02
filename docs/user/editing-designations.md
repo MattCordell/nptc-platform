@@ -23,7 +23,10 @@ published yet can be edited the same way as published ones.
 The **Terms** table lists everything the entry publishes, one row per term:
 
 - The **preferred term** first. This is the catalogue's own name for the test.
-- Every **synonym** after it, including any that have been retired.
+- Every **synonym** after it.
+
+Retired terms are not listed. They are kept, with their history, but the table shows what
+the entry publishes today.
 
 **Length** is the character count of the preferred term. It is worked out by the
 catalogue, not stored and not typed, so it always matches the term it describes. There is
@@ -39,6 +42,9 @@ separated by semicolons are split into one row each, so pasting
 `Zovirax;;Cyclir` adds **Zovirax** and **Cyclir** — two terms, not three. The empty
 stretch between the doubled semicolon is dropped, because a blank term is not a thing the
 catalogue can hold.
+
+You can add up to 100 terms at once. A larger paste is refused before it is sent, with a
+count, so you can split it.
 
 Before you save, the screen tells you exactly what it will create — *"This will add 2
 terms: “Zovirax”, “Cyclir”"* — so you can check the split matches what you meant.
@@ -56,15 +62,15 @@ Editing the preferred term works the same way as editing a synonym, even though 
 catalogue stores the two differently behind the scenes.
 
 If someone else changes the entry while you have it open, your save is refused and you are
-told who changed it, when, and which values moved. Nothing of yours is saved. Reload the
-entry to pick up their change, then make yours again.
+told who changed it, when, and which values moved. Nothing of yours is saved. The screen
+reloads their change for you, so check yours is still needed and save it again.
 
 ## Retiring a synonym
 
 Choose **Retire** on the row, give a changelog note, and confirm.
 
-Retiring keeps the term and its history on the entry, marked retired, and stops it being
-published. Nothing is deleted.
+The term stops being published and disappears from the Terms table. Nothing is deleted:
+the catalogue keeps the term and records who retired it and why, in the entry's history.
 
 **The preferred term cannot be retired**, so no Retire button appears on that row. Every
 entry must have a preferred term at all times. To change what the entry is called, edit
@@ -122,7 +128,8 @@ correct repair — a zero-width space, or a control character — usually picked
 from a formatted document. Retype the term rather than pasting it.
 
 **"Someone else changed this entry while you had it open."** Another editor saved before
-you did. Nothing of yours was saved. Reload the entry and make your change again.
+you did. Nothing of yours was saved. The screen has already picked up their change - check
+yours is still needed, then save it again.
 
 **"No active designation was found for the given term."** The term was retired or edited
 by someone else between the page loading and your save. Reload the entry.
