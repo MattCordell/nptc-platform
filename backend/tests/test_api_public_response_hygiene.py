@@ -45,6 +45,7 @@ from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.user import User
+from nptc_shared.terminology import AU_LANGUAGE_TAG, StubConcept
 
 
 def _load(name: str) -> Any:
@@ -498,3 +499,42 @@ def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTest
         f"{found_number and found_number.group()!r} - a code serialised as a JSON number (FR-06)"
     )
     assert f'"{_seed.RETIRED_CODE}"' in response.text
+
+
+# --- issue #240's terminology lookup route: the same two invariants ------
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+def test_terminology_lookup_response_contains_no_uuid_and_no_unquoted_code(
+    api: ApiTestApp,
+) -> None:
+    """`_catalogue_paths` above only ever walks `{API_PREFIX}/catalogue*`
+    paths, so `/terminology/concepts/{code}` - deliberately its own prefix,
+    per that router's own module docstring - needs its own authenticated
+    coverage of the same two acceptance criteria (issue #240). The response
+    carries an SCTID (`code`), so the unquoted-number half is a live
+    assertion here too, not a formality."""
+    token = api.token(subject="sub-terminology-hygiene")
+    api.get("/auth/me", token=token)  # bootstraps the default Provisional grant
+
+    api.terminology.add_concept(
+        StubConcept(
+            code=_seed.ACTIVE_CODE,
+            fsn=_seed.ACTIVE_FSN,
+            preferred_terms={AU_LANGUAGE_TAG: "Acid fast bacilli microscopy"},
+        )
+    )
+
+    response = api.get(f"/terminology/concepts/{_seed.ACTIVE_CODE}", token=token)
+    assert response.status_code == 200, response.text
+
+    found_uuid = _UUID_RE.search(response.text)
+    assert found_uuid is None, f"response body contains a UUID: {found_uuid and found_uuid.group()}"
+    found_number = _UNQUOTED_LONG_NUMBER_RE.search(response.text)
+    assert found_number is None, (
+        f"response body contains an unquoted long number "
+        f"{found_number and found_number.group()!r} - a code serialised as a JSON number (FR-06)"
+    )
+    assert f'"{_seed.ACTIVE_CODE}"' in response.text

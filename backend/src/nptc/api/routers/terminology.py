@@ -95,8 +95,8 @@ _RESPONSE_502: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "The terminology server's response could not be used - an unparseable body, "
-        "the wrong resource type, or a 4xx that was not itself an answer to \"does "
-        "this code exist\". Names no URL, variable or upstream host."
+        'the wrong resource type, or a 4xx that was not itself an answer to "does '
+        'this code exist". Names no URL, variable or upstream host.'
     ),
 }
 _RESPONSE_503: Final[dict[str, Any]] = {
