@@ -1,9 +1,37 @@
-"""Trigram search over the public catalogue (issue #142, FR-14, FR-15).
+"""Hybrid full-text and trigram search over the public catalogue
+(issues #142 and #138, FR-14, FR-15).
 
-See `docs/adr/0024-catalogue-search-and-pagination.md` for the decision
-record, including why `pg_trgm` rather than `tsvector` (a lexeme match
-scores a transposition at zero, and FR-15 requires tolerating exactly that)
-and why not a search engine (ADR-0001 already ruled one out).
+See `docs/adr/0024-catalogue-search-and-pagination.md` for the original
+decision record - the cursor shape, the threshold discipline, and why not a
+search engine (ADR-0001 already ruled one out) - and
+`docs/adr/0029-hybrid-full-text-and-trigram-search.md`, which supersedes
+ADR-0024's rejection of full-text search and records what changed.
+
+The short version of that change: ADR-0024 chose trigram alone because a
+`tsvector` match is lexeme equality after stemming and so scores a
+transposition at exactly zero, which is precisely what FR-15 requires
+tolerating. That remains true, and it is why the trigram scans are still
+here. What ADR-0024 deferred, and #138 settles, is that the converse gap is
+real too: trigram scores an inflected form as a near-miss and penalises a
+short query against a long FSN by the length ratio alone. The two mechanisms
+fail in opposite directions, so the query runs both and keeps the better
+score per entry rather than choosing between them.
+
+**All five of FR-14's fields, in one query field.** The catalogue's own
+preferred term, its active synonyms, the stored `fsn`, the stored
+`au_preferred_term`, and the SNOMED code. A user typing `49466006`, `ACTH`,
+`Adrenocorticotropic hormone` or `Corticotropin` reaches the same entry -
+the PRD's own worked example, asserted as a test in
+`backend/tests/test_search_ranking.py`.
+
+The two SNOMED labels are searched **tag-intact, exactly as stored**
+(FR-82). There is no stripped second copy and no SQL-side tag stripper:
+the semantic tag is extra text to trigram and its own lexeme to full-text,
+so an FSN searched with its tag typed in full and the same FSN with the tag
+omitted both reach the entry through the one index. ADR-0029 records why the
+alternative was refused - a `nptc_strip_semantic_tag(text)` in the database
+would be a second copy of the semantic-tag regex, which ADR-0006 identifies
+as the defect class FR-83 exists to prevent.
 
 **One raw statement, and it is a module-level literal.** `_SEARCH_SQL` below
 is plain text with bound parameters only - no f-string, no concatenation, no
@@ -36,18 +64,27 @@ found. `SET LOCAL` says the same thing more directly but takes no bound
 parameter, and NFR-22 rules out interpolating the value into the statement
 text, so `set_config` is the parameterised spelling of `SET LOCAL`.
 
-The `HAVING` clause then re-asserts `>= :threshold` on the score directly.
-Stating precisely what that protects against matters, because the loose
-version of the claim - "correct regardless of session state" - is false.
-`HAVING` can only *discard* rows the inner `%` scans already returned. So
-it does defend against a threshold left **lower** than this module's: the
-extra, weaker matches such a threshold admits are filtered back out, and
-the answer is unchanged. It cannot defend against one left **higher**: a
-raised threshold narrows the inner `%` index scans themselves, and no
-`HAVING` recovers a row that was never scanned. The transaction scoping
-above is what keeps that second case from arising at all; the `HAVING` is
-the belt to its braces, and specifically the reason a future code path
-setting the GUC lower cannot silently *broaden* this query.
+`scored`'s own `WHERE` then re-asserts `trigram_score >= :threshold`
+directly. Stating precisely what that protects against matters, because the
+loose version of the claim - "correct regardless of session state" - is
+false. That filter can only *discard* rows the inner `%` scans already
+returned. So it does defend against a threshold left **lower** than this
+module's: the extra, weaker matches such a threshold admits are filtered
+back out, and the answer is unchanged. It cannot defend against one left
+**higher**: a raised threshold narrows the inner `%` index scans themselves,
+and no later filter recovers a row that was never scanned. The transaction
+scoping above is what keeps that second case from arising at all; the
+restatement is the belt to its braces, and specifically the reason a future
+code path setting the GUC lower cannot silently *broaden* this query.
+
+ADR-0024 put that restatement in a `HAVING` over `MAX(score)`. It cannot
+live there now that scores are weighted per source - a genuine trigram match
+at 0.35 from a source weighted 0.75 scores 0.26, and a `HAVING` on the
+weighted value would silently raise the effective threshold for every source
+except the highest-weighted one. It is applied to the raw `similarity()`
+instead, which is the value the GUC actually governs, and the full-text and
+code branches carry `NULL` there because `%`'s threshold has no meaning for
+an `@@` or an `=` test.
 
 **Relevance keyset.** The cursor is `"<score>:<query digest>:<business_key>"`
 - the score and key are both values the client just received, neither an
@@ -78,6 +115,12 @@ from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.queries import PUBLIC_STATUSES
 
 __all__ = [
+    "BINDING_LABEL_WEIGHT",
+    "DESIGNATION_WEIGHT",
+    "EXACT_CODE_SCORE",
+    "EXACT_LABEL_SCORE",
+    "EXACT_PREFERRED_TERM_SCORE",
+    "PREFERRED_TERM_WEIGHT",
     "SIMILARITY_THRESHOLD",
     "EmptySearchQueryError",
     "MalformedSearchCursorError",
@@ -93,6 +136,35 @@ __all__ = [
 #: cannot tell a bad result from a broken catalogue), which is what lowering
 #: this produces - so it is raised, never lowered, in response to noise.
 SIMILARITY_THRESHOLD: Final[float] = 0.3
+
+#: The score tiers and per-source weights that make FR-14's ranking
+#: requirement - "an exact code match and an exact preferred-term match
+#: outrank a fuzzy synonym hit" - true by arithmetic rather than by hope.
+#:
+#: The mechanism is a set of disjoint bands. Every fuzzy contribution is a
+#: `similarity()` or a `ts_rank_cd()` result, both of which are at most 1.0,
+#: multiplied by its source's weight - so no fuzzy match from any source can
+#: exceed `PREFERRED_TERM_WEIGHT`. Both exact tiers sit strictly above that
+#: ceiling, and the exact code tier strictly above them. The ordering the
+#: acceptance criterion asks for is therefore not a tuning outcome that could
+#: regress under a different corpus; it holds for every possible input, and
+#: `test_search_ranking.py::test_the_score_bands_cannot_overlap` asserts the
+#: inequality directly rather than inferring it from one worked example.
+#:
+#: Weights are *relative source trust*, not tuned constants. The catalogue's
+#: own preferred term is the label RCPA curates and is what an entry is
+#: called; a synonym is a real but secondary way in; the two stored SNOMED
+#: labels are what a terminology server served for the bound concept, which
+#: is authoritative about SNOMED and only indirectly about this entry. The
+#: gaps between them are what stop a long FSN's incidental word overlap from
+#: outranking a genuine synonym match, and nothing finer is claimed for the
+#: specific figures - there is no production query log yet (ADR-0029).
+EXACT_CODE_SCORE: Final[float] = 1.0
+EXACT_PREFERRED_TERM_SCORE: Final[float] = 0.99
+EXACT_LABEL_SCORE: Final[float] = 0.95
+PREFERRED_TERM_WEIGHT: Final[float] = 0.90
+DESIGNATION_WEIGHT: Final[float] = 0.80
+BINDING_LABEL_WEIGHT: Final[float] = 0.75
 
 #: The cursor separator. `:` cannot occur in any of the three parts - a
 #: score is a float, the query digest is hex, and a `business_key` matches
@@ -120,18 +192,55 @@ _SET_THRESHOLD_SQL = text(
     "SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"
 )
 
-#: One statement. Reading it from the inside out: the `UNION ALL` subquery is
-#: two index-supported `%` scans, one per searchable column; the outer
-#: `GROUP BY` collapses an entry matched by several of its own synonyms into
-#: a single row scored by its best match; the `HAVING` applies both the
-#: real threshold and the keyset predicate.
+#: One statement. Reading it from the inside out: the `matches` subquery is
+#: nine index-supported scans - a trigram `%` scan and a full-text `@@` scan
+#: over each of the four searchable text columns, plus one equality scan on
+#: the SNOMED code; the `scored` subquery collapses an entry matched several
+#: ways into a single row carrying its best score; the outer query joins back
+#: for the served columns and applies the keyset predicate.
 #:
-#: `d.status = 'active'` is written as a literal, matching
-#: `ix_designation_term_trgm`'s own partial-index predicate exactly - a
-#: bound parameter there would leave the planner unable to prove the partial
-#: index covers the query. The entry status filter *is* parameterised
+#: **Why nine branches and not one predicate with `OR`.** Every branch is a
+#: separate index scan because that is the only shape in which each one *is*
+#: an index scan. `a % q OR a @@ q` over two different indexes on the same
+#: column plans as a sequential scan with both tests as filters - the same
+#: class of defect ADR-0024 recorded for `similarity(...) >= 0.3`, invisible
+#: to every functional test and visible only as a slow catalogue.
+#: `backend/tests/test_db_search_index.py` `EXPLAIN`s this statement and
+#: asserts an `Index Cond` on each of the nine.
+#:
+#: **Why both a trigram and a full-text scan per column.** They fail in
+#: opposite directions and neither is a superset of the other. A `tsvector`
+#: match is lexeme equality after stemming, so it scores a transposition at
+#: exactly zero - FR-15's typo half is entirely trigram's. A trigram set is
+#: unordered, so it handles word-order variation well, but it scores an
+#: inflected or pluralised form as a near-miss and it penalises a short query
+#: against a long FSN by the length ratio alone - those are full-text's.
+#: `MAX` over the branches means an entry found both ways keeps whichever
+#: score is better rather than being averaged into the middle.
+#:
+#: **The status literals.** `d.status = 'active'` and `cb.status = 'active'`
+#: are written as literals, matching the partial-index predicates on
+#: `ix_designation_term_*` and all five `ix_code_binding_*` exactly - a bound
+#: parameter there would leave the planner unable to prove the partial index
+#: covers the query. The entry status filter *is* parameterised
 #: (`:statuses`), because `PUBLIC_STATUSES` is a Python constant the tests
-#: import and the entry-side index is not partial on status anyway.
+#: import and the entry-side indexes are not partial on status anyway.
+#:
+#: **Where the threshold restatement went, and why it is still the same
+#: defence.** ADR-0024 put `MAX(score) >= :threshold` in a `HAVING`. It
+#: cannot stay there now that scores are weighted: a genuine trigram match at
+#: 0.35 from a source weighted 0.75 scores 0.26, and a `HAVING` on the
+#: weighted value would silently raise the effective threshold per source.
+#: The restatement is instead `trigram_score >= :threshold` on the *raw*
+#: similarity in `scored`'s `WHERE`, which is exactly the value the GUC
+#: governs. That preserves the property ADR-0024 actually argued for - a
+#: threshold left **lower** by another code path admits extra weak matches to
+#: the `%` scans and they are filtered back out here - and it still cannot
+#: defend against one left **higher**, which narrows the index scans
+#: themselves. The transaction scoping is what keeps that case from arising.
+#: Full-text and code branches carry `NULL` here rather than a number,
+#: because `pg_trgm.similarity_threshold` has no meaning for them: `@@` and
+#: `=` are exact tests with no threshold to restate.
 #:
 #: The `CAST(...)` around the two keyset parameters is required rather than
 #: decorative: on the first page both are `NULL`, and `$n IS NULL` gives
@@ -151,46 +260,131 @@ _SET_THRESHOLD_SQL = text(
 #: construction - and it is the tie branch that keeps a page boundary
 #: inside a score tie from dropping or repeating a row.
 _SEARCH_SQL = text("""
+WITH matches AS (
+    SELECT
+        entry.id AS entry_id,
+        similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
+            AS trigram_score,
+        CASE
+            WHEN nptc_search_text(entry.preferred_term) = nptc_search_text(:q)
+                THEN CAST(:exact_preferred_term_score AS real)
+            ELSE similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
+                 * CAST(:preferred_term_weight AS real)
+        END AS score
+    FROM catalogue_entry AS entry
+    WHERE entry.status = ANY(:statuses)
+      AND nptc_search_text(entry.preferred_term) % nptc_search_text(:q)
+    UNION ALL
+    SELECT
+        entry.id,
+        CAST(NULL AS real),
+        ts_rank_cd(nptc_search_document(entry.preferred_term), nptc_search_query(:q), 32)
+            * CAST(:preferred_term_weight AS real)
+    FROM catalogue_entry AS entry
+    WHERE entry.status = ANY(:statuses)
+      AND nptc_search_document(entry.preferred_term) @@ nptc_search_query(:q)
+    UNION ALL
+    SELECT
+        d.entry_id,
+        similarity(nptc_search_text(d.term), nptc_search_text(:q)),
+        CASE
+            WHEN nptc_search_text(d.term) = nptc_search_text(:q)
+                THEN CAST(:exact_label_score AS real)
+            ELSE similarity(nptc_search_text(d.term), nptc_search_text(:q))
+                 * CAST(:designation_weight AS real)
+        END
+    FROM designation AS d
+    WHERE d.status = 'active'
+      AND nptc_search_text(d.term) % nptc_search_text(:q)
+    UNION ALL
+    SELECT
+        d.entry_id,
+        CAST(NULL AS real),
+        ts_rank_cd(nptc_search_document(d.term), nptc_search_query(:q), 32)
+            * CAST(:designation_weight AS real)
+    FROM designation AS d
+    WHERE d.status = 'active'
+      AND nptc_search_document(d.term) @@ nptc_search_query(:q)
+    UNION ALL
+    SELECT
+        cb.entry_id,
+        similarity(nptc_search_text(cb.fsn), nptc_search_text(:q)),
+        CASE
+            WHEN nptc_search_text(cb.fsn) = nptc_search_text(:q)
+                THEN CAST(:exact_label_score AS real)
+            ELSE similarity(nptc_search_text(cb.fsn), nptc_search_text(:q))
+                 * CAST(:binding_label_weight AS real)
+        END
+    FROM code_binding AS cb
+    WHERE cb.status = 'active'
+      AND nptc_search_text(cb.fsn) % nptc_search_text(:q)
+    UNION ALL
+    SELECT
+        cb.entry_id,
+        CAST(NULL AS real),
+        ts_rank_cd(nptc_search_document(cb.fsn), nptc_search_query(:q), 32)
+            * CAST(:binding_label_weight AS real)
+    FROM code_binding AS cb
+    WHERE cb.status = 'active'
+      AND nptc_search_document(cb.fsn) @@ nptc_search_query(:q)
+    UNION ALL
+    SELECT
+        cb.entry_id,
+        similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q)),
+        CASE
+            WHEN nptc_search_text(cb.au_preferred_term) = nptc_search_text(:q)
+                THEN CAST(:exact_label_score AS real)
+            ELSE similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q))
+                 * CAST(:binding_label_weight AS real)
+        END
+    FROM code_binding AS cb
+    WHERE cb.status = 'active'
+      AND nptc_search_text(cb.au_preferred_term) % nptc_search_text(:q)
+    UNION ALL
+    SELECT
+        cb.entry_id,
+        CAST(NULL AS real),
+        ts_rank_cd(nptc_search_document(cb.au_preferred_term), nptc_search_query(:q), 32)
+            * CAST(:binding_label_weight AS real)
+    FROM code_binding AS cb
+    WHERE cb.status = 'active'
+      AND nptc_search_document(cb.au_preferred_term) @@ nptc_search_query(:q)
+    UNION ALL
+    SELECT
+        cb.entry_id,
+        CAST(NULL AS real),
+        CAST(:exact_code_score AS real)
+    FROM code_binding AS cb
+    WHERE cb.status = 'active'
+      AND cb.code = btrim(:q)
+), scored AS (
+    SELECT
+        m.entry_id AS entry_id,
+        MAX(m.score) AS score
+    FROM matches AS m
+    WHERE m.trigram_score IS NULL
+       OR m.trigram_score >= :threshold
+    GROUP BY m.entry_id
+)
 SELECT
     e.business_key,
     e.preferred_term,
     e.status,
     e.specimen_unconstrained,
     e.updated_at,
-    MAX(m.score) AS score
-FROM (
-    SELECT
-        entry.id AS entry_id,
-        similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q)) AS score
-    FROM catalogue_entry AS entry
-    WHERE entry.status = ANY(:statuses)
-      AND nptc_search_text(entry.preferred_term) % nptc_search_text(:q)
-    UNION ALL
-    SELECT
-        d.entry_id AS entry_id,
-        similarity(nptc_search_text(d.term), nptc_search_text(:q)) AS score
-    FROM designation AS d
-    WHERE d.status = 'active'
-      AND nptc_search_text(d.term) % nptc_search_text(:q)
-) AS m
-JOIN catalogue_entry AS e ON e.id = m.entry_id
+    s.score AS score
+FROM scored AS s
+JOIN catalogue_entry AS e ON e.id = s.entry_id
 WHERE e.status = ANY(:statuses)
-GROUP BY
-    e.business_key,
-    e.preferred_term,
-    e.status,
-    e.specimen_unconstrained,
-    e.updated_at
-HAVING MAX(m.score) >= :threshold
-   AND (
-        CAST(:after_score AS real) IS NULL
-        OR MAX(m.score) < CAST(:after_score AS real)
-        OR (
-            MAX(m.score) = CAST(:after_score AS real)
-            AND e.business_key > CAST(:after_key AS text)
-        )
-   )
-ORDER BY MAX(m.score) DESC, e.business_key ASC
+  AND (
+       CAST(:after_score AS real) IS NULL
+       OR s.score < CAST(:after_score AS real)
+       OR (
+           s.score = CAST(:after_score AS real)
+           AND e.business_key > CAST(:after_key AS text)
+       )
+  )
+ORDER BY s.score DESC, e.business_key ASC
 LIMIT :limit
 """)
 
@@ -338,6 +532,16 @@ def search_entries(session: Session, *, q: str, limit: int, after: str | None = 
             "q": q,
             "statuses": list(PUBLIC_STATUSES),
             "threshold": SIMILARITY_THRESHOLD,
+            # Bound, not interpolated, for the same reason every other value
+            # here is (NFR-22) - and bound rather than written into the
+            # statement text so the tests can import the constants and assert
+            # the band inequality against the same numbers the query uses.
+            "exact_code_score": EXACT_CODE_SCORE,
+            "exact_preferred_term_score": EXACT_PREFERRED_TERM_SCORE,
+            "exact_label_score": EXACT_LABEL_SCORE,
+            "preferred_term_weight": PREFERRED_TERM_WEIGHT,
+            "designation_weight": DESIGNATION_WEIGHT,
+            "binding_label_weight": BINDING_LABEL_WEIGHT,
             "after_score": after_score,
             "after_key": after_key,
             # One more row than asked for, exactly as `list_entries` does:
