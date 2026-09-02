@@ -247,6 +247,17 @@ DROP_SEARCH_DOCUMENT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS public.nptc_search_
 #: the trigram branches still answer the query. That is the correct
 #: degradation and it needs no special case in ``_SEARCH_SQL``.
 #:
+#: A ``tsquery`` with **no surviving positive lexeme** is the opposite case
+#: and does need one. ``websearch_to_tsquery`` reads ``-`` as NOT, so
+#: ``-glucose`` lexes to ``!'glucos'``, which ``@@`` satisfies for every row
+#: with nothing for GIN to probe - the whole catalogue, by sequential scan.
+#: That is not repaired here, because rewriting a user's query inside this
+#: function would make the returned ``tsquery`` disagree with what they
+#: typed; ``_SEARCH_SQL`` guards each FTS branch with
+#: ``NOT ('' :: tsvector @@ nptc_search_query(:q))`` instead, which is a
+#: precise test of the condition and costs a one-time filter. See
+#: ``nptc.catalogue.search``'s module docstring.
+#:
 #: Not ``STRICT``-dependent in practice - ``nptc.catalogue.search`` refuses a
 #: blank ``q`` before any SQL runs - but marked ``STRICT`` anyway so the pair
 #: is symmetric and a NULL can never become a match-everything query.

@@ -75,7 +75,28 @@ They fail in opposite directions and neither is a superset of the other.
   for. It scores a transposition at exactly zero: `haemglobin` and `haemoglobin` share no
   lexeme, so no ranking function recovers a match the query never made.
 
-The query takes the better of the two per entry rather than layering one behind the other.
+The query takes the better of the two per entry rather than layering one behind the other -
+but only after the full-text score is rescaled onto the trigram range. The two do not
+produce comparable numbers on their own: `similarity()` is a ratio that uses all of
+`0.0 … 1.0`, while `ts_rank_cd(..., 32)` measures a *complete* match in this catalogue's
+text at `0.0909`. Taking `MAX` of the two unscaled would mean "the trigram score if there
+was one, otherwise a near-zero floor", and an entry found only by an inflected form would
+sort below every barely-admissible typo in the catalogue. Each full-text contribution is
+therefore mapped onto `[0.3, 1.0]` before its weight is applied, anchored on the
+similarity threshold rather than on a tuned constant, so the weakest admissible match of
+either kind enters at the same rank.
+
+What that does **not** buy is a well-spread full-text ranking: `ts_rank_cd`'s output is
+dense near zero, so in practice a full-text contribution sits near its floor and orders
+only within the full-text branch. Calibrating it properly needs a production query log.
+
+**Negation is guarded.** `websearch_to_tsquery` reads `-` as NOT, so a query with no
+surviving positive lexeme (`-glucose`, and also `a -b`, whose positive half is a stopword)
+lexes to `!'glucos'` - which `@@` satisfies for every row, with nothing for GIN to probe.
+Each full-text branch therefore carries `NOT ('' :: tsvector @@ nptc_search_query(:q))`,
+a direct test of that condition, which the planner resolves once and uses to prune the
+branch. Trigram is unaffected and still runs, so such a query is searched for the literal
+text typed rather than refused.
 
 ### Normalisation
 
@@ -99,6 +120,14 @@ A query that lexes to nothing (`the`, say - `english` drops stopwords) yields an
 `tsquery`, which matches nothing rather than everything. The full-text branches simply
 contribute no rows and the trigram branches still answer.
 
+`nptc_search_text` folds case and diacritics but does **not** trim. The four exact-match
+comparisons therefore apply `btrim` themselves, as the code branch already did: a
+preferred term pasted with surrounding whitespace has a `similarity()` of `1.0` but is not
+`=` to the stored value, so without it a pasted term is scored as fuzzy and can be
+outranked by an exact synonym hit on a different entry. Trimming here rather than inside
+`nptc_search_text` avoids rebuilding four trigram indexes for a difference `similarity()`
+does not notice.
+
 ### The similarity threshold
 
 `pg_trgm.similarity_threshold` is `0.3` - the extension's own default, kept rather than
@@ -116,6 +145,14 @@ for an `@@` or an `=` test.
 matching everything: a caller cannot distinguish a page of noise from a working search
 over a catalogue that has nothing to offer, so they trust the noise.
 
+**The threshold governs trigram only, and full-text has no equivalent.** `@@` admits a row
+on a single shared lexeme after stemming, so a common domain word - `test`, `level`,
+`measurement` - matches a large fraction of the catalogue at a score near the floor. Page
+one is still the best matches, so this is a recall and plan-cost consequence rather than a
+wrong answer, and it is accepted deliberately: a minimum-rank floor would be an invented
+constant, and this platform has no production query log to justify one. ADR-0029 records
+it as an open consequence.
+
 ## How results are ranked
 
 Scores fall into disjoint bands:
@@ -129,8 +166,9 @@ Scores fall into disjoint bands:
 | Fuzzy match on a synonym | raw score × `0.80` |
 | Fuzzy match on the FSN or AU preferred term | raw score × `0.75` |
 
-where the raw score is `similarity()` for a trigram branch and `ts_rank_cd(..., 32)` for a
-full-text one, both in `0.0 … 1.0`.
+where the raw score is `similarity()` for a trigram branch, and for a full-text one
+`ts_rank_cd(..., 32)` rescaled onto `[0.3, 1.0]` as described above. Both are in
+`0.0 … 1.0`, which is what bounds every fuzzy band below.
 
 Because every fuzzy contribution is multiplied by a weight below 1.0, **no fuzzy match
 from any source can reach an exact band**. FR-14's requirement that an exact code or
@@ -159,6 +197,10 @@ is not a total order and a page boundary inside a tie would drop or repeat rows.
 | A retired binding, a retired synonym and a non-active entry are unreachable | `test_search_ranking.py`, `test_api_public_search.py` |
 | A near-miss code finds nothing | `test_search_ranking.py` |
 | A nonsense query returns an empty page | `test_search_ranking.py`, `test_api_public_search.py` |
+| A query that excludes every word does not return the catalogue - as an answer and as a plan | `test_search_ranking.py`, `test_db_search_index.py` |
+| A padded code and a padded preferred term both still reach the exact band | `test_search_ranking.py` |
+| An inflected form reaches its entry, and is not ranked beneath a typo | `test_search_ranking.py` |
+| A cursor carrying a non-finite score is refused | `test_api_public_search.py` |
 | All nine branches plan as index scans | `test_db_search_index.py` |
 | Every index exists over the expression the query actually uses | `test_db_search_index.py` |
 | The document and query functions agree, and stem as expected | `test_db_search_index.py` |

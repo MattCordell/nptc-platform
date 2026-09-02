@@ -317,7 +317,12 @@ def search(
                 "(FR-14) - insensitive to case and to diacritics, tolerant of "
                 "typographical error and of word order (FR-15). A code is "
                 "matched exactly; everything else is matched by similarity and "
-                "by full-text search, whichever scores the entry higher."
+                "by full-text search, whichever scores the entry higher. The "
+                "full-text half accepts web-search syntax - a quoted phrase, "
+                "`or` between alternatives, and a leading `-` to exclude a "
+                "word - which applies to that half only: a query whose every "
+                "word is excluded is still searched by similarity, as the "
+                "literal text it is, rather than matching the whole catalogue."
             ),
         ),
     ],

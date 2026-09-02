@@ -47,6 +47,7 @@ from nptc.catalogue.search import (
     EXACT_LABEL_SCORE,
     EXACT_PREFERRED_TERM_SCORE,
     PREFERRED_TERM_WEIGHT,
+    SIMILARITY_THRESHOLD,
 )
 
 
@@ -140,15 +141,58 @@ def test_the_code_is_matched_exactly_and_not_by_similarity(api: ApiTestApp, exam
 
 @pytest.mark.req("FR-14")
 @pytest.mark.integration
-def test_a_query_with_surrounding_whitespace_still_matches_the_code(
-    api: ApiTestApp, example: Any
-) -> None:
-    """A code pasted out of a spreadsheet or an email arrives padded.
+def test_a_padded_query_still_reaches_the_exact_band(api: ApiTestApp, example: Any) -> None:
+    """A code or a term pasted out of a spreadsheet or an email arrives
+    padded, and every exact comparison has to survive that.
 
-    The equality branch trims before comparing for this reason; without it a
-    pasted code is a silent empty result, which reads to a user as 'this code
-    is not in the catalogue'."""
+    Without a trim, the code branch is a silent empty result - which reads to
+    a user as 'this code is not in the catalogue'. The four *label*
+    comparisons fail more quietly still, and that is the case this test grew
+    to cover (PR #237 review): `nptc_search_text` lowercases and unaccents
+    but does not trim, so a padded preferred term is not equal to the stored
+    one while its `similarity()` is 1.0. The hit is returned either way, so
+    presence proves nothing here - it would simply be scored as fuzzy, and an
+    exact synonym match on a *different* entry would outrank the entry the
+    user pasted the name of. Asserting the band is what detects that."""
     assert _keys(api, q=f"  {_seed.WORKED_EXAMPLE_CODE}  ")[:1] == [example.acth]
+
+    padded = _hits(api, q=f"  {_seed.WORKED_EXAMPLE_TERM}  ")
+    assert padded[0]["business_key"] == example.acth, padded
+    assert padded[0]["score"] == pytest.approx(EXACT_PREFERRED_TERM_SCORE, abs=1e-6), (
+        "a padded preferred term scored below the exact band - the equality "
+        "comparison is no longer trimming"
+    )
+
+
+@pytest.mark.req("FR-14")
+@pytest.mark.integration
+def test_a_query_that_excludes_every_word_does_not_return_the_catalogue(
+    api: ApiTestApp, catalogue: Any, example: Any
+) -> None:
+    """The one-character denial of service (PR #237 review).
+
+    `websearch_to_tsquery` reads a leading `-` as NOT, so `-glucose` lexes to
+    `!'glucos'` - a query with nothing positive in it, which `@@` satisfies
+    for *every* row and which GIN cannot probe. Unguarded, each of the four
+    full-text branches becomes a sequential scan returning the whole
+    catalogue at a floor score, on an unauthenticated endpoint.
+
+    The existing nonsense-query test cannot catch this: a nonsense *word*
+    still lexes to a positive lexeme. Neither can a scan for a leading `-` -
+    the third case below has no leading `-` at all, and reduces to a pure
+    negation only because its positive half is an english stopword. Hence the
+    guard is `NOT ('' :: tsvector @@ nptc_search_query(:q))`, which asks the
+    question directly.
+
+    Trigram is unaffected and deliberately still runs, so these queries are
+    not refused - they are searched, by similarity, for the literal string
+    typed. That is why this asserts nothing comes back for text nothing in
+    the catalogue resembles, rather than asserting an error."""
+    assert _keys(api, q=_seed.WORKED_EXAMPLE_TERM) != [], (
+        "the fixtures are not seeded - an empty result below would prove nothing"
+    )
+    for query in ("-zymogen", "-zymogen -kinase", "the -zymogen"):
+        assert _keys(api, q=query, limit=100) == [], query
 
 
 # --- FR-98: both tag forms reach the entry --------------------------------
@@ -277,6 +321,47 @@ def test_the_score_bands_cannot_overlap() -> None:
     # The bands are only meaningful if a weight actually attenuates. A weight
     # of 1.0 anywhere would let a perfect fuzzy score reach the exact band.
     assert highest_fuzzy < 1.0
+
+
+@pytest.mark.req("FR-15")
+@pytest.mark.integration
+def test_an_inflected_form_reaches_the_entry_and_is_not_ranked_beneath_a_typo(
+    api: ApiTestApp, example: Any
+) -> None:
+    """Both halves of what the full-text branches are for (PR #237 review).
+
+    `counting` appears in no seeded text; `count` does, inside
+    `Full blood count (procedure)`. Trigram cannot bridge that on its own -
+    measured against this fixture the similarity is 0.16, well under the 0.3
+    threshold, because the query is short and the field it has to match is
+    long and the length ratio alone sinks it. That is precisely the gap
+    ADR-0029 added full-text to close, and the entry's own preferred term
+    (`Unrelated haematology placeholder`) shares nothing with the query, so
+    the stored `fsn` is the only route in and the full-text branch is the
+    only thing that can find it. The entry being reachable at all is
+    therefore the recall claim, and it fails outright without that branch.
+
+    The score is the ranking claim, and it is the one that regressed in
+    review. `ts_rank_cd(..., 32)` measures a *complete* match in this text at
+    0.0909, so an unscaled weighted full-text contribution tops out around
+    0.07 - beneath every trigram hit the threshold admits, which would mean
+    an entry found only by an inflected form sorts below every typo in the
+    catalogue. Each contribution is therefore mapped onto
+    `[SIMILARITY_THRESHOLD, 1]` before weighting, so the weakest admissible
+    match of either kind enters at the same rank. Asserting against that
+    floor - rather than a measured constant - is what keeps this a test of
+    the rescale rather than of `ts_rank_cd`'s current output."""
+    hits = _hits(api, q="counting", limit=100)
+    scored = {hit["business_key"]: hit["score"] for hit in hits}
+    assert example.fsn_only in scored, (
+        "an inflected form no longer reaches its entry - the full-text "
+        "branches are not contributing recall"
+    )
+    assert scored[example.fsn_only] >= SIMILARITY_THRESHOLD * BINDING_LABEL_WEIGHT - 1e-6, (
+        "a full-text match scored below the weakest admissible trigram match "
+        "from the same source - the rescale is gone and full-text is buying "
+        "recall at the bottom of the list rather than ranking"
+    )
 
 
 @pytest.mark.req("FR-14")

@@ -248,6 +248,17 @@ def test_a_cursor_this_api_did_not_issue_is_refused(
         f"{score}:{digest}:NPTC-12345",
         f"{score}:{digest}:nptc-000001",
         f"{score}:{digest}:",
+        # Scores `float()` accepts and this endpoint never mints. `inf`
+        # satisfies `score < :after_score` for every row, so the caller is
+        # handed page one again and pages forever - the infinite loop the
+        # refusals above exist to prevent, arrived at through the score half
+        # instead of the shape. `nan` makes every comparison false and yields
+        # a permanently empty page. The digest is no defence: it is unkeyed
+        # by design, so a client replaying its own `q` computes it.
+        f"inf:{digest}:NPTC-000001",
+        f"-inf:{digest}:NPTC-000001",
+        f"nan:{digest}:NPTC-000001",
+        f"Infinity:{digest}:NPTC-000001",
     )
     for cursor in bogus:
         response = api.get("/catalogue/search", params={"q": _seed.TIE_TERM, "after": cursor})

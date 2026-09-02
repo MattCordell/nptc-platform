@@ -412,6 +412,53 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     assert "Filter: (to_tsvector(" not in plan, plan
 
 
+@pytest.mark.req("FR-14")
+@pytest.mark.integration
+def test_a_negation_only_query_plans_away_the_full_text_branches(db: Connection) -> None:
+    """The plan-level half of the guard added in PR #237 review.
+
+    `-glucose` lexes to `!'glucos'`, a tsquery `@@` satisfies for every row
+    and GIN cannot probe - so the four full-text branches would each be a
+    sequential scan over the whole table. `backend/tests/
+    test_search_ranking.py` asserts the *answer* is not the whole catalogue;
+    this asserts the *cost*, which is the half a functional test cannot see:
+    a guard applied as a per-row filter would return the same empty result
+    while still reading every row.
+
+    `NOT ('' :: tsvector @@ nptc_search_query(:q))` depends only on `:q`, so
+    the planner resolves it once and prunes the branch outright. Four
+    `One-Time Filter: false` nodes is that pruning, one per full-text branch,
+    and no `to_tsvector` index condition surviving is the same statement from
+    the other side. No fixture rows are needed - a one-time filter is decided
+    at plan time, not from statistics."""
+    from nptc.catalogue import search
+
+    plan = _explain(
+        db,
+        str(search._SEARCH_SQL),
+        {
+            "q": "-glucose",
+            "statuses": ["active"],
+            "threshold": search.SIMILARITY_THRESHOLD,
+            "exact_code_score": search.EXACT_CODE_SCORE,
+            "exact_preferred_term_score": search.EXACT_PREFERRED_TERM_SCORE,
+            "exact_label_score": search.EXACT_LABEL_SCORE,
+            "preferred_term_weight": search.PREFERRED_TERM_WEIGHT,
+            "designation_weight": search.DESIGNATION_WEIGHT,
+            "binding_label_weight": search.BINDING_LABEL_WEIGHT,
+            "after_score": None,
+            "after_key": None,
+            "limit": 51,
+        },
+    )
+
+    assert plan.count("One-Time Filter: false") == 4, plan
+    assert "Index Cond: (to_tsvector(" not in plan, plan
+    # The trigram branches are deliberately untouched: `%` has no negation,
+    # so the query is still searched for the literal text the user typed.
+    assert "Index Cond: (nptc_search_text(" in plan, plan
+
+
 #: Deliberately not `nptc.catalogue.search.SIMILARITY_THRESHOLD`. It stands
 #: in for "whatever the previous user of this pooled connection left behind",
 #: and it has to differ from the module's own threshold for the assertion

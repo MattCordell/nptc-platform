@@ -17,6 +17,43 @@ short query against a long FSN by the length ratio alone. The two mechanisms
 fail in opposite directions, so the query runs both and keeps the better
 score per entry rather than choosing between them.
 
+**What an `@@` match is worth, and why its score is rescaled.** The two
+mechanisms do not produce comparable numbers. `similarity()` is a ratio in
+`[0, 1]` that uses its whole range; `ts_rank_cd(..., 32)` is a cover-density
+figure squashed through `rank / (rank + 1)`, and in this catalogue's text a
+*complete* three-lexeme match measures 0.0909 - so a raw weighted `ts_rank_cd`
+tops out around 0.07. Left unscaled, `MAX` would not be "the better of the
+two" at all: it would be "the trigram score if there was one, otherwise a
+near-zero floor", and an entry found only by an inflected form would sort
+below every barely-admissible typo match in the catalogue. Each full-text
+contribution is therefore mapped onto `[threshold, 1]` before its weight is
+applied. The anchor is not a tuned number: `SIMILARITY_THRESHOLD` is the
+similarity at which a trigram match is admitted at all, so the weakest
+admissible match of either kind now enters at exactly the same rank and
+neither mechanism is systematically preferred. What this does *not* claim is
+a well-spread full-text ranking - `ts_rank_cd`'s output is dense near zero,
+so in practice a full-text contribution sits near its floor and orders only
+*within* the full-text branch. Fixing that properly needs a production query
+log to calibrate against (ADR-0029), which does not exist yet.
+
+**Negation, and why every full-text branch is guarded.** `websearch_to_tsquery`
+gives callers `-` for NOT, and a query with no surviving positive lexeme -
+`-glucose`, but also `a -b`, where the positive half is a stopword - lexes to
+`!'glucos'`. That matches every row: `@@` is satisfied by the *absence* of a
+lexeme, GIN has no positive key to probe, and the branch degrades to a
+sequential scan returning the entire catalogue at a floor score. That is the
+"matching everything" failure this module's threshold discipline exists to
+prevent, reachable from one character on an unauthenticated endpoint, and no
+nonsense-query test catches it because a nonsense *word* still has a positive
+lexeme. Each full-text branch therefore carries
+`NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))`: a tsquery matches the
+empty document exactly when it has no required positive lexeme, so this is a
+precise test of the condition rather than a scan for `-`. It depends only on
+`:q`, so the planner resolves it to `One-Time Filter: false` and skips the
+branch entirely rather than evaluating it per row. The trigram branches need
+no guard - `%` has no negation - so such a query still searches, by
+similarity, for the string the user actually typed.
+
 **All five of FR-14's fields, in one query field.** The catalogue's own
 preferred term, its active synonyms, the stored `fsn`, the stored
 `au_preferred_term`, and the SNOMED code. A user typing `49466006`, `ACTH`,
@@ -104,6 +141,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Final
@@ -187,7 +225,7 @@ _CURSOR_QUERY_DIGEST_BYTES: Final[int] = 8
 #: bound parameter and NFR-22 forbids interpolating one into the text; the
 #: `text` cast is needed because `set_config`'s second argument is declared
 #: `text` and a bound Python float arrives as `double precision`. See the
-#: module docstring on why the statement's own `HAVING` restates this too.
+#: module docstring on why `scored`'s own `WHERE` restates this too.
 _SET_THRESHOLD_SQL = text(
     "SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"
 )
@@ -216,7 +254,33 @@ _SET_THRESHOLD_SQL = text(
 #: inflected or pluralised form as a near-miss and it penalises a short query
 #: against a long FSN by the length ratio alone - those are full-text's.
 #: `MAX` over the branches means an entry found both ways keeps whichever
-#: score is better rather than being averaged into the middle.
+#: score is better rather than being averaged into the middle - which is only
+#: meaningful because the full-text contribution is rescaled onto the trigram
+#: range first. See the module docstring: raw `ts_rank_cd` is an order of
+#: magnitude smaller and `MAX` over it would silently mean "trigram if there
+#: was one".
+#:
+#: **What `@@` does not have, and trigram does.** `%` compares against a
+#: threshold, so trigram recall is bounded; `@@` has no analogue, and any
+#: single shared lexeme after stemming admits a row. A common domain word -
+#: `test`, `level`, `measurement` - therefore matches a large fraction of the
+#: catalogue at a score near the floor. That is a recall and plan-cost
+#: consequence rather than a wrong answer (page one is still the best
+#: matches, and the ordering above is what decides it), and it is accepted
+#: deliberately: a minimum-rank floor would be an invented constant, and
+#: ADR-0024's discipline of raising a threshold only against observed noise
+#: needs a production query log this platform does not have yet. ADR-0029
+#: records it as an open consequence rather than leaving it implied.
+#:
+#: **`btrim` on the four exact-match comparisons.** `nptc_search_text`
+#: lowercases and unaccents but does not trim, so a preferred term pasted
+#: with surrounding whitespace is not equal to the stored one while its
+#: `similarity()` is 1.0 - the exact band would be missed and the hit would
+#: score as fuzzy, beneath an exact synonym match on a *different* entry.
+#: Trimming here rather than inside `nptc_search_text` is deliberate: that
+#: function is the four trigram indexes' own expression, so changing it would
+#: require rebuilding them for a difference `similarity()` does not notice.
+#: The code branch has always done this (`btrim(:q)`); these four now agree.
 #:
 #: **The status literals.** `d.status = 'active'` and `cb.status = 'active'`
 #: are written as literals, matching the partial-index predicates on
@@ -266,7 +330,7 @@ WITH matches AS (
         similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
             AS trigram_score,
         CASE
-            WHEN nptc_search_text(entry.preferred_term) = nptc_search_text(:q)
+            WHEN btrim(nptc_search_text(entry.preferred_term)) = btrim(nptc_search_text(:q))
                 THEN CAST(:exact_preferred_term_score AS real)
             ELSE similarity(nptc_search_text(entry.preferred_term), nptc_search_text(:q))
                  * CAST(:preferred_term_weight AS real)
@@ -278,17 +342,19 @@ WITH matches AS (
     SELECT
         entry.id,
         CAST(NULL AS real),
-        ts_rank_cd(nptc_search_document(entry.preferred_term), nptc_search_query(:q), 32)
+        (CAST(:threshold AS real) + (1 - CAST(:threshold AS real))
+         * ts_rank_cd(nptc_search_document(entry.preferred_term), nptc_search_query(:q), 32))
             * CAST(:preferred_term_weight AS real)
     FROM catalogue_entry AS entry
     WHERE entry.status = ANY(:statuses)
+      AND NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))
       AND nptc_search_document(entry.preferred_term) @@ nptc_search_query(:q)
     UNION ALL
     SELECT
         d.entry_id,
         similarity(nptc_search_text(d.term), nptc_search_text(:q)),
         CASE
-            WHEN nptc_search_text(d.term) = nptc_search_text(:q)
+            WHEN btrim(nptc_search_text(d.term)) = btrim(nptc_search_text(:q))
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(d.term), nptc_search_text(:q))
                  * CAST(:designation_weight AS real)
@@ -300,17 +366,19 @@ WITH matches AS (
     SELECT
         d.entry_id,
         CAST(NULL AS real),
-        ts_rank_cd(nptc_search_document(d.term), nptc_search_query(:q), 32)
+        (CAST(:threshold AS real) + (1 - CAST(:threshold AS real))
+         * ts_rank_cd(nptc_search_document(d.term), nptc_search_query(:q), 32))
             * CAST(:designation_weight AS real)
     FROM designation AS d
     WHERE d.status = 'active'
+      AND NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))
       AND nptc_search_document(d.term) @@ nptc_search_query(:q)
     UNION ALL
     SELECT
         cb.entry_id,
         similarity(nptc_search_text(cb.fsn), nptc_search_text(:q)),
         CASE
-            WHEN nptc_search_text(cb.fsn) = nptc_search_text(:q)
+            WHEN btrim(nptc_search_text(cb.fsn)) = btrim(nptc_search_text(:q))
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(cb.fsn), nptc_search_text(:q))
                  * CAST(:binding_label_weight AS real)
@@ -322,17 +390,19 @@ WITH matches AS (
     SELECT
         cb.entry_id,
         CAST(NULL AS real),
-        ts_rank_cd(nptc_search_document(cb.fsn), nptc_search_query(:q), 32)
+        (CAST(:threshold AS real) + (1 - CAST(:threshold AS real))
+         * ts_rank_cd(nptc_search_document(cb.fsn), nptc_search_query(:q), 32))
             * CAST(:binding_label_weight AS real)
     FROM code_binding AS cb
     WHERE cb.status = 'active'
+      AND NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))
       AND nptc_search_document(cb.fsn) @@ nptc_search_query(:q)
     UNION ALL
     SELECT
         cb.entry_id,
         similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q)),
         CASE
-            WHEN nptc_search_text(cb.au_preferred_term) = nptc_search_text(:q)
+            WHEN btrim(nptc_search_text(cb.au_preferred_term)) = btrim(nptc_search_text(:q))
                 THEN CAST(:exact_label_score AS real)
             ELSE similarity(nptc_search_text(cb.au_preferred_term), nptc_search_text(:q))
                  * CAST(:binding_label_weight AS real)
@@ -344,10 +414,12 @@ WITH matches AS (
     SELECT
         cb.entry_id,
         CAST(NULL AS real),
-        ts_rank_cd(nptc_search_document(cb.au_preferred_term), nptc_search_query(:q), 32)
+        (CAST(:threshold AS real) + (1 - CAST(:threshold AS real))
+         * ts_rank_cd(nptc_search_document(cb.au_preferred_term), nptc_search_query(:q), 32))
             * CAST(:binding_label_weight AS real)
     FROM code_binding AS cb
     WHERE cb.status = 'active'
+      AND NOT (CAST('' AS tsvector) @@ nptc_search_query(:q))
       AND nptc_search_document(cb.au_preferred_term) @@ nptc_search_query(:q)
     UNION ALL
     SELECT
@@ -485,6 +557,19 @@ def _parse_cursor(cursor: str, *, q: str) -> tuple[float, str]:
         raise MalformedSearchCursorError(
             f"search cursor {cursor!r} does not begin with a numeric score"
         ) from None
+    # `float()` also accepts `inf`, `-inf` and `nan`, none of which this
+    # module ever mints, and each of which defeats the keyset rather than
+    # advancing it: `score < 'inf'` is true for every row, so a client is
+    # handed page one again and pages forever - the exact failure
+    # `MalformedSearchCursorError` exists to refuse - while `nan` makes every
+    # comparison false and yields a permanently empty page. Neither is
+    # reachable by accident, but the digest is no defence here: it is
+    # unkeyed by design (see `_CURSOR_QUERY_DIGEST_BYTES`), so anyone
+    # replaying their own `q` can compute it. A cheap finiteness check is.
+    if not math.isfinite(score):
+        raise MalformedSearchCursorError(
+            f"search cursor {cursor!r} does not begin with a finite score"
+        )
     # The same pattern `/catalogue/entries` validates its own `after`
     # against: a cursor's key half is a `business_key` (FR-03), and an
     # endpoint that instead paged from "whatever this sorts after" would
@@ -521,8 +606,8 @@ def search_entries(session: Session, *, q: str, limit: int, after: str | None = 
     if after is not None:
         after_score, after_key = _parse_cursor(after, q=q)
 
-    # Transaction-scoped, and re-asserted in the statement's own HAVING -
-    # see the module docstring on why both, and on what the HAVING does and
+    # Transaction-scoped, and re-asserted in `scored`'s own WHERE - see the
+    # module docstring on why both, and on what that restatement does and
     # does not protect against.
     session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
 

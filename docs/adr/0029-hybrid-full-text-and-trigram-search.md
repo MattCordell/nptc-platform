@@ -126,6 +126,24 @@ figures - ADR-0024's "no production query log yet" is still true, and these are 
 of number that should move once there is one. What must not move is the *ordering* of
 the bands, which is a requirement rather than a tuning parameter.
 
+**The full-text score is rescaled onto the trigram range before its weight is applied.**
+Review of PR #237 established that the two raw scores are not comparable: `similarity()`
+uses all of `0.0 … 1.0`, while `ts_rank_cd(..., 32)` measures a *complete* three-lexeme
+match in this catalogue's text at `0.0909`, so a weighted full-text contribution topped
+out around `0.07`. Taking `MAX` of the two unscaled did not mean "the better of the two"
+at all - it meant "the trigram score if there was one, otherwise a near-zero floor", and
+an entry found only by an inflected form sorted below every barely-admissible typo in the
+catalogue. Each full-text contribution is now mapped onto `[SIMILARITY_THRESHOLD, 1]`
+first. The anchor is deliberately not a new tuned constant: the similarity threshold is
+the point at which a trigram match is admitted at all, so the weakest admissible match of
+either mechanism now enters at exactly the same rank and neither is systematically
+preferred. The band ceiling is untouched, because the rescaled value is still at most 1.0.
+
+This is a floor, not a calibration. `ts_rank_cd`'s output is dense near zero, so a
+full-text contribution sits near its floor in practice and orders only *within* the
+full-text branch. Spreading it properly is the same "needs a query log" problem as the
+weights above.
+
 ### The threshold restatement moves from `HAVING` to the raw similarity
 
 ADR-0024 stated the similarity threshold twice: once as the GUC the `%` operator reads,
@@ -141,9 +159,40 @@ are filtered back out) and cannot defend against one left **higher** (which narr
 index scans themselves). The full-text and code branches carry `NULL` there, because
 `pg_trgm.similarity_threshold` has no meaning for an `@@` or an `=` test.
 
+### A full-text branch is only entered when the query has a positive lexeme
+
+`websearch_to_tsquery` gives callers `-` for NOT, and a query with no surviving positive
+lexeme lexes to a pure negation: `-glucose` becomes `!'glucos'`, and so does `a -b`, whose
+positive half is an `english` stopword. `@@` is satisfied by the *absence* of a lexeme, so
+such a query matches every row with nothing for GIN to probe - four sequential scans
+returning the whole catalogue at a floor score, from one character, on an unauthenticated
+endpoint. This is exactly the "matching everything" failure ADR-0024's threshold
+discipline exists to prevent, arriving through the half of the query that has no
+threshold, and no nonsense-query test detects it because a nonsense *word* still lexes to
+a positive lexeme.
+
+Each full-text branch therefore carries `NOT ('' :: tsvector @@ nptc_search_query(:q))`. A
+tsquery matches the empty document exactly when it has no required positive lexeme, so
+this tests the condition itself rather than scanning the input for `-`; the predicate
+depends only on `:q`, so the planner resolves it once and prunes the branch
+(`One-Time Filter: false`) rather than evaluating it per row.
+
+Rewriting the query inside `nptc_search_query` was rejected: the function would then
+return a `tsquery` that is not what the caller asked for, and the guard belongs where the
+consequence is. The trigram branches need no guard - `%` has no negation - so the query is
+still searched, by similarity, for the literal text typed. Refusing such a query outright
+was also rejected; it is a well-formed search for a string, and only its full-text
+interpretation is degenerate.
+
 ### The SNOMED code is matched by equality
 
-A btree index on `code`, partial on `status = 'active'`, and `cb.code = btrim(:q)`.
+A btree index on `code`, partial on `status = 'active'`, and `cb.code = btrim(:q)`. The
+four label equality comparisons `btrim` for the same reason (PR #237 review):
+`nptc_search_text` folds case and diacritics but does not trim, so a term pasted with
+surrounding whitespace has a `similarity()` of `1.0` yet is not `=` to the stored value,
+and would be scored as fuzzy - beneath an exact synonym hit on a different entry.
+Trimming in the comparison rather than inside `nptc_search_text` avoids rebuilding the
+four trigram indexes for a difference `similarity()` cannot see.
 
 `ix_code_binding_one_active_entry_per_code` cannot serve this despite indexing the same
 column: `code` is its second column behind `system`, and the search box has no `system`
@@ -243,6 +292,21 @@ this one, not a larger.
   `docs/requirements/requirements.yaml` both attributed it to #138; issue #138 scopes
   itself to FR-14/FR-15, and epic #57 splits facets into a separate child. Both notes are
   corrected in this PR.
+- **Full-text recall has no threshold, and this is accepted.** `%` compares against
+  `pg_trgm.similarity_threshold`, so trigram recall is bounded; `@@` has no analogue and
+  admits a row on a single shared lexeme after stemming. A common domain word - `test`,
+  `level`, `measurement` - will therefore match a large fraction of the catalogue at a
+  score near the floor. Page one is still the best matches, so this is a recall and
+  plan-cost consequence rather than a wrong answer. A minimum-rank floor is deliberately
+  *not* added: it would be an invented constant, and ADR-0024's discipline of moving a
+  threshold only against observed noise needs a production query log that does not exist
+  yet. The remedy, when it does, is a rank floor on the full-text branches, tuned the same
+  way and in the same direction as the similarity threshold.
+- **Callers now have query syntax they did not have before.** `websearch_to_tsquery`
+  brings quoted phrases, `or`, and `-` negation with it, which is part of the public
+  contract whether or not it was asked for - documented in the `q` parameter description
+  and in `docs/architecture/public-api.md`. It applies to the full-text half only; the
+  trigram half sees the literal text.
 - **The exact-match bands are a contract, the weights are not.** A future change may
   retune `PREFERRED_TERM_WEIGHT` and friends against a real query log. Reordering the
   bands, or letting a weight reach 1.0, breaks FR-14 and fails a test that says so.

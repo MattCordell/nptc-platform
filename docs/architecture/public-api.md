@@ -161,10 +161,18 @@ which field and how the scores are combined.
   from a working search over a catalogue with nothing to offer.
 - **`q` must contain a non-whitespace character.** A blank query is a 422, not the whole
   catalogue.
+- **Surrounding whitespace does not change the answer.** A code or a term pasted out of a
+  spreadsheet with padding still counts as an exact match, rather than dropping to a fuzzy
+  score.
+- **`q` accepts web-search syntax, on the full-text half only.** A quoted `"phrase"`, `or`
+  between alternatives, and a leading `-` to exclude a word. Excluding every word in the
+  query does not return the catalogue: the full-text half of such a query contributes
+  nothing, and the trigram half searches for the literal text typed.
 
 `score` is a relevance score between 0 and 1, combining trigram similarity, full-text
 rank and how the entry was matched - an exact hit on the code or the preferred term
-scores above any fuzzy match. It is comparable *within* one response (it is what the
+scores above any fuzzy match, and a full-text-only match is scored on the same range as a
+trigram one rather than beneath it. It is comparable *within* one response (it is what the
 ordering is), and is not a quality rating of the entry. The bands are documented in
 [search.md](search.md); the weights behind them may be retuned, so a client should order
 by it rather than threshold on it.
