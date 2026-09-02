@@ -125,7 +125,9 @@ describe("the entry it loads", () => {
     await renderLoaded();
 
     expect(calls[0]?.path).toBe(`/api/v1/catalogue/admin/entries/${BUSINESS_KEY}`);
-    expect(screen.getByText("draft")).toBeInTheDocument();
+    expect(screen.getByText("Entry status").nextElementSibling).toHaveTextContent(
+      "draft",
+    );
   });
 
   it("shows the computed preferred-term length with no control to edit it", async () => {
@@ -224,6 +226,57 @@ describe("the terms table", () => {
 
     const retiredRow = screen.getAllByRole("row")[3] as HTMLElement;
     expect(within(retiredRow).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("tells two rows apart when a synonym shadows the preferred term", async () => {
+    // `POST .../designations` will happily create a synonym whose comparison
+    // key equals its own entry's preferred term - the state #227 added `use`
+    // to reach past. Both rows then read "Ferritin", so naming the buttons by
+    // term alone would leave a screen-reader user with two identical actions
+    // and no way to know which one moves which.
+    stubApi([
+      {
+        ...READ_OK,
+        body: {
+          ...ENTRY,
+          designations: [
+            {
+              term: "Ferritin",
+              use: "synonym",
+              language: "en-AU",
+              status: "active",
+              length: 8,
+            },
+          ],
+        },
+      },
+    ]);
+
+    await renderLoaded();
+
+    expect(
+      screen.getByRole("button", { name: "Edit Ferritin (preferred)" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit Ferritin (synonym)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the preferred term editable on a draft entry", async () => {
+    // Found in review. A designation is active or retired; an entry is
+    // draft/active/deprecated/withdrawn. Putting the entry's status in the
+    // term's Status column - which the row actions key on - took the Edit
+    // action away from every unpublished entry, which is precisely the kind
+    // this screen exists to edit (#228).
+    stubApi([READ_OK]);
+
+    await renderLoaded();
+
+    const preferredRow = screen.getAllByRole("row")[1] as HTMLElement;
+    expect(within(preferredRow).getByText("active")).toBeInTheDocument();
+    expect(
+      within(preferredRow).getByRole("button", { name: "Edit Ferritin (preferred)" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -462,7 +515,7 @@ describe("a warning-severity collision", () => {
     await addWarnedTerm(user);
     await screen.findByRole("heading", { name: "Possible duplicates" });
 
-    await user.click(screen.getByRole("button", { name: /^Acknowledge Ferritin assay/ }));
+    await user.click(screen.getByRole("button", { name: "Acknowledge Ferritin assay" }));
     await user.type(inDialog().getByLabelText(/Changelog note/), "Both entries use it");
     await user.click(inDialog().getByRole("button", { name: "Acknowledge" }));
 
@@ -507,7 +560,7 @@ describe("amending a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Ferritin$/ }));
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
     const term = inDialog().getByLabelText("Term");
     await user.clear(term);
     await user.type(term, "Serum ferritin level");
@@ -551,7 +604,9 @@ describe("amending a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Serum ferritin$/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Edit Serum ferritin (synonym)" }),
+    );
     const term = inDialog().getByLabelText("Term");
     await user.clear(term);
     await user.type(term, "Ferritin, serum");
@@ -594,7 +649,7 @@ describe("amending a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Ferritin$/ }));
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
     await user.type(
       inDialog().getByLabelText(/Changelog note/),
       "Disambiguate from plasma",
@@ -630,7 +685,7 @@ describe("amending a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Ferritin$/ }));
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
     await user.type(
       inDialog().getByLabelText(/Changelog note/),
       "Disambiguate from plasma",
@@ -644,13 +699,54 @@ describe("amending a term", () => {
     expect(screen.getByText(/Reload the entry/)).toBeInTheDocument();
   });
 
+  it("renders a conflicting value that is not a string", async () => {
+    // `submitted`/`current` are deliberately untyped on the wire - the audit
+    // diff carries whatever the field holds, and `specimen_unconstrained`
+    // (FR-89) is a boolean. Assuming a string here would print nothing at all
+    // for the one field whose two values look most alike.
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 409,
+        body: {
+          detail: "This entry was changed by someone else since you loaded it.",
+          business_key: BUSINESS_KEY,
+          expected_row_version: 3,
+          current_row_version: 4,
+          conflicts: [
+            { field: "specimen_unconstrained", submitted: false, current: true },
+          ],
+          changed_by: "A Curator",
+          changed_at: "2026-09-02T01:00:00Z",
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Disambiguate from plasma",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    // The field name is in its own <strong>, so climb to the list item that
+    // carries the whole sentence.
+    const item = (await screen.findByText("specimen_unconstrained")).closest("li");
+    expect(item).toHaveTextContent("you sent false");
+    expect(item).toHaveTextContent("it is now true");
+  });
+
   it("has no control for the computed length in the dialog either", async () => {
     // FR-24 is "on any code path", so the dialog is its own check.
     const user = userEvent.setup();
     stubApi([READ_OK]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Ferritin$/ }));
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByLabelText(/length/i)).not.toBeInTheDocument();
@@ -678,7 +774,9 @@ describe("retiring a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Retire Serum ferritin$/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+    );
     await user.type(
       inDialog().getByLabelText(/Changelog note/),
       "Superseded by the new wording",
@@ -698,7 +796,9 @@ describe("retiring a term", () => {
     const calls = stubApi([READ_OK]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Retire Serum ferritin$/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+    );
     await user.click(inDialog().getByRole("button", { name: "Retire term" }));
 
     expect(await inDialog().findAllByText(/Enter a changelog note/)).toHaveLength(2);
@@ -722,7 +822,9 @@ describe("retiring a term", () => {
     ]);
     await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Retire Serum ferritin$/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+    );
     await user.type(inDialog().getByLabelText(/Changelog note/), "update");
     await user.click(inDialog().getByRole("button", { name: "Retire term" }));
 
@@ -744,7 +846,7 @@ describe("accessibility", () => {
     stubApi([READ_OK]);
     const { container } = await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: /^Edit Ferritin$/ }));
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
 
     await expectNoA11yViolations(container);
   });

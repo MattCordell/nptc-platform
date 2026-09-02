@@ -37,7 +37,7 @@ export function AdminCatalogueEditPage() {
           <dl>
             <dt>Identifier</dt>
             <dd>{entry.data.business_key}</dd>
-            <dt>Status</dt>
+            <dt>Entry status</dt>
             <dd>{entry.data.status}</dd>
             {/* FR-85/FR-24: the published character count of the preferred
                 term, computed by the server and shown as text. There is

@@ -69,7 +69,16 @@ function termRows(entry: EntryDetail): TermRow[] {
     term: entry.preferred_term,
     use: "preferred",
     language: DEFAULT_LANGUAGE,
-    status: entry.status === "withdrawn" ? "withdrawn" : "active",
+    // Always active, and never the *entry's* status. These are two different
+    // vocabularies: a designation is active or retired, an entry is
+    // draft/active/deprecated/withdrawn. Putting the entry's value in this
+    // column reads as a term-level fact it is not, and - found in review -
+    // silently removed the Edit action from every draft entry's preferred
+    // term, since the actions below key on this column. The entry's own
+    // lifecycle is in the header, in its own words. This term is always
+    // current: `catalogue_entry.preferred_term` is NOT NULL and nothing
+    // retires it (ADR-0022).
+    status: "active",
     // FR-85: the published figure, computed by the server from the stored
     // term. Never recomputed here - `CatalogueEntry.length` counts the term
     // *after* whitespace cleaning, so a browser-side `term.length` would
@@ -138,12 +147,17 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
                     variant="secondary"
                     // Named for the row, not just "Edit": a screen-reader user
                     // moving button to button hears which term each one acts
-                    // on. `aria-label` rather than visually-hidden text
+                    // on, and the use as well as the term: an entry can
+                    // hold a synonym whose comparison key equals its own
+                    // preferred term (the state #227's `use` exists for), and
+                    // "Edit Ferritin" twice over is two buttons a
+                    // screen-reader user cannot tell apart.
+                    // `aria-label` rather than visually-hidden text
                     // because the accessible-name algorithm trims each node
                     // before joining, so "Edit" + " Ferritin" computes as
                     // "EditFerritin". The visible word is a prefix of the
                     // label, which is what WCAG 2.5.3 asks for.
-                    aria-label={`Edit ${row.term}`}
+                    aria-label={`Edit ${row.term} (${row.use})`}
                     onClick={() => setEditing(row)}
                   >
                     Edit
@@ -157,7 +171,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
                   <Button
                     type="button"
                     variant="danger"
-                    aria-label={`Retire ${row.term}`}
+                    aria-label={`Retire ${row.term} (${row.use})`}
                     onClick={() => setRetiring(row)}
                   >
                     Retire
@@ -321,8 +335,13 @@ function AddSynonymsForm({
       {/* The preview is what makes the delimiter repair visible: pasting
           "Zovirax;;Cyclir" says two terms, not three and not one, so the
           empty part FR-04 is about is seen to have gone rather than being
-          silently dropped somewhere the editor cannot check. */}
-      <p aria-live="polite">
+          silently dropped somewhere the editor cannot check.
+
+          Deliberately *not* a live region. It changes on every keystroke, so
+          announcing it would interrupt a screen-reader user once per
+          character while they were still typing. The count that matters is
+          announced once, after the save, through the panel's `LiveRegion`. */}
+      <p>
         {cell.trim().length === 0
           ? "Nothing to add yet."
           : `This will add ${terms.length} ${terms.length === 1 ? "term" : "terms"}: ${terms
