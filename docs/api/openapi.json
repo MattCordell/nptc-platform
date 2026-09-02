@@ -1858,6 +1858,108 @@
           }
         }
       }
+    },
+    "/api/v1/terminology/concepts/{code}": {
+      "get": {
+        "tags": [
+          "terminology"
+        ],
+        "summary": "Resolve one SNOMED CT code's served FSN, AU preferred term and active status",
+        "operationId": "get_concept_api_v1_terminology_concepts__code__get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConceptLookup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `registry.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The terminology server does not recognise this code in the AU edition - never a blank-but-successful resolution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The code is not a well-formed SNOMED CT identifier - a format or Verhoeff check-digit failure. No request reaches the terminology server for this case.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to \"does this code exist\". Names no URL, variable or upstream host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries - the code field's live assist degrades; nothing else about the entry is affected (FR-54). May carry a `Retry-After` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2313,6 +2415,78 @@
         ],
         "title": "CollisionWarning",
         "description": "One warning-severity collision (FR-05): the same term active on\nanother live entry. Names that entry's public identifier and preferred\nterm, never its internal id (NFR-04/NFR-26) - the same shape the 409\nhandler for the *error*-severity case already returns."
+      },
+      "ConceptLookup": {
+        "properties": {
+          "system": {
+            "type": "string",
+            "title": "System"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn"
+          },
+          "au_preferred_term": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Au Preferred Term"
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "edition": {
+            "type": "string",
+            "title": "Edition"
+          },
+          "resolved_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "system",
+          "code",
+          "fsn",
+          "au_preferred_term",
+          "active",
+          "edition",
+          "resolved_version"
+        ],
+        "title": "ConceptLookup",
+        "description": "One `$lookup`'s answer, on the wire.\n\n`code` is a string end-to-end (FR-06), echoed back rather than assumed\n- `$lookup` itself does not echo it, and a caller matching a late\nresponse to the field that asked needs it. `fsn` keeps its semantic\ntag intact and is nullable: the server may return no FSN designation\nat all, and `LookupResult.fully_specified_name` never falls back to\n`display`, which is a different thing. `active` is tri-state\n(`bool | None`) - `None` means the server did not report the\n`inactive` property, which is not the same as active (hazard H-05).\n`edition` is always `\"au\"` today - the honest source for a client's\nown `edition_hint`, so `\"unknown\"` stops being a value a form has to\nproduce. `resolved_version` is FR-48: which release actually answered.\n\nDeliberately carries no `display_term` - see\n`nptc.terminology.concepts`'s own module docstring for why computing\none here would risk a permanent 500 on a later read of whatever this\nvalue feeds."
       },
       "CreatePropertyDefinitionRequest": {
         "properties": {

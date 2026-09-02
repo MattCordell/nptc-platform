@@ -124,3 +124,35 @@ class TerminologyOutcomeError(TerminologyProtocolError):
     ) -> None:
         super().__init__(message, operation=operation)
         self.issues = issues
+
+
+#: ``OperationOutcome`` issue codes that mean "this code is not in this
+#: edition" rather than "this request failed" - see ``is_concept_absence``.
+NOT_FOUND_ISSUE_CODES = frozenset({"not-found", "code-invalid", "invalid-code"})
+
+
+def is_concept_absence(exc: TerminologyError) -> bool:
+    """True if ``exc`` means "no such code here", not "the request failed".
+
+    A ``$lookup`` for a code that is not in an edition is a 404 from a
+    conformant FHIR server, which is an answer to "does this code exist"
+    rather than a failure. Deliberately narrow: only a 4xx (never a 5xx,
+    never a transport failure, never a protocol error) and only a 404 or an
+    ``OperationOutcome`` that says not-found in as many words. Widening this
+    to "any 4xx" would turn a malformed request - one the server rejected
+    outright - into a false "code not found" answer; at catalogue scale
+    (``sweep.py``'s own caller) that reads as thousands of plausible-looking
+    absences instead of the one broken request that caused them.
+
+    Promoted out of ``sweep.py`` (FR-52's second pass) so a second,
+    interactive caller - the P1 API's single-code lookup route, FR-26 - can
+    ask the same question without a second, independently-written answer to
+    it (FR-74/ADR-0001: one implementation, never two that could drift).
+    """
+    if not isinstance(exc, TerminologyStatusError):
+        return False
+    if not 400 <= exc.status_code < 500:
+        return False
+    return exc.status_code == 404 or any(
+        issue.code in NOT_FOUND_ISSUE_CODES for issue in exc.issues
+    )

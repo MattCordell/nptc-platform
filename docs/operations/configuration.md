@@ -33,7 +33,7 @@ values (NFR-26).
 | `VITE_OIDC_CLIENT_ID` | `frontend/src/auth/config.ts` (browser, issue #41, NFR-01) | none - required at build time | No | The realm's public client. Must match `nptc-frontend` in the committed realm (ADR-0014) |
 | `NPTC_TX_BASE_URL` | `nptc_shared.terminology` (backend and transform) | `https://tx.ontoserver.csiro.au/fhir` | No | The default is fine; point it at a local Ontoserver to work offline |
 | `NPTC_TX_TOKEN` | `nptc_shared.terminology` (backend and transform) | *(empty — anonymous)* | Yes | Leave empty — `tx.ontoserver.csiro.au` accepts anonymous requests |
-| `NPTC_TX_TIMEOUT_SECONDS` | `nptc_shared.terminology` (backend and transform) | `30` | No | `30` is fine |
+| `NPTC_TX_TIMEOUT_SECONDS` | `nptc_shared.terminology` (backend and transform) | `30` | No | `30` is fine for the P3 batch sweep; a deployment exposing `GET /api/v1/terminology/concepts/{code}` (FR-26, issue #240) also bounds an interactive form request with this value, so consider a lower value there |
 | `NPTC_TX_MAX_RETRIES` | `nptc_shared.terminology` (backend and transform) | `3` | No | `3` is fine |
 | `NPTC_TX_CHUNK_SIZE` | `nptc_shared.terminology` batch sweep (FR-52) | `300` | No | `300` is fine; see the tuning note below |
 | `NPTC_TX_MAX_CONCURRENCY` | `nptc_shared.terminology` batch sweep (FR-52) | `4` | No | `4` is fine; raise only with the server operator's knowledge |
@@ -63,7 +63,11 @@ backend and the transform (see [ADR-0003](../adr/0003-terminology-client-in-shar
 and [the terminology client architecture doc](../architecture/terminology-client.md)). An
 empty or unset `NPTC_TX_TOKEN` means anonymous access and sends no `Authorization`
 header; setting it sends a static bearer token, the only auth scheme supported today —
-OAuth2 client-credentials is deferred. Retry backoff timings are `TerminologyConfig`
+OAuth2 client-credentials is deferred. `NPTC_TX_TIMEOUT_SECONDS`/`NPTC_TX_MAX_RETRIES`
+were tuned only against the P3 batch sweep until issue #240 (FR-26) added the first
+*interactive* caller, `GET /api/v1/terminology/concepts/{code}` — an operator exposing
+that route should weigh a lower timeout there against the sweep's own tolerance for a
+slow, retried request. Retry backoff timings are `TerminologyConfig`
 constructor defaults, deliberately not environment variables: they are tuning constants,
 not deployment configuration. This table grows as later issues add services that read
 their own configuration.

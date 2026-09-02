@@ -25,6 +25,13 @@ release goes through `git blame` and PR review, not an unreviewed `INSERT` — e
 with no admin UI in this issue's scope. `mypy --strict` typechecks every `Permission`
 reference; a database string cannot be.
 
+**`Permission.REGISTRY_READ` (ADR-0028) in practice.** Two `GET` routes hold it so far:
+`nptc.api.routers.registry`'s `/registry/properties`/`/registry/properties/{key}`
+(issue #55, its originating case) and `nptc.api.routers.terminology`'s
+`/terminology/concepts/{code}` (issue #240, FR-26) — exactly the reuse ADR-0028's own
+Consequences predicted: "any later route serving the same … audience … can reuse it
+rather than reaching for `CATALOGUE_BROWSE` or `REGISTRY_MANAGE`."
+
 **Kept honest against the PRD itself.** `test_permission_matrix.py` parses the markdown
 table at PRD §4.7 directly out of `docs/prd/NPTC-Catalogue-Platform-PRD.md` and asserts
 `ROLE_PERMISSIONS` reproduces it cell by cell, with exhaustiveness checked in both

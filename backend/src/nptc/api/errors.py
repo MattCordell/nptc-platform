@@ -56,6 +56,7 @@ catalogue_bindings` a route to raise them from.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -107,6 +108,11 @@ from nptc.registry.definitions import (
     PropertyKeyImmutableError,
     PropertyReactivationRefusedError,
     SystemPropertyDeprecationRefusedError,
+)
+from nptc.terminology.errors import (
+    ConceptNotFoundError,
+    TerminologyUnavailableError,
+    TerminologyUpstreamError,
 )
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
@@ -365,6 +371,16 @@ _DETAIL_DEPRECATED_PROPERTY_WRITE = (
 _DETAIL_PROPERTY_DATATYPE_UNKNOWN = "This is not a recognised property datatype."
 _DETAIL_PROPERTY_CONSTRAINTS_INVALID = (
     "The constraints given for this property are not valid for its datatype."
+)
+_DETAIL_CONCEPT_NOT_FOUND = "No concept was found for this code in the AU edition."
+#: Deliberately not `str(exc)`, and names no URL, variable or upstream host
+#: (NFR-26) - see issue #240's own error-mapping table.
+_DETAIL_TERMINOLOGY_UNAVAILABLE = (
+    "The terminology server could not be reached. Try again shortly; the rest of "
+    "this entry is unaffected."
+)
+_DETAIL_TERMINOLOGY_UPSTREAM = (
+    "The terminology server's response could not be used. The problem has been logged."
 )
 
 
@@ -929,4 +945,59 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": _DETAIL_PROPERTY_CONSTRAINTS_INVALID},
+        )
+
+    @app.exception_handler(ConceptNotFoundError)
+    async def _handle_concept_not_found(
+        _request: Request, exc: ConceptNotFoundError
+    ) -> JSONResponse:
+        # FR-26: a routine, expected outcome of a caller typing a code the
+        # server does not have - INFO, not WARNING, matching every other
+        # "not found" handler in this module.
+        _logger.info("concept lookup refused, not found: %s", exc)
+        return JSONResponse(
+            status_code=ConceptNotFoundError.http_status,
+            content={"detail": _DETAIL_CONCEPT_NOT_FOUND},
+        )
+
+    @app.exception_handler(TerminologyUnavailableError)
+    async def _handle_terminology_unavailable(
+        _request: Request, exc: TerminologyUnavailableError
+    ) -> JSONResponse:
+        # WARNING, not INFO: unlike a caller mistake, this is the shared
+        # terminology server misbehaving or unreachable - worth noticing,
+        # not routine. FR-54: nothing here degrades a result, it only tells
+        # the caller the live check could not run this time.
+        _logger.warning("terminology lookup refused, server unavailable: %s", exc)
+        # `is not None`, not truthiness: a server-supplied `retry_after` of
+        # `0.0` is a real value ("retry immediately"), not "none given" -
+        # truthiness would silently drop the header for it. `ceil` rounds
+        # up rather than `int`'s truncate-toward-zero, so a sub-second value
+        # (e.g. `0.4`) is never rounded down to `Retry-After: 0`, and
+        # `max(1, ...)` is the floor RFC 9110 implies for a delay worth
+        # sending at all - it also guards against an ever-negative value
+        # producing an invalid header.
+        headers = (
+            {"Retry-After": str(max(1, math.ceil(exc.retry_after)))}
+            if exc.retry_after is not None
+            else None
+        )
+        return JSONResponse(
+            status_code=TerminologyUnavailableError.http_status,
+            content={"detail": _DETAIL_TERMINOLOGY_UNAVAILABLE},
+            headers=headers,
+        )
+
+    @app.exception_handler(TerminologyUpstreamError)
+    async def _handle_terminology_upstream(
+        _request: Request, exc: TerminologyUpstreamError
+    ) -> JSONResponse:
+        # ERROR, not WARNING: an unparseable or otherwise unusable response
+        # from a conformant endpoint is a defect worth investigating, not
+        # an ordinary outage - see this exception's own docstring for why
+        # this is the catch-all rather than a 404.
+        _logger.error("terminology lookup refused, unusable response: %s", exc)
+        return JSONResponse(
+            status_code=TerminologyUpstreamError.http_status,
+            content={"detail": _DETAIL_TERMINOLOGY_UPSTREAM},
         )

@@ -65,7 +65,7 @@ from nptc_shared.terminology.config import (
 from nptc_shared.terminology.errors import (
     TerminologyConfigError,
     TerminologyError,
-    TerminologyStatusError,
+    is_concept_absence,
 )
 from nptc_shared.terminology.models import (
     PROCEDURE_ROOT_CODE,
@@ -89,12 +89,6 @@ __all__ = [
 #: Appendix A.10: ``71388002`` \|Procedure\| subsumes ``243120004``
 #: \|Regime/therapy (regime/therapy)\|).
 PROCEDURE_SEMANTIC_TAG = "procedure"
-
-#: ``OperationOutcome`` issue codes that mean "this code is not in this
-#: edition" rather than "this request failed". A 4xx carrying one of these is
-#: an *answer* to the second pass's question, so it is recorded as an absence
-#: instead of being raised - every other failure still propagates.
-_NOT_FOUND_ISSUE_CODES = frozenset({"not-found", "code-invalid", "invalid-code"})
 
 #: ``$lookup`` properties requested on every delta call. ``inactive`` is
 #: requested explicitly rather than relying on a server volunteering it
@@ -248,26 +242,6 @@ class SweepResult:
 def _chunks[T](items: Sequence[T], size: int) -> Iterable[Sequence[T]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
-
-
-def _is_absence(exc: TerminologyError) -> bool:
-    """True if ``exc`` means "no such code here", not "the request failed".
-
-    A ``$lookup`` for a code that is not in the edition is a 404 from a
-    conformant FHIR server, which is an answer to the second pass's question.
-    Deliberately narrow: only a 4xx (never a 5xx, never a transport failure,
-    never a protocol error) and only a 404 or an ``OperationOutcome`` that
-    says not-found in as many words. Widening this to "any 4xx" would turn a
-    malformed request - one the server rejected outright - into 20,000
-    plausible-looking "code not found" findings.
-    """
-    if not isinstance(exc, TerminologyStatusError):
-        return False
-    if not 400 <= exc.status_code < 500:
-        return False
-    return exc.status_code == 404 or any(
-        issue.code in _NOT_FOUND_ISSUE_CODES for issue in exc.issues
-    )
 
 
 class TerminologySweep:
@@ -517,7 +491,7 @@ class TerminologySweep:
         """One ``$lookup`` per unresolved code, ``max_concurrency`` at a time.
 
         ``None`` for a code the server says it does not have (see
-        ``_is_absence``); any other failure propagates, aborting the sweep -
+        ``errors.is_concept_absence``); any other failure propagates, aborting the sweep -
         an unreachable server must never be recorded as a catalogue of absent
         codes (FR-54).
 
@@ -555,7 +529,7 @@ class TerminologySweep:
         try:
             return self._client.lookup(code, edition=edition, properties=_LOOKUP_PROPERTIES)
         except TerminologyError as exc:
-            if _is_absence(exc):
+            if is_concept_absence(exc):
                 return None
             raise
 

@@ -12,6 +12,12 @@ the permission derivation are all the production ones. A test that passes
 here has exercised `TokenVerifier.verify` -> `resolve_user_for_claims` ->
 `principal_for` for real.
 
+`get_terminology_client` is the one exception, overridden onto a
+`StubTerminologyClient` (issue #240) - real terminology-server traffic has
+no place in this suite at all (NFR-37), unlike the auth chain above, which
+this harness deliberately exercises for real against a local, in-process
+IdP.
+
 **Each request runs inside its own `SAVEPOINT`, mirroring
 `nptc.db.session.session_scope`'s commit-on-success/rollback-on-exception
 contract without touching the outer transaction the fixture rolls back at
@@ -43,10 +49,16 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.api.app import API_PREFIX, create_app
-from nptc.api.dependencies import get_auth_settings, get_session, get_token_verifier
+from nptc.api.dependencies import (
+    get_auth_settings,
+    get_session,
+    get_terminology_client,
+    get_token_verifier,
+)
 from nptc.auth.jwks import SigningKeys
 from nptc.auth.tokens import TokenVerifier
 from nptc.settings import ApiSettings, AuthSettings
+from nptc_shared.terminology import StubTerminologyClient
 
 # Registered in sys.modules before exec_module - see
 # test_authz_negative_http.py for why @dataclass requires it.
@@ -75,6 +87,11 @@ class ApiTestApp:
     idp: StubIdp
     key: RSAPrivateKey
     session: Session
+    #: The `StubTerminologyClient` `get_terminology_client` is overridden
+    #: onto for this app (issue #240) - a test seeds `expand`/`lookup`/etc.
+    #: responses on this directly, and can inspect `.requests` for the
+    #: "exactly one upstream request" assertions FR-26/FR-52 both need.
+    terminology: StubTerminologyClient
 
     @property
     def issuer(self) -> str:
@@ -140,13 +157,33 @@ def build_api_test_app(
             with session.begin_nested():
                 yield session
 
+        # issue #240: overridden here, in the builder, rather than per test
+        # file - the precedent is `get_token_verifier` immediately below.
+        # `get_terminology_client` is `@lru_cache`d exactly like it and
+        # FastAPI keys overrides on the function object, so doing it once
+        # here makes every present and future app test offline **by
+        # construction** (NFR-37) rather than by a test author remembering
+        # to override it themselves. `create_app`'s own eager
+        # `get_terminology_client()` call still runs first and builds a
+        # real, unused `OntoserverClient` - harmless, since construction
+        # opens no socket (see that function's own docstring).
+        terminology_client = StubTerminologyClient()
+
         app = create_app(settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN))
         app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings
+        app.dependency_overrides[get_terminology_client] = lambda: terminology_client
 
         # raise_server_exceptions=False so a handler-mapped error is
         # observed as the HTTP response a real client would see, not
         # re-raised into the test.
         with TestClient(app, raise_server_exceptions=False) as client:
-            yield ApiTestApp(app=app, client=client, idp=idp, key=key, session=session)
+            yield ApiTestApp(
+                app=app,
+                client=client,
+                idp=idp,
+                key=key,
+                session=session,
+                terminology=terminology_client,
+            )

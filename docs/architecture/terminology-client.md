@@ -206,6 +206,50 @@ with OntoserverClient() as client:
     assert violations.codes == ()
 ```
 
+## FR-26: the interactive lookup route (issue #240)
+
+`GET /api/v1/terminology/concepts/{code}` (`nptc.api.routers.terminology`,
+`nptc.terminology.concepts.resolve_concept`) is the one interactive caller of this
+package's `lookup` operation - the form-completion half of FR-26, distinct from
+`TerminologySweep`'s batch callers above. It resolves one code's served FSN (semantic
+tag intact, FR-82), AU preferred term, and tri-state active status, so #150's code
+binding edit screen can accept a code and derive the labels itself rather than trusting
+an editor to type them.
+
+Edition is fixed to `SNOMED_CT_AU` in code, never a query parameter - the same
+`display_language`-ambiguity reasoning "Editions and versions" above gives for why only
+the AU edition carries it. Only the `inactive` property is requested, not FR-46's
+inactivation-reason/historical-association set: FR-26 asks for active status, not a
+"replace with the successor" affordance, and that reading belongs to FR-46/FR-47's own
+table. `au_preferred_term` is `LookupResult.display` under `display_language=
+AU_LANGUAGE_TAG`, never a designation scan - see "Editions and versions" again for why a
+second rule here would silently disagree with the sweep's own.
+
+The route's error table reuses this package's classification (`TerminologyError.
+retryable`, `errors.is_concept_absence` - promoted out of `sweep.py`'s own private
+helper for exactly this second caller, FR-74) rather than re-deriving it:
+
+| Condition | HTTP |
+|---|---|
+| Malformed or Verhoeff-failing SCTID (pre-flight, no request) | 422 |
+| `is_concept_absence` | 404 |
+| `TerminologyRateLimitError`, or a timeout/transport failure, or another retryable `TerminologyStatusError` | 503 (`Retry-After` when the server supplied one) |
+| Anything else - an unparseable body, a 2xx `OperationOutcome`, an unclassified 4xx, or the stub's own `StubNotSeededError` | 502 |
+| `TerminologyConfigError` - a malformed `NPTC_TX_*` value | 500 |
+
+The fourth row is deliberately the catch-all, never 404: reading an unrecognised failure
+as "not found" would let an unseeded `StubTerminologyClient` answer a test with a
+clean-looking absence instead of the authoring defect it actually is - see `stub.py`'s
+own module docstring. The last row is `resolve_concept` re-raising `TerminologyConfigError`
+unchanged rather than letting it reach that same catch-all - it is itself a
+`TerminologyError` subclass, so without that carve-out a malformed `NPTC_TX_*` value
+would misreport as 502 instead of the 500 `nptc.api.errors` already gives it; in normal
+operation this is a start-up failure (`create_app` builds the client eagerly), so 500
+here only covers a path that bypasses that warm-up. No server-side cache and no bespoke
+rate limiter: FR-82 forbids a stale served label, and `Permission.REGISTRY_READ` already
+bounds and attributes traffic to signed-in, submission-capable callers, which is the
+control an anonymous limiter cannot provide.
+
 ## Not implemented here
 
 - FR-47's *forecast* finding — a concept inactivated in International while still active in
