@@ -25,6 +25,7 @@ from nptc_shared.terminology.config import (
     TerminologyConfig,
 )
 from nptc_shared.terminology.errors import (
+    NOT_FOUND_ISSUE_CODES,
     OperationOutcomeIssue,
     TerminologyConfigError,
     TerminologyError,
@@ -34,6 +35,7 @@ from nptc_shared.terminology.errors import (
     TerminologyStatusError,
     TerminologyTimeoutError,
     TerminologyTransportError,
+    is_concept_absence,
 )
 from nptc_shared.terminology.models import (
     AU_LANGUAGE_TAG,
@@ -75,6 +77,7 @@ __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "DEFAULT_MAX_CONCURRENCY",
     "FSN_USE_CODE",
+    "NOT_FOUND_ISSUE_CODES",
     "PROCEDURE_ROOT_CODE",
     "PROCEDURE_SEMANTIC_TAG",
     "SNOMED_CT_AU",
@@ -110,6 +113,7 @@ __all__ = [
     "ValidationResult",
     "ecl_set_of",
     "implicit_value_set_url",
+    "is_concept_absence",
     "semantic_tag",
     "strip_semantic_tag",
 ]

@@ -24,6 +24,7 @@ from nptc.api.routers import (
     catalogue_bindings,
     catalogue_designations,
     registry,
+    terminology,
 )
 from nptc.settings import ApiSettings
 
@@ -97,4 +98,8 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # issue #55: PropertyDefinition admin - create/amend/deprecate, plus the
     # always-refusing DELETE (FR-11, FR-12).
     app.include_router(registry.router, prefix=API_PREFIX)
+    # issue #240, FR-26: live SCTID resolution during form completion - its
+    # own prefix and tag, not under /catalogue (see the router's own module
+    # docstring for why).
+    app.include_router(terminology.router, prefix=API_PREFIX)
     return app

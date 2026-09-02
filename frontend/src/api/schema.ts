@@ -345,6 +345,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/terminology/concepts/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve one SNOMED CT code's served FSN, AU preferred term and active status */
+        get: operations["get_concept_api_v1_terminology_concepts__code__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -614,6 +631,43 @@ export interface components {
             business_key: string;
             /** Preferred Term */
             preferred_term: string;
+        };
+        /**
+         * ConceptLookup
+         * @description One `$lookup`'s answer, on the wire.
+         *
+         *     `code` is a string end-to-end (FR-06), echoed back rather than assumed
+         *     - `$lookup` itself does not echo it, and a caller matching a late
+         *     response to the field that asked needs it. `fsn` keeps its semantic
+         *     tag intact and is nullable: the server may return no FSN designation
+         *     at all, and `LookupResult.fully_specified_name` never falls back to
+         *     `display`, which is a different thing. `active` is tri-state
+         *     (`bool | None`) - `None` means the server did not report the
+         *     `inactive` property, which is not the same as active (hazard H-05).
+         *     `edition` is always `"au"` today - the honest source for a client's
+         *     own `edition_hint`, so `"unknown"` stops being a value a form has to
+         *     produce. `resolved_version` is FR-48: which release actually answered.
+         *
+         *     Deliberately carries no `display_term` - see
+         *     `nptc.terminology.concepts`'s own module docstring for why computing
+         *     one here would risk a permanent 500 on a later read of whatever this
+         *     value feeds.
+         */
+        ConceptLookup: {
+            /** System */
+            system: string;
+            /** Code */
+            code: string;
+            /** Fsn */
+            fsn: string | null;
+            /** Au Preferred Term */
+            au_preferred_term: string | null;
+            /** Active */
+            active: boolean | null;
+            /** Edition */
+            edition: string;
+            /** Resolved Version */
+            resolved_version: string | null;
         };
         /**
          * CreatePropertyDefinitionRequest
@@ -2425,6 +2479,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_concept_api_v1_terminology_concepts__code__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConceptLookup"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server does not recognise this code in the AU edition - never a blank-but-successful resolution. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The code is not a well-formed SNOMED CT identifier - a format or Verhoeff check-digit failure. No request reaches the terminology server for this case. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to "does this code exist". Names no URL, variable or upstream host. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries - the code field's live assist degrades; nothing else about the entry is affected (FR-54). May carry a `Retry-After` header. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
