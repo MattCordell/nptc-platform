@@ -189,8 +189,8 @@
   priority: SHOULD
   phase: p2
   title: "Where the submitter supplies a SNOMED code, the platform validates it live against Ontoserver during form completion"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #240: GET /api/v1/terminology/concepts/{code} resolves one code's served FSN, AU preferred term and active status via a single CodeSystem/$lookup, gated on Permission.REGISTRY_READ (ADR-0028) so any submission-capable role can call it. backend/tests/test_api_terminology.py and test_terminology_concepts.py cover the happy path, the full error-mapping table (422/404/503/502) and the Provisional positive control. Stays in-progress, not implemented: this is the resolver half only - the P2 submission form itself (the actual form-completion UI FR-26 describes) does not exist yet, so there is nowhere for a submitter to see this check run end to end."
 - id: "FR-27"
   priority: SHOULD
   phase: p2

@@ -389,6 +389,13 @@ inherited from #219.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.
+- Server-side SCTID resolution for the code binding form. `POST .../bindings` and
+  `/replacement` still take `fsn`/`au_preferred_term` as caller-supplied fields, exactly
+  as documented above - issue #240 (FR-26) adds `GET /api/v1/terminology/concepts/{code}`
+  as the resolver #150's edit screen calls *before* submitting one of these routes, so an
+  editor only ever types the code. That route is deliberately not under `/catalogue` and
+  not part of this API - see [terminology-client.md](terminology-client.md#fr-26-the-interactive-lookup-route-issue-240)
+  for why, and for its own error table.
 
 ## Route-table inventory (issues #44, #165)
 
