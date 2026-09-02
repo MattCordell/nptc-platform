@@ -235,14 +235,20 @@ helper for exactly this second caller, FR-74) rather than re-deriving it:
 | `is_concept_absence` | 404 |
 | `TerminologyRateLimitError`, or a timeout/transport failure, or another retryable `TerminologyStatusError` | 503 (`Retry-After` when the server supplied one) |
 | Anything else - an unparseable body, a 2xx `OperationOutcome`, an unclassified 4xx, or the stub's own `StubNotSeededError` | 502 |
+| `TerminologyConfigError` - a malformed `NPTC_TX_*` value | 500 |
 
-The last row is deliberately the catch-all, never 404: reading an unrecognised failure
+The fourth row is deliberately the catch-all, never 404: reading an unrecognised failure
 as "not found" would let an unseeded `StubTerminologyClient` answer a test with a
 clean-looking absence instead of the authoring defect it actually is - see `stub.py`'s
-own module docstring. No server-side cache and no bespoke rate limiter: FR-82 forbids a
-stale served label, and `Permission.REGISTRY_READ` already bounds and attributes traffic
-to signed-in, submission-capable callers, which is the control an anonymous limiter
-cannot provide.
+own module docstring. The last row is `resolve_concept` re-raising `TerminologyConfigError`
+unchanged rather than letting it reach that same catch-all - it is itself a
+`TerminologyError` subclass, so without that carve-out a malformed `NPTC_TX_*` value
+would misreport as 502 instead of the 500 `nptc.api.errors` already gives it; in normal
+operation this is a start-up failure (`create_app` builds the client eagerly), so 500
+here only covers a path that bypasses that warm-up. No server-side cache and no bespoke
+rate limiter: FR-82 forbids a stale served label, and `Permission.REGISTRY_READ` already
+bounds and attributes traffic to signed-in, submission-capable callers, which is the
+control an anonymous limiter cannot provide.
 
 ## Not implemented here
 

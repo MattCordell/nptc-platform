@@ -34,6 +34,7 @@ from nptc_shared.terminology import (
     LookupResult,
     Operation,
     StubConcept,
+    TerminologyConfigError,
     TerminologyOutcomeError,
     TerminologyRateLimitError,
     TerminologyStatusError,
@@ -378,6 +379,22 @@ def test_lookup_unseeded_stub_is_502_never_404(api: ApiTestApp) -> None:
     response = _get(api, token, code="71388002")
 
     assert response.status_code == 502, response.text
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.integration
+def test_lookup_terminology_config_error_is_500(api: ApiTestApp) -> None:
+    """Round-2 review: `TerminologyConfigError` is a `TerminologyError`
+    subclass `resolve_concept` re-raises unchanged, so it must reach
+    `nptc.api.errors`'s own config-error handler (500) rather than falling
+    into `_classify`'s 502 catch-all."""
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyConfigError("bad config"), key=_CODE)
+    token = _role_token(api, subject="sub-lookup-config-error", role=Role.PROVISIONAL)
+
+    response = _get(api, token)
+
+    assert response.status_code == 500, response.text
+    assert set(response.json()) == {"detail"}
 
 
 # --- authorisation (FR-44, ADR-0028) -------------------------------------

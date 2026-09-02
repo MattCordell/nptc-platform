@@ -2539,6 +2539,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to "does this code exist". Names no URL, variable or upstream host. */
             502: {
                 headers: {

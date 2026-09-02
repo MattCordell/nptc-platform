@@ -107,12 +107,27 @@ _RESPONSE_503: Final[dict[str, Any]] = {
         "the entry is affected (FR-54). May carry a `Retry-After` header."
     ),
 }
+#: `TerminologyConfigError` - a malformed `NPTC_TX_*` value - reaching
+#: `resolve_concept` (round-2 review, issue #240). `nptc.api.app.create_app`
+#: builds the terminology client eagerly precisely so this is a start-up
+#: failure in normal operation; this response only documents the paths that
+#: bypass that warm-up (a dependency override, a lazily-configured client),
+#: matching `nptc.api.errors`'s own `_handle_terminology_config_error`.
+_RESPONSE_500: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The service is misconfigured, not a caller mistake - a malformed "
+        "`NPTC_TX_*` value. Not produced by anything a well-formed request can "
+        "trigger on its own; retrying will not clear it."
+    ),
+}
 
 _RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
     404: _RESPONSE_404,
     422: _RESPONSE_422,
+    500: _RESPONSE_500,
     502: _RESPONSE_502,
     503: _RESPONSE_503,
 }
