@@ -66,19 +66,36 @@ interface Route {
   body: unknown;
 }
 
+interface StubOptions {
+  /**
+   * Consulted before `routes`, with the number of earlier calls to the same
+   * method and path - so one render can answer the same request differently
+   * the second time. Return `null` to fall through to `routes`.
+   *
+   * This rather than re-stubbing `fetch` mid-test: the API client holds the
+   * reference it was created with, so a second `vi.stubGlobal` is never seen.
+   */
+  vary?: (call: { method: string; path: string }, priorSameCalls: number) => Route | null;
+}
+
 /**
  * A fetch stub that dispatches on method and path, so one render can serve the
  * entry read *and* answer a write differently. Returns the calls for
  * assertions on what was actually sent.
  */
-function stubApi(routes: Route[]) {
+function stubApi(routes: Route[], options: StubOptions = {}) {
   const calls: { method: string; path: string; body: unknown }[] = [];
   const fetchMock = vi.fn(async (request: Request) => {
     const path = new URL(request.url).pathname;
     const method = request.method;
     const body = method === "GET" ? null : await request.clone().json();
+    const priorSameCalls = calls.filter(
+      (call) => call.method === method && call.path === path,
+    ).length;
     calls.push({ method, path, body });
-    const route = routes.find((r) => r.method === method && path.endsWith(r.path));
+    const route =
+      options.vary?.({ method, path }, priorSameCalls) ??
+      routes.find((r) => r.method === method && path.endsWith(r.path));
     if (route === undefined) {
       return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
     }
@@ -199,6 +216,62 @@ describe("the entry it loads", () => {
         new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
       ),
     ).toBeInTheDocument();
+  });
+  it("keeps the editor on screen when a refresh fails, and says so", async () => {
+    // `isError` and `data` are not exclusive states. Before this, an entry
+    // that loaded and then failed a refetch rendered "You cannot edit this
+    // entry with your current sign-in" directly above a working terms table -
+    // and the amend mutation's conflict refetch makes that a designed-in path
+    // (PR #238 review).
+    const user = userEvent.setup();
+    const CONFLICT = {
+      method: "POST",
+      path: AMEND_PATH,
+      status: 409,
+      body: {
+        detail: "This entry was changed by someone else since you loaded it.",
+        business_key: BUSINESS_KEY,
+        expected_row_version: 3,
+        current_row_version: 4,
+        conflicts: [],
+        changed_by: "A Curator",
+        changed_at: "2026-09-02T01:00:00Z",
+      },
+    };
+    // The read succeeds once and is refused after that - a session expiring
+    // while the screen sits open, which is the same session length that makes
+    // a version conflict likely in the first place. Re-stubbing `fetch`
+    // mid-test would not do it: the API client holds the reference it was
+    // created with.
+    // Reads are refused from the amendment onwards, not from the second read
+    // onwards: StrictMode double-mounts, so the load itself is two reads.
+    let expired = false;
+    const calls = stubApi([READ_OK, CONFLICT], {
+      vary: (call) => {
+        if (call.method === "POST") {
+          expired = true;
+          return null;
+        }
+        return expired
+          ? { ...READ_OK, status: 403, body: { detail: "Step-up required." } }
+          : null;
+      },
+    });
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    expect(
+      await screen.findByText(/could not be refreshed just now/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Sign out and sign in again/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+    ).toBeInTheDocument();
+    // The refetch the conflict asked for actually went out.
+    expect(readsOf(calls).length).toBeGreaterThan(1);
   });
 });
 
@@ -701,7 +774,7 @@ describe("amending a term", () => {
 
     expect(await screen.findByText(/A Curator/)).toBeInTheDocument();
     expect(screen.getByText(/Ferritin \(S\)/)).toBeInTheDocument();
-    expect(screen.getByText(/The entry has been reloaded/)).toBeInTheDocument();
+    expect(screen.getByText(/The entry is reloading/)).toBeInTheDocument();
   });
 
   it("reads correctly when the concurrent edit touched a different field", async () => {
@@ -739,7 +812,7 @@ describe("amending a term", () => {
       await screen.findByText(/Someone else changed this entry/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/What you sent/)).not.toBeInTheDocument();
-    expect(screen.getByText(/The entry has been reloaded/)).toBeInTheDocument();
+    expect(screen.getByText(/The entry is reloading/)).toBeInTheDocument();
   });
 
   it("refetches the entry on a version conflict, so a retry can succeed", async () => {
@@ -776,7 +849,7 @@ describe("amending a term", () => {
     );
     await user.click(inDialog().getByRole("button", { name: "Save term" }));
 
-    await screen.findByText(/The entry has been reloaded/);
+    await screen.findByText(/The entry is reloading/);
     await waitFor(() => expect(readsOf(calls).length).toBeGreaterThan(readsBefore));
   });
 

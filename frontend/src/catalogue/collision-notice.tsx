@@ -89,12 +89,14 @@ function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
         </>
       )}
       {/* Not "reload the page": `useAmendDesignation` refetches the entry on
-          this refusal, so by the time this is read the screen behind the
-          dialog already holds their change (review finding 3). Advice the
-          screen does not carry out is worse than no advice. */}
+          this refusal, so the screen behind the dialog is already fetching
+          their change. Present tense, because it says so the moment the 409
+          lands - the refetch has not resolved yet and can itself fail, and a
+          claim that it is done would sit next to the refresh banner saying it
+          is not (PR #238 review). */}
       <p>
-        The entry has been reloaded with their change. Check yours is still needed, then
-        save it again.
+        The entry is reloading with their change. Check yours is still needed, then save
+        it again.
       </p>
     </div>
   );

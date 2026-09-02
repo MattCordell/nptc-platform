@@ -640,7 +640,12 @@ def test_stripping_covers_the_codepoints_javascript_and_python_disagree_on() -> 
     exists to catch. Asserting the boundary here and on the identical strings
     in `split-synonyms.test.ts` makes a drift fail on a named codepoint.
     """
-    nel, fs, bom = "", "", "﻿"
+    # Escapes, never the characters themselves - the rule
+    # `split-synonyms.ts` states and follows. A fixture whose job is to pin a
+    # codepoint boundary is exactly the one an editor's strip-invisibles or a
+    # paste through a review UI can silently turn into a space, leaving a test
+    # that passes while asserting nothing (PR #238 review).
+    nel, fs, bom = "\x85", "\x1c", "\ufeff"
     assert split_synonyms(f"{nel}Ferritin{nel};{fs}Serum ferritin{fs}") == (
         "Ferritin",
         "Serum ferritin",

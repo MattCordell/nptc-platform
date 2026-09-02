@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type { CollisionWarning } from "./collision-notice.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
+import { MAX_TERMS_PER_BATCH } from "./limits.ts";
 import { splitSynonyms } from "./split-synonyms.ts";
 import {
   useAcknowledgeCollision,
@@ -112,18 +113,6 @@ function termRows(entry: EntryDetail): TermRow[] {
 const NOTE_HINT =
   "This becomes the published History text, so describe the change - single words " +
   "like “update” or “fix” are not accepted.";
-
-/**
- * `_MAX_TERMS_PER_BATCH` in `catalogue_designations.py`, mirrored.
- *
- * Not in the generated schema - `max_length` on a list does not survive into
- * `schema.ts` - so this is a second copy of a server constant, kept only
- * because failing a 137-term paste in the form (beside the preview that just
- * said "This will add 137 terms") is the difference between a fixable message
- * and a generic 422 (review finding 6). The server remains the authority; this
- * check exists to say *what* is wrong, not to decide it.
- */
-const MAX_TERMS_PER_BATCH = 100;
 
 /** Client-side check only for emptiness; FR-37's substance is the server's. */
 function noteError(note: string, fieldId: string): FormError[] {

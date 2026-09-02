@@ -30,7 +30,24 @@ export function AdminCatalogueEditPage() {
 
       {entry.isPending && <p>Loading {businessKey}…</p>}
 
-      {entry.isError && <LoadFailure businessKey={businessKey} error={entry.error} />}
+      {/* `isError` and `data` are not exclusive: `retry` is off and
+          `refetchOnWindowFocus` is on, so an entry that loaded and then failed
+          a *re*fetch has both. Rendering the failure paragraph unconditionally
+          put "you cannot edit this entry" directly above a working editor -
+          and the amend mutation's conflict refetch makes that a designed-in
+          path, since a long-open session is exactly when one expires (PR #238
+          review). A first load that fails blocks; a failed refresh is a
+          banner over the terms the screen already has. */}
+      {entry.isError && entry.data === undefined && (
+        <LoadFailure businessKey={businessKey} error={entry.error} />
+      )}
+
+      {entry.isError && entry.data !== undefined && (
+        <p role="status">
+          {businessKey} could not be refreshed just now, so what follows may be out of
+          date. Your last save is unaffected.
+        </p>
+      )}
 
       {entry.data && (
         <>

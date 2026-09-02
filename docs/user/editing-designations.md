@@ -63,7 +63,7 @@ catalogue stores the two differently behind the scenes.
 
 If someone else changes the entry while you have it open, your save is refused and you are
 told who changed it, when, and which values moved. Nothing of yours is saved. The screen
-reloads their change for you, so check yours is still needed and save it again.
+starts reloading their change for you, so check yours is still needed and save it again.
 
 ## Retiring a synonym
 
@@ -128,11 +128,16 @@ correct repair — a zero-width space, or a control character — usually picked
 from a formatted document. Retype the term rather than pasting it.
 
 **"Someone else changed this entry while you had it open."** Another editor saved before
-you did. Nothing of yours was saved. The screen has already picked up their change - check
-yours is still needed, then save it again.
+you did. Nothing of yours was saved. The screen picks up their change for you - check yours
+is still needed, then save it again.
 
 **"No active designation was found for the given term."** The term was retired or edited
 by someone else between the page loading and your save. Reload the entry.
 
 **"You cannot edit this entry with your current sign-in."** See the note on multi-factor
 authentication at the top of this page.
+
+**"... could not be refreshed just now, so what follows may be out of date."** The entry
+loaded, but a later refresh was refused - usually a sign-in that has expired while the
+screen was open. What you have already saved is unaffected. Sign in again and reopen the
+entry before making further changes.
