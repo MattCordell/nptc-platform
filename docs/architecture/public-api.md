@@ -133,26 +133,55 @@ response a lie about what was asked for, and a client that pages by "did I recei
 
 ## Search
 
-`GET /catalogue/search?q=...` matches against each entry's own preferred term and its
-active designations, and returns one result per entry scored by its best match.
+`GET /catalogue/search?q=...` matches against all five of FR-14's searchable fields - the
+entry's own preferred term, its active designations, and the fully specified name, AU
+preferred term and SNOMED code of its active binding - and returns one result per entry
+scored by its best match. `docs/architecture/search.md` documents which indexes serve
+which field and how the scores are combined.
 
+- **One query field, five fields searched** (FR-14): `49466006`, `ACTH`,
+  `Adrenocorticotropic hormone` and `Corticotropin` all reach the same entry.
 - **Insensitive to case and to diacritics** (FR-14): `muller` finds `Müller cell
   antibody`.
 - **Tolerant of typographical error** (FR-15): `Haemoglobni electrophoresis` finds
-  `Haemoglobin electrophoresis`. Matching is trigram similarity, so a transposition or a
-  dropped letter still scores.
+  `Haemoglobin electrophoresis`. Trigram similarity is what carries this - a
+  transposition or a dropped letter still scores.
+- **Tolerant of word order and of inflection** (FR-15): `electrophoresis haemoglobin`
+  finds `Haemoglobin electrophoresis`, and full-text stemming matches a plural or an
+  inflected form against the stored singular.
+- **A SNOMED code is matched exactly**, not fuzzily. A code with a wrong digit finds
+  nothing, rather than a list of codes that look similar.
+- **An FSN is matched with or without its semantic tag.** `Full blood count` and
+  `Full blood count (procedure)` both reach the entry; labels are stored and indexed
+  exactly as served (FR-82, FR-98).
+- **Retired designations and retired bindings are never a way in.** They are history, not
+  a route to the entry.
 - **A query below the similarity threshold returns an empty page**, not a broadened
   match. That is intended: a search that quietly matches everything cannot be told apart
   from a working search over a catalogue with nothing to offer.
 - **`q` must contain a non-whitespace character.** A blank query is a 422, not the whole
   catalogue.
+- **Surrounding whitespace does not change the answer.** A code or a term pasted out of a
+  spreadsheet still counts as an exact match, rather than dropping to a fuzzy score -
+  including the trailing carriage return and newline a single copied cell carries.
+- **`q` accepts web-search syntax, on the full-text half only.** A quoted `"phrase"`, `or`
+  between alternatives, and a leading `-` to exclude a word. A query that can be satisfied
+  by exclusion alone - `-glucose`, and also `zymogen or -kinase`, whose negated half would
+  match nearly everything on its own - is dropped from that half rather than returning the
+  catalogue, and is still searched by similarity as the literal text typed.
 
-`score` is a trigram similarity between 0 and 1. It is comparable *within* one response
-(it is what the ordering is), and is not a quality rating of the entry.
+`score` is a relevance score between 0 and 1, combining trigram similarity, full-text
+rank and how the entry was matched - an exact hit on the code or the preferred term
+scores above any fuzzy match, and a full-text-only match is scored on the same range as a
+trigram one rather than beneath it. It is comparable *within* one response (it is what the
+ordering is), and is not a quality rating of the entry. The bands are documented in
+[search.md](search.md); the weights behind them may be retuned, so a client should order
+by it rather than threshold on it.
 
-**Not searched here:** the FSN, the AU preferred term, and the SNOMED code itself.
-Exact-code lookup is FR-17's own endpoint, owned by #140; faceted filtering over
-`filterable` properties (FR-16) is #138's. See ADR-0024's Consequences.
+**Not here:** exact-code lookup as its own addressable endpoint is FR-17's, owned by
+issue #140 - typing a code into `q` works, but a stable per-code URL is separate.
+Faceted filtering over `filterable` properties (FR-16) is a separate child of epic #57.
+See [ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md).
 
 ## Errors
 

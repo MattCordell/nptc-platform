@@ -167,6 +167,27 @@ class CatalogueEntry(Base):
             # skipping it.
             postgresql_ops={"nptc_search_text(preferred_term)": "gin_trgm_ops"},
         ),
+        # FR-14/FR-15, issue #138: the full-text half of the hybrid, over
+        # `nptc_search_document` (migration 0015, ADR-0029). It sits beside
+        # the trigram index rather than replacing it because the two answer
+        # different halves of FR-15 - trigram ranks a transposition as a
+        # near-match where full-text scores it zero, and full-text matches an
+        # inflected form that trigram scores as a near-miss. `_SEARCH_SQL`
+        # scans both and keeps the better score, so both are load-bearing.
+        #
+        # No `postgresql_ops` here, unlike the trigram index above:
+        # `tsvector_ops` is GIN's default operator class for `tsvector` and
+        # PostgreSQL omits a default class from `indexdef`, so naming it
+        # would make this declaration and the reflected index disagree on
+        # every autogenerate run - the precise failure `postgresql_ops`
+        # exists to avoid for the trigram index, arrived at from the other
+        # direction. Not partial on status, matching the trigram index and
+        # for the same reason (#149's maintenance search covers drafts).
+        Index(
+            "ix_catalogue_entry_preferred_term_fts",
+            text("nptc_search_document(preferred_term)"),
+            postgresql_using="gin",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

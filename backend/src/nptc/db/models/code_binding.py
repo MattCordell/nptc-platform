@@ -167,6 +167,68 @@ class CodeBinding(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+        # FR-14, issue #138: the three fields this table contributes to the
+        # single search box. All five indexes below are partial on
+        # `status = 'active'`, matching `ix_designation_term_trgm`'s reason
+        # exactly - a retired binding is history, and search never returns a
+        # way into the catalogue through a code or label that was withdrawn.
+        # `_SEARCH_SQL` spells that predicate as the literal `'active'` so
+        # the planner can prove these partial indexes cover the query.
+        #
+        # The code is matched by equality, not similarity, so it gets a
+        # btree rather than a trigram index. `ix_code_binding_one_active_
+        # entry_per_code` above cannot serve the lookup despite covering the
+        # same column: `code` is its *second* column, and the search box has
+        # no `system` to offer as a leading equality qualifier. Trigram over
+        # an 8-digit string was considered and rejected in ADR-0029 - a code
+        # is right or wrong, and near-miss digit runs clear the 0.3 threshold
+        # in bulk.
+        Index(
+            "ix_code_binding_code",
+            "code",
+            postgresql_where=text("status = 'active'"),
+        ),
+        # The two stored SNOMED labels, each indexed both ways - see
+        # `CatalogueEntry`'s trigram/FTS pair for why both mechanisms and why
+        # only the trigram indexes declare `postgresql_ops`. Both are indexed
+        # tag-intact, exactly as stored (FR-82): the semantic tag is extra
+        # text to trigram and its own lexeme to full-text, so an FSN searched
+        # with the tag typed in full and the same FSN with it omitted both
+        # reach the entry without a second, stripped copy of the column. See
+        # ADR-0029 on why a SQL-side tag stripper was rejected (it would put
+        # a second copy of the semantic-tag regex in the database, which
+        # ADR-0006 records as the defect class FR-83 exists to prevent).
+        Index(
+            "ix_code_binding_fsn_trgm",
+            text("nptc_search_text(fsn)"),
+            postgresql_using="gin",
+            postgresql_ops={"nptc_search_text(fsn)": "gin_trgm_ops"},
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index(
+            "ix_code_binding_fsn_fts",
+            text("nptc_search_document(fsn)"),
+            postgresql_using="gin",
+            postgresql_where=text("status = 'active'"),
+        ),
+        # `au_preferred_term` is nullable, and both `nptc_search_text` and
+        # `nptc_search_document` are `STRICT`, so a binding without one
+        # indexes as NULL and is simply unfindable through this column -
+        # which is correct, and the reason the strictness of those functions
+        # is a correctness property rather than tidiness.
+        Index(
+            "ix_code_binding_au_preferred_term_trgm",
+            text("nptc_search_text(au_preferred_term)"),
+            postgresql_using="gin",
+            postgresql_ops={"nptc_search_text(au_preferred_term)": "gin_trgm_ops"},
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index(
+            "ix_code_binding_au_preferred_term_fts",
+            text("nptc_search_document(au_preferred_term)"),
+            postgresql_using="gin",
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

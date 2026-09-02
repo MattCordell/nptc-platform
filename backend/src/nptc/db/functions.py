@@ -171,6 +171,123 @@ $$;
 
 DROP_SEARCH_TEXT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS nptc_search_text(text);"
 
+#: FR-14/FR-15 (issue #138): the full-text half of the hybrid search, and the
+#: companion to ``nptc_search_text`` above. Four ``tsvector`` GIN indexes in
+#: migration ``0015`` are built over ``nptc_search_document``; every FTS
+#: predicate in ``nptc.catalogue.search`` matches them against
+#: ``nptc_search_query`` applied to the user's own input, so index and query
+#: are normalised by the same code rather than by two spellings that agree
+#: today.
+#:
+#: **Why a function pair and not two inline expressions.** The text search
+#: configuration has to be identical on both sides - a document lexed as
+#: ``english`` and a query lexed as ``simple`` share no stems and match
+#: nothing - and a configuration named in nine separate places in
+#: ``_SEARCH_SQL`` is a configuration that will eventually disagree with
+#: itself. Naming it once here is the only way the agreement is structural.
+#:
+#: **Why the two-argument ``to_tsvector``/``websearch_to_tsquery``, with the
+#: configuration as a constant.** Exactly ``nptc_search_text``'s own reason
+#: for the two-argument ``unaccent``: the one-argument forms resolve the
+#: configuration through ``default_text_search_config``, a GUC, so they are
+#: only ``STABLE`` and PostgreSQL refuses them in an index expression. The
+#: two-argument forms with a literal ``regconfig`` are ``IMMUTABLE``. The
+#: same "immutable for a fixed definition" caveat applies and has the same
+#: remedy: if the ``english`` configuration, its stemmer or its stopword list
+#: is ever changed underneath a running database, the four FTS indexes must
+#: be ``REINDEX``ed (``docs/operations/upgrade.md``).
+#:
+#: **Why every object is schema-qualified.** ``public.nptc_search_text`` is
+#: qualified for the reason ``nptc_numeric_or_null`` is: this function is
+#: inlined into an index expression, and PostgreSQL evaluates an inlined body
+#: under a secure ``search_path`` of ``pg_catalog, pg_temp``, where an
+#: unqualified reference to a ``public`` function resolves against nothing
+#: and ``CREATE INDEX`` fails outright. ``pg_catalog.english`` is qualified
+#: for the same reason - a bare ``'english'::regconfig`` is resolved against
+#: that same secure path, and while ``pg_catalog`` happens to be on it, being
+#: explicit costs nothing and removes the dependence on that happening to
+#: stay true.
+#:
+#: **Why ``english`` and not ``simple``.** ``simple`` lexes to lowercased
+#: words with no stemming and no stopword list, which would make the FTS half
+#: a strictly worse trigram - it would find nothing trigram does not already
+#: find, and the index footprint would buy nothing. ``english`` is what makes
+#: this pair earn its place: it is the half that matches a plural against a
+#: singular and a query word against an inflected term, which trigram
+#: similarity scores as a near-miss rather than a match.
+#:
+#: ``STRICT``, so a NULL ``au_preferred_term`` yields NULL rather than an
+#: empty ``tsvector`` - the same reason ``nptc_search_text`` is ``STRICT``.
+CREATE_SEARCH_DOCUMENT_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION public.nptc_search_document(value text)
+RETURNS tsvector
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+SELECT to_tsvector('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+$$;
+"""
+
+DROP_SEARCH_DOCUMENT_FUNCTION_SQL = "DROP FUNCTION IF EXISTS public.nptc_search_document(text);"
+
+#: The query-side half of the pair above. ``websearch_to_tsquery`` rather
+#: than ``to_tsquery`` or ``plainto_tsquery``, and the choice is about
+#: failure behaviour rather than syntax sugar: ``to_tsquery`` raises a syntax
+#: error on input it cannot parse, and ``q`` is a free-text field a user
+#: types, so every stray ``&``, ``!`` or unbalanced quote would be a 500.
+#: ``websearch_to_tsquery`` never raises - it accepts anything and returns a
+#: query, possibly an empty one - which is the only acceptable contract for a
+#: value arriving from a URL. It also gives users quoted-phrase and ``OR``
+#: syntax for free, which ``plainto_tsquery`` does not.
+#:
+#: An empty ``tsquery`` (``q`` was entirely stopwords, say) matches nothing
+#: rather than everything, so the FTS branches simply contribute no rows and
+#: the trigram branches still answer the query. That is the correct
+#: degradation and it needs no special case in ``_SEARCH_SQL``.
+#:
+#: A ``tsquery`` that can be satisfied by **absence alone** is the opposite
+#: case and does need one. ``websearch_to_tsquery`` reads ``-`` as NOT, so
+#: ``-glucose`` lexes to ``!'glucos'``, which ``@@`` satisfies for every row
+#: with nothing for GIN to probe - the whole catalogue, by sequential scan.
+#: So does ``zymogen or -kinase``, whose negated disjunct alone matches
+#: nearly everything. That is not repaired here, because rewriting a user's
+#: query inside this function would make the returned ``tsquery`` disagree
+#: with what they typed; ``_SEARCH_SQL`` guards each FTS branch with
+#: ``NOT ('' :: tsvector @@ nptc_search_query(:q))`` instead, which is a
+#: precise test of the condition and costs a one-time filter. See
+#: ``nptc.catalogue.search``'s module docstring.
+#:
+#: **This function is noisy on stopword-only input.** ``websearch_to_tsquery``
+#: raises a ``NOTICE`` ("contains only stop words or doesn't contain
+#: lexemes") each time it returns an empty query, and ``_SEARCH_SQL`` names
+#: it twelve times, so ``q=the`` produces twelve identical notices from one
+#: request (PR #237 review, measured). Nothing consumes them today - psycopg
+#: discards notices unless a handler is registered, and the server's own
+#: ``log_min_messages`` defaults above ``NOTICE`` - so this is deliberately
+#: left alone rather than suppressed with a transaction-scoped
+#: ``client_min_messages``, which would also hide notices a future statement
+#: in the same transaction might genuinely need. Anyone attaching a notice
+#: handler should set that GUC first.
+#:
+#: Not ``STRICT``-dependent in practice - ``nptc.catalogue.search`` refuses a
+#: blank ``q`` before any SQL runs - but marked ``STRICT`` anyway so the pair
+#: is symmetric and a NULL can never become a match-everything query.
+CREATE_SEARCH_QUERY_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION public.nptc_search_query(value text)
+RETURNS tsquery
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+SELECT websearch_to_tsquery('pg_catalog.english'::regconfig, public.nptc_search_text(value))
+$$;
+"""
+
+DROP_SEARCH_QUERY_FUNCTION_SQL = "DROP FUNCTION IF EXISTS public.nptc_search_query(text);"
+
 #: FR-13 (issue #54): the cast-safe numeric expression ADR-0012's third
 #: index shape needs. See ``docs/adr/0027-cast-safe-numeric-index-
 #: expression.md`` for the full argument - the short version: a `decimal`/
