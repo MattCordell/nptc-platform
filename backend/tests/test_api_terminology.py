@@ -387,7 +387,7 @@ def test_lookup_terminology_config_error_is_500(api: ApiTestApp) -> None:
     """Round-2 review: `TerminologyConfigError` is a `TerminologyError`
     subclass `resolve_concept` re-raises unchanged, so it must reach
     `nptc.api.errors`'s own config-error handler (500) rather than falling
-    into `_classify`'s 502 catch-all."""
+    into `classify_terminology_error`'s 502 catch-all."""
     api.terminology.seed_error(Operation.LOOKUP, TerminologyConfigError("bad config"), key=_CODE)
     token = _role_token(api, subject="sub-lookup-config-error", role=Role.PROVISIONAL)
 
