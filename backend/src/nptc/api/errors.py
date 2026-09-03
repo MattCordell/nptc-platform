@@ -94,6 +94,10 @@ from nptc.catalogue.designations import (
     PreferredDesignationAlreadyActiveError,
 )
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.property_value_sources import (
+    PropertyNotCodeTypeError,
+    PropertyValueSourceMisconfiguredError,
+)
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
@@ -330,6 +334,9 @@ _DETAIL_PROPERTY_VALIDATION = (
     "fields and correct them before saving again."
 )
 _DETAIL_PROPERTY_DEFINITION_NOT_FOUND = "No property definition was found for the given key."
+_DETAIL_PROPERTY_NOT_CODE_TYPE = (
+    "This property does not have a coded datatype, so it has no bound value source to list."
+)
 _DETAIL_INVALID_SCTID = (
     "This is not a valid SNOMED CT identifier. It must be 6 to 18 digits and pass the "
     "check-digit calculation."
@@ -717,6 +724,29 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=PropertyDefinitionNotFoundError.http_status,
             content={"detail": _DETAIL_PROPERTY_DEFINITION_NOT_FOUND},
         )
+
+    @app.exception_handler(PropertyNotCodeTypeError)
+    async def _handle_property_not_code_type(
+        _request: Request, exc: PropertyNotCodeTypeError
+    ) -> JSONResponse:
+        # issue #247: a routine, expected refusal - the caller named a real
+        # property that just isn't datatype == "code", not an anomaly.
+        _logger.info("property values refused, not a coded property: %s", exc)
+        return JSONResponse(
+            status_code=PropertyNotCodeTypeError.http_status,
+            content={"detail": _DETAIL_PROPERTY_NOT_CODE_TYPE},
+        )
+
+    @app.exception_handler(PropertyValueSourceMisconfiguredError)
+    async def _handle_property_value_source_misconfigured(
+        _request: Request, exc: PropertyValueSourceMisconfiguredError
+    ) -> JSONResponse:
+        # issue #247: the property's own stored value_set_uri could not be
+        # interpreted - a data-integrity fault in the definition, never a
+        # caller mistake, matching `_handle_terminology_config_error`'s own
+        # posture and detail string above.
+        _logger.error("property values refused, value source misconfigured: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
 
     @app.exception_handler(DesignationCollisionError)
     async def _handle_designation_collision_error(
