@@ -11,9 +11,19 @@ import type { ControlProps } from "./types.ts";
  * string `<input type="number">` reports natively, which `isEmptySlotValue`
  * (`types.ts`) does not recognise as "nothing entered".
  */
-export function NumberControl({ id, label, hint, error, value, onChange, params }: ControlProps) {
+export function NumberControl({
+  id,
+  label,
+  hint,
+  error,
+  value,
+  onChange,
+  params,
+}: ControlProps) {
   const step =
-    typeof params.step === "number" || typeof params.step === "string" ? params.step : "any";
+    typeof params.step === "number" || typeof params.step === "string"
+      ? params.step
+      : "any";
   const min = typeof params.minimum === "number" ? params.minimum : undefined;
 
   return (

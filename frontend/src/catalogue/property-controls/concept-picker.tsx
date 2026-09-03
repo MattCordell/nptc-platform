@@ -47,8 +47,12 @@ export function ConceptPickerControl({
     label: item.display === null ? item.code : `${item.code} — ${item.display}`,
   }));
   const selectOptions =
-    currentCode.length > 0 && !fetchedOptions.some((option) => option.value === currentCode)
-      ? [{ value: currentCode, label: `${currentCode} (currently recorded)` }, ...fetchedOptions]
+    currentCode.length > 0 &&
+    !fetchedOptions.some((option) => option.value === currentCode)
+      ? [
+          { value: currentCode, label: `${currentCode} (currently recorded)` },
+          ...fetchedOptions,
+        ]
       : fetchedOptions;
 
   const searchHint =
@@ -78,7 +82,9 @@ export function ConceptPickerControl({
         options={selectOptions}
         placeholder="Choose a code"
         value={currentCode}
-        onChange={(event) => onChange(event.target.value === "" ? null : event.target.value)}
+        onChange={(event) =>
+          onChange(event.target.value === "" ? null : event.target.value)
+        }
       />
     </div>
   );

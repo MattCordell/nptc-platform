@@ -90,7 +90,10 @@ describe.each(["text", "textarea", "number", "uri"] as ControlKind[])(
 
 describe("CONTROLS.concept_picker", () => {
   it("offers the currently held code even when it is outside the fetched list", async () => {
-    stubFetch(200, { items: [{ code: "119361006", display: "Plasma specimen" }], total: 1 });
+    stubFetch(200, {
+      items: [{ code: "119361006", display: "Plasma specimen" }],
+      total: 1,
+    });
     const Control = CONTROLS.concept_picker;
 
     render(
@@ -113,7 +116,10 @@ describe("CONTROLS.concept_picker", () => {
   });
 
   it("reports the chosen code through onChange", async () => {
-    stubFetch(200, { items: [{ code: "119361006", display: "Plasma specimen" }], total: 1 });
+    stubFetch(200, {
+      items: [{ code: "119361006", display: "Plasma specimen" }],
+      total: 1,
+    });
     const user = userEvent.setup();
     const onChange = vi.fn();
     const Control = CONTROLS.concept_picker;
@@ -166,7 +172,9 @@ describe("RepeatableValues", () => {
 
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /add another/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add another/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers Add/Remove for a multi-valued property, and never for a single-valued one", async () => {

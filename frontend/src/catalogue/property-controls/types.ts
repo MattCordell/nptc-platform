@@ -51,7 +51,9 @@ export interface PropertyValueSlot {
  */
 export function isEmptySlotValue(value: unknown): boolean {
   return (
-    value === null || value === undefined || (typeof value === "string" && value.trim().length === 0)
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim().length === 0)
   );
 }
 

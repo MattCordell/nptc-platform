@@ -1,7 +1,11 @@
 import { useState } from "react";
 
 import { asPropertyValidationError, refusalDetail } from "../api/conflicts.ts";
-import { usePatchEntryCore, usePropertyDefinitions, useSavePropertyValues } from "../api/queries.ts";
+import {
+  usePatchEntryCore,
+  usePropertyDefinitions,
+  useSavePropertyValues,
+} from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { Button } from "../components/button.tsx";
 import { Checkbox } from "../components/checkbox.tsx";
@@ -77,7 +81,10 @@ interface PropertyRow {
  * recorded a value against simply never appears, matching "never offered
  * for entry" for the case where there is nothing to retain either.
  */
-function buildRows(definitions: PropertyDefinitionResponse[], values: PropertyValue[]): PropertyRow[] {
+function buildRows(
+  definitions: PropertyDefinitionResponse[],
+  values: PropertyValue[],
+): PropertyRow[] {
   const valuesByKey = new Map<string, PropertyValue[]>();
   for (const value of values) {
     const existing = valuesByKey.get(value.key);
@@ -126,7 +133,9 @@ export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
   const [editingSpecimenFlag, setEditingSpecimenFlag] = useState(false);
   const { message, politeness, announce } = useAnnounce();
 
-  const rows = definitions.data ? buildRows(definitions.data.items, entry.properties) : [];
+  const rows = definitions.data
+    ? buildRows(definitions.data.items, entry.properties)
+    : [];
   const editingRow = rows.find((row) => row.definition.key === editingKey) ?? null;
 
   return (
@@ -163,7 +172,11 @@ export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
               header: "Cardinality",
               render: (row) => row.definition.cardinality,
             },
-            { key: "values", header: "Values", render: (row) => formatValues(row.values) },
+            {
+              key: "values",
+              header: "Values",
+              render: (row) => formatValues(row.values),
+            },
             {
               key: "status",
               header: "Status",
@@ -295,7 +308,11 @@ function PropertyEditDialog({
         // `errors` above; the generic slot only carries a refusal with no
         // field attribution (a rejected note, a write against a now-
         // deprecated property, FR-38's conflict).
-        formError={save.isError && validation === null ? <RefusalNotice error={save.error} /> : undefined}
+        formError={
+          save.isError && validation === null ? (
+            <RefusalNotice error={save.error} />
+          ) : undefined
+        }
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>

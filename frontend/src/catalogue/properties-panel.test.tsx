@@ -236,7 +236,9 @@ describe("generated rows", () => {
 
     await renderLoaded();
 
-    await expectNoA11yViolations(screen.getByRole("region", { name: "Registry properties" }));
+    await expectNoA11yViolations(
+      screen.getByRole("region", { name: "Registry properties" }),
+    );
   });
 
   it("has no accessibility violations in the property edit dialog", async () => {
@@ -269,7 +271,18 @@ describe("editing a property's values", () => {
         path: `/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`,
         status: 200,
         body: {
-          values: [{ key: "usage_guidance", label: "Usage guidance", datatype: "string", cardinality: "0..1", status: "active", ordinal: 0, value: "Fasting required", justification: null }],
+          values: [
+            {
+              key: "usage_guidance",
+              label: "Usage guidance",
+              datatype: "string",
+              cardinality: "0..1",
+              status: "active",
+              ordinal: 0,
+              value: "Fasting required",
+              justification: null,
+            },
+          ],
           row_version: 5,
         },
       },
@@ -287,7 +300,8 @@ describe("editing a property's values", () => {
     const write = calls.find(
       (call) =>
         call.method === "PUT" &&
-        call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`,
+        call.path ===
+          `/api/v1/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`,
     );
     expect(write).toBeDefined();
     expect(write?.body).toEqual({
@@ -300,9 +314,9 @@ describe("editing a property's values", () => {
     // Every panel on this page owns its own live region, so this checks
     // across all of them rather than assuming there is only one.
     await waitFor(() =>
-      expect(
-        screen.getAllByRole("status").map((region) => region.textContent),
-      ).toContain("Usage guidance saved."),
+      expect(screen.getAllByRole("status").map((region) => region.textContent)).toContain(
+        "Usage guidance saved.",
+      ),
     );
   });
 
@@ -387,12 +401,17 @@ describe("specimen_unconstrained", () => {
     await user.click(panel().getByRole("button", { name: "Edit" }));
     const dialog = within(screen.getByRole("dialog"));
     await user.click(dialog.getByLabelText("This entry accepts any specimen (Any)"));
-    await user.type(dialog.getByLabelText("Changelog note"), "This entry accepts any specimen");
+    await user.type(
+      dialog.getByLabelText("Changelog note"),
+      "This entry accepts any specimen",
+    );
     await user.click(dialog.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const write = calls.find(
-      (call) => call.method === "PATCH" && call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}`,
+      (call) =>
+        call.method === "PATCH" &&
+        call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}`,
     );
     expect(write?.body).toEqual({
       specimen_unconstrained: true,

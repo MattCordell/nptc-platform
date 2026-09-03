@@ -385,7 +385,9 @@ describe("usePropertyValueOptions", () => {
     const page = { items: [{ code: "119361006", display: "Plasma specimen" }], total: 1 };
     const fetchMock = stubFetch(200, page);
 
-    const { result } = renderHook(() => usePropertyValueOptions("specimen", ""), { wrapper });
+    const { result } = renderHook(() => usePropertyValueOptions("specimen", ""), {
+      wrapper,
+    });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 

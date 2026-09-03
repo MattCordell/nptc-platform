@@ -56,14 +56,12 @@ export function RepeatableValues({
   const rendered: PropertyValueSlot[] =
     slots.length === 0 ? [{ value: null, justification: null }] : slots;
   const allowJustification = params.allowJustification === true;
-  const groupError = errors.find((error) => error.fieldId === groupFieldId(propertyKey))?.message;
+  const groupError = errors.find(
+    (error) => error.fieldId === groupFieldId(propertyKey),
+  )?.message;
 
   return (
-    <div
-      id={groupFieldId(propertyKey)}
-      tabIndex={-1}
-      className="flex flex-col gap-3"
-    >
+    <div id={groupFieldId(propertyKey)} tabIndex={-1} className="flex flex-col gap-3">
       {rendered.map((slot, index) => {
         const fieldId = slotFieldId(propertyKey, index);
         const slotLabel = multi ? `${label} ${index + 1}` : label;
@@ -96,7 +94,10 @@ export function RepeatableValues({
                       value={slot.justification ?? ""}
                       onChange={(event) => {
                         const next = [...rendered];
-                        next[index] = { ...next[index], justification: event.target.value };
+                        next[index] = {
+                          ...next[index],
+                          justification: event.target.value,
+                        };
                         onChange(multi ? next : next.slice(0, 1));
                       }}
                     />

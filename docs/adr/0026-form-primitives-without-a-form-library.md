@@ -64,6 +64,17 @@ parsing and `frontend/src/router/search-params.ts` is hand-rolled for exactly th
 reason. Revisit if a screen appears with genuinely dynamic field arrays or cross-field
 validation, where the hand-rolled state starts to cost more than the dependency would.
 
+**Addendum (issue #151):** the registry properties panel is exactly the "genuinely dynamic
+field arrays" case this paragraph names as the revisit trigger - a `0..*`/`1..*` property
+renders a caller-controlled number of value slots, added and removed at runtime. The
+decision, on arrival, was to stay with plain `useState` (`property-controls/
+repeatable-values.tsx`'s `RepeatableValues`): the array is small (the PRD's own worst case
+is seven specimen values), holds no cross-field validation of its own - ADR-0030 keeps that
+server-side - and the component that owns it is a single, narrow wrapper rather than
+something repeated per screen. The trade-off this ADR anticipated (hand-rolled state costing
+more than a dependency) has not materialised for this shape; it may still for a case with
+real cross-field client validation, which this is not.
+
 **A form context that wires errors to fields automatically.** `Form` would provide a
 context, each field would register its generated id under a `name`, and a summary link
 could never point at a dead id. Rejected in favour of explicit props after putting the
