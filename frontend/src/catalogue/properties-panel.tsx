@@ -22,6 +22,7 @@ import {
   RepeatableValues,
   groupFieldId,
   isEmptySlotValue,
+  newSlotId,
   slotFieldId,
 } from "./property-controls/index.ts";
 import type { PropertyValueSlot } from "./property-controls/index.ts";
@@ -109,11 +110,40 @@ function buildRows(
     });
 }
 
+/**
+ * `PropertyValue.value` is `unknown` in the schema - every control today
+ * emits a string, number or boolean, but `String({})` reading
+ * `"[object Object]"` for a future object-valued datatype would be a worse
+ * failure than an explicit JSON fallback.
+ */
+function formatValue(value: unknown): string {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
 function formatValues(values: PropertyValue[]): string {
   if (values.length === 0) {
     return "No value recorded.";
   }
-  return values.map((value) => String(value.value)).join(", ");
+  return values.map((value) => formatValue(value.value)).join(", ");
+}
+
+/** The indexes into `slots` that `isEmptySlotValue` keeps for a save - see
+ * `PropertyEditDialog`'s own note on why the same list drives both the
+ * submitted body and the server-issue-to-slot mapping. */
+function nonEmptySlotIndexes(slots: PropertyValueSlot[]): number[] {
+  return slots.reduce<number[]>((indexes, slot, index) => {
+    if (!isEmptySlotValue(slot.value)) {
+      indexes.push(index);
+    }
+    return indexes;
+  }, []);
 }
 
 const NOTE_HINT =
@@ -278,7 +308,11 @@ function PropertyEditDialog({
   onSaved: () => void;
 }) {
   const [slots, setSlots] = useState<PropertyValueSlot[]>(
-    values.map((value) => ({ value: value.value, justification: value.justification })),
+    values.map((value) => ({
+      id: newSlotId(),
+      value: value.value,
+      justification: value.justification,
+    })),
   );
   const [note, setNote] = useState("");
   const [clientErrors, setClientErrors] = useState<FormError[]>([]);
@@ -286,13 +320,21 @@ function PropertyEditDialog({
   const Control = CONTROLS[definition.form_control.control];
   const noteFieldId = `${definition.key}-note`;
 
+  // `save.mutate` below sends only the slots `isEmptySlotValue` keeps, so a
+  // `PropertyIssueItem.ordinal` from the server indexes *that* filtered
+  // array, not `slots` as rendered. `submittedIndexes[issue.ordinal]` is the
+  // one place both directions agree: the render index a field-level error
+  // must attach to for `slotFieldId` to land on the slot that actually
+  // produced it, rather than whichever slot happens to sit at the server's
+  // raw ordinal (wrong the moment an earlier slot is left blank).
+  const submittedIndexes = nonEmptySlotIndexes(slots);
   const validation = asPropertyValidationError(save.error);
   const serverErrors: FormError[] =
     validation?.issues.map((issue) => ({
       fieldId:
         issue.ordinal === null
           ? groupFieldId(definition.key)
-          : slotFieldId(definition.key, issue.ordinal),
+          : slotFieldId(definition.key, submittedIndexes[issue.ordinal] ?? issue.ordinal),
       message: issue.message,
     })) ?? [];
   const errors = [...clientErrors, ...serverErrors];
@@ -325,9 +367,10 @@ function PropertyEditDialog({
           if (found.length > 0) {
             return;
           }
-          const submitted = slots
-            .filter((slot) => !isEmptySlotValue(slot.value))
-            .map((slot) => ({ value: slot.value, justification: slot.justification }));
+          const submitted = submittedIndexes.map((index) => ({
+            value: slots[index].value,
+            justification: slots[index].justification,
+          }));
           save.mutate(
             { values: submitted, reason: note, expected_row_version: rowVersion },
             { onSuccess: () => onSaved() },
@@ -341,7 +384,18 @@ function PropertyEditDialog({
           control={Control}
           params={definition.form_control.params}
           slots={slots}
-          onChange={setSlots}
+          onChange={(next) => {
+            setSlots(next);
+            // A field-level 422 is rendered against `slots` as they stood at
+            // submit time; editing after a refusal must not leave it stuck
+            // against a value already changed, and - since `submittedIndexes`
+            // above is recomputed from current `slots` - must not leave a
+            // stale error's `ordinal` pointing at a slot a Remove/Add just
+            // shifted out from under it.
+            if (save.isError) {
+              save.reset();
+            }
+          }}
           errors={errors}
         />
         <Field

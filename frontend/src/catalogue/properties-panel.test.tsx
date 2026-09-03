@@ -409,6 +409,128 @@ describe("editing a property's values", () => {
     expect(await dialog.findAllByText("This value is too long.")).not.toHaveLength(0);
   });
 
+  // Regression: `save.mutate` sends only the slots `isEmptySlotValue` keeps,
+  // so a server issue's `ordinal` indexes that filtered array, not the
+  // dialog's own rendered slots. Leaving slot 1 blank and slot 2 filled
+  // means the server's `ordinal: 0` names the *second* rendered slot - a
+  // naive `slotFieldId(key, issue.ordinal)` would attach the message to the
+  // first (blank) one instead.
+  it("maps a server issue's ordinal back through the slots a blank leading slot shifted", async () => {
+    stubApi([
+      READ_OK,
+      PROPERTIES_OK,
+      VALUE_OPTIONS_OK,
+      {
+        method: "PUT",
+        path: `/catalogue/entries/${BUSINESS_KEY}/properties/discipline`,
+        status: 422,
+        body: {
+          detail: "One or more values failed validation.",
+          issues: [
+            {
+              property_key: "discipline",
+              label: "Discipline",
+              code: "schema-violation",
+              message: "Not a recognised discipline code.",
+              ordinal: 0,
+            },
+          ],
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: /add another value/i }));
+    // Slot 1 ("Discipline 1") already holds "HAEM" from the entry - clear it
+    // so only slot 2 is submitted, making the server's `ordinal: 0` refer to
+    // slot 2's rendered position.
+    await user.selectOptions(dialog.getByLabelText("Discipline 1"), "");
+    await user.selectOptions(dialog.getByLabelText("Discipline 2"), "HAEM");
+    await user.type(
+      dialog.getByLabelText("Changelog note"),
+      "Correct the discipline code",
+    );
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+
+    const slotTwo = (await dialog.findByLabelText("Discipline 2")) as HTMLSelectElement;
+    const describedBy = slotTwo.getAttribute("aria-describedby") ?? "";
+    expect(describedBy).toContain("discipline-1-error");
+    expect(document.getElementById("discipline-1-error")?.textContent).toBe(
+      "Not a recognised discipline code.",
+    );
+
+    const slotOne = dialog.getByLabelText("Discipline 1") as HTMLSelectElement;
+    expect(slotOne.getAttribute("aria-describedby") ?? "").not.toContain("error");
+  });
+
+  // FR-10's extensible-binding path: a coded property whose handler set
+  // `allowJustification` must both render the field and put it on the wire -
+  // untested until now because every other fixture leaves it `false`.
+  it("saves a justification alongside a coded value when the property allows one", async () => {
+    const justifiableDefinitions = {
+      items: DEFINITIONS.items.map((definition) =>
+        definition.key === "discipline"
+          ? {
+              ...definition,
+              form_control: {
+                control: "concept_picker",
+                params: { allowJustification: true },
+              },
+            }
+          : definition,
+      ),
+    };
+    const calls = stubApi([
+      READ_OK,
+      { ...PROPERTIES_OK, body: justifiableDefinitions },
+      VALUE_OPTIONS_OK,
+      {
+        method: "PUT",
+        path: `/catalogue/entries/${BUSINESS_KEY}/properties/discipline`,
+        status: 200,
+        body: {
+          values: [
+            {
+              key: "discipline",
+              label: "Discipline",
+              datatype: "code",
+              cardinality: "0..*",
+              status: "active",
+              ordinal: 0,
+              value: "HAEM",
+              justification: "Locally agreed substitute",
+            },
+          ],
+          row_version: 5,
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByLabelText("Justification")).toBeInTheDocument();
+    await user.type(dialog.getByLabelText("Justification"), "Locally agreed substitute");
+    await user.type(dialog.getByLabelText("Changelog note"), "Add a justification");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const write = calls.find(
+      (call) =>
+        call.method === "PUT" &&
+        call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}/properties/discipline`,
+    );
+    expect(write?.body).toEqual({
+      values: [{ value: "HAEM", justification: "Locally agreed substitute" }],
+      reason: "Add a justification",
+      expected_row_version: 4,
+    });
+  });
+
   // FR-88: specimen is 0..* - the sample's own worst case carries seven
   // values, so the panel must not impose a lower cap of its own.
   it("lets a 0..* coded property like specimen grow past a single value", async () => {
