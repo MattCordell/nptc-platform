@@ -625,9 +625,14 @@ describe("mount probe outliving its provider (issue #243)", () => {
     // is still in flight.
     cleanup();
 
+    // `window`, not `process`: this file targets the browser lib, not
+    // Node, and jsdom dispatches this event the same way a real browser
+    // would for a promise nobody attached a handler to in time.
     const rejections: unknown[] = [];
-    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
-    process.on("unhandledRejection", onUnhandledRejection);
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      rejections.push(event.reason);
+    };
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
 
     try {
       // The stale probe settles only *after* teardown, and deliberately
@@ -642,7 +647,7 @@ describe("mount probe outliving its provider (issue #243)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
-      process.off("unhandledRejection", onUnhandledRejection);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
     }
 
     expect(rejections).toEqual([]);
