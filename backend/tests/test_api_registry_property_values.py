@@ -27,6 +27,14 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
 from nptc.db.bootstrap import seed_system_properties
+from nptc.db.models.property_definition import (
+    BindingStrength,
+    BindingTarget,
+    PropertyCardinality,
+    PropertyDefinition,
+    PropertyOrigin,
+    PropertyScope,
+)
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 from nptc_shared.terminology import (
@@ -247,6 +255,41 @@ def test_unclassified_terminology_failure_is_502(api: ApiTestApp) -> None:
     response = _get_values(api, "specimen", token)
 
     assert response.status_code == 502, response.text
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_misconfigured_value_set_uri_is_500(api: ApiTestApp) -> None:
+    """Proves the new `PropertyValueSourceMisconfiguredError` handler is
+    actually wired into `register_exception_handlers` and produces the
+    documented status/body, not just that the service layer raises the
+    right type (`test_catalogue_property_value_sources.py` already covers
+    that half)."""
+    api.session.add(
+        PropertyDefinition(
+            key="misconfigured_value_set_http_test",
+            label="Misconfigured value set HTTP test",
+            datatype="code",
+            cardinality=PropertyCardinality.ZERO_OR_MANY,
+            scope=PropertyScope.MAINTENANCE,
+            required_for_submission=False,
+            required_for_publication=False,
+            filterable=False,
+            origin=PropertyOrigin.ADMIN,
+            display_order=0,
+            binding_target=BindingTarget.VALUE_SET,
+            value_set_uri="http://example.org/not-an-implicit-value-set",
+            strength=BindingStrength.REQUIRED,
+            edition="au",
+            constraints={},
+        )
+    )
+    api.session.flush()
+    token = _role_token(api, subject="sub-values-misconfigured", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "misconfigured_value_set_http_test", token)
+
+    assert response.status_code == 500, response.text
 
 
 # --- authorisation (FR-44) ------------------------------------------------
