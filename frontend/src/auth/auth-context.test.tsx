@@ -489,12 +489,13 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
 
     // The probe's late answer: an ordinary "no SSO session" refusal, the
     // path that used to clear the session `completeCallback` just
-    // established. A macrotask boundary, not a fixed number of
-    // microtask ticks, so the refusal has fully travelled the `await
-    // silentAuthorize(...)` resumption, the catch, the renewal settling
-    // and `restore()`'s own `finally` before the assertion runs - a
-    // microtask-only flush could pass merely because it ran before any
-    // of that had happened.
+    // established. Two macrotask boundaries, not a fixed number of
+    // microtask ticks: the first carries the refusal through the `await
+    // silentAuthorize(...)` resumption and into the catch, and the
+    // second lets `restore()`'s own `finally` settle before the
+    // assertion runs - a single tick can still leave that `finally` in
+    // flight, and a microtask-only flush could pass merely because it
+    // ran before any of that had happened.
     await act(async () => {
       refuse();
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -640,10 +641,11 @@ describe("mount probe outliving its provider (issue #243)", () => {
       // outside any `act()` for the now-unmounted provider: an unguarded
       // `store()`/`setUnavailable()`/`setRestored()` call reaching this far
       // is exactly the side effect that used to run against whatever the
-      // next test had since put in this provider's place. A macrotask
-      // boundary, not a fixed number of microtask ticks, so the refusal has
-      // fully travelled the `await silentAuthorize(...)` resumption, the
-      // catch, and `restore()`'s own `finally` before the assertion runs.
+      // next test had since put in this provider's place. Two macrotask
+      // boundaries, not a fixed number of microtask ticks: the first
+      // carries the refusal through the `await silentAuthorize(...)`
+      // resumption and into the catch, and the second lets `restore()`'s
+      // own `finally` settle before the assertion runs.
       refuse();
       await new Promise((resolve) => setTimeout(resolve, 0));
       await new Promise((resolve) => setTimeout(resolve, 0));
