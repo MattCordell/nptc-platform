@@ -138,7 +138,7 @@ _RESPONSE_422: Final[dict[str, Any]] = {
 _RESPONSE_500: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
-        "The property's own stored `datatype` no longer matches a registered "
+        "The definition's own stored `datatype` no longer matches a registered "
         "handler - a data integrity fault in the definition, not a caller mistake. "
         "Not produced by anything a well-formed request can trigger on its own."
     ),

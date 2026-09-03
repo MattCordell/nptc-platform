@@ -500,7 +500,14 @@ def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
     the drift they need to see), but nothing pinned it before this test -
     inserted directly via the ORM, bypassing `create_definition`'s own
     registry validation, since that validation is precisely what makes this
-    row impossible to create through the API."""
+    row impossible to create through the API.
+
+    Asserts `detail` against `_handle_unknown_datatype`'s own constant
+    (round-2 review), not just the status code - a bare `500` would stay
+    green for any unrelated server error the route happened to raise,
+    including one that stopped exercising the drift this test exists to
+    pin."""
+    from nptc.api.errors import _DETAIL_SERVER_MISCONFIGURED
     from nptc.db.models.property_definition import PropertyDefinition
 
     token = _admin_token(api, subject="sub-list-drifted-datatype")
@@ -525,6 +532,7 @@ def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
     response = api.get("/registry/properties", token=token)
 
     assert response.status_code == 500, response.text
+    assert response.json()["detail"] == _DETAIL_SERVER_MISCONFIGURED
 
 
 # --- scope filter (issue #248, re-adding issue #223 review finding 8) -----
