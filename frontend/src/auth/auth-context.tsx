@@ -65,6 +65,17 @@ export function AuthProvider({
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
   const renewal = useRef<Promise<TokenSet | null> | null>(null);
+  // Guards every setState-driven side effect below so a probe or renewal
+  // still in flight when this provider unmounts (e.g. between tests, or a
+  // remount elsewhere in the app) can never act on a torn-down instance -
+  // otherwise its eventual resolution runs against whatever the next
+  // instance's mocks/globals have since become (issue #243).
+  const mounted = useRef(true);
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const config = useMemo(() => {
     if (providedConfig) {
@@ -116,6 +127,12 @@ export function AuthProvider({
         issuedState = new URL(url).searchParams.get("state");
         const search = await silentAuthorize(url, config.redirectUri);
         const { tokens: next } = await completeSignIn(config, search);
+        // A provider that unmounted while this renewal was in flight has no
+        // state left worth touching - checked ahead of the #216 guard
+        // below, not instead of it (issue #243).
+        if (!mounted.current) {
+          return null;
+        }
         // Symmetric with the failure-path guard below: this renewal only
         // knows about the session it started with, so it must not install
         // its own late answer over whatever `tokensRef.current` has become
@@ -134,6 +151,9 @@ export function AuthProvider({
       } catch (error) {
         if (issuedState) {
           takeTransaction(issuedState);
+        }
+        if (!mounted.current) {
+          return null;
         }
         const stillOurs = tokensRef.current === startedWith;
         if (error instanceof InteractionRequiredError) {
@@ -224,8 +244,13 @@ export function AuthProvider({
       await renew();
     } finally {
       // In a `finally`, so a thrown probe cannot strand the whole app in
-      // `"restoring"` - a status nothing would ever move it out of.
-      setRestored(true);
+      // `"restoring"` - a status nothing would ever move it out of. Guarded
+      // by `mounted` for the same reason as `renew()`'s own side effects: a
+      // provider that unmounted before this settles has nothing left to
+      // move out of `"restoring"` (issue #243).
+      if (mounted.current) {
+        setRestored(true);
+      }
     }
   }, [config, renew]);
 
