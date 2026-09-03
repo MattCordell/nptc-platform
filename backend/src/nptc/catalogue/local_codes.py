@@ -38,10 +38,11 @@ service module in this package."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import ClassVar
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -71,6 +72,7 @@ __all__ = [
     "deprecate_local_code_system",
     "find_local_code",
     "find_local_code_with_system_status",
+    "list_local_codes",
 ]
 
 
@@ -341,6 +343,73 @@ def find_local_code_with_system_status(
         .where(LocalCodeSystem.key == system_key, LocalCode.code == code)
     ).one_or_none()
     return None if row is None else (row[0], row[1])
+
+
+def _escape_like(text: str) -> str:
+    """Escapes `%`, `_` and the escape character itself, so a caller's own
+    literal `%`/`_` in a filter is matched as text, never treated as a
+    wildcard - `list_local_codes` always pairs this with `ILIKE ... ESCAPE
+    '\\'`."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_local_codes(
+    session: Session,
+    *,
+    system_key: str,
+    filter: str | None = None,
+    offset: int = 0,
+    limit: int | None = None,
+) -> tuple[Sequence[LocalCode], int]:
+    """Every active code in the local code system named `system_key` - the
+    FR-90 read path issue #247's coded-property values route serves a
+    `binding_target = 'local_code_system'` property from.
+
+    Active-only, mirroring `TerminologyClient.expand(active_only=True)` on
+    the SNOMED side of that same route: a deprecated code is not offered
+    for entry, but stays resolvable through `DatabaseLocalCodeLookup.resolve`
+    unchanged (FR-11 posture) - this function is additive, not a replacement
+    for that read path. Ordered by `display_order` then `code`, matching how
+    a governed vocabulary is curated to read.
+
+    `filter`, when given, is a case-insensitive substring match against
+    `display` - proportionate to a governed vocabulary's size (a handful of
+    codes for `discipline`/`subgroup`), unlike `nptc.catalogue.search`'s
+    trigram/full-text ranking machinery built for catalogue-wide search
+    (ADR-0024, ADR-0029).
+
+    Returns `(page, total)`: `total` counts every active, filter-matching
+    code, not just this page - the caller's `next_cursor` paging needs it to
+    know when to stop. An unknown `system_key` is not a special case: it
+    simply has no matching codes, mirroring an empty `Expansion` being a
+    valid, non-error result rather than a failure.
+    """
+    where_clauses = [
+        LocalCodeSystem.key == system_key,
+        LocalCode.status == str(LocalCodeStatus.ACTIVE),
+    ]
+    if filter:
+        where_clauses.append(LocalCode.display.ilike(f"%{_escape_like(filter)}%", escape="\\"))
+
+    total = session.execute(
+        select(func.count(LocalCode.id))
+        .select_from(LocalCode)
+        .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
+        .where(*where_clauses)
+    ).scalar_one()
+    page = (
+        session.execute(
+            select(LocalCode)
+            .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
+            .where(*where_clauses)
+            .order_by(LocalCode.display_order, LocalCode.code)
+            .offset(offset)
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return page, total
 
 
 class DatabaseLocalCodeLookup:
