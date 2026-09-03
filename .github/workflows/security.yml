@@ -91,7 +91,16 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Worst case (issue #255): the audit step below retries up to 2 times
+    # (1 extra attempt) on a registry timeout, and each `pnpm audit` process
+    # itself now retries up to 4 times (../.npmrc's fetch-retries=3) with a
+    # fetch-timeout of 90s and a 60s max backoff - 4 x 90s + 3 x 60s = 9
+    # minutes per process. 2 outer attempts + a 30s sleep between them is
+    # 2 x 9min + 30s = ~18.5 minutes, plus ~2 minutes for checkout/install.
+    # 22 minutes leaves margin above that without masking a real outage as
+    # a job cancellation (a cancelled job fails `Required (Security)` just
+    # as a failed one does).
+    timeout-minutes: 22
     defaults:
       run:
         working-directory: frontend
@@ -113,7 +122,35 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: pnpm audit (fails on high/critical - NFR-25)
-        run: pnpm audit --prod --audit-level=high
+        # Retries only a registry-timeout/network failure against
+        # registry.npmjs.org's advisories/bulk endpoint (issue #255) - not
+        # `set -e`, so a failing `pnpm audit` doesn't abort the shell before
+        # its output can be classified as "registry flake" vs "real finding".
+        # A real advisory (or any other failure) prints and exits on the
+        # first attempt, exactly as before this change.
+        run: |
+          set -uo pipefail
+          max_attempts=2
+          sleep_seconds=30
+          attempt=1
+          while true; do
+            output=$(pnpm audit --prod --audit-level=high 2>&1)
+            status=$?
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if ! echo "$output" | grep -qE 'TimeoutError|operation was aborted|ERR_PNPM_[A-Z_]*FETCH'; then
+              exit "$status"
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::pnpm audit failed after $attempt attempts with a registry-timeout signature - registry.npmjs.org appears unreachable (see issue #255)"
+              exit "$status"
+            fi
+            echo "pnpm audit hit a registry timeout (attempt $attempt/$max_attempts) - retrying in ${sleep_seconds}s"
+            attempt=$((attempt + 1))
+            sleep "$sleep_seconds"
+          done
 
   gitleaks:
     name: gitleaks (secret scanning)

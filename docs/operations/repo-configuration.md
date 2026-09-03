@@ -180,3 +180,23 @@ developer joins.
 gh api repos/aehrc/nptc-platform/rulesets
 git push origin main   # rejected: direct pushes are blocked
 ```
+
+## `frontend-audit` retries on registry timeouts (issue #255)
+
+`pnpm audit`'s POST to `registry.npmjs.org/-/npm/v1/security/advisories/bulk`
+intermittently timed out under pnpm's defaults, failing the
+`pnpm audit (production dependencies)` job - and with it the
+`Required (Security)` aggregator - on PRs that touched no dependency manifest
+at all. Two layers now guard against that:
+
+- The repo-root `.npmrc` raises `fetch-timeout` and `fetch-retries` above
+  pnpm's defaults for every `pnpm` invocation (install and audit alike, in CI
+  and locally).
+- `frontend-audit`'s audit step in
+  [`security.yml`](../../.github/workflows/security.yml) wraps `pnpm audit`
+  in a retry loop that inspects the failure output: a registry-timeout
+  signature (`TimeoutError`, `operation was aborted`, an `ERR_PNPM_*_FETCH`
+  code) retries once more after a short sleep; anything else - including a
+  real high/critical advisory - fails immediately, on the first attempt, with
+  no retry. The job's `timeout-minutes` is sized to the worst-case retry wall
+  time (see the comment above that job in `security.yml` for the budget).
