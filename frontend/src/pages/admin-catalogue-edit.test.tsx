@@ -1457,11 +1457,20 @@ describe("code bindings", () => {
     // The debounce window means "hasn't fired yet" and "does not resolve"
     // would otherwise read identically - submitting right after pasting a
     // code, before the 400ms debounce fires, is a realistic sequence.
+    //
+    // A single `paste`, not `type`: typing nine characters races real
+    // keystroke delays against the 400ms debounce, and on a loaded CI
+    // runner enough of it could land inside that window for the lookup to
+    // resolve before the click below, turning this into a flake rather than
+    // a deterministic check of the still-checking state (review finding).
+    // One paste is one state update, so nothing here waits on wall-clock
+    // timing except the assertion itself.
     const user = userEvent.setup();
     const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
     await renderLoaded();
 
-    await user.type(inBindingsPanel().getByLabelText("SNOMED CT code"), FSN_CODE);
+    await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
+    await user.paste(FSN_CODE);
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
 
     expect(

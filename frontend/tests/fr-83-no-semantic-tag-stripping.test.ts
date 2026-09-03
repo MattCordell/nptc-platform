@@ -1,13 +1,14 @@
-// Scoped to this file rather than `tsconfig.app.json`'s `types` array
-// (review finding): `include` there is all of `src`, so a project-wide
-// `"types": ["node"]` would let `process.env.SOMETHING`/`Buffer` typecheck
-// clean in browser code too, leaving only `assert-no-secret-in-bundle.mjs`
-// and review between that and a real secret in the bundle (NFR-26).
-/// <reference types="node" />
-
+// Lives outside `src` and in `tsconfig.node.json`'s program instead
+// (review finding): a `/// <reference types="node" />` is program-wide, not
+// file-scoped, so putting one on a file `tsconfig.app.json` still includes
+// would leak `process`/`Buffer` into every browser module's typecheck - the
+// same result as the `"types": ["node"]` this replaced. Being outside `src`
+// altogether is what actually keeps Node's ambient globals off the app's own
+// program; see `tsconfig.app.json`'s `"types": []` for the other half.
+//
 // `node:fs`/`node:path`/`node:url`: a Vitest source-scanning guard, not app
 // code - Vite's build never resolves a `node:*` specifier into the browser
-// bundle.
+// bundle in any case.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +34,7 @@ import { describe, expect, it } from "vitest";
  * to it - only an actual reference in code trips this guard.
  */
 
-const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 
 const BANNED_NAMES = new Set([
   "display_term",

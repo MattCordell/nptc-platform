@@ -554,6 +554,13 @@ export function BindingsPanel({ entry }: { entry: EntryDetail }) {
         // two rows with identical code and status: "retired" (review
         // finding). `Binding` carries no id, so the row's own position in
         // this render's stable `rows` array is what disambiguates.
+        //
+        // The cost (review nit): retiring the active binding moves it below
+        // the retired ones in `sortedBindings`, changing every row below it
+        // by position and so its key - React remounts those rows rather than
+        // moving them, dropping keyboard focus that was on one of their
+        // buttons at that moment. Accepted rather than engineered around,
+        // since there is no stable id to key on instead.
         getRowKey={(row) => `${row.code}:${row.status}:${rows.indexOf(row)}`}
         emptyState="This entry has no code bindings."
       />
