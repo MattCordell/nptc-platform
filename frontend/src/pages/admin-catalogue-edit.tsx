@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { refusalDetail } from "../api/conflicts.ts";
 import { useAdminEntryDetail } from "../api/queries.ts";
 import { ApiError } from "../api/unwrap.ts";
+import { BindingsPanel } from "../catalogue/bindings-panel.tsx";
 import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -15,8 +16,9 @@ import { useAnnounce } from "../components/use-announce.ts";
  * edited is very often `draft`, and the public route 404s a draft entry
  * identically to a key that was never minted (#142/#228).
  *
- * This page is the shell. #149 fills in the designations panel; #150 (code
- * bindings) and #151 (registry properties) add sibling sections below it.
+ * This page is the shell. #149 fills in the designations panel, #150 the code
+ * bindings panel; #151 (registry properties) adds the last sibling section
+ * below it.
  */
 
 /**
@@ -97,6 +99,7 @@ export function AdminCatalogueEditPage() {
               one entry's edit screen to another's, which re-renders this same
               route component rather than remounting it (review finding 4). */}
           <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
+          <BindingsPanel key={entry.data.business_key} entry={entry.data} />
         </>
       )}
     </section>

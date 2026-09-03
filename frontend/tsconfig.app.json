@@ -1,4 +1,5 @@
 {
+  "// types": "Deliberately empty, not omitted (review finding): omitting `types` lets TypeScript auto-include every @types/* package it finds, and @types/node is a devDependency for reasons that have nothing to do with this program - an empty array is what actually keeps process/Buffer/etc. out of every browser module's typecheck. A Vitest guard needing Node types lives outside src, in tsconfig.node.json's program instead (frontend/tests/fr-83-no-semantic-tag-stripping.test.ts).",
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
@@ -12,6 +13,8 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
+
+    "types": [],
 
     "strict": true,
     "noUnusedLocals": true,

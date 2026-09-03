@@ -11,5 +11,9 @@
     "noEmit": true,
     "strict": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "tests/fr-83-no-semantic-tag-stripping.test.ts"
+  ]
 }

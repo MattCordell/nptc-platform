@@ -84,15 +84,20 @@ interface StubOptions {
  * assertions on what was actually sent.
  */
 function stubApi(routes: Route[], options: StubOptions = {}) {
-  const calls: { method: string; path: string; body: unknown }[] = [];
+  const calls: { method: string; path: string; body: unknown; text: string }[] = [];
   const fetchMock = vi.fn(async (request: Request) => {
     const path = new URL(request.url).pathname;
     const method = request.method;
-    const body = method === "GET" ? null : await request.clone().json();
+    // The raw wire text, alongside the parsed body: `JSON.parse` (like
+    // `request.json()`) cannot tell a quoted SCTID from a bare number once
+    // parsed, so FR-06's own test needs the text a route actually sent, not
+    // what it round-trips back to.
+    const text = method === "GET" ? "" : await request.clone().text();
+    const body = method === "GET" ? null : JSON.parse(text);
     const priorSameCalls = calls.filter(
       (call) => call.method === method && call.path === path,
     ).length;
-    calls.push({ method, path, body });
+    calls.push({ method, path, body, text });
     const route =
       options.vary?.({ method, path }, priorSameCalls) ??
       routes.find((r) => r.method === method && path.endsWith(r.path));
@@ -120,13 +125,72 @@ const AMEND_PATH = `${ADD_PATH}/amendment`;
 const RETIRE_PATH = `${ADD_PATH}/retirement`;
 const ACK_PATH = `${ADD_PATH}/acknowledgement`;
 
+const BIND_PATH = `/catalogue/entries/${BUSINESS_KEY}/bindings`;
+const TERMINOLOGY_PATH = "/terminology/concepts/";
+
+// The PRD's own FR-83 regression fixture: a double-parenthesis FSN, chosen
+// because a careless semantic-tag strip mangles it (it has two `)`s to stop
+// at, not one).
+const FSN_CODE = "391483001";
+const FSN = "Microscopy (acid fast bacilli) (procedure)";
+const AU_PT = "Microscopy (AFB)";
+
+function terminologyRoute(
+  code: string,
+  overrides: {
+    status?: number;
+    fsn?: string | null;
+    au_preferred_term?: string | null;
+    active?: boolean | null;
+    edition?: string;
+    body?: unknown;
+  } = {},
+): Route {
+  const {
+    status = 200,
+    fsn = FSN,
+    au_preferred_term = AU_PT,
+    active = true,
+    edition = "au",
+    body,
+  } = overrides;
+  return {
+    method: "GET",
+    path: `${TERMINOLOGY_PATH}${code}`,
+    status,
+    body: body ?? {
+      system: "http://snomed.info/sct",
+      code,
+      fsn,
+      au_preferred_term,
+      active,
+      edition,
+      resolved_version: "http://snomed.info/sct/32506021000036107/version/20260101",
+    },
+  };
+}
+
+/** Types a code into the given input and waits past the 400ms debounce for its lookup to land. */
+async function typeCodeAndWait(
+  user: ReturnType<typeof userEvent.setup>,
+  input: HTMLElement,
+  code: string,
+  awaitText: RegExp | string,
+) {
+  await user.type(input, code);
+  await screen.findByText(awaitText, {}, { timeout: 2000 });
+}
+
 async function renderLoaded() {
   const rendered = await renderRoute(EDIT_URL, SIGNED_IN);
   await screen.findByRole("heading", { name: "Ferritin", level: 1 });
   return rendered;
 }
 
-function callsTo(calls: { method: string; path: string; body: unknown }[], path: string) {
+function callsTo(
+  calls: { method: string; path: string; body: unknown; text: string }[],
+  path: string,
+) {
   return calls.filter((call) => call.method === "POST" && call.path.endsWith(path));
 }
 
@@ -138,10 +202,11 @@ function readsOf(calls: { method: string; path: string }[]) {
 }
 
 /**
- * Everything the page's live regions currently say. There are two - the page
- * owns one for a failed refresh, the panel one for the outcome of a write -
- * and both are mounted from the first render, which is the point of
- * `LiveRegion`. A test cares what was announced, not which region carried it.
+ * Everything the page's live regions currently say. There are three - the
+ * page owns one for a failed refresh, and each panel (designations, code
+ * bindings) owns one for the outcome of its own writes - and all are mounted
+ * from the first render, which is the point of `LiveRegion`. A test cares
+ * what was announced, not which region carried it.
  */
 function announced(): string {
   return screen
@@ -157,6 +222,23 @@ function announced(): string {
  */
 function inDialog() {
   return within(screen.getByRole("dialog"));
+}
+
+/**
+ * Queries scoped to the Terms panel. Its own "Changelog note" field shares a
+ * label with the code bindings panel's Bind form (#150) - both sit directly
+ * on the page, neither behind a dialog - so an unscoped
+ * `getByLabelText(/Changelog note/)` legitimately matches two fields once
+ * both panels are mounted, the same way `inDialog()` already documents for
+ * the dialog case.
+ */
+function inTermsPanel() {
+  return within(screen.getByRole("region", { name: "Terms" }));
+}
+
+/** Queries scoped to the code bindings panel, for the same reason as `inTermsPanel()`. */
+function inBindingsPanel() {
+  return within(screen.getByRole("region", { name: "Code bindings" }));
 }
 
 afterEach(() => {
@@ -321,12 +403,15 @@ describe("the terms table", () => {
     // `queries.load_designations` omits retired designations and
     // `catalogue_entry.preferred_term` is NOT NULL, so a Status column could
     // only ever render the same literal on every row (review finding 2).
+    // Scoped to this table: the code bindings panel (#150) below it legitimately
+    // has one, since a binding can genuinely be active or retired.
     stubApi([READ_OK]);
 
     await renderLoaded();
 
+    const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
     expect(
-      screen.queryByRole("columnheader", { name: "Status" }),
+      within(table).queryByRole("columnheader", { name: "Status" }),
     ).not.toBeInTheDocument();
   });
 
@@ -417,7 +502,10 @@ describe("adding synonyms", () => {
     await user.type(screen.getByLabelText("Synonyms"), "Zovirax;;Cyclir");
     expect(screen.getByText(/This will add 2 terms/)).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the two brand names");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the two brand names",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
 
     await waitFor(() => expect(callsTo(calls, ADD_PATH)).toHaveLength(1));
@@ -446,7 +534,10 @@ describe("adding synonyms", () => {
     await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), "Adrenal Ab");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the variant spelling");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the variant spelling",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
 
     await waitFor(() => expect(callsTo(calls, ADD_PATH)).toHaveLength(1));
@@ -461,7 +552,10 @@ describe("adding synonyms", () => {
     await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), ";;;");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add nothing at all");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add nothing at all",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
 
     // Twice over, and deliberately: once in the error summary the form moves
@@ -486,7 +580,7 @@ describe("adding synonyms", () => {
 
     // And the summary's link reaches the field it names, rather than a dead id.
     await user.click(screen.getByRole("link", { name: /changelog note/i }));
-    expect(screen.getByLabelText(/Changelog note/)).toHaveFocus();
+    expect(inTermsPanel().getByLabelText(/Changelog note/)).toHaveFocus();
   });
   it("refuses a paste over the server's batch cap, saying by how much", async () => {
     // `_MAX_TERMS_PER_BATCH` is 100 and a 422 for it carries FastAPI's
@@ -500,7 +594,10 @@ describe("adding synonyms", () => {
     const cell = Array.from({ length: 101 }, (_, index) => `Term ${index}`).join(";");
     await user.click(screen.getByLabelText("Synonyms"));
     await user.paste(cell);
-    await user.type(screen.getByLabelText(/Changelog note/), "Bulk import of synonyms");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Bulk import of synonyms",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
 
     expect(
@@ -534,7 +631,10 @@ describe("an error-severity collision", () => {
     await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), "Adrenal Ab");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the abbreviation");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the abbreviation",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
 
     const link = await screen.findByRole("link", { name: /NPTC-000111/ });
@@ -550,7 +650,10 @@ describe("an error-severity collision", () => {
     const { container } = await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), "Adrenal Ab");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the abbreviation");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the abbreviation",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
     await screen.findByRole("link", { name: /NPTC-000111/ });
 
@@ -564,12 +667,18 @@ describe("an error-severity collision", () => {
     await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), "Adrenal Ab");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the abbreviation");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the abbreviation",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
     await screen.findByRole("link", { name: /NPTC-000111/ });
 
     // Header plus the three terms the entry started with, and no fourth.
-    expect(screen.getAllByRole("row")).toHaveLength(4);
+    // Scoped to this table, not the whole page: the code bindings table (#150)
+    // below it renders its own header and empty-state rows.
+    const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
   });
 });
 
@@ -600,7 +709,10 @@ describe("a warning-severity collision", () => {
 
   async function addWarnedTerm(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the assay wording");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the assay wording",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
   }
 
@@ -1084,7 +1196,10 @@ describe("retiring a term", () => {
     await renderLoaded();
 
     await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
-    await user.type(screen.getByLabelText(/Changelog note/), "Add the assay wording");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the assay wording",
+    );
     await user.click(screen.getByRole("button", { name: "Add terms" }));
     await screen.findByRole("button", { name: "Acknowledge Serum ferritin" });
 
@@ -1142,6 +1257,440 @@ describe("retiring a term", () => {
   });
 });
 
+const ACTIVE_BINDING = {
+  system: "http://snomed.info/sct",
+  code: FSN_CODE,
+  fsn: FSN,
+  display_term: "Microscopy (acid fast bacilli)",
+  au_preferred_term: AU_PT,
+  edition_hint: "au",
+  status: "active",
+  retirement_reason: null,
+  replaced_by_code: null,
+};
+
+const RETIRED_BINDING = {
+  system: "http://snomed.info/sct",
+  code: "165288007",
+  fsn: "Basophil count (procedure)",
+  display_term: "Basophil count",
+  au_preferred_term: "Basophil count",
+  edition_hint: "au",
+  status: "retired",
+  retirement_reason: "Superseded by the new method",
+  replaced_by_code: FSN_CODE,
+};
+
+describe("code bindings", () => {
+  it("shows an active binding, and offers no bind form while one exists", async () => {
+    // FR-08 permits at most one active binding - offering a form that could
+    // only ever 409 would be the mistake the designations panel avoids by
+    // not offering Retire on the entry's own preferred term.
+    stubApi([{ ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } }]);
+
+    await renderLoaded();
+
+    const table = screen.getByRole("table", { name: `Code bindings on ${BUSINESS_KEY}` });
+    expect(within(table).getByRole("rowheader", { name: FSN_CODE })).toBeInTheDocument();
+    expect(within(table).getByText(FSN)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Bind a code" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resolves a code before binding it: the FSN keeps its tag, and the code is sent as a quoted string", async () => {
+    // FR-82 (the resolved FSN/PT are never typed) and FR-06 (a string, not a
+    // number, on the wire) in one test. `FSN` is the PRD's own FR-83
+    // regression fixture - a double-parenthesis value a careless semantic-tag
+    // strip mangles - chosen here because this is also this frontend's
+    // principal FR-06 test with no browser Verhoeff mirror to fall back on.
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE),
+      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(inBindingsPanel().getByText(AU_PT)).toBeInTheDocument();
+
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await waitFor(() => expect(callsTo(calls, BIND_PATH)).toHaveLength(1));
+    const call = callsTo(calls, BIND_PATH)[0];
+    expect(call?.body).toEqual({
+      code: FSN_CODE,
+      fsn: FSN,
+      au_preferred_term: AU_PT,
+      edition_hint: "au",
+      reason: "Add the primary code",
+    });
+    // The wire text itself, not the parsed value: `JSON.parse` cannot tell a
+    // quoted SCTID from a bare number once parsed either way.
+    expect(call?.text).toContain(`"code":"${FSN_CODE}"`);
+  });
+
+  it("shows an inactive code as inactive, and still lets it be bound", async () => {
+    // The partial H-05 mitigation this PR offers: the editor is told, but
+    // the FR-45 sweep-time check (out of scope here) is what actually blocks.
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, { active: false }),
+      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+    ]);
+    await renderLoaded();
+
+    // `ResolvedConcept` isolates each resolved value in its own `<span>`
+    // (`getByText`'s default matcher only ever sees an element's own direct
+    // text-node children, never text carried by a nested element) - so the
+    // status is checked as that span's exact, standalone content, not a
+    // phrase spanning the surrounding sentence.
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(inBindingsPanel().getByText("inactive")).toBeInTheDocument();
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await waitFor(() => expect(callsTo(calls, BIND_PATH)).toHaveLength(1));
+  });
+
+  it("shows an unreported active status distinctly from active or inactive", async () => {
+    // `active: null` (the tri-state `ConceptLookup.active` can genuinely be)
+    // must not be misread as "active" - that is hazard H-05's whole concern.
+    const user = userEvent.setup();
+    stubApi([READ_OK, terminologyRoute(FSN_CODE, { active: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(
+      inBindingsPanel().getByText("not reported by the terminology server"),
+    ).toBeInTheDocument();
+    expect(inBindingsPanel().queryByText("active")).not.toBeInTheDocument();
+    expect(inBindingsPanel().queryByText("inactive")).not.toBeInTheDocument();
+  });
+
+  it("shows a missing AU preferred term as not reported", async () => {
+    const user = userEvent.setup();
+    stubApi([READ_OK, terminologyRoute(FSN_CODE, { au_preferred_term: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(inBindingsPanel().getByText("not reported")).toBeInTheDocument();
+  });
+
+  it("refuses to bind a code the server resolved with no name, and sends no request", async () => {
+    // `ConceptLookup.fsn` is nullable - the server may report no FSN
+    // designation at all. A `null` here must refuse to prefill rather than
+    // substitute anything (never falling back to `display`/au_preferred_term).
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE, { fsn: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      /did not return a name/,
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      await screen.findAllByText(/must resolve against the terminology server/),
+    ).toHaveLength(2);
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
+  });
+
+  it("falls back to an unknown edition hint when the server reports an edition this screen does not recognise", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, { edition: "gb" }),
+      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await waitFor(() => expect(callsTo(calls, BIND_PATH)).toHaveLength(1));
+    expect(callsTo(calls, BIND_PATH)[0]?.body).toMatchObject({ edition_hint: "unknown" });
+  });
+
+  it("tells the editor a code is still checking, rather than reading as a rejection", async () => {
+    // The debounce window means "hasn't fired yet" and "does not resolve"
+    // would otherwise read identically - submitting right after pasting a
+    // code, before the 400ms debounce fires, is a realistic sequence.
+    //
+    // A single `paste`, not `type`: typing nine characters races real
+    // keystroke delays against the 400ms debounce, and on a loaded CI
+    // runner enough of it could land inside that window for the lookup to
+    // resolve before the click below, turning this into a flake rather than
+    // a deterministic check of the still-checking state (review finding).
+    // One paste is one state update, so nothing here waits on wall-clock
+    // timing except the assertion itself.
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
+    await renderLoaded();
+
+    await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
+    await user.paste(FSN_CODE);
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      await screen.findAllByText(/Wait for the code to finish checking/),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText(/must resolve against the terminology server/),
+    ).not.toBeInTheDocument();
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
+  });
+
+  it("refuses to bind a code that does not resolve, and sends no request", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, {
+        status: 404,
+        body: {
+          detail: `${FSN_CODE} was not found in the AU edition. Check the identifier.`,
+        },
+      }),
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      /was not found in the AU edition/,
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    // Twice over, as elsewhere in this file: once in the error summary,
+    // once beside the field itself.
+    expect(
+      await screen.findAllByText(/must resolve against the terminology server/),
+    ).toHaveLength(2);
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
+  });
+
+  it("reads an unreachable terminology server differently from a code that does not exist", async () => {
+    // FR-26/FR-54's whole point: the editor needs to know whether to retry
+    // or to look again, so the two refusals must not read the same.
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, {
+        status: 503,
+        body: {
+          detail:
+            "The terminology server could not be reached. Carry on editing and try again shortly.",
+        },
+      }),
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      /could not be reached/,
+    );
+
+    expect(screen.queryByText(/was not found/)).not.toBeInTheDocument();
+  });
+
+  it("shows the server's own sentence when a bind is refused, not a status code", async () => {
+    // The concurrent-editor case `catalogue-write-api.md` notes is
+    // unguarded: these routes take no `row_version`, so a second active
+    // binding can still reach the server as a 409 even though the form is
+    // never offered for it deliberately.
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE),
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 409,
+        body: { detail: "This entry already has an active code binding." },
+      },
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      await screen.findByText(/already has an active code binding/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/\b409\b/)).not.toBeInTheDocument();
+  });
+
+  it("refuses to retire without a reason", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
+    await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
+
+    expect(await inDialog().findAllByText(/Enter a changelog note/)).toHaveLength(2);
+    expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)).toHaveLength(0);
+  });
+
+  it("retires a binding with its reason, addressed by its active code", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } },
+      {
+        method: "POST",
+        path: `${BIND_PATH}/${FSN_CODE}/retirement`,
+        status: 200,
+        body: { ...ACTIVE_BINDING, status: "retired", retirement_reason: "Superseded" },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Superseded");
+    await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
+
+    await waitFor(() =>
+      expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)).toHaveLength(1),
+    );
+    expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)[0]?.body).toEqual({
+      reason: "Superseded",
+    });
+  });
+
+  it("replaces a binding: retires it and binds the resolved successor in one request", async () => {
+    // Retire and Replace are two separate actions: `/replacement` is the
+    // only route that populates `replaced_by_code`.
+    const user = userEvent.setup();
+    const SUCCESSOR_CODE = "165288007";
+    const calls = stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } },
+      terminologyRoute(SUCCESSOR_CODE, {
+        fsn: "Basophil count (procedure)",
+        au_preferred_term: "Basophil count",
+      }),
+      {
+        method: "POST",
+        path: `${BIND_PATH}/${FSN_CODE}/replacement`,
+        status: 200,
+        body: { items: [] },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Replace ${FSN_CODE}` }));
+    await typeCodeAndWait(
+      user,
+      inDialog().getByLabelText("Successor SNOMED CT code"),
+      SUCCESSOR_CODE,
+      "Basophil count (procedure)",
+    );
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Superseded by the new method",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Replace" }));
+
+    await waitFor(() =>
+      expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/replacement`)).toHaveLength(1),
+    );
+    expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/replacement`)[0]?.body).toEqual({
+      successor: {
+        code: SUCCESSOR_CODE,
+        fsn: "Basophil count (procedure)",
+        au_preferred_term: "Basophil count",
+        edition_hint: "au",
+      },
+      reason: "Superseded by the new method",
+    });
+  });
+
+  it("keeps a retired binding visible, with its reason and successor code (FR-08)", async () => {
+    stubApi([{ ...READ_OK, body: { ...ENTRY, bindings: [RETIRED_BINDING] } }]);
+
+    await renderLoaded();
+
+    const table = screen.getByRole("table", { name: `Code bindings on ${BUSINESS_KEY}` });
+    expect(
+      within(table).getByRole("rowheader", { name: RETIRED_BINDING.code }),
+    ).toBeInTheDocument();
+    // The reason and the replacement sit in one cell as separate text nodes,
+    // not a substring on its own - a substring matcher, not an exact one.
+    expect(
+      within(table).getByText(new RegExp(RETIRED_BINDING.retirement_reason)),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByText(new RegExp(`replaced by ${FSN_CODE}`)),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Retire ${RETIRED_BINDING.code}` }),
+    ).not.toBeInTheDocument();
+    // No active binding among these rows, so the bind form is offered.
+    expect(screen.getByRole("heading", { name: "Bind a code" })).toBeInTheDocument();
+  });
+
+  it("renders no view or component that strips or re-derives a semantic tag", () => {
+    // A structural guarantee, not just this fixture's behaviour - see
+    // `fr-83-no-semantic-tag-stripping.test.ts`, which walks every module
+    // under `frontend/src` rather than relying on one screen's rendering.
+    expect(FSN).not.toBe(ACTIVE_BINDING.display_term);
+  });
+});
+
 describe("accessibility", () => {
   it("has no automated accessibility violations on the loaded screen", async () => {
     stubApi([READ_OK]);
@@ -1157,6 +1706,18 @@ describe("accessibility", () => {
     const { container } = await renderLoaded();
 
     await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+
+    await expectNoA11yViolations(container);
+  });
+
+  it("has no automated accessibility violations with the code bindings panel populated and a dialog open", async () => {
+    const user = userEvent.setup();
+    stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING, RETIRED_BINDING] } },
+    ]);
+    const { container } = await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
 
     await expectNoA11yViolations(container);
   });

@@ -103,6 +103,9 @@ type AddDesignationsBody = components["schemas"]["AddDesignationsRequest"];
 type AmendDesignationBody = components["schemas"]["AmendDesignationRequest"];
 type RetireDesignationBody = components["schemas"]["RetireDesignationRequest"];
 type AcknowledgeCollisionBody = components["schemas"]["AcknowledgeCollisionRequest"];
+type BindCodeBody = components["schemas"]["BindCodeRequest"];
+type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
+type ReplaceBindingBody = components["schemas"]["ReplaceBindingRequest"];
 
 /**
  * Add one or more terms to an entry (FR-04).
@@ -214,6 +217,114 @@ export function useAcknowledgeCollision(businessKey: string) {
           "/api/v1/catalogue/entries/{business_key}/designations/acknowledgement",
           {
             params: { path: { business_key: businessKey } },
+            body,
+          },
+        ),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+  });
+}
+
+/**
+ * Resolve one SNOMED CT code's served FSN, AU preferred term and active
+ * status (FR-26, issue #240) - the one thing the code binding form (#150)
+ * needs so an editor never types a label, only a code.
+ *
+ * `enabled` gates on a non-empty code rather than on looking like a well-formed
+ * SCTID: the route's own pre-flight already turns a malformed candidate into a
+ * cheap 422 with no upstream call, and duplicating that shape check here would
+ * be a second, weaker copy of `SCTID`'s own rule (ADR-0030's third condition -
+ * the server stays the authority). The caller debounces keystrokes before
+ * this ever fires; `retry` stays the app-wide `false` (`query-client.ts`) so a
+ * 404/503/502 shows as-is rather than retrying blind on top of the retries the
+ * route itself already did against Ontoserver.
+ */
+export function useConceptLookup(code: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/terminology/concepts/{code}", code],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/terminology/concepts/{code}", {
+          params: { path: { code } },
+          signal,
+        }),
+      ),
+    enabled: code.length > 0,
+    // Repeats within one form session - typing, then backspacing to the same
+    // code, or opening Replace after Bind already resolved it - should not
+    // re-hit Ontoserver. Not a cache that should outlive the session: this is
+    // TanStack Query's own in-memory store, gone on reload, never persisted.
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * Bind a SNOMED CT code to an entry (FR-08, FR-26, FR-82; issue #150).
+ *
+ * `fsn`/`au_preferred_term` in the body come from `useConceptLookup`'s
+ * answer, never typed - this hook does not re-check that, the same way
+ * `useAmendDesignation` does not re-check `expected_row_version` was ever
+ * fetched. Shown only while the entry has no active binding (FR-08 permits at
+ * most one); the panel enforces that, not this hook.
+ */
+export function useBindCode(businessKey: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BindCodeBody) =>
+      unwrap(
+        await client.POST("/api/v1/catalogue/entries/{business_key}/bindings", {
+          params: { path: { business_key: businessKey } },
+          body,
+        }),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+  });
+}
+
+/**
+ * Retire an entry's active code binding (FR-08) - a status transition, never
+ * a delete. Addressed by the binding's currently-active `code` in the path,
+ * not an id: `Binding` deliberately carries none.
+ */
+export function useRetireBinding(businessKey: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ code, body }: { code: string; body: RetireBindingBody }) =>
+      unwrap(
+        await client.POST(
+          "/api/v1/catalogue/entries/{business_key}/bindings/{code}/retirement",
+          {
+            params: { path: { business_key: businessKey, code } },
+            body,
+          },
+        ),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+  });
+}
+
+/**
+ * Retire an entry's active code binding and bind its successor in one
+ * request (FR-08) - the only route that populates a retired binding's
+ * `replaced_by_code`, which is why Retire and Replace are two separate
+ * actions rather than one dialog with a conditional branch.
+ */
+export function useReplaceBinding(businessKey: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ code, body }: { code: string; body: ReplaceBindingBody }) =>
+      unwrap(
+        await client.POST(
+          "/api/v1/catalogue/entries/{business_key}/bindings/{code}/replacement",
+          {
+            params: { path: { business_key: businessKey, code } },
             body,
           },
         ),

@@ -35,6 +35,24 @@ const _entrySummaryBusinessKeyIsString: AssertString<
   components["schemas"]["EntrySummary"]["business_key"]
 > = true;
 
+// `BindCodeRequest.code` and `ReplacementSuccessor.code` (issue #150) - the
+// two *request* fields a code binding form sends. This is the direction FR-06
+// cares about most: with no browser Verhoeff mirror (see `catalogue/sctid.ts`
+// - there isn't one, by design), this file is the frontend's only mechanism
+// for catching a backend change that narrows one of these to `number`.
+const _bindCodeRequestCodeIsString: AssertString<
+  components["schemas"]["BindCodeRequest"]["code"]
+> = true;
+const _replacementSuccessorCodeIsString: AssertString<
+  components["schemas"]["ReplacementSuccessor"]["code"]
+> = true;
+
+// `ConceptLookup.code` (issue #240/#150) - the terminology lookup route's own
+// echo of the code it resolved.
+const _conceptLookupCodeIsString: AssertString<
+  components["schemas"]["ConceptLookup"]["code"]
+> = true;
+
 // Referenced only for their type-level effect; keeping a runtime reference
 // satisfies `noUnusedLocals` without disabling the rule for this file.
 export const fr06Assertions = {
@@ -42,4 +60,7 @@ export const fr06Assertions = {
   _bindingReplacedByCodeIsString,
   _entryDetailBusinessKeyIsString,
   _entrySummaryBusinessKeyIsString,
+  _bindCodeRequestCodeIsString,
+  _replacementSuccessorCodeIsString,
+  _conceptLookupCodeIsString,
 };
