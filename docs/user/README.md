@@ -2,6 +2,7 @@
 
 - [Signing in, registering, and signing out](signing-in.md) — issue #41.
 - [Editing an entry's terms](editing-designations.md) — issue #149.
+- [Binding a SNOMED CT code](binding-a-code.md) — issue #150.
 
 Otherwise not yet populated. Will hold a short role guide per authenticated role — Member,
 Reviewer, Administrator (PRD §4) — covering what that role can do and the parts of the

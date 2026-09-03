@@ -25,7 +25,8 @@ acceptance criterion of #149 (`Zovirax;;Cyclir` must become two rows and no empt
 This is not a one-off. Issue #150 needs `nptc_shared.sctid`'s format check and Verhoeff
 check digit in the form, before a request is sent - its own acceptance criteria say so.
 Whatever is decided here is the precedent for that, so it is worth deciding once rather
-than twice.
+than twice. **(See the amendment below: #150's SCTID mirror was withdrawn before it was
+built.)**
 
 ## Decision
 
@@ -111,9 +112,49 @@ relitigating a stack choice" rule exists to prevent.
   Both files carry a comment naming the other, so a reader editing either is told.
 - `frontend/src/catalogue/` is established as where a mirrored domain rule lives - not
   `frontend/src/api/`, which is transport and generated types, and not inside a component.
-  #150's SCTID check belongs there, beside this one, rather than in the binding form.
+  A future mirror belongs there, beside this one, rather than inside the form that needs
+  it. (#150's SCTID check was the candidate in mind when this was written - see the
+  amendment below for why it never landed there.)
 - The three conditions are a real gate, not a formality. "Re-implement the collision key in
   TypeScript so the screen can warn before saving" fails condition 1, and would fail
   condition 3 in spirit: `collision_key` folds tokens against rules that live in
   `nptc_shared.similarity` for a reason, and a browser-side approximation that disagreed
   with the server would be worse than no warning at all.
+
+## Amendment (2026-09-03): #150's SCTID mirror withdrawn
+
+The Context and Consequences above name #150's Verhoeff/format check as this ADR's second
+candidate mirror. It was withdrawn before being built, and the reasoning is worth recording
+here rather than leaving the ADR asserting a mirror that does not exist.
+
+A code failing the Verhoeff check digit **cannot exist in SNOMED CT**. Issue #240 gave
+#150 a live `$lookup` against the terminology server (FR-26), and that lookup already
+answers "is this a real code" more strongly than a check-digit mirror ever could - a
+Verhoeff pass says only that a code is *well-formed*, not that it exists. Building the
+mirror anyway would have bought one saved round trip on a malformed code, at the cost of a
+worse message than the lookup's own ("that code does not exist" beats "that identifier is
+malformed" for an editor deciding what to do next) and a second home for a rule that must
+never drift from `nptc_shared.sctid`.
+
+This does not fail condition 1 or 2 above - the mirror would have been small enough, and
+fixtures were available to share. It fails condition 3: **the server stays the authority**,
+and here the cleanest way to honour that condition is for the server to answer the
+question directly (FR-26's live check) rather than the browser pre-empting it with an
+approximation. Where a requirement already puts a live server round trip on the critical
+path, a client-side pre-check of the same fact is redundant, not merely small - the
+mirror's own justification (catching a typo instantly, before a request) evaporates once
+the request has to go out anyway to learn the one thing that actually matters: whether the
+code resolves.
+
+**This does not touch `nptc_shared.sctid`, the `nptc_sctid_is_valid` Postgres function
+(ADR-0023), or the `code_binding` CHECK constraint.** FR-06 is a MUST naming the database
+constraint by name, and the P0 transform screens SCTIDs offline, with no terminology server
+in play - the withdrawal is scoped to the browser only. See
+`frontend/src/catalogue/bindings-panel.tsx`'s module docstring and
+[binding-a-code.md](../user/binding-a-code.md) for what #150 built instead.
+
+The general lesson for a future mirror candidate: check whether the requirement already
+forces a round trip to the authority for an overlapping question before mirroring a
+narrower check locally. A mirror earns its keep by being the *only* thing standing between
+the browser and a slow round trip - not when a round trip for a related, stronger check is
+already unavoidable.
