@@ -677,6 +677,20 @@ Following ADR-0012's precedent of naming the deciding issue rather than guessing
    not recognise) -> [#151](https://github.com/MattCordell/nptc-platform/issues/151):
    render-nothing-plus-warning vs a read-only text view. Not decided here because it is a
    frontend UX call, not a registry design question.
+
+   **Resolved by #151: neither, in the end.** `frontend/src/catalogue/property-controls/
+   index.ts`'s `CONTROLS` is typed `Record<ControlKind, ComponentType<ControlProps>>` against
+   the generated `ControlKind` union itself, so a server that adds a sixth kind ships with a
+   frontend that already fails to build against it (`tsc -b`) rather than one that renders
+   anything - correct or a graceful fallback - at runtime. The render-nothing-vs-read-only-text
+   choice this question posed only arises for a client that is *already* stale at the moment
+   the new kind reaches it over the wire, which `CONTROLS`'s own construction makes
+   structurally impossible for a client built from the same schema: `ControlKind` and
+   `CONTROLS` are regenerated and re-typechecked together. A genuinely older, already-deployed
+   client (the schema drift case a compile-time check cannot reach) is out of scope here for
+   the same reason #53 gave for `sort_key` above - no caller has surfaced it as a real
+   deployment shape yet, and speculative runtime handling for it is exactly the "arrive
+   unargued" pattern this section exists to avoid.
 5. Whether `sort_key` belongs on the handler at all ->
    [#53](https://github.com/MattCordell/nptc-platform/issues/53) may drop it. Named as the one
    speculative member of the eleven, rather than letting it arrive unargued.

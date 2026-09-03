@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import {
@@ -17,6 +17,7 @@ import { Form } from "../components/form.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { RefusalNotice } from "./collision-notice.tsx";
+import { useDebouncedValue } from "./use-debounced-value.ts";
 
 /**
  * The code-binding editing panel (issue #150; FR-06, FR-08, FR-26, FR-36, FR-82).
@@ -72,20 +73,6 @@ function reasonError(reason: string, fieldId: string): FormError[] {
  */
 function toEditionHint(edition: string): CodeBindingEditionHint {
   return edition === "au" || edition === "int" ? edition : "unknown";
-}
-
-/**
- * Debounces a fast-changing value, so a code lookup fires once typing pauses
- * rather than once per keystroke (FR-52's spirit, applied to an interactive
- * caller rather than the batch sweep it was written for).
- */
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timeout);
-  }, [value, delayMs]);
-  return debounced;
 }
 
 /**

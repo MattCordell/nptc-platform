@@ -106,6 +106,8 @@ type AcknowledgeCollisionBody = components["schemas"]["AcknowledgeCollisionReque
 type BindCodeBody = components["schemas"]["BindCodeRequest"];
 type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
 type ReplaceBindingBody = components["schemas"]["ReplaceBindingRequest"];
+type SavePropertyValuesBody = components["schemas"]["SavePropertyValuesRequest"];
+type PatchEntryBody = components["schemas"]["PatchEntryRequest"];
 
 /**
  * Add one or more terms to an entry (FR-04).
@@ -331,5 +333,124 @@ export function useReplaceBinding(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+  });
+}
+
+/**
+ * Every active *and* deprecated property definition, generated-form data for
+ * #151's properties panel.
+ *
+ * `include_deprecated=true` always: FR-11 requires a deprecated property that
+ * still carries a recorded value to keep rendering (read-only) rather than
+ * disappearing, and `EntryDetail.properties[].status` (issue #248) is what
+ * `PropertiesPanel` uses to tell that value apart from one on a property
+ * still open for new entry - both the value *and* its definition (label,
+ * cardinality, `form_control`) are needed to render either state, so this
+ * hook always asks for the full set rather than two calls keyed on `status`.
+ */
+export function usePropertyDefinitions() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/registry/properties", { include_deprecated: true }],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties", {
+          params: { query: { include_deprecated: true } },
+          signal,
+        }),
+      ),
+  });
+}
+
+/**
+ * A coded property's offerable values (issue #247) - the concept picker's
+ * data source, resolved server-side against whichever binding (SNOMED value
+ * set or local code system) the property's own definition carries, so this
+ * hook never branches on `binding_target` (ADR-0013's own limit 1).
+ *
+ * Keyed on `key` *and* `filter`, unlike `useConceptLookup`: a picker's typed
+ * filter narrows the same property's results repeatedly within one dialog
+ * session, and each distinct filter is worth its own cache entry rather than
+ * only the property's unfiltered list.
+ */
+export function usePropertyValueOptions(key: string, filter: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/registry/properties/{key}/values", key, filter],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties/{key}/values", {
+          params: { path: { key }, query: filter.length > 0 ? { filter } : {} },
+          signal,
+        }),
+      ),
+    enabled: key.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * Replace one property's recorded values on an entry (FR-09, FR-10, FR-11,
+ * FR-36, FR-88, FR-89; issue #248) - a whole-set replace, matching
+ * `save_property_values`' own signature: there is no route for a single
+ * value in isolation, so the caller always sends the complete intended set.
+ *
+ * `key` is fixed per hook instance (one edit dialog targets one property),
+ * matching `useRetireBinding`'s split for the part that *does* vary
+ * (`code`/here, the body) versus the part that does not (`businessKey`).
+ */
+export function useSavePropertyValues(businessKey: string, key: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: SavePropertyValuesBody) =>
+      unwrap(
+        await client.PUT("/api/v1/catalogue/entries/{business_key}/properties/{key}", {
+          params: { path: { business_key: businessKey, key } },
+          body,
+        }),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // Same FR-38 reasoning as `useAmendDesignation`: a stale
+    // `expected_row_version` means the entry moved under the editor, so the
+    // cached copy is refetched rather than left to fail identically on retry.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
+  });
+}
+
+/**
+ * Set an entry's core `status` and/or `specimen_unconstrained` flag (issue
+ * #249, FR-36, FR-89) - the one write this screen needs that is not a
+ * property value at all, since both columns live on `catalogue_entry`
+ * itself. `Any` (FR-89) is this flag turned on with zero specimen values,
+ * never a value the `specimen` property itself can hold.
+ */
+export function usePatchEntryCore(businessKey: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: PatchEntryBody) =>
+      unwrap(
+        await client.PATCH("/api/v1/catalogue/entries/{business_key}", {
+          params: { path: { business_key: businessKey } },
+          body,
+        }),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
