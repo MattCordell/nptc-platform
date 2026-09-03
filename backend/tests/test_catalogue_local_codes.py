@@ -31,11 +31,12 @@ from nptc.catalogue.local_codes import (
     deprecate_local_code_system,
     find_local_code,
     find_local_code_with_system_status,
+    list_local_codes,
 )
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.local_code import LocalCodeStatus
 from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap
-from nptc.db.models.local_code_system import LocalCodeSystemStatus
+from nptc.db.models.local_code_system import LocalCodeSystem, LocalCodeSystemStatus
 from nptc.registry.handlers import LocalCodeLookup
 from nptc_shared.sctid import InvalidSCTIDError
 
@@ -529,6 +530,288 @@ def test_create_snomed_map_row_requires_registry_manage(app_session: Session) ->
             advisory_note="Advisory only, not a code_binding: test fixture.",
             reason="publishing the advisory map",
         )
+
+
+# --- list_local_codes (issue #247) -------------------------------------------
+
+
+def _system(app_session: Session, key: str) -> LocalCodeSystem:
+    system = create_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        key=key,
+        uri=f"https://nptc.example.org/CodeSystem/{key}",
+        title="Discipline",
+        description="test",
+        owner="RCPA-QAP",
+        reason="creating a test fixture code system",
+    )
+    app_session.flush()
+    return system
+
+
+@pytest.mark.req("FR-90")
+def test_list_local_codes_excludes_a_deprecated_code(app_session: Session) -> None:
+    """A deprecated code is not offered for entry (FR-90's governed-
+    vocabulary posture) - `DatabaseLocalCodeLookup.resolve` still resolves
+    it unchanged, this function is additive."""
+    system = _system(app_session, "list_active_only_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="active_one",
+        display="Active one",
+        reason="test fixture",
+    )
+    deprecated = create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="deprecated_one",
+        display="Deprecated one",
+        reason="test fixture",
+    )
+    app_session.flush()
+    deprecate_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        code=deprecated,
+        reason="superseded",
+    )
+    app_session.flush()
+
+    codes, total = list_local_codes(app_session, system_key=system.key)
+
+    assert [c.code for c in codes] == ["active_one"]
+    assert total == 1
+
+    resolved = DatabaseLocalCodeLookup(app_session).resolve(
+        "list_active_only_test", "deprecated_one"
+    )
+    assert resolved is not None
+    assert resolved.status == str(LocalCodeStatus.DEPRECATED)
+
+
+@pytest.mark.req("FR-90")
+def test_list_local_codes_excludes_every_code_of_a_deprecated_system(app_session: Session) -> None:
+    """`deprecate_local_code_system` deliberately does not cascade to
+    member codes' own `status` (`find_local_code_with_system_status`'s own
+    docstring) - but a retired vocabulary must not keep offering its codes
+    for new entry, so this function filters on the system's status too, not
+    just the code's. `DatabaseLocalCodeLookup.resolve` still resolves the
+    code unchanged, matching `test_lookup_surfaces_system_deprecation_
+    independently_of_the_code` above - this function is additive."""
+    system = _system(app_session, "list_deprecated_system_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="orphaned_by_system",
+        display="Orphaned by system",
+        reason="test fixture",
+    )
+    app_session.flush()
+    deprecate_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        reason="retiring this vocabulary",
+    )
+    app_session.flush()
+
+    codes, total = list_local_codes(app_session, system_key=system.key)
+
+    assert list(codes) == []
+    assert total == 0
+
+    resolved = DatabaseLocalCodeLookup(app_session).resolve(
+        "list_deprecated_system_test", "orphaned_by_system"
+    )
+    assert resolved is not None
+    assert resolved.status == str(LocalCodeStatus.ACTIVE)
+    assert resolved.system_status == str(LocalCodeSystemStatus.DEPRECATED)
+
+
+def test_list_local_codes_filters_by_display_text_case_insensitively(app_session: Session) -> None:
+    system = _system(app_session, "list_filter_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="haem",
+        display="Haematology",
+        reason="test fixture",
+    )
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="chem",
+        display="Chemical pathology",
+        reason="test fixture",
+    )
+    app_session.flush()
+
+    codes, total = list_local_codes(app_session, system_key=system.key, filter="HAEM")
+
+    assert [c.code for c in codes] == ["haem"]
+    assert total == 1
+
+
+def test_list_local_codes_orders_by_display_order_before_code(app_session: Session) -> None:
+    system = _system(app_session, "list_order_test")
+    alphabetically_first = create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="a_code",
+        display="A",
+        reason="test fixture",
+    )
+    alphabetically_last = create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="z_code",
+        display="Z",
+        reason="test fixture",
+    )
+    app_session.flush()
+    alphabetically_first.display_order = 2
+    alphabetically_last.display_order = 1
+    app_session.flush()
+
+    codes, _total = list_local_codes(app_session, system_key=system.key)
+
+    assert [c.code for c in codes] == ["z_code", "a_code"]
+
+
+def test_list_local_codes_orders_by_code_when_display_order_ties(app_session: Session) -> None:
+    system = _system(app_session, "list_tie_order_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="zebra",
+        display="Zebra",
+        reason="test fixture",
+    )
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="alpha",
+        display="Alpha",
+        reason="test fixture",
+    )
+    app_session.flush()
+
+    codes, _total = list_local_codes(app_session, system_key=system.key)
+
+    assert [c.code for c in codes] == ["alpha", "zebra"]
+
+
+def test_list_local_codes_pages_with_offset_and_limit(app_session: Session) -> None:
+    system = _system(app_session, "list_paging_test")
+    for code in ("c1", "c2", "c3"):
+        create_local_code(
+            app_session,
+            AuditContext.system(),
+            actor=_administrator(),
+            system=system,
+            code=code,
+            display=code.upper(),
+            reason="test fixture",
+        )
+    app_session.flush()
+
+    first_page, total = list_local_codes(app_session, system_key=system.key, offset=0, limit=2)
+    second_page, total_again = list_local_codes(
+        app_session, system_key=system.key, offset=2, limit=2
+    )
+
+    assert [c.code for c in first_page] == ["c1", "c2"]
+    assert [c.code for c in second_page] == ["c3"]
+    assert total == 3
+    assert total_again == 3
+
+
+def test_list_local_codes_treats_a_literal_percent_as_text_not_a_wildcard(
+    app_session: Session,
+) -> None:
+    system = _system(app_session, "list_escape_percent_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="literal_percent",
+        display="50% saline",
+        reason="test fixture",
+    )
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="no_percent",
+        display="50X saline",
+        reason="test fixture",
+    )
+    app_session.flush()
+
+    codes, _total = list_local_codes(app_session, system_key=system.key, filter="50%")
+
+    assert [c.code for c in codes] == ["literal_percent"]
+
+
+def test_list_local_codes_treats_a_literal_underscore_as_text_not_a_wildcard(
+    app_session: Session,
+) -> None:
+    system = _system(app_session, "list_escape_underscore_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="literal_underscore",
+        display="a_b test",
+        reason="test fixture",
+    )
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="single_char_between",
+        display="axb test",
+        reason="test fixture",
+    )
+    app_session.flush()
+
+    codes, _total = list_local_codes(app_session, system_key=system.key, filter="a_b")
+
+    assert [c.code for c in codes] == ["literal_underscore"]
+
+
+def test_list_local_codes_returns_empty_for_an_unknown_system(app_session: Session) -> None:
+    codes, total = list_local_codes(app_session, system_key="not_a_real_system_at_all")
+
+    assert list(codes) == []
+    assert total == 0
 
 
 # --- LocalCodeLookup ----------------------------------------------------------

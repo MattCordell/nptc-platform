@@ -90,10 +90,19 @@ class StubConcept:
 @dataclass(frozen=True, slots=True)
 class StubRequest:
     """One call made against the stub, for #27-style "one request, not N"
-    assertions to work identically against the stub and the real client."""
+    assertions to work identically against the stub and the real client.
+
+    `offset`/`count`/`display_language` are recorded for `expand` calls
+    only (every other operation leaves them at their defaults) - issue
+    #247's review found that without this, a caller silently dropping or
+    transposing `offset`/`count`, or never forwarding `display_language`,
+    could not be told apart from a correct call through this stub."""
 
     operation: Operation
     detail: str
+    offset: int = 0
+    count: int | None = None
+    display_language: str | None = None
 
 
 #: FR-75's two attribute-refinement forms: ``* : <attr> = *`` and
@@ -122,7 +131,7 @@ class StubTerminologyClient:
     ) -> None:
         self._concepts: dict[str, StubConcept] = {concept.code: concept for concept in concepts}
         self._resolved_version: dict[str, str] = dict(resolved_version or {})
-        self._expansions: dict[tuple[str, str | None], Expansion] = {}
+        self._expansions: dict[tuple[str, str | None, str | None], Expansion] = {}
         self._lookups: dict[tuple[str, str | None], LookupResult] = {}
         self._subsumes: dict[tuple[str, str, str | None], SubsumptionOutcome] = {}
         self._validate_code: dict[
@@ -137,9 +146,14 @@ class StubTerminologyClient:
         self._concepts[concept.code] = concept
 
     def seed_expansion(
-        self, ecl: str, expansion: Expansion, *, edition: Edition | None = None
+        self,
+        ecl: str,
+        expansion: Expansion,
+        *,
+        edition: Edition | None = None,
+        filter: str | None = None,
     ) -> None:
-        self._expansions[(ecl, _edition_key(edition))] = expansion
+        self._expansions[(ecl, _edition_key(edition), filter)] = expansion
 
     def seed_lookup(
         self, code: str, result: LookupResult, *, edition: Edition | None = None
@@ -195,11 +209,26 @@ class StubTerminologyClient:
         include_designations: bool = False,
         display_language: str | None = None,
         active_only: bool | None = None,
+        filter: str | None = None,
     ) -> Expansion:
-        self._requests.append(StubRequest(Operation.EXPAND, ecl))
+        self._requests.append(
+            StubRequest(
+                Operation.EXPAND,
+                ecl,
+                offset=offset,
+                count=count,
+                display_language=display_language,
+            )
+        )
         self._raise_if_seeded_error(Operation.EXPAND, ecl)
 
-        seeded = self._expansions.get((ecl, edition.label), self._expansions.get((ecl, None)))
+        # Edition falls back to "any edition" (as before filter existed), but
+        # filter never does: a seeded *unfiltered* response is never a stand-
+        # in for a filter nobody seeded a response for - the dynamic
+        # ``_evaluate_ecl`` path below is what answers that instead.
+        seeded = self._expansions.get(
+            (ecl, edition.label, filter), self._expansions.get((ecl, None, filter))
+        )
         if seeded is not None:
             return seeded
 
@@ -210,6 +239,18 @@ class StubTerminologyClient:
             # rule _visible_in_edition applies to edition membership.
             codes = [
                 c for c in codes if (concept := self._concepts.get(c)) is None or concept.active
+            ]
+        if filter:
+            # Server-side text filter (FR-10): case-insensitive substring
+            # against the same display text `expand` would otherwise return -
+            # a code with no seeded concept has no display to match, so it
+            # drops out rather than being kept on an unverifiable guess.
+            needle = filter.casefold()
+            codes = [
+                c
+                for c in codes
+                if (concept := self._concepts.get(c)) is not None
+                and needle in _display_for(concept, None).casefold()
             ]
         total = len(codes)
         page = codes[offset : offset + count] if count is not None else codes[offset:]

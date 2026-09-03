@@ -56,7 +56,9 @@ from nptc_shared.terminology.models import (
 )
 from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.snomed import (
+    ecl_from_implicit_value_set_url,
     ecl_set_of,
+    edition_from_implicit_value_set_url,
     implicit_value_set_url,
     semantic_tag,
     strip_semantic_tag,
@@ -111,7 +113,9 @@ __all__ = [
     "TerminologyTimeoutError",
     "TerminologyTransportError",
     "ValidationResult",
+    "ecl_from_implicit_value_set_url",
     "ecl_set_of",
+    "edition_from_implicit_value_set_url",
     "implicit_value_set_url",
     "is_concept_absence",
     "semantic_tag",

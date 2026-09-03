@@ -49,7 +49,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -57,10 +57,12 @@ from nptc.api.dependencies import (
     AuditContextDep,
     get_datatype_registry,
     get_session,
+    get_terminology_client,
     permission_dep,
 )
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
+from nptc.catalogue.property_value_sources import DEFAULT_PAGE_SIZE, list_property_values
 from nptc.db.definitions import (
     amend_definition,
     create_definition,
@@ -77,6 +79,7 @@ from nptc.db.models.property_definition import (
 )
 from nptc.registry.definitions import DefinitionAudience, PropertyDefinitionDeleteRefusedError
 from nptc.registry.handlers import DatatypeRegistry
+from nptc_shared.terminology import TerminologyClient
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 
@@ -174,8 +177,70 @@ _RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
     409: _RESPONSE_409,
 }
 
+#: issue #247's own response family - deliberately separate from
+#: `_RESPONSES_GET_ONE` above (issue #223 review finding 10's own rule:
+#: each route's dict names only the statuses it can actually produce). 404
+#: and the query-parameter-validation half of 422 are shared with the rest
+#: of this router; the value-source-resolution statuses (422's other half,
+#: 500/502/503) are unique to this one route, matching `routers/
+#: terminology.py`'s own `_RESPONSE_502`/`_RESPONSE_503` wording almost
+#: verbatim - the same underlying `TerminologyClient` failures, reached
+#: through `$expand` here rather than `$lookup` there.
+_RESPONSE_422_VALUES: Final[dict[str, Any]] = {
+    "description": (
+        "The property named by `key` is not a coded property (it has no bound value "
+        "source), or the `offset`/`count` query parameters failed validation."
+    ),
+    "content": {
+        "application/json": {
+            "schema": {
+                "anyOf": [
+                    {"$ref": "#/components/schemas/ErrorResponse"},
+                    {"$ref": "#/components/schemas/HTTPValidationError"},
+                ]
+            }
+        }
+    },
+}
+_RESPONSE_500_VALUES: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The property's own stored value_set_uri could not be interpreted - a data "
+        "integrity fault in the definition, not a caller mistake. Not produced by "
+        "anything a well-formed request can trigger on its own."
+    ),
+}
+_RESPONSE_502_VALUES: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The terminology server's response could not be used - an unparseable body, the "
+        'wrong resource type, or a 4xx that was not itself an answer to "does this value '
+        'set exist". Only reachable for a `value_set`-bound property. Names no URL, '
+        "variable or upstream host."
+    ),
+}
+_RESPONSE_503_VALUES: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The terminology server could not be reached, or a rate limit persisted through "
+        "retries. Only reachable for a `value_set`-bound property; a `local_code_system` "
+        "binding never calls the terminology server at all. May carry a `Retry-After` "
+        "header."
+    ),
+}
+_RESPONSES_VALUES: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_READ,
+    404: _RESPONSE_404,
+    422: _RESPONSE_422_VALUES,
+    500: _RESPONSE_500_VALUES,
+    502: _RESPONSE_502_VALUES,
+    503: _RESPONSE_503_VALUES,
+}
+
 SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
+TerminologyClientDep = Annotated[TerminologyClient, Depends(get_terminology_client)]
 _MANAGE = Depends(permission_dep(Permission.REGISTRY_MANAGE))
 _READ = Depends(permission_dep(Permission.REGISTRY_READ))
 
@@ -311,6 +376,25 @@ class DeprecatePropertyDefinitionRequest(BaseModel):
 
     expected_row_version: int
     reason: str
+
+
+class PropertyValueItem(BaseModel):
+    """One offerable value for a coded property (issue #247) - identical in
+    shape whether it came from a SNOMED value set or a local code system;
+    nothing here names `binding_target` (the acceptance criterion, on the
+    wire)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    display: str | None
+
+
+class PropertyValuePage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[PropertyValueItem]
+    total: int
 
 
 def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
@@ -467,4 +551,30 @@ def delete_property(key: str) -> None:
     key."""
     raise PropertyDefinitionDeleteRefusedError(
         f"property_definition {key!r} cannot be deleted; deprecate it instead (FR-11)"
+    )
+
+
+@router.get(
+    "/properties/{key}/values",
+    summary="List a coded property's offerable values",
+    responses=_RESPONSES_VALUES,
+    dependencies=[_READ],
+)
+def list_property_value_options(
+    session: SessionDep,
+    client: TerminologyClientDep,
+    key: str,
+    filter: str | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    count: Annotated[int, Query(ge=1, le=200)] = DEFAULT_PAGE_SIZE,
+) -> PropertyValuePage:
+    """FR-10's concept-picker data source (issue #247). Resolves `key`'s own
+    binding and answers from Ontoserver or the `LocalCode` table - see
+    `nptc.catalogue.property_value_sources.list_property_values` for the
+    one place that branches on `binding_target`; this route and
+    `PropertyValuePage` never see it."""
+    page = list_property_values(session, client, key=key, filter=filter, offset=offset, count=count)
+    return PropertyValuePage(
+        items=[PropertyValueItem(code=item.code, display=item.display) for item in page.items],
+        total=page.total,
     )

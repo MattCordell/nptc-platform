@@ -69,6 +69,14 @@ def test_expand_with_designations_and_display_language_reports_a_non_fsn_designa
     assert concept.display == "Acanthamoeba culture"
 
 
+@pytest.mark.req("FR-10")
+def test_expand_filter_narrows_to_the_matching_display(client: TerminologyClient) -> None:
+    """A coded-property picker's search-as-you-type (issue #247) is server-
+    side filtering, not a client-side scan of the whole expansion."""
+    result = client.expand(ECL_TWO_CODES, edition=SNOMED_CT_AU, filter="acanth")
+    assert result.codes == ("122192001",)
+
+
 @pytest.mark.req("FR-53")
 def test_lookup_exposes_display_fsn_and_active_status(client: TerminologyClient) -> None:
     result = client.lookup("122192001", edition=SNOMED_CT_AU)

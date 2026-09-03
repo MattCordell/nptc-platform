@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from nptc_shared.sctid import has_valid_format
-from nptc_shared.terminology.models import Edition
+from nptc_shared.terminology.models import (
+    SNOMED_CT_AU,
+    SNOMED_CT_INTERNATIONAL,
+    SNOMED_SYSTEM,
+    Edition,
+)
 
 # The final parenthesised group of an FSN, and nothing nested inside another
 # group: "Microscopy (acid fast bacilli) (procedure)" has to yield "procedure",
@@ -30,6 +35,101 @@ def implicit_value_set_url(ecl: str, edition: Edition) -> str:
     string and the pinned and unpinned forms differ only by a path segment.
     """
     return f"{edition.system_version_uri}?fhir_vs=ecl/{quote(ecl, safe='')}"
+
+
+def ecl_from_implicit_value_set_url(uri: str) -> str:
+    """The ECL a SNOMED implicit value set URI encodes - the inverse of
+    ``implicit_value_set_url``.
+
+    Only the ``?fhir_vs=ecl/<percent-encoded ECL>`` form is recognised
+    (FR-10's binding shape for a coded property). Any other implicit value
+    set (``?fhir_vs=isa/...``, ``?fhir_vs=refset/...``) or a URI that carries
+    no ``fhir_vs`` parameter at all raises ``ValueError`` rather than
+    guessing at an ECL the URI never encoded - a property's stored
+    ``value_set_uri`` is server-side data, not caller input, so a bad value
+    here is a data-integrity fault for the caller to classify accordingly.
+    """
+    marker = "?fhir_vs=ecl/"
+    if marker not in uri:
+        raise ValueError(
+            f"{uri!r} is not a SNOMED implicit ECL value set URI (expected {marker!r})"
+        )
+    _base, _, encoded_ecl = uri.partition(marker)
+    if not encoded_ecl:
+        raise ValueError(f"{uri!r} has no ECL after {marker!r}")
+    return unquote(encoded_ecl)
+
+
+#: The base of a *module-qualified* implicit value set URI:
+#: ``<system>/<module>[/version/<v>]``, matching `Edition.system_version_uri`'s
+#: own construction exactly (`implicit_value_set_url`'s own output shape).
+_VALUE_SET_BASE = re.compile(
+    rf"^{re.escape(SNOMED_SYSTEM)}/(?P<module_id>[^/]+)(?:/version/(?P<version>[^/]+))?$"
+)
+
+
+def edition_from_implicit_value_set_url(
+    uri: str,
+    *,
+    label: str | None = None,
+    known_editions: Iterable[Edition] = (SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL),
+) -> Edition:
+    """The `Edition` a SNOMED implicit value set URI encodes - the base-half
+    companion to `ecl_from_implicit_value_set_url` (that one reads the query
+    string; this one reads everything before it, plus `label` for the one
+    shape that carries no edition information of its own - see below).
+
+    Two URI shapes are recognised, because both are real in this codebase:
+
+    - **Module-qualified** (`implicit_value_set_url`'s own output shape):
+      `<system>/<module>[/version/<v>]?fhir_vs=ecl/...`. The module id (and
+      pinned version, if present) is read directly from the URI and matched
+      against `known_editions` for `label`/`display_language` - `label` is
+      not consulted here, since the URI is already authoritative and a
+      pinned version must never be silently dropped in favour of a
+      caller-supplied edition.
+    - **Bare system** (the PRD's own S6.6 worked example, and the shape
+      `nptc.db.bootstrap`'s real seeded `specimen` binding actually stores):
+      `<system>?fhir_vs=ecl/...`, with no module segment at all. Nothing in
+      this shape identifies which edition it was written against, so
+      `label` (typically the same `PropertyDefinition.edition` this URI's
+      own binding stores) is matched against `known_editions.label`
+      instead. Raises `ValueError` if `label` is `None` or matches no known
+      edition - never fabricates an `Edition` from an arbitrary label the
+      way constructing `Edition(module_id=label, label=label)` would.
+
+    Any other shape (a non-implicit URI, `?fhir_vs=isa/...`, a module id
+    that matches neither known edition) also raises `ValueError` - a
+    property's stored `value_set_uri`/`edition` are server-side data, not
+    caller input, so any of these failures is a data-integrity fault for
+    the caller to classify accordingly (mirrors
+    `ecl_from_implicit_value_set_url`'s own posture).
+    """
+    marker = "?fhir_vs=ecl/"
+    base, separator, _ = uri.partition(marker)
+    if not separator:
+        raise ValueError(
+            f"{uri!r} is not a SNOMED implicit ECL value set URI (expected {marker!r})"
+        )
+    if base == SNOMED_SYSTEM:
+        for candidate in known_editions:
+            if candidate.label == label:
+                return candidate
+        raise ValueError(
+            f"{uri!r} names no SNOMED module, and label {label!r} does not match a "
+            "recognised edition"
+        )
+    match = _VALUE_SET_BASE.match(base)
+    if match is None:
+        raise ValueError(
+            f"{uri!r}'s base {base!r} is not a recognised SNOMED system[/module[/version]] URI"
+        )
+    module_id = match.group("module_id")
+    version = match.group("version")
+    for candidate in known_editions:
+        if candidate.module_id == module_id:
+            return candidate.pinned_to(version) if version is not None else candidate
+    raise ValueError(f"{uri!r} names an unrecognised SNOMED module id {module_id!r}")
 
 
 def ecl_set_of(codes: Iterable[str]) -> str:

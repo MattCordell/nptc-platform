@@ -42,6 +42,7 @@ class TerminologyClient(Protocol):
         include_designations: bool = False,
         display_language: str | None = None,
         active_only: bool | None = None,
+        filter: str | None = None,
     ) -> Expansion:
         """Expands the SNOMED implicit value set for ``ecl`` against ``edition``.
 
@@ -49,6 +50,12 @@ class TerminologyClient(Protocol):
         whole chunk of codes, not one request per code. It is also FR-84's
         hierarchy check, via ``nptc_shared.terminology.snomed.ecl_set_of`` and
         a ``MINUS <<71388002`` clause.
+
+        ``filter`` is FHIR ``$expand``'s own server-side text filter - a
+        case-insensitive, partial match against each candidate's display -
+        used to narrow a value-set-bound concept picker's results to what the
+        caller typed (FR-10) without pulling the whole expansion client-side
+        first.
 
         Exactly one request per call - this method never pages on its own.
         Check ``result.is_complete`` and re-call with an advanced ``offset``

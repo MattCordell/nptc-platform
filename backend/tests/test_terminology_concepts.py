@@ -303,7 +303,7 @@ def test_unseeded_stub_raises_terminology_upstream_not_not_found() -> None:
 def test_terminology_config_error_propagates_unchanged() -> None:
     """A malformed `NPTC_TX_*` value is already mapped to 500 by
     `nptc.api.errors` - `resolve_concept` must never fold it into
-    `_classify`'s own 4xx/5xx types, since `TerminologyConfigError` is
+    `classify_terminology_error`'s own 4xx/5xx types, since `TerminologyConfigError` is
     itself a `TerminologyError` subclass and would otherwise land in the
     502 catch-all (issue #240 review)."""
     client = StubTerminologyClient()
