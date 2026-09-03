@@ -1,5 +1,5 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { useEffect } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider } from "./auth-context.tsx";
@@ -324,6 +324,12 @@ describe("getAccessToken", () => {
 describe("signIn", () => {
   it("sends the browser to the authorize endpoint", async () => {
     renderProvider();
+    // Lets the mount-time cold-load probe settle before this test's own
+    // work and teardown run, so it cannot still be in flight when the next
+    // test's mocks replace these (issue #243).
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
 
     await act(async () => {
       await api().signIn({ redirect: "/submissions" });
@@ -384,6 +390,11 @@ describe("signOut", () => {
 
   it("does nothing but clear locally when there was no session", async () => {
     renderProvider();
+    // See the `signIn` test above for why this waits out the mount probe
+    // (issue #243).
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
 
     await act(async () => {
       await api().signOut();
@@ -397,6 +408,11 @@ describe("signOut", () => {
 describe("completeCallback", () => {
   it("returns the stored destination and becomes signed in", async () => {
     renderProvider();
+    // See the `signIn` describe block above for why this waits out the
+    // mount probe before the test's own flow starts (issue #243).
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
     // Start a real flow so a genuine transaction exists to match against.
     await act(async () => {
       await api().signIn({ redirect: "/submissions" });
@@ -416,6 +432,11 @@ describe("completeCallback", () => {
 
   it("returns null, not a thrown error, when the state does not match", async () => {
     renderProvider();
+    // See the `signIn` describe block above for why this waits out the
+    // mount probe before the test's own flow starts (issue #243).
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
     await act(async () => {
       await api().signIn();
     });
@@ -433,6 +454,11 @@ describe("completeCallback", () => {
 
   it("defaults to the home page when no destination was stored", async () => {
     renderProvider();
+    // See the `signIn` describe block above for why this waits out the
+    // mount probe before the test's own flow starts (issue #243).
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
     await act(async () => {
       await api().signIn();
     });
@@ -575,5 +601,76 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
     });
 
     expect(token).toBe("access-token");
+  });
+});
+
+describe("mount probe outliving its provider (issue #243)", () => {
+  it("cannot touch state, or reject unhandled, once the provider has unmounted", async () => {
+    const { silentAuthorize, refuse } = releasableRenewal();
+    renderProvider(silentAuthorize);
+    // Waits out everything the mount probe does *before* it parks on the
+    // pending `silentAuthorize` promise (its own `await Promise.resolve()`,
+    // `buildAuthorizeUrl`'s discovery fetch) - refusing before it actually
+    // reaches that await would reject a promise nothing has attached to
+    // yet, an unhandled rejection of the test's own making, not the
+    // provider's.
+    await waitFor(() => {
+      expect(silentAuthorize).toHaveBeenCalled();
+    });
+    expect(screen.getByTestId("status")).toHaveTextContent("restoring");
+
+    // The exact interleaving CI hit: the provider is torn down - as RTL's
+    // own auto-cleanup does between every test - while its cold-load probe
+    // is still in flight.
+    cleanup();
+
+    const rejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      // The stale probe settles only *after* teardown, and deliberately
+      // outside any `act()` for the now-unmounted provider: an unguarded
+      // `store()`/`setUnavailable()`/`setRestored()` call reaching this far
+      // is exactly the side effect that used to run against whatever the
+      // next test had since put in this provider's place. A macrotask
+      // boundary, not a fixed number of microtask ticks, so the refusal has
+      // fully travelled the `await silentAuthorize(...)` resumption, the
+      // catch, and `restore()`'s own `finally` before the assertion runs.
+      refuse();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(rejections).toEqual([]);
+
+    // A provider mounted afterwards settles on its own mock's outcome,
+    // unaffected by the stale one's late answer.
+    renderProvider();
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
+  });
+
+  it("still settles a real, single mount when StrictMode double-invokes it", async () => {
+    // `main.tsx` renders the real app under `StrictMode`, which mounts,
+    // cleans up, and mounts this provider again before committing - so a
+    // "mounted" flag only ever cleared by a cleanup, and never restored by
+    // the mount that follows it, would read as permanently unmounted for
+    // the rest of this provider's genuinely-single, real lifetime, silently
+    // suppressing every later `setRestored`/`store`/`setUnavailable` call.
+    render(
+      <StrictMode>
+        <AuthProvider config={CONFIG} silentAuthorize={noSession()} navigate={navigate}>
+          <Probe />
+        </AuthProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+    });
   });
 });
