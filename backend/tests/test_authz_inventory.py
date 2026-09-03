@@ -144,6 +144,10 @@ COVERED_WRITE_ROUTES = frozenset(
         RouteKey(method="PATCH", path="/registry/properties/{key}"),
         RouteKey(method="POST", path="/registry/properties/{key}/deprecation"),
         RouteKey(method="DELETE", path="/registry/properties/{key}"),
+        # issue #248: the property-value write route - whole-property
+        # replace on a catalogue entry. Negative-auth coverage lives in
+        # `test_api_catalogue_properties.py`.
+        RouteKey(method="PUT", path="/catalogue/entries/{business_key}/properties/{key}"),
     }
 )
 

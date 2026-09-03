@@ -23,6 +23,7 @@ from nptc.api.routers import (
     catalogue_admin,
     catalogue_bindings,
     catalogue_designations,
+    catalogue_properties,
     registry,
     terminology,
 )
@@ -89,6 +90,10 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # acknowledgement (FR-04, FR-05). A separate router from `catalogue.py`
     # for the same reason as `catalogue_bindings` above.
     app.include_router(catalogue_designations.router, prefix=API_PREFIX)
+    # issue #248: whole-property-value replace on a catalogue entry (FR-09,
+    # FR-10, FR-11, FR-37, FR-38, FR-88, FR-89). A separate router for the
+    # same reason as the two write routers above.
+    app.include_router(catalogue_properties.router, prefix=API_PREFIX)
     # issue #228: the admin read counterpart to catalogue.py's public detail
     # route - any status, gated on catalogue.edit_published, so an edit
     # screen (#149) can load a draft entry before the write routes above
