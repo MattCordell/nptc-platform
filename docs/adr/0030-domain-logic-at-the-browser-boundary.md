@@ -127,8 +127,8 @@ The Context and Consequences above name #150's Verhoeff/format check as this ADR
 candidate mirror. It was withdrawn before being built, and the reasoning is worth recording
 here rather than leaving the ADR asserting a mirror that does not exist.
 
-A code failing the Verhoeff check digit **cannot exist in SNOMED CT**. Issue #240 gave
-#150 a live `$lookup` against the terminology server (FR-26), and that lookup already
+A code failing the Verhoeff check digit **cannot exist in SNOMED CT**. Issue #240 gave this
+screen a live `$lookup` against the terminology server (FR-26), and that lookup already
 answers "is this a real code" more strongly than a check-digit mirror ever could - a
 Verhoeff pass says only that a code is *well-formed*, not that it exists. Building the
 mirror anyway would have bought one saved round trip on a malformed code, at the cost of a
