@@ -333,6 +333,7 @@ def test_save_property_values_against_a_deprecated_property_is_422_untouched(
         json={"expected_row_version": created["row_version"], "reason": _REASON},
     )
     assert deprecate_response.status_code == 200, deprecate_response.text
+    before = _audit_event_count(api)
 
     response = _put_values(
         api,
@@ -344,6 +345,16 @@ def test_save_property_values_against_a_deprecated_property_is_422_untouched(
     )
 
     assert response.status_code == 422, response.text
+    # FR-11's own acceptance criterion: the value recorded before
+    # deprecation is untouched, and the rejected write leaves no audit
+    # event.
+    stored_value = api.session.execute(
+        select(PropertyValue.value).where(
+            PropertyValue.entry_id == entry.id, PropertyValue.property_key == key
+        )
+    ).scalar_one()
+    assert stored_value == "recorded before deprecation"
+    assert _audit_event_count(api) == before
 
 
 # --- FR-88/FR-89: Specimen -------------------------------------------------
