@@ -348,6 +348,145 @@ def test_list_properties_default_excludes_deprecated_include_deprecated_shows_it
     assert key in export_keys
 
 
+# --- form_control (issue #248, FR-77) -------------------------------------
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_get_property_returns_a_form_control(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-form-control")
+    key = _unique_key("form_control")
+    _create(api, token, key)
+
+    response = api.get(f"/registry/properties/{key}", token=token)
+
+    assert response.status_code == 200, response.text
+    form_control = response.json()["form_control"]
+    assert form_control == {"control": "text", "params": {}}
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_list_properties_returns_a_synthetic_datatypes_own_form_control(api: ApiTestApp) -> None:
+    """FR-77's own acceptance criterion, at the HTTP layer: a datatype
+    registered nowhere in `nptc.registry.datatypes.BUILTIN_DATATYPES`
+    still appears in `GET /registry/properties` with its own handler's
+    `form_control` - no route or response model in `nptc.api.routers.
+    registry` is edited to make this work, matching `test_synthetic_
+    datatype.py`'s own service-layer proof of the same claim."""
+    from nptc.api.dependencies import get_datatype_registry
+    from nptc.registry import (
+        ControlKind,
+        DatatypeRegistry,
+        FormControlDescriptor,
+        HandlerDeps,
+        PropertyDefinitionSpec,
+        SerialisationTarget,
+        ValidationIssue,
+        build_builtin_handlers,
+    )
+    from nptc_shared.terminology.stub import StubTerminologyClient
+
+    class _SyntheticColourHandler:
+        """A wholly synthetic datatype - never one of PRD SS6.5's five and
+        never registered as a builtin - existing only inside this test, to
+        prove FR-77's extensibility claim without pre-registering a
+        speculative real one (mirrors `test_synthetic_datatype.py`'s own
+        `DurationHandler`, trimmed to what this route-level test needs)."""
+
+        datatype = "synthetic_colour"
+
+        def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> dict[str, object]:
+            return {"type": "string"}
+
+        def constraints_schema(self) -> dict[str, object]:
+            return {"type": "object", "additionalProperties": False}
+
+        def validate(self, value: object, spec: PropertyDefinitionSpec) -> list[ValidationIssue]:
+            return []
+
+        def form_control(self, spec: PropertyDefinitionSpec) -> FormControlDescriptor:
+            return FormControlDescriptor(
+                control=ControlKind.CONCEPT_PICKER, params={"palette": "swatch"}
+            )
+
+        def serialise(self, value: object, target: SerialisationTarget) -> object:
+            return value
+
+        def index_shape(self, spec: PropertyDefinitionSpec) -> None:
+            return None
+
+        def supported_filter_ops(self) -> frozenset[object]:
+            return frozenset()
+
+        def filter_clause(self, op: object, value: object, column: object) -> object:
+            raise AssertionError("not exercised by this test")
+
+        def facet_expression(self, column: object) -> None:
+            return None
+
+    registry_with_synthetic = DatatypeRegistry(
+        [
+            *build_builtin_handlers(HandlerDeps(terminology_client=StubTerminologyClient())),
+            _SyntheticColourHandler(),
+        ]
+    )
+    api.app.dependency_overrides[get_datatype_registry] = lambda: registry_with_synthetic
+    try:
+        token = _admin_token(api, subject="sub-synthetic-datatype")
+        key = _unique_key("synthetic_colour")
+        response = _create(api, token, key, datatype="synthetic_colour")
+        assert response.status_code == 201, response.text
+
+        list_response = api.get("/registry/properties", token=token)
+        assert list_response.status_code == 200, list_response.text
+        items = {item["key"]: item for item in list_response.json()["items"]}
+        assert items[key]["form_control"] == {
+            "control": "concept_picker",
+            "params": {"palette": "swatch"},
+        }
+    finally:
+        del api.app.dependency_overrides[get_datatype_registry]
+
+
+# --- scope filter (issue #248, re-adding issue #223 review finding 8) -----
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_list_properties_scope_filter_is_inclusive_of_both(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-scope-filter")
+    submission_key = _unique_key("scope_submission")
+    maintenance_key = _unique_key("scope_maintenance")
+    both_key = _unique_key("scope_both")
+    _create(api, token, submission_key, scope="submission")
+    _create(api, token, maintenance_key, scope="maintenance")
+    _create(api, token, both_key, scope="both")
+
+    submission_response = api.get(
+        "/registry/properties", token=token, params={"scope": "submission"}
+    )
+    assert submission_response.status_code == 200, submission_response.text
+    submission_keys = {item["key"] for item in submission_response.json()["items"]}
+    assert submission_key in submission_keys
+    assert both_key in submission_keys
+    assert maintenance_key not in submission_keys
+
+    maintenance_response = api.get(
+        "/registry/properties", token=token, params={"scope": "maintenance"}
+    )
+    assert maintenance_response.status_code == 200, maintenance_response.text
+    maintenance_keys = {item["key"] for item in maintenance_response.json()["items"]}
+    assert maintenance_key in maintenance_keys
+    assert both_key in maintenance_keys
+    assert submission_key not in maintenance_keys
+
+    unfiltered_response = api.get("/registry/properties", token=token)
+    assert unfiltered_response.status_code == 200, unfiltered_response.text
+    unfiltered_keys = {item["key"] for item in unfiltered_response.json()["items"]}
+    assert {submission_key, maintenance_key, both_key} <= unfiltered_keys
+
+
 # --- domain refusals ---------------------------------------------------
 
 
