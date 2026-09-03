@@ -161,6 +161,13 @@ class PropertyValue(BaseModel):
     new datatype (FR-77) appears here correctly without this module
     changing. `ordinal` is meaningful for a multi-valued property: it is the
     position of this value among that property's values, zero-based.
+
+    `status` is the *definition's* status (issue #248) - `active` or
+    `deprecated` - not a fact about this value. FR-11 makes a deprecated
+    definition retain its recorded values, so without this field a client
+    reading an entry could not tell such a value apart from one recorded
+    against a property still open for new writes, short of a second call to
+    `GET /registry/properties?include_deprecated=true`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -169,6 +176,7 @@ class PropertyValue(BaseModel):
     label: str
     datatype: str
     cardinality: str
+    status: str
     ordinal: int
     value: Any
     justification: str | None
@@ -249,6 +257,7 @@ def property_value_from_row(
         label=row.label,
         datatype=row.datatype,
         cardinality=row.cardinality,
+        status=row.status,
         ordinal=row.ordinal,
         value=handler.serialise(row.value, SerialisationTarget.JSON),
         justification=row.justification,

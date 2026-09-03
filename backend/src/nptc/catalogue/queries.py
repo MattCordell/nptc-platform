@@ -153,6 +153,12 @@ class PropertyValueRow:
     handler's job, not this module's (FR-77/ADR-0013), so `datatype` is
     carried through for the caller to resolve a handler with. There is
     deliberately no `switch` on it here.
+
+    `status` is the *definition's* status (issue #248), not the value's own
+    - `property_value` has no status column of its own. A client cannot
+    otherwise tell a deprecated property's recorded values apart from an
+    active one's without a second, cross-referencing call to `GET
+    /registry/properties?include_deprecated=true`.
     """
 
     entry_id: uuid.UUID
@@ -160,6 +166,7 @@ class PropertyValueRow:
     label: str
     datatype: str
     cardinality: str
+    status: str
     ordinal: int
     value: object
     justification: str | None
@@ -407,6 +414,7 @@ def load_property_values(
             PropertyDefinition.label,
             PropertyDefinition.datatype,
             PropertyDefinition.cardinality,
+            PropertyDefinition.status,
         )
         .join(PropertyDefinition, PropertyValue.property_key == PropertyDefinition.key)
         .where(PropertyValue.entry_id.in_(ids))
@@ -419,6 +427,7 @@ def load_property_values(
             label=row.label,
             datatype=row.datatype,
             cardinality=row.cardinality,
+            status=row.status,
             ordinal=row.ordinal,
             value=row.value,
             justification=row.justification,
