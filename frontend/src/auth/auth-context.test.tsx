@@ -106,6 +106,22 @@ function renderProvider(silentAuthorize: SilentAuthorize = noSession()) {
   );
 }
 
+/**
+ * `renderProvider` plus waiting out the mount-time cold-load probe it
+ * fires, so it cannot still be in flight when the test's own work or
+ * teardown runs (issue #243). Only for tests using the default `noSession`
+ * probe, which always settles to `"signed-out"` - a test whose probe
+ * settles somewhere else (`"signed-in"`, `"unavailable"`) waits for that
+ * outcome directly instead.
+ */
+async function renderSettledProvider() {
+  const view = renderProvider();
+  await waitFor(() => {
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+  });
+  return view;
+}
+
 /** A silent renewal that succeeds, standing in for a live SSO session. */
 function succeedingRenewal() {
   return vi.fn((url: string) => {
@@ -323,13 +339,7 @@ describe("getAccessToken", () => {
 
 describe("signIn", () => {
   it("sends the browser to the authorize endpoint", async () => {
-    renderProvider();
-    // Lets the mount-time cold-load probe settle before this test's own
-    // work and teardown run, so it cannot still be in flight when the next
-    // test's mocks replace these (issue #243).
-    await waitFor(() => {
-      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    });
+    await renderSettledProvider();
 
     await act(async () => {
       await api().signIn({ redirect: "/submissions" });
@@ -389,12 +399,7 @@ describe("signOut", () => {
   });
 
   it("does nothing but clear locally when there was no session", async () => {
-    renderProvider();
-    // See the `signIn` test above for why this waits out the mount probe
-    // (issue #243).
-    await waitFor(() => {
-      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    });
+    await renderSettledProvider();
 
     await act(async () => {
       await api().signOut();
@@ -407,12 +412,7 @@ describe("signOut", () => {
 
 describe("completeCallback", () => {
   it("returns the stored destination and becomes signed in", async () => {
-    renderProvider();
-    // See the `signIn` describe block above for why this waits out the
-    // mount probe before the test's own flow starts (issue #243).
-    await waitFor(() => {
-      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    });
+    await renderSettledProvider();
     // Start a real flow so a genuine transaction exists to match against.
     await act(async () => {
       await api().signIn({ redirect: "/submissions" });
@@ -431,12 +431,7 @@ describe("completeCallback", () => {
   });
 
   it("returns null, not a thrown error, when the state does not match", async () => {
-    renderProvider();
-    // See the `signIn` describe block above for why this waits out the
-    // mount probe before the test's own flow starts (issue #243).
-    await waitFor(() => {
-      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    });
+    await renderSettledProvider();
     await act(async () => {
       await api().signIn();
     });
@@ -453,12 +448,7 @@ describe("completeCallback", () => {
   });
 
   it("defaults to the home page when no destination was stored", async () => {
-    renderProvider();
-    // See the `signIn` describe block above for why this waits out the
-    // mount probe before the test's own flow starts (issue #243).
-    await waitFor(() => {
-      expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
-    });
+    await renderSettledProvider();
     await act(async () => {
       await api().signIn();
     });
@@ -605,6 +595,17 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
 });
 
 describe("mount probe outliving its provider (issue #243)", () => {
+  // Contract coverage, not a regression discriminator: `store`/
+  // `setUnavailable`/`setRestored` on an already-unmounted component are
+  // silent no-ops in React 19 regardless of the `mounted` guard, and a
+  // provider mounted afterwards is a wholly separate instance either way -
+  // so this test passes identically with or without the guard in
+  // `auth-context.tsx`. It still earns its place: it pins down the
+  // behaviour the guard is meant to preserve (no unhandled rejection, no
+  // leakage into a later provider) so a future change that broke either
+  // would be caught here, even though this specific fix wasn't caught by
+  // it. The `StrictMode` test below is the one with actual discriminating
+  // power against this PR's changes - it failed without the fix.
   it("cannot touch state, or reject unhandled, once the provider has unmounted", async () => {
     const { silentAuthorize, refuse } = releasableRenewal();
     renderProvider(silentAuthorize);

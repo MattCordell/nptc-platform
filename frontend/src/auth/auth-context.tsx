@@ -65,11 +65,18 @@ export function AuthProvider({
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
   const renewal = useRef<Promise<TokenSet | null> | null>(null);
-  // Guards every setState-driven side effect below so a probe or renewal
-  // still in flight when this provider unmounts (e.g. between tests, or a
-  // remount elsewhere in the app) can never act on a torn-down instance -
-  // otherwise its eventual resolution runs against whatever the next
-  // instance's mocks/globals have since become (issue #243).
+  // Guards every setState call below so a probe or renewal still in flight
+  // when this provider unmounts (e.g. between tests, or a remount
+  // elsewhere in the app) can never touch a torn-down instance's state
+  // (issue #243). This does not by itself stop the network/transaction
+  // work such a probe is mid-flight on - `buildAuthorizeUrl`, the
+  // `silentAuthorize` round trip, `completeSignIn` and `takeTransaction`
+  // all still run to completion regardless, landing in the existing
+  // `catch` below exactly as before. The `waitFor`s added to
+  // `auth-context.test.tsx` alongside this guard, so the mount probe
+  // settles inside the test that started it rather than outliving it, are
+  // what actually closes the CI flake's window; this guard is the backstop
+  // for whatever's still in flight despite that.
   const mounted = useRef(true);
   useEffect(() => {
     // Reset in the body, not only relied on as the `useRef` default:
@@ -77,6 +84,17 @@ export function AuthProvider({
     // mount cycle, so a flag only ever cleared - never set back - by the
     // cleanup would end this effect permanently `false` after that cycle's
     // second mount, even though the provider is genuinely still mounted.
+    //
+    // That second mount's own effect body is a no-op, though (see `probed`
+    // below): the probe actually running to completion is the one the
+    // *first*, discarded-by-StrictMode mount started. It survives because
+    // `probed`, `mounted` and every ref/callback it closes over live on the
+    // one fiber React reuses across the double-invoke, not on either
+    // individual mount - so resetting `mounted.current` here is what lets
+    // that surviving probe keep being treated as "mounted" for the rest of
+    // its genuinely-single lifetime. A future change that made `probed`
+    // reset on cleanup (so the second mount re-probed) would need this
+    // reset to move with it.
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -135,7 +153,17 @@ export function AuthProvider({
         const { tokens: next } = await completeSignIn(config, search);
         // A provider that unmounted while this renewal was in flight has no
         // state left worth touching - checked ahead of the #216 guard
-        // below, not instead of it (issue #243).
+        // below, not instead of it (issue #243). Deliberately returns
+        // `null` here rather than `next`: a caller still awaiting this same
+        // `renewal.current` (e.g. a concurrent `getAccessToken`) gets told
+        // "no token" even though one was in fact obtained, and falls back
+        // to `tokensRef.current`, which this skipped `store(next)` also
+        // never updated - so it sees the pre-renewal token, not the new
+        // one. Harmless in practice: a provider that unmounted has no live
+        // caller left to hand a token to, and the alternative (calling
+        // `store` anyway, unguarded, so late callers get the right value)
+        // is exactly the post-unmount side effect this guard exists to
+        // prevent.
         if (!mounted.current) {
           return null;
         }
@@ -155,6 +183,11 @@ export function AuthProvider({
         store(next);
         return next;
       } catch (error) {
+        // Runs regardless of `mounted` - deliberately the one exception to
+        // "no side effects after unmount": this is cleanup of a
+        // module-level transaction, not provider state, and skipping it
+        // post-unmount would leak the entry rather than merely acting on a
+        // torn-down instance.
         if (issuedState) {
           takeTransaction(issuedState);
         }
