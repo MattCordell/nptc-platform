@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, code bindings, designations and property values (issues #219, #224, #228, #227, #248)
+# The catalogue admin API: entry read, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #227, #248, #249)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -450,12 +450,73 @@ A rejected write leaves no partial `property_value` state and no audit event -
 that function's own docstring), the same "reject before mutating" posture `save_entry`'s
 row-version check already takes.
 
+## Entry core columns (issue #249)
+
+All under `/api/v1/catalogue`, in `nptc.api.routers.catalogue_entries` - a router
+separate from every module above, the same one-router-per-thing-written pattern: this
+one owns `CatalogueEntry`'s own core columns, not a sub-resource attached to it.
+
+| Path | Method | Body | Returns |
+|---|---|---|---|
+| `/entries/{business_key}` | `PATCH` | `{status?, specimen_unconstrained?, reason, expected_row_version}` | `200 {status, specimen_unconstrained, row_version}` |
+
+`business_key` is immutable (FR-03) and `preferred_term` writes through
+`/amendment` (issue #227, ADR-0022's two storage homes) - this route is the remaining
+two of `catalogue_entry`'s four auditable core columns. It shares its path with
+[public-api.md](public-api.md)'s public `GET /catalogue/entries/{business_key}`: one
+path item in the OpenAPI document carrying a public `get` (tag `catalogue`) and an
+admin `patch` (tag `catalogue-admin`), the same write family every route above lives
+in rather than `catalogue_admin.py`'s separate `/admin/` prefix.
+
+Everything below HTTP already existed and was already tested as a library -
+`nptc.catalogue.entries.save_entry` (issue #46) - so this route is purely the HTTP
+adapter: FR-37's reason gate, FR-38's optimistic lock and FR-89's specimen cross-field
+check (see below) are all handled by that existing service, the same posture
+`/properties/{key}` above takes for `save_property_values`.
+
+**`PATCH` semantics, not two named sub-resources.** Both fields are core columns of one
+row under one `row_version`, and `save_entry` applies them in one `EntryChanges`/one
+audit event - splitting them into two routes would mean two lock tokens and two audit
+events for one editorial save. An absent field means "leave this alone", matching
+`EntryChanges`' own `None`-means-unchanged contract - including
+`specimen_unconstrained: false`, which is not `None` and so is applied like any other
+value. A body naming neither field is refused (422) rather than silently accepted as a
+no-op write.
+
+**No status transition rules.** `save_entry` does a bare `setattr` and the PRD defines
+no state machine for `status`; the wire type is the closed `CatalogueEntryStatus` enum,
+so a value outside `draft|active|deprecated|withdrawn` is a 422 before the route body
+ever runs, and the table's own `CHECK` constraint remains the backstop. Introducing
+transition rules would be new editorial policy with no PRD backing today.
+
+**FR-89's cross-field check, the reverse direction.** `save_property_values` already
+refused a specimen value on an entry already flagged `specimen_unconstrained`; this
+route is what makes the other direction reachable over HTTP - setting the flag on an
+entry that already holds specimen values. `nptc.catalogue.property_values.
+assert_specimen_flag_allowed` is the shared implementation, called from `save_entry`
+itself (so `save_entries` inherits it too, not just this route), and it raises the same
+`PropertyValidationError`/`PropertyValidationResponse` the forward direction does -
+both directions share one refusal message, and the 422 names each blocking specimen
+value by `ordinal`.
+
+### Errors (entry core columns)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
+| 404 | No catalogue entry with this `business_key`. |
+| 409 | A stale `expected_row_version` (FR-38) - the same `VersionConflictResponse` body `/amendment` and `/properties/{key}` return above. |
+| 422 | A missing or low-information `reason` (FR-37), a body naming neither `status` nor `specimen_unconstrained`, a `status` outside the closed enum, or setting `specimen_unconstrained` to `true` while the entry still holds one or more specimen values (FR-89) - `issues[]` then names each blocking value's `ordinal`. |
+
+A rejected write leaves no partial mutation and no audit event: `save_entry`'s
+row-version and FR-89 preconditions both run before its savepoint opens, the same
+"reject before mutating" posture every write path in this document takes.
+
 ## What these issues do not cover
 
-- Entry-level writes other than the preferred term. `EntryChanges` also carries `status`
-  and `specimen_unconstrained`, and neither has a route: issue #227 wired only
-  `preferred_term`, through `/amendment`. Publishing or withdrawing an entry over HTTP
-  is still unbuilt.
+- Entry creation over HTTP. `nptc.catalogue.entries.create_entry` is library-only -
+  same FR-36 family as the writes above, different gap, not covered by any issue here.
 - FR-38 optimistic locking on the code-binding routes. Issue #227 put `row_version` on
   the wire and `expected_row_version` on `/amendment` only; `catalogue_bindings.py`'s
   three routes take no version at all. Two administrators editing one entry's bindings
@@ -491,4 +552,9 @@ three code-binding ones, with their negative-auth coverage in
 `mutating_routes` never sees it and it needs no entry in `COVERED_WRITE_ROUTES` - its
 own negative-auth coverage is `test_api_catalogue_admin_read.py`. Issue #248's `PUT
 .../properties/{key}` is added the same way as the code-binding/designation routes, with
-its own negative-auth coverage in `test_api_catalogue_properties.py`.
+its own negative-auth coverage in `test_api_catalogue_properties.py`. Issue #249's
+`PATCH /entries/{business_key}` is added the same way, with its own negative-auth
+coverage in `test_api_catalogue_entries.py` - it shares a path with the public `GET`
+`catalogue.py` already serves at that same URL, but the two are independent route
+objects with independent method keys, so this is no different from any other route
+sharing a path with a differently-methoded one.

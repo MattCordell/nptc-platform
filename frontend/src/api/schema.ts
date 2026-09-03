@@ -99,7 +99,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Set a catalogue entry's status and/or specimen_unconstrained flag */
+        patch: operations["patch_entry_api_v1_catalogue_entries__business_key__patch"];
         trace?: never;
     };
     "/api/v1/catalogue/entries/{business_key}/designations": {
@@ -626,6 +627,11 @@ export interface components {
          */
         BindingTarget: "value_set" | "local_code_system";
         /**
+         * CatalogueEntryStatus
+         * @enum {string}
+         */
+        CatalogueEntryStatus: "draft" | "active" | "deprecated" | "withdrawn";
+        /**
          * CodeBindingEditionHint
          * @enum {string}
          */
@@ -851,6 +857,21 @@ export interface components {
             warnings: components["schemas"]["CollisionWarning"][];
         };
         /**
+         * EntryCoreWriteResult
+         * @description The entry's core columns after the write, plus its new `row_version`
+         *     - mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
+         *     editing client never has to re-fetch the entry just to learn its next
+         *     lock token.
+         */
+        EntryCoreWriteResult: {
+            /** Status */
+            status: string;
+            /** Specimen Unconstrained */
+            specimen_unconstrained: boolean;
+            /** Row Version */
+            row_version: number;
+        };
+        /**
          * EntryDetail
          * @description A summary plus everything attached to the entry.
          *
@@ -972,6 +993,25 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * PatchEntryRequest
+         * @description The body of `PATCH /catalogue/entries/{business_key}`.
+         *
+         *     `status`/`specimen_unconstrained` are both optional so a caller can set
+         *     either or both in one save - `None` means "leave this field alone",
+         *     matching `EntryChanges`' own contract - but a body naming neither is
+         *     refused rather than silently treated as a no-op write (issue #249's own
+         *     acceptance criterion).
+         */
+        PatchEntryRequest: {
+            status?: components["schemas"]["CatalogueEntryStatus"] | null;
+            /** Specimen Unconstrained */
+            specimen_unconstrained?: boolean | null;
+            /** Reason */
+            reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /**
          * PropertyCardinality
@@ -1536,6 +1576,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_entry_api_v1_catalogue_entries__business_key__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchEntryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryCoreWriteResult"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry matches the given business_key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. Carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
+                };
+            };
+            /** @description The `reason` is missing or low-information (FR-37), the body names neither `status` nor `specimen_unconstrained`, `status` is not one of `draft`, `active`, `deprecated` or `withdrawn`, or setting `specimen_unconstrained` to `true` conflicts with one or more specimen values already recorded on this entry (FR-89) - `issues[]` then names each blocking value by `ordinal`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
         };
