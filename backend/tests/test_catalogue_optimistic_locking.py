@@ -23,8 +23,43 @@ from nptc.catalogue.entries import (
     save_entry,
 )
 from nptc.catalogue.errors import EntryVersionConflictError
+from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
+from nptc.catalogue.property_values import (
+    PropertyValidationError,
+    PropertyValueInput,
+    save_property_values,
+)
+from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.registry.datatypes import build_builtin_handlers
+from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
+from nptc_shared.terminology.models import Edition, ValidationResult
+from nptc_shared.terminology.stub import StubTerminologyClient
+
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+_SPECIMEN_EDITION = Edition(module_id="au", label="au")
+_SPECIMEN_SYSTEM = "http://example.org/specimen-test"
+
+
+def _seeded_specimen_registry(session: Session) -> DatatypeRegistry:
+    seed_system_properties(session)
+    session.flush()
+    terminology = StubTerminologyClient()
+    terminology.seed_validate_code(
+        "specimen-1",
+        ValidationResult(code="specimen-1", result=True),
+        value_set_url=_SPECIMEN_VALUE_SET_URI,
+        edition=_SPECIMEN_EDITION,
+    )
+    return DatatypeRegistry(
+        build_builtin_handlers(
+            HandlerDeps(
+                terminology_client=terminology,
+                local_code_lookup=DatabaseLocalCodeLookup(session),
+            )
+        )
+    )
 
 
 @pytest.fixture
@@ -417,6 +452,113 @@ def test_save_entries_stale_middle_entry_does_not_bump_the_first(app_session: Se
     ).scalar_one()
     assert first.row_version == 2
     assert first.preferred_term == "Renamed 0"
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_save_entry_refuses_specimen_unconstrained_when_specimen_values_exist(
+    app_session: Session,
+) -> None:
+    """FR-89's cross-field invariant, the reverse direction (issue #249):
+    `save_property_values` already refuses a specimen value on an entry
+    already flagged unconstrained; this is the other half - refused,
+    untouched, and with no audit event, whether the caller goes through
+    `save_entry` directly or (below) `save_entries`."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Specimen conflict fixture",
+        reason="Created for FR-89 test",
+    )
+    registry = _seeded_specimen_registry(app_session)
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key="specimen",
+        values=[PropertyValueInput(value={"system": _SPECIMEN_SYSTEM, "code": "specimen-1"})],
+        reason="Recorded a specimen value before flagging unconstrained",
+        registry=registry,
+    )
+    events_before = _audit_event_count(app_session)
+    row_version_before = entry.row_version
+
+    with pytest.raises(PropertyValidationError) as excinfo:
+        save_entry(
+            app_session,
+            AuditContext.system(),
+            business_key=entry.business_key,
+            expected_row_version=entry.row_version,
+            changes=EntryChanges(specimen_unconstrained=True),
+            reason="Should be refused - entry still holds a specimen value",
+        )
+
+    assert any(issue.code == "specimen-unconstrained-conflict" for issue in excinfo.value.issues)
+    assert entry.specimen_unconstrained is False
+    assert entry.row_version == row_version_before
+    assert _audit_event_count(app_session) == events_before
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_save_entries_inherits_the_specimen_unconstrained_refusal(app_session: Session) -> None:
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Specimen conflict bulk fixture",
+        reason="Created for FR-89 bulk test",
+    )
+    registry = _seeded_specimen_registry(app_session)
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key="specimen",
+        values=[PropertyValueInput(value={"system": _SPECIMEN_SYSTEM, "code": "specimen-1"})],
+        reason="Recorded a specimen value before flagging unconstrained",
+        registry=registry,
+    )
+
+    with pytest.raises(PropertyValidationError):
+        save_entries(
+            app_session,
+            AuditContext.system(),
+            updates=[
+                (entry.business_key, entry.row_version, EntryChanges(specimen_unconstrained=True))
+            ],
+            reason="Bulk reclassify test",
+        )
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_save_entry_allows_clearing_specimen_unconstrained_with_specimen_values_present(
+    app_session: Session,
+) -> None:
+    """The check only ever fires for *setting* the flag - clearing it never
+    conflicts with a recorded specimen value, whatever `save_property_values`
+    might separately have refused."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Specimen clear fixture",
+        reason="Created for FR-89 test",
+    )
+    entry.specimen_unconstrained = True
+    app_session.flush()
+
+    saved = save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        changes=EntryChanges(specimen_unconstrained=False),
+        reason="Clearing the flag",
+    )
+
+    assert saved.specimen_unconstrained is False
 
 
 @pytest.mark.req("FR-38")

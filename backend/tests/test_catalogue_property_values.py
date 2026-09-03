@@ -27,6 +27,7 @@ from nptc.catalogue.property_values import (
     PropertyDefinitionNotFoundError,
     PropertyValidationError,
     PropertyValueInput,
+    assert_specimen_flag_allowed,
     save_property_values,
 )
 from nptc.db.bootstrap import seed_system_properties
@@ -500,6 +501,49 @@ def test_specimen_unconstrained_entry_accepts_zero_specimen_values(
     )
 
     assert rows == []
+
+
+# --- FR-89: the reverse direction (issue #249) ------------------------------
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_assert_specimen_flag_allowed_refuses_when_specimen_values_exist(
+    app_session: Session,
+) -> None:
+    entry = _new_entry(app_session)
+    _specimen_seeded(app_session)
+    terminology = StubTerminologyClient()
+    _seed_specimen_stub(terminology, ["specimen-1"])
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key="specimen",
+        values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
+        reason="Recorded a specimen value before flagging unconstrained",
+        registry=_registry(app_session, terminology),
+    )
+
+    with pytest.raises(PropertyValidationError) as excinfo:
+        assert_specimen_flag_allowed(app_session, entry)
+
+    issue = excinfo.value.issues[0]
+    assert issue.code == "specimen-unconstrained-conflict"
+    assert issue.property_key == "specimen"
+    assert issue.ordinal == 0
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_assert_specimen_flag_allowed_permits_an_entry_with_no_specimen_values(
+    app_session: Session,
+) -> None:
+    entry = _new_entry(app_session)
+    _specimen_seeded(app_session)
+
+    assert_specimen_flag_allowed(app_session, entry)  # must not raise
 
 
 # --- FR-10: local code system binding, no terminology call ------------------

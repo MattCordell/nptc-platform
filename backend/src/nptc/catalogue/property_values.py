@@ -26,14 +26,18 @@ bound (ADR-0012, enforced by `nptc.registry.schema.validate_values`)
 actually meaningful: a caller cannot bypass it by adding one row at a time
 without ever supplying the full set for validation.
 
-**FR-89's cross-field invariant.** `specimen_unconstrained = true`
-(PRD S6.2) asserts "this test accepts any specimen", which is a fact about
-the *entry*, not the *property* - so it cannot live inside
-`nptc.registry.schema.validate_values`, which only ever sees one
-property's own values. `_validate_specimen_cross_field` is the one piece
-of specimen-specific knowledge in this module, checked only when
-`property_key == "specimen"`; every other property's validation is
-entirely generic.
+**FR-89's cross-field invariant, enforced from both sides (issue #249).**
+`specimen_unconstrained = true` (PRD S6.2) asserts "this test accepts any
+specimen", which is a fact about the *entry*, not the *property* - so it
+cannot live inside `nptc.registry.schema.validate_values`, which only ever
+sees one property's own values. `_validate_specimen_cross_field` is the
+one piece of specimen-specific knowledge checked when a `specimen` value is
+saved (`property_key == "specimen"`); `assert_specimen_flag_allowed` is the
+reverse direction, called by `nptc.catalogue.entries.save_entry` when a
+caller sets the flag itself. Both raise `PropertyValidationError` with the
+same `_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE`, so a caller sees one
+wording for one invariant regardless of which write path tripped it. Every
+other property's validation is entirely generic.
 
 **FR-10's binding-strength override lives here, not in `CodeHandler`.**
 `CodeHandler.validate(value, spec)` never sees a `justification` - that
@@ -53,7 +57,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from sqlalchemy import delete, select
 from sqlalchemy import inspect as sa_inspect
@@ -78,6 +82,7 @@ __all__ = [
     "PropertyValidationError",
     "PropertyValueInput",
     "PropertyWriteIssue",
+    "assert_specimen_flag_allowed",
     "save_property_values",
 ]
 
@@ -92,6 +97,15 @@ _NOT_IN_VALUE_SET = "not-in-value-set"
 #: the module docstring's cross-field note. Every other property is
 #: handled entirely generically.
 _SPECIMEN_KEY = "specimen"
+
+#: FR-89's cross-field refusal, in the one wording both directions share
+#: (issue #249's own requirement: mirrored, not restated) - see
+#: `_validate_specimen_cross_field` and `assert_specimen_flag_allowed`.
+_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE: Final[str] = (
+    "this entry is marked as accepting any specimen "
+    "(specimen_unconstrained) - clear that flag before recording "
+    "a specimen value, or remove the specimen value before setting it"
+)
 
 #: A synthetic policy for the audit snapshot this module records - not
 #: `nptc.audit.policy.policy_for(PropertyValue)`, which classifies that
@@ -209,12 +223,50 @@ def _validate_specimen_cross_field(
             property_key=property_key,
             label="Specimen",
             code="specimen-unconstrained-conflict",
-            message=(
-                "this entry is marked as accepting any specimen "
-                "(specimen_unconstrained) - clear that flag before recording "
-                "a specimen value, or remove the specimen value before setting it"
-            ),
+            message=_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE,
         ),
+    )
+
+
+def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> None:
+    """FR-89's cross-field invariant, checked in the other direction (issue
+    #249): refuses setting `entry.specimen_unconstrained = True` while the
+    entry still holds one or more `specimen` property values. Does nothing
+    if it holds none - including when the flag is being *cleared*, which
+    `nptc.catalogue.entries.save_entry` never calls this for at all.
+
+    Raises `PropertyValidationError` with one `PropertyWriteIssue` per
+    blocking value, named by its `ordinal`, so a caller can see exactly
+    which recorded specimens are in the way - mirroring
+    `_validate_specimen_cross_field`'s own issue shape for the forward
+    direction. See the module docstring's cross-field note for why both
+    directions share one message.
+    """
+    existing = (
+        session.execute(
+            select(PropertyValue)
+            .where(
+                PropertyValue.entry_id == entry.id,
+                PropertyValue.property_key == _SPECIMEN_KEY,
+            )
+            .order_by(PropertyValue.ordinal)
+        )
+        .scalars()
+        .all()
+    )
+    if not existing:
+        return
+    raise PropertyValidationError(
+        tuple(
+            PropertyWriteIssue(
+                property_key=_SPECIMEN_KEY,
+                label="Specimen",
+                code="specimen-unconstrained-conflict",
+                message=_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE,
+                ordinal=row.ordinal,
+            )
+            for row in existing
+        )
     )
 
 

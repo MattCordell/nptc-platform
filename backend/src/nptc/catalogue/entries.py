@@ -35,6 +35,16 @@ savepoint rollback discards only the attempted (and never-persisted)
 have their own test (`backend/tests/test_catalogue_optimistic_locking.py`);
 one passing proves nothing about the other.
 
+**FR-89's cross-field invariant, the reverse direction (issue #249).**
+`nptc.catalogue.property_values.save_property_values` already refuses a
+specimen value on an entry already flagged `specimen_unconstrained`; `save_
+entry` calls that module's `assert_specimen_flag_allowed` to refuse the
+other direction - setting the flag on an entry that already holds specimen
+values - so the invariant holds no matter which write path a caller takes.
+This is an import from `nptc.catalogue.property_values`, not the reverse:
+that module has no need to import anything from this one, so there is no
+cycle.
+
 **FR-37 (issue #47): `reason` is a required argument, not an optional one.**
 Every write path here validates it via
 `nptc.catalogue.changelog.validate_changelog_note` *before* touching the
@@ -71,6 +81,7 @@ from nptc.catalogue.errors import (
     EntryVersionConflictError,
     FieldConflict,
 )
+from nptc.catalogue.property_values import assert_specimen_flag_allowed
 from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
@@ -482,6 +493,14 @@ def save_entry(
             language=DEFAULT_LANGUAGE,
             use=str(DesignationUse.PREFERRED),
         )
+
+    if changes.specimen_unconstrained:
+        # FR-89, the reverse direction (issue #249): refused before the
+        # savepoint opens, same posture as the collision check above - a
+        # rejected flag-set must never reach `record_change`. Only checked
+        # when the flag is being *set*; clearing it (`False`) never
+        # conflicts with anything a specimen value could hold.
+        assert_specimen_flag_allowed(session, entry)
 
     # The savepoint must open *before* any attribute is mutated: opening
     # one autoflushes any already-pending state, and if that happened
