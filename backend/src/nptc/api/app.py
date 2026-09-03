@@ -23,6 +23,7 @@ from nptc.api.routers import (
     catalogue_admin,
     catalogue_bindings,
     catalogue_designations,
+    catalogue_entries,
     catalogue_properties,
     registry,
     terminology,
@@ -94,6 +95,11 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
     # FR-10, FR-11, FR-37, FR-38, FR-88, FR-89). A separate router for the
     # same reason as the two write routers above.
     app.include_router(catalogue_properties.router, prefix=API_PREFIX)
+    # issue #249: the entry's own core-column write route - status and
+    # specimen_unconstrained (FR-36, FR-37, FR-38, FR-89). Shares its path
+    # with catalogue.py's public GET; see that module's own docstring for
+    # why that is legal and deliberate.
+    app.include_router(catalogue_entries.router, prefix=API_PREFIX)
     # issue #228: the admin read counterpart to catalogue.py's public detail
     # route - any status, gated on catalogue.edit_published, so an edit
     # screen (#149) can load a draft entry before the write routes above

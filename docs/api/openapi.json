@@ -298,6 +298,121 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Set a catalogue entry's status and/or specimen_unconstrained flag",
+        "operationId": "patch_entry_api_v1_catalogue_entries__business_key__patch",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchEntryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryCoreWriteResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry matches the given business_key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. Carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Patch Entry Api V1 Catalogue Entries  Business Key  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The `reason` is missing or low-information (FR-37), the body names neither `status` nor `specimen_unconstrained`, `status` is not one of `draft`, `active`, `deprecated` or `withdrawn`, or setting `specimen_unconstrained` to `true` conflicts with one or more specimen values already recorded on this entry (FR-89) - `issues[]` then names each blocking value by `ordinal`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PropertyValidationResponse"
+                    }
+                  ],
+                  "title": "Response 422 Patch Entry Api V1 Catalogue Entries  Business Key  Patch"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/catalogue/entries/{business_key}/designations": {
@@ -2687,6 +2802,16 @@
         ],
         "title": "BindingTarget"
       },
+      "CatalogueEntryStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "active",
+          "deprecated",
+          "withdrawn"
+        ],
+        "title": "CatalogueEntryStatus"
+      },
       "CodeBindingEditionHint": {
         "type": "string",
         "enum": [
@@ -3089,6 +3214,29 @@
         ],
         "title": "DesignationWriteResult"
       },
+      "EntryCoreWriteResult": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CatalogueEntryStatus"
+          },
+          "specimen_unconstrained": {
+            "type": "boolean",
+            "title": "Specimen Unconstrained"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "specimen_unconstrained",
+          "row_version"
+        ],
+        "title": "EntryCoreWriteResult",
+        "description": "The entry's core columns after the write, plus its new `row_version`\n- mirroring `catalogue_properties.PropertyValuesWriteResult`, so an\nediting client never has to re-fetch the entry just to learn its next\nlock token. `status` is typed `CatalogueEntryStatus`, matching the\nrequest field it round-trips into (`entry.status` is a plain `str` at\nthe ORM layer - see `catalogue_entry.py`'s note on why the column\nitself is `TEXT`, not a native `ENUM` - but the wire contract stays a\nclosed union both ways, so a caller can feed this response straight\nback into its next PATCH body without a cast)."
+      },
       "EntryDetail": {
         "properties": {
           "business_key": {
@@ -3294,6 +3442,46 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "PatchEntryRequest": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatalogueEntryStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "specimen_unconstrained": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specimen Unconstrained"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "title": "Expected Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason",
+          "expected_row_version"
+        ],
+        "title": "PatchEntryRequest",
+        "description": "The body of `PATCH /catalogue/entries/{business_key}`.\n\n`status`/`specimen_unconstrained` are both optional so a caller can set\neither or both in one save - `None` means \"leave this field alone\",\nmatching `EntryChanges`' own contract - but a body naming neither is\nrefused rather than silently treated as a no-op write (issue #249's own\nacceptance criterion)."
       },
       "PropertyCardinality": {
         "type": "string",
