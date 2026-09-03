@@ -30,6 +30,8 @@ export type CollisionBody = components["schemas"]["DesignationCollisionResponse"
 export type VersionConflictBody = components["schemas"]["VersionConflictResponse"];
 export type CollisionItem = components["schemas"]["CollisionItem"];
 export type FieldConflict = components["schemas"]["FieldConflictItem"];
+export type PropertyValidationBody = components["schemas"]["PropertyValidationResponse"];
+export type PropertyIssue = components["schemas"]["PropertyIssueItem"];
 
 function conflictBody(error: unknown): Record<string, unknown> | null {
   // `instanceof ApiError` rather than a duck-typed `status` check: every
@@ -75,6 +77,28 @@ export function asVersionConflict(error: unknown): VersionConflictBody | null {
     return null;
   }
   return body as unknown as VersionConflictBody;
+}
+
+/**
+ * The FR-09/FR-10/FR-88/FR-89 field-level validation body, or `null` if this
+ * refusal is not one (issue #151, #248's `PropertyValidationResponse`).
+ *
+ * Status 422, not 409 - a different code from the two conflict bodies above,
+ * so this checks `error.status` directly rather than sharing `conflictBody`.
+ * Keyed on `issues` being an array: FastAPI's own `HTTPValidationError` (a
+ * malformed request body that never reached the route) is also a 422 with a
+ * `detail` array, but under the key `detail`, not `issues` - so the two
+ * shapes cannot be confused even though both arrive as this status.
+ */
+export function asPropertyValidationError(error: unknown): PropertyValidationBody | null {
+  if (!(error instanceof ApiError) || error.status !== 422) {
+    return null;
+  }
+  if (typeof error.body !== "object" || error.body === null) {
+    return null;
+  }
+  const body = error.body as Record<string, unknown>;
+  return Array.isArray(body.issues) ? (body as unknown as PropertyValidationBody) : null;
 }
 
 /** The `detail` sentence any refusal carries, or `null` if it has none. */
