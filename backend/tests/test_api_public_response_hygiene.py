@@ -489,6 +489,49 @@ def test_property_value_write_response_contains_no_uuid(api: ApiTestApp) -> None
     assert found_uuid is None, f"{save_response.request.url}: {found_uuid and found_uuid.group()}"
 
 
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_entry_core_write_response_contains_no_uuid(api: ApiTestApp) -> None:
+    """The entry-core-write analogue of the binding/designation/property-value
+    write hygiene tests above (issue #249)."""
+    token = api.token(subject="sub-entry-core-write-hygiene")
+    api.get("/auth/me", token=token)
+    user = api.session.query(User).order_by(User.created_at.desc()).first()
+    assert user is not None
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    admin_token = api.token(subject="sub-entry-core-write-hygiene", extra_claims={"acr": "2"})
+
+    entry = create_entry(
+        api.session,
+        AuditContext.system(),
+        preferred_term="Entry core write hygiene fixture",
+        reason="Created for issue #249 hygiene test",
+    )
+    api.session.flush()
+
+    patch_response = api.request(
+        "PATCH",
+        f"/catalogue/entries/{entry.business_key}",
+        token=admin_token,
+        json={
+            "specimen_unconstrained": True,
+            "reason": "Set for the entry core write-hygiene test.",
+            "expected_row_version": entry.row_version,
+        },
+    )
+
+    assert patch_response.status_code == 200, patch_response.text
+    found_uuid = _UUID_RE.search(patch_response.text)
+    assert found_uuid is None, f"{patch_response.request.url}: {found_uuid and found_uuid.group()}"
+
+
 # --- issue #228's admin read route: the same two invariants, on a draft --
 
 
