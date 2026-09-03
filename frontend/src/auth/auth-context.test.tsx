@@ -498,6 +498,7 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
     await act(async () => {
       refuse();
       await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
