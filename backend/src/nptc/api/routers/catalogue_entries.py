@@ -55,6 +55,16 @@ withdrawn` is a 422 before the route body ever runs, and the table's own
 permission every other catalogue write route already uses. Also in
 `MFA_REQUIRED_PERMISSIONS`, so the NFR-06 step-up comes free, matching
 `catalogue_properties.py`/`catalogue_designations.py`.
+
+**A no-op resubmission is a `200`, not a `422`.** `save_entry`'s own
+short-circuit (see its docstring) means a body that names a field but
+submits its already-current value - e.g. `{"status": "draft", ...}` against
+an entry already `draft` - returns `200` with the entry's *unchanged*
+`row_version` and writes no audit event; the submitted `reason` is silently
+discarded. This is a different case from a body naming neither field
+(rejected `422`, since that is ambiguous between "no-op" and "caller
+forgot the field") - a no-op body unambiguously names its intended change,
+`save_entry` just finds nothing to apply.
 """
 
 from __future__ import annotations
@@ -170,11 +180,16 @@ class EntryCoreWriteResult(BaseModel):
     """The entry's core columns after the write, plus its new `row_version`
     - mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
     editing client never has to re-fetch the entry just to learn its next
-    lock token."""
+    lock token. `status` is typed `CatalogueEntryStatus`, matching the
+    request field it round-trips into (`entry.status` is a plain `str` at
+    the ORM layer - see `catalogue_entry.py`'s note on why the column
+    itself is `TEXT`, not a native `ENUM` - but the wire contract stays a
+    closed union both ways, so a caller can feed this response straight
+    back into its next PATCH body without a cast)."""
 
     model_config = ConfigDict(frozen=True)
 
-    status: str
+    status: CatalogueEntryStatus
     specimen_unconstrained: bool
     row_version: int
 

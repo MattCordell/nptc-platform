@@ -242,9 +242,13 @@ def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> Non
     direction. See the module docstring's cross-field note for why both
     directions share one message.
     """
-    existing = (
+    # A precondition check, not a read that needs the mapped objects - only
+    # `ordinal` is used, so this selects the column directly rather than
+    # hydrating and identity-mapping every specimen row on a path that runs
+    # on every flag-set.
+    ordinals = (
         session.execute(
-            select(PropertyValue)
+            select(PropertyValue.ordinal)
             .where(
                 PropertyValue.entry_id == entry.id,
                 PropertyValue.property_key == _SPECIMEN_KEY,
@@ -254,7 +258,7 @@ def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> Non
         .scalars()
         .all()
     )
-    if not existing:
+    if not ordinals:
         return
     raise PropertyValidationError(
         tuple(
@@ -263,9 +267,9 @@ def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> Non
                 label="Specimen",
                 code="specimen-unconstrained-conflict",
                 message=_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE,
-                ordinal=row.ordinal,
+                ordinal=ordinal,
             )
-            for row in existing
+            for ordinal in ordinals
         )
     )
 

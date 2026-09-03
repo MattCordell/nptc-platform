@@ -212,22 +212,72 @@ def test_patch_entry_clears_specimen_unconstrained(api: ApiTestApp) -> None:
 
 
 @pytest.mark.req("FR-36")
+@pytest.mark.req("NFR-08")
 @pytest.mark.integration
 @pytest.mark.parametrize("status", ["draft", "active", "deprecated", "withdrawn"])
 def test_patch_entry_sets_status_to_every_recognised_value(api: ApiTestApp, status: str) -> None:
+    """A new entry starts `draft` (`create_entry`'s own default), so the
+    `status="draft"` case of this parametrize is genuinely a no-op
+    resubmission, not a transition - see `test_patch_entry_resubmitting_
+    the_current_status_is_a_no_op` for that case asserted on its own
+    terms. The other three are real transitions and get the NFR-08
+    audit-event assertion the no-op case cannot give."""
     token = _admin_token(api, subject=f"sub-patch-status-{status}")
     entry = _new_entry(api, preferred_term=f"FR-36 status entry {status}")
+    starting_row_version = entry.row_version
+    events_before = api.session.execute(select(AuditEvent)).all()
+
+    response = _patch_entry(
+        api,
+        token,
+        business_key=entry.business_key,
+        expected_row_version=starting_row_version,
+        status=status,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == status
+
+    if status == "draft":
+        assert response.json()["row_version"] == starting_row_version
+        assert api.session.execute(select(AuditEvent)).all() == events_before
+        return
+
+    assert response.json()["row_version"] == starting_row_version + 1
+    event = _latest_audit_event(api.session, entry.id)
+    assert event.action == "catalogue_entry.updated"
+    assert event.before == {"status": "draft"}
+    assert event.after == {"status": status}
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_patch_entry_resubmitting_the_current_status_is_a_no_op(api: ApiTestApp) -> None:
+    """`save_entry`'s own no-op short-circuit reaches this route: a body
+    naming `status` but submitting the entry's already-current value
+    returns `200` with an *unchanged* `row_version` and writes no audit
+    event - a different outcome from a body naming neither field, which is
+    refused `422` (`test_patch_entry_with_neither_field_is_422`) because
+    that case is ambiguous between "no-op" and "caller forgot the
+    field"."""
+    token = _admin_token(api, subject="sub-patch-status-no-op")
+    entry = _new_entry(api)
+    events_before = api.session.execute(select(AuditEvent)).all()
 
     response = _patch_entry(
         api,
         token,
         business_key=entry.business_key,
         expected_row_version=entry.row_version,
-        status=status,
+        status="draft",
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == status
+    body = response.json()
+    assert body["status"] == "draft"
+    assert body["row_version"] == entry.row_version
+    assert api.session.execute(select(AuditEvent)).all() == events_before
 
 
 @pytest.mark.req("FR-36")

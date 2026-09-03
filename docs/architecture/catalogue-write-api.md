@@ -497,7 +497,19 @@ assert_specimen_flag_allowed` is the shared implementation, called from `save_en
 itself (so `save_entries` inherits it too, not just this route), and it raises the same
 `PropertyValidationError`/`PropertyValidationResponse` the forward direction does -
 both directions share one refusal message, and the 422 names each blocking specimen
-value by `ordinal`.
+value by `ordinal`. It only runs on the *transition* to `True` - a submitted
+`specimen_unconstrained: true` against an entry already `True` is not checked again, so
+an editor whose form resends the whole entry on every save (issue #149's edit screen)
+never gets refused for a flag they are not changing.
+
+**A no-op resubmission returns 200, not 422.** `save_entry`'s own short-circuit means a
+body naming a field but submitting its already-current value - e.g.
+`{"status": "draft", ...}` against an entry already `draft` - returns `200` with the
+entry's *unchanged* `row_version` and writes no audit event; the submitted `reason` is
+silently discarded. This differs from a body naming neither field, which is refused
+(422): naming neither is ambiguous between "no-op" and "caller forgot the field",
+whereas naming a field with its current value unambiguously states the intent and
+`save_entry` simply finds nothing to apply.
 
 ### Errors (entry core columns)
 
@@ -507,11 +519,12 @@ value by `ordinal`.
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry with this `business_key`. |
 | 409 | A stale `expected_row_version` (FR-38) - the same `VersionConflictResponse` body `/amendment` and `/properties/{key}` return above. |
-| 422 | A missing or low-information `reason` (FR-37), a body naming neither `status` nor `specimen_unconstrained`, a `status` outside the closed enum, or setting `specimen_unconstrained` to `true` while the entry still holds one or more specimen values (FR-89) - `issues[]` then names each blocking value's `ordinal`. |
+| 422 | A missing or low-information `reason` (FR-37), a body naming neither `status` nor `specimen_unconstrained`, a `status` outside the closed enum, or setting `specimen_unconstrained` to `true` while the entry does not already hold it and still holds one or more specimen values (FR-89) - `issues[]` then names each blocking value's `ordinal`. |
 
 A rejected write leaves no partial mutation and no audit event: `save_entry`'s
 row-version and FR-89 preconditions both run before its savepoint opens, the same
-"reject before mutating" posture every write path in this document takes.
+"reject before mutating" posture every write path in this document takes. A no-op
+resubmission (see above) is not a rejection - it is a `200`.
 
 ## What these issues do not cover
 

@@ -494,12 +494,19 @@ def save_entry(
             use=str(DesignationUse.PREFERRED),
         )
 
-    if changes.specimen_unconstrained:
+    if changes.specimen_unconstrained and not entry.specimen_unconstrained:
         # FR-89, the reverse direction (issue #249): refused before the
         # savepoint opens, same posture as the collision check above - a
         # rejected flag-set must never reach `record_change`. Only checked
-        # when the flag is being *set*; clearing it (`False`) never
-        # conflicts with anything a specimen value could hold.
+        # on the *transition* to True, not merely when the submitted value
+        # is True: an entry that already holds `specimen_unconstrained =
+        # True` (a state the service layer itself never produces alongside
+        # specimen values, but a direct-SQL or seeded row could) must stay
+        # editable for its other columns without an editor having to first
+        # "clear" a flag they never touched - #149's edit screen resends
+        # the whole form, both fields, on every save. Clearing the flag
+        # (`False`) never conflicts with anything a specimen value could
+        # hold, so it is excluded either way.
         assert_specimen_flag_allowed(session, entry)
 
     # The savepoint must open *before* any attribute is mutated: opening

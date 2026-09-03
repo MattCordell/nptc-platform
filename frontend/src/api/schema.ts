@@ -861,11 +861,15 @@ export interface components {
          * @description The entry's core columns after the write, plus its new `row_version`
          *     - mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
          *     editing client never has to re-fetch the entry just to learn its next
-         *     lock token.
+         *     lock token. `status` is typed `CatalogueEntryStatus`, matching the
+         *     request field it round-trips into (`entry.status` is a plain `str` at
+         *     the ORM layer - see `catalogue_entry.py`'s note on why the column
+         *     itself is `TEXT`, not a native `ENUM` - but the wire contract stays a
+         *     closed union both ways, so a caller can feed this response straight
+         *     back into its next PATCH body without a cast).
          */
         EntryCoreWriteResult: {
-            /** Status */
-            status: string;
+            status: components["schemas"]["CatalogueEntryStatus"];
             /** Specimen Unconstrained */
             specimen_unconstrained: boolean;
             /** Row Version */

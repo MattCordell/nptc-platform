@@ -535,10 +535,11 @@ def test_save_entries_inherits_the_specimen_unconstrained_refusal(app_session: S
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
 def test_save_entry_allows_clearing_specimen_unconstrained(app_session: Session) -> None:
-    """`assert_specimen_flag_allowed` only ever fires for *setting* the
-    flag (`if changes.specimen_unconstrained:` is falsy for `False`) - a
-    caller clearing it is never routed through the check at all, no matter
-    what specimen values the entry does or does not hold."""
+    """`assert_specimen_flag_allowed` only ever fires on the *transition* to
+    `True` (`if changes.specimen_unconstrained and not entry.
+    specimen_unconstrained:`) - a caller clearing it is never routed through
+    the check at all, no matter what specimen values the entry does or does
+    not hold."""
     entry = create_entry(
         app_session,
         AuditContext.system(),
@@ -558,6 +559,53 @@ def test_save_entry_allows_clearing_specimen_unconstrained(app_session: Session)
     )
 
     assert saved.specimen_unconstrained is False
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_save_entry_does_not_recheck_an_already_set_specimen_flag(app_session: Session) -> None:
+    """The gate is `and not entry.specimen_unconstrained`, not a bare
+    `if changes.specimen_unconstrained:` (found in review of #249's first
+    pass) - resending `specimen_unconstrained=True` must not by itself
+    refuse a save, even for an entry that (through a route this invariant
+    cannot see, e.g. a direct-SQL or seeded row) already holds both the
+    flag and specimen values. Otherwise an editor whose form resends the
+    whole entry unchanged on every save (issue #149's edit screen) could
+    never save an unrelated field like `status` on such an entry."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Specimen already-set fixture",
+        reason="Created for FR-89 test",
+    )
+    registry = _seeded_specimen_registry(app_session)
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key="specimen",
+        values=[PropertyValueInput(value={"system": _SPECIMEN_SYSTEM, "code": "specimen-1"})],
+        reason="Recorded a specimen value while the flag was still False",
+        registry=registry,
+    )
+    # Bypasses `save_entry` (and its own FR-89 check) to reach a state the
+    # service layer never produces on its own - standing in for a
+    # direct-SQL or seeded row that already holds both.
+    entry.specimen_unconstrained = True
+    app_session.flush()
+
+    saved = save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        changes=EntryChanges(specimen_unconstrained=True, status="active"),
+        reason="Resends the whole form; only status actually changes",
+    )
+
+    assert saved.specimen_unconstrained is True
+    assert saved.status == "active"
 
 
 @pytest.mark.req("FR-38")

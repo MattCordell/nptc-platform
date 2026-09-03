@@ -3217,8 +3217,7 @@
       "EntryCoreWriteResult": {
         "properties": {
           "status": {
-            "type": "string",
-            "title": "Status"
+            "$ref": "#/components/schemas/CatalogueEntryStatus"
           },
           "specimen_unconstrained": {
             "type": "boolean",
@@ -3236,7 +3235,7 @@
           "row_version"
         ],
         "title": "EntryCoreWriteResult",
-        "description": "The entry's core columns after the write, plus its new `row_version`\n- mirroring `catalogue_properties.PropertyValuesWriteResult`, so an\nediting client never has to re-fetch the entry just to learn its next\nlock token."
+        "description": "The entry's core columns after the write, plus its new `row_version`\n- mirroring `catalogue_properties.PropertyValuesWriteResult`, so an\nediting client never has to re-fetch the entry just to learn its next\nlock token. `status` is typed `CatalogueEntryStatus`, matching the\nrequest field it round-trips into (`entry.status` is a plain `str` at\nthe ORM layer - see `catalogue_entry.py`'s note on why the column\nitself is `TEXT`, not a native `ENUM` - but the wire contract stays a\nclosed union both ways, so a caller can feed this response straight\nback into its next PATCH body without a cast)."
       },
       "EntryDetail": {
         "properties": {
