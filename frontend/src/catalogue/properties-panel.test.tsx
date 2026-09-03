@@ -112,6 +112,27 @@ const DEFINITIONS = {
       row_version: 1,
       form_control: { control: "text", params: {} },
     },
+    {
+      key: "specimen",
+      label: "Specimen",
+      datatype: "code",
+      cardinality: "0..*",
+      scope: "both",
+      required_for_submission: false,
+      required_for_publication: false,
+      binding_target: "value_set",
+      value_set_uri: "http://snomed.info/sct?fhir_vs=ecl/%3C123038009",
+      strength: "required",
+      edition: null,
+      local_code_system_key: null,
+      filterable: true,
+      origin: "system",
+      status: "active",
+      display_order: 30,
+      constraints: { forbidden_codes: ["Any"] },
+      row_version: 1,
+      form_control: { control: "concept_picker", params: { allowJustification: false } },
+    },
   ],
 };
 
@@ -170,6 +191,19 @@ const VALUE_OPTIONS_OK: Route = {
   body: { items: [{ code: "HAEM", display: "Haematology" }], total: 1 },
 };
 
+const SPECIMEN_VALUE_OPTIONS_OK: Route = {
+  method: "GET",
+  path: "/registry/properties/specimen/values",
+  status: 200,
+  body: {
+    items: [
+      { code: "119361006", display: "Plasma specimen" },
+      { code: "122554006", display: "Serum specimen" },
+    ],
+    total: 2,
+  },
+};
+
 function panel() {
   return within(screen.getByRole("region", { name: "Registry properties" }));
 }
@@ -187,16 +221,18 @@ afterEach(() => {
 
 describe("generated rows", () => {
   it("shows an active property's recorded value, in display_order", async () => {
-    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
 
     await renderLoaded();
 
     const rows = panel().getAllByRole("row");
-    // Header + discipline + usage_guidance + retired_note (never_used has no
-    // recorded value on this entry, so FR-11's own rule drops it entirely).
-    expect(rows).toHaveLength(4);
+    // Header + discipline + specimen + usage_guidance + retired_note
+    // (never_used has no recorded value on this entry, so FR-11's own rule
+    // drops it entirely), in display_order (10, 30, 40, 50).
+    expect(rows).toHaveLength(5);
     expect(within(rows[1]).getByText("Discipline")).toBeInTheDocument();
     expect(within(rows[1]).getByText("HAEM")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Specimen")).toBeInTheDocument();
   });
 
   it("shows an active property with nothing recorded yet as editable, not hidden", async () => {
@@ -204,7 +240,7 @@ describe("generated rows", () => {
 
     await renderLoaded();
 
-    expect(panel().getByText("No value recorded.")).toBeInTheDocument();
+    expect(panel().getAllByText("No value recorded.").length).toBeGreaterThan(0);
     expect(
       panel().getByRole("button", { name: "Edit Usage guidance" }),
     ).toBeInTheDocument();
@@ -371,6 +407,63 @@ describe("editing a property's values", () => {
     await user.click(dialog.getByRole("button", { name: "Save" }));
 
     expect(await dialog.findAllByText("This value is too long.")).not.toHaveLength(0);
+  });
+
+  // FR-88: specimen is 0..* - the sample's own worst case carries seven
+  // values, so the panel must not impose a lower cap of its own.
+  it("lets a 0..* coded property like specimen grow past a single value", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
+    const dialog = within(screen.getByRole("dialog"));
+    for (let i = 0; i < 6; i += 1) {
+      await user.click(dialog.getByRole("button", { name: /add another value/i }));
+    }
+
+    expect(dialog.getAllByLabelText(/^Specimen \d$/)).toHaveLength(7);
+  });
+
+  // FR-89: the literal "Any" is refused server-side (a forbidden code on the
+  // specimen definition's own constraints), and the refusal must land on the
+  // specimen value it names rather than as a generic sentence.
+  it("shows the literal-Any refusal against the specimen value it names", async () => {
+    stubApi([
+      READ_OK,
+      PROPERTIES_OK,
+      VALUE_OPTIONS_OK,
+      SPECIMEN_VALUE_OPTIONS_OK,
+      {
+        method: "PUT",
+        path: `/catalogue/entries/${BUSINESS_KEY}/properties/specimen`,
+        status: 422,
+        body: {
+          detail: "One or more values failed validation.",
+          issues: [
+            {
+              property_key: "specimen",
+              label: "Specimen",
+              code: "forbidden-code",
+              message:
+                "Any is not a valid specimen code (FR-89). Use the Any setting instead.",
+              ordinal: 0,
+            },
+          ],
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.type(dialog.getByLabelText("Changelog note"), "Try the literal Any code");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+
+    expect(
+      await dialog.findAllByText(/Any is not a valid specimen code/),
+    ).not.toHaveLength(0);
   });
 });
 
