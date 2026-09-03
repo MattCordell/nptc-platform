@@ -49,8 +49,10 @@ ECL_SINGLE_CONCEPT = "122192001"
 class Exchange:
     """One captured response and the request identity that selects it.
 
-    ``key``'s shape depends on its first element (the operation): ``expand``
-    keys are ``("expand", ecl, edition_label)``; ``lookup`` keys are
+    ``key``'s shape depends on its first element (the operation), with
+    ``edition_label`` always last so ``_seeded_stub`` can read it via
+    ``key[-1]`` regardless of operation: ``expand`` keys are
+    ``("expand", ecl, filter, edition_label)``; ``lookup`` keys are
     ``("lookup", code, edition_label)``; ``subsumes`` keys are
     ``("subsumes", code_a, code_b, edition_label)``; ``validate_code`` keys
     are ``("validate_code", code, display, edition_label)``. Both the
@@ -65,9 +67,10 @@ class Exchange:
 
 
 EXCHANGES: tuple[Exchange, ...] = (
-    Exchange(("expand", ECL_TWO_CODES, "au"), "expand-two-active-concepts.json"),
-    Exchange(("expand", ECL_FR84_CHECK, "au"), "expand-empty.json"),
-    Exchange(("expand", ECL_SINGLE_CONCEPT, "au"), "expand-with-designations.json"),
+    Exchange(("expand", ECL_TWO_CODES, None, "au"), "expand-two-active-concepts.json"),
+    Exchange(("expand", ECL_FR84_CHECK, None, "au"), "expand-empty.json"),
+    Exchange(("expand", ECL_SINGLE_CONCEPT, None, "au"), "expand-with-designations.json"),
+    Exchange(("expand", ECL_TWO_CODES, "acanth", "au"), "expand-filtered-by-text.json"),
     Exchange(("lookup", "122192001", "au"), "lookup-active-concept.json"),
     Exchange(("lookup", "873871000168106", "au"), "lookup-inactive-duplicate-same-as.json"),
     Exchange(("subsumes", "71388002", "71388002", "au"), "subsumes-equivalent.json"),
@@ -125,7 +128,7 @@ def _key_for_request(request: httpx.Request) -> tuple[str | None, ...]:
             base, _, encoded_ecl = url_param.partition("?fhir_vs=ecl/")
             ecl = unquote(encoded_ecl)
             label = _label_from_version_uri(base)
-        return ("expand", ecl, label)
+        return ("expand", ecl, params.get("filter"), label)
     if path.endswith("$lookup"):
         return ("lookup", params.get("code", ""), _label_from_version_uri(params.get("version")))
     if path.endswith("$subsumes"):
@@ -181,9 +184,11 @@ def _seeded_stub(
         operation = key[0]
         edition = _edition_for_label(key[-1])
         if operation == "expand":
-            _, ecl, _label = key
+            _, ecl, filter_text, _label = key
             assert ecl is not None
-            stub.seed_expansion(ecl, fhir.parse_expansion(body), edition=edition)
+            stub.seed_expansion(
+                ecl, fhir.parse_expansion(body), edition=edition, filter=filter_text
+            )
         elif operation == "lookup":
             _, code, _label = key
             assert code is not None

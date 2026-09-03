@@ -24,6 +24,7 @@ authoring.
 | `expand-two-active-concepts.json` | `$expand` | Two active concepts, no designations |
 | `expand-empty.json` | `$expand` | FR-84's `MINUS <<71388002` check, zero violations |
 | `expand-with-designations.json` | `$expand` | `includeDesignations=true`, FSN + AU preferred term |
+| `expand-filtered-by-text.json` | `$expand` | `filter=` narrows a two-concept expansion to the one matching display (issue #247) - hand-constructed to the R4 shape like the inactive-concept fixture above, not live-captured |
 | `lookup-active-concept.json` | `$lookup` | Active concept, FSN + AU preferred term + `inactive=false` |
 | `lookup-inactive-duplicate-same-as.json` | `$lookup` | Inactive, `inactivationReason=Duplicate`, `SAME_AS` target (FR-46) |
 | `subsumes-equivalent.json` | `$subsumes` | `outcome: equivalent` |

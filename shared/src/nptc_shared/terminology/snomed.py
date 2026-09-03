@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from nptc_shared.sctid import has_valid_format
 from nptc_shared.terminology.models import Edition
@@ -30,6 +30,29 @@ def implicit_value_set_url(ecl: str, edition: Edition) -> str:
     string and the pinned and unpinned forms differ only by a path segment.
     """
     return f"{edition.system_version_uri}?fhir_vs=ecl/{quote(ecl, safe='')}"
+
+
+def ecl_from_implicit_value_set_url(uri: str) -> str:
+    """The ECL a SNOMED implicit value set URI encodes - the inverse of
+    ``implicit_value_set_url``.
+
+    Only the ``?fhir_vs=ecl/<percent-encoded ECL>`` form is recognised
+    (FR-10's binding shape for a coded property). Any other implicit value
+    set (``?fhir_vs=isa/...``, ``?fhir_vs=refset/...``) or a URI that carries
+    no ``fhir_vs`` parameter at all raises ``ValueError`` rather than
+    guessing at an ECL the URI never encoded - a property's stored
+    ``value_set_uri`` is server-side data, not caller input, so a bad value
+    here is a data-integrity fault for the caller to classify accordingly.
+    """
+    marker = "?fhir_vs=ecl/"
+    if marker not in uri:
+        raise ValueError(
+            f"{uri!r} is not a SNOMED implicit ECL value set URI (expected {marker!r})"
+        )
+    _base, _, encoded_ecl = uri.partition(marker)
+    if not encoded_ecl:
+        raise ValueError(f"{uri!r} has no ECL after {marker!r}")
+    return unquote(encoded_ecl)
 
 
 def ecl_set_of(codes: Iterable[str]) -> str:

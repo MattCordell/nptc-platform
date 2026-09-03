@@ -6,6 +6,7 @@ import pytest
 
 from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL
 from nptc_shared.terminology.snomed import (
+    ecl_from_implicit_value_set_url,
     ecl_set_of,
     implicit_value_set_url,
     semantic_tag,
@@ -30,6 +31,28 @@ def test_implicit_value_set_url_percent_encodes_the_ecl_exactly_once() -> None:
     url = implicit_value_set_url("<<71388002", SNOMED_CT_INTERNATIONAL)
     assert "ecl/%3C%3C71388002" in url
     assert "<<" not in url
+
+
+@pytest.mark.req("FR-10")
+def test_ecl_from_implicit_value_set_url_round_trips_with_the_builder() -> None:
+    for ecl, edition in (
+        ("122192001", SNOMED_CT_AU),
+        ("<<71388002", SNOMED_CT_INTERNATIONAL),
+        ("(122192001 OR 71388002) MINUS <<71388002", SNOMED_CT_AU.pinned_to("20260531")),
+    ):
+        assert ecl_from_implicit_value_set_url(implicit_value_set_url(ecl, edition)) == ecl
+
+
+def test_ecl_from_implicit_value_set_url_rejects_a_non_ecl_implicit_value_set() -> None:
+    with pytest.raises(ValueError, match="not a SNOMED implicit ECL value set URI"):
+        ecl_from_implicit_value_set_url(
+            "http://snomed.info/sct/32506021000036107?fhir_vs=isa/71388002"
+        )
+
+
+def test_ecl_from_implicit_value_set_url_rejects_a_uri_with_no_fhir_vs_parameter() -> None:
+    with pytest.raises(ValueError, match="not a SNOMED implicit ECL value set URI"):
+        ecl_from_implicit_value_set_url("http://snomed.info/sct/32506021000036107")
 
 
 def test_ecl_set_of_joins_codes_with_or() -> None:

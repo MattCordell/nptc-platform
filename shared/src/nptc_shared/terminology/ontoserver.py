@@ -115,6 +115,7 @@ class OntoserverClient:
         include_designations: bool = False,
         display_language: str | None = None,
         active_only: bool | None = None,
+        filter: str | None = None,
     ) -> Expansion:
         params: dict[str, str] = {
             "url": implicit_value_set_url(ecl, edition),
@@ -128,6 +129,8 @@ class OntoserverClient:
             params["displayLanguage"] = display_language
         if active_only is not None:
             params["activeOnly"] = "true" if active_only else "false"
+        if filter is not None:
+            params["filter"] = filter
 
         query_length = len(f"{Operation.EXPAND.value}?{httpx.QueryParams(params)}")
         if query_length <= _MAX_GET_URL_LENGTH:
