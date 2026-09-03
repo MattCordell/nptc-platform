@@ -345,6 +345,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/properties/{key}/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a coded property's offerable values
+         * @description FR-10's concept-picker data source (issue #247). Resolves `key`'s own
+         *     binding and answers from Ontoserver or the `LocalCode` table - see
+         *     `nptc.catalogue.property_value_sources.list_property_values` for the
+         *     one place that branches on `binding_target`; this route and
+         *     `PropertyValuePage` never see it.
+         */
+        get: operations["list_property_value_options_api_v1_registry_properties__key__values_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/terminology/concepts/{code}": {
         parameters: {
             query?: never;
@@ -991,6 +1015,26 @@ export interface components {
             value: unknown;
             /** Justification */
             justification: string | null;
+        };
+        /**
+         * PropertyValueItem
+         * @description One offerable value for a coded property (issue #247) - identical in
+         *     shape whether it came from a SNOMED value set or a local code system;
+         *     nothing here names `binding_target` (the acceptance criterion, on the
+         *     wire).
+         */
+        PropertyValueItem: {
+            /** Code */
+            code: string;
+            /** Display */
+            display: string | null;
+        };
+        /** PropertyValuePage */
+        PropertyValuePage: {
+            /** Items */
+            items: components["schemas"]["PropertyValueItem"][];
+            /** Total */
+            total: number;
         };
         /**
          * ReplaceBindingRequest
@@ -2479,6 +2523,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_property_value_options_api_v1_registry_properties__key__values_get: {
+        parameters: {
+            query?: {
+                filter?: string | null;
+                offset?: number;
+                count?: number;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyValuePage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No property definition matches the given key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The property named by `key` is not a coded property (it has no bound value source), or the `offset`/`count` query parameters failed validation. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The property's own stored value_set_uri could not be interpreted - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to "does this value set exist". Only reachable for a `value_set`-bound property. Names no URL, variable or upstream host. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries. Only reachable for a `value_set`-bound property; a `local_code_system` binding never calls the terminology server at all. May carry a `Retry-After` header. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

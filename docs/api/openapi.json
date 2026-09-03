@@ -1859,6 +1859,155 @@
         }
       }
     },
+    "/api/v1/registry/properties/{key}/values": {
+      "get": {
+        "tags": [
+          "registry"
+        ],
+        "summary": "List a coded property's offerable values",
+        "description": "FR-10's concept-picker data source (issue #247). Resolves `key`'s own\nbinding and answers from Ontoserver or the `LocalCode` table - see\n`nptc.catalogue.property_value_sources.list_property_values` for the\none place that branches on `binding_target`; this route and\n`PropertyValuePage` never see it.",
+        "operationId": "list_property_value_options_api_v1_registry_properties__key__values_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Count"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyValuePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `registry.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No property definition matches the given key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The property named by `key` is not a coded property (it has no bound value source), or the `offset`/`count` query parameters failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The property's own stored value_set_uri could not be interpreted - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to \"does this value set exist\". Only reachable for a `value_set`-bound property. Names no URL, variable or upstream host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries. Only reachable for a `value_set`-bound property; a `local_code_system` binding never calls the terminology server at all. May carry a `Retry-After` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/terminology/concepts/{code}": {
       "get": {
         "tags": [
@@ -3147,6 +3296,53 @@
         ],
         "title": "PropertyValue",
         "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based."
+      },
+      "PropertyValueItem": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "display"
+        ],
+        "title": "PropertyValueItem",
+        "description": "One offerable value for a coded property (issue #247) - identical in\nshape whether it came from a SNOMED value set or a local code system;\nnothing here names `binding_target` (the acceptance criterion, on the\nwire)."
+      },
+      "PropertyValuePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValueItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "PropertyValuePage"
       },
       "ReplaceBindingRequest": {
         "properties": {
