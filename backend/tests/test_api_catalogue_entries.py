@@ -183,20 +183,41 @@ def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
-def test_patch_entry_sets_status(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-status")
-    entry = _new_entry(api)
+@pytest.mark.parametrize("status", ["draft", "active", "deprecated", "withdrawn"])
+def test_patch_entry_sets_status_to_every_recognised_value(api: ApiTestApp, status: str) -> None:
+    token = _admin_token(api, subject=f"sub-patch-status-{status}")
+    entry = _new_entry(api, preferred_term=f"FR-36 status entry {status}")
 
     response = _patch_entry(
         api,
         token,
         business_key=entry.business_key,
         expected_row_version=entry.row_version,
-        status="active",
+        status=status,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "active"
+    assert response.json()["status"] == status
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_patch_entry_with_an_unrecognised_status_is_422(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-patch-bad-status")
+    entry = _new_entry(api)
+
+    response = api.request(
+        "PATCH",
+        f"/catalogue/entries/{entry.business_key}",
+        token=token,
+        json={
+            "status": "published",
+            "reason": _REASON,
+            "expected_row_version": entry.row_version,
+        },
+    )
+
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.req("FR-89")
