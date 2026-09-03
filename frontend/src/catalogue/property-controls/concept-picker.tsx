@@ -55,16 +55,28 @@ export function ConceptPickerControl({
         ]
       : fetchedOptions;
 
+  // `PropertyValuePage.total` can exceed what one page returns (a SNOMED
+  // value set easily does); with no signal an editor whose code sits past
+  // the first page sees an apparently-complete list with nothing wrong,
+  // and no reason to type a filter to narrow it further.
+  const page = options.data;
+  const truncated = page !== undefined && page.total > page.items.length;
   const searchHint =
     options.isPending && debouncedFilter.length > 0
       ? "Searching…"
       : options.isError
         ? "The list of values could not be loaded. Try again."
-        : undefined;
+        : truncated && page !== undefined
+          ? `Showing ${page.items.length} of ${page.total} — type to narrow.`
+          : undefined;
 
   return (
     <div className="flex flex-col gap-2">
-      <Field id={filterId} label="Filter" hint="Type to narrow the list below.">
+      <Field
+        id={filterId}
+        label={`Filter ${label}`}
+        hint="Type to narrow the list below."
+      >
         {(controlProps) => (
           <input
             {...controlProps}

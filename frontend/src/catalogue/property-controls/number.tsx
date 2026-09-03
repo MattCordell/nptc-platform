@@ -37,7 +37,17 @@ export function NumberControl({
           value={typeof value === "number" ? value : ""}
           onChange={(event) => {
             const raw = event.target.value;
-            onChange(raw === "" ? null : Number(raw));
+            if (raw === "") {
+              onChange(null);
+              return;
+            }
+            // A non-empty `raw` a browser's own `type="number"` constraint
+            // did not block (partial input, some non-Chromium engines) must
+            // not become `NaN` in state - `JSON.stringify(NaN)` serialises
+            // as `null` on the wire, silently indistinguishable from an
+            // untouched slot rather than surfacing as the entry it is.
+            const parsed = Number(raw);
+            onChange(Number.isFinite(parsed) ? parsed : null);
           }}
         />
       )}
