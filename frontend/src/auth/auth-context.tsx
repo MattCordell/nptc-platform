@@ -72,6 +72,12 @@ export function AuthProvider({
   // instance's mocks/globals have since become (issue #243).
   const mounted = useRef(true);
   useEffect(() => {
+    // Reset in the body, not only relied on as the `useRef` default:
+    // `StrictMode` (main.tsx) double-invokes this exact mount -> cleanup ->
+    // mount cycle, so a flag only ever cleared - never set back - by the
+    // cleanup would end this effect permanently `false` after that cycle's
+    // second mount, even though the provider is genuinely still mounted.
+    mounted.current = true;
     return () => {
       mounted.current = false;
     };
