@@ -238,6 +238,24 @@ describe("generated rows", () => {
 
     await expectNoA11yViolations(screen.getByRole("region", { name: "Registry properties" }));
   });
+
+  it("has no accessibility violations in the property edit dialog", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
+    await expectNoA11yViolations(await screen.findByRole("dialog"));
+  });
+
+  it("has no accessibility violations in the specimen_unconstrained dialog", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit" }));
+    await expectNoA11yViolations(await screen.findByRole("dialog"));
+  });
 });
 
 describe("editing a property's values", () => {
@@ -277,6 +295,15 @@ describe("editing a property's values", () => {
       reason: "Record fasting guidance",
       expected_row_version: 4,
     });
+    // A screen-reader user closing a dialog on save needs to be told the
+    // save happened, the same way DesignationsPanel/BindingsPanel announce.
+    // Every panel on this page owns its own live region, so this checks
+    // across all of them rather than assuming there is only one.
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("status").map((region) => region.textContent),
+      ).toContain("Usage guidance saved."),
+    );
   });
 
   it("refuses to save with no changelog note", async () => {
