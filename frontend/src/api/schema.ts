@@ -260,6 +260,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/entries/{business_key}/properties/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a property's recorded values on a catalogue entry */
+        put: operations["save_property_api_v1_catalogue_entries__business_key__properties__key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalogue/admin/entries/{business_key}": {
         parameters: {
             query?: never;
@@ -290,7 +307,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List property definitions */
+        /**
+         * List property definitions
+         * @description `scope` is inclusive of `PropertyScope.BOTH` (issue #248, decided
+         *     with the maintainer): `?scope=submission` returns `submission` and
+         *     `both` properties, `?scope=maintenance` returns `maintenance` and
+         *     `both`, and omitting it returns everything - a submission form should
+         *     not have to also ask for `both` to see a property meant for both
+         *     screens.
+         */
         get: operations["list_properties_api_v1_registry_properties_get"];
         put?: never;
         /** Create a property definition */
@@ -694,6 +719,12 @@ export interface components {
             resolved_version: string | null;
         };
         /**
+         * ControlKind
+         * @description Named after the interaction, never after a datatype (ADR-0013 SS3).
+         * @enum {string}
+         */
+        ControlKind: "text" | "textarea" | "number" | "uri" | "concept_picker";
+        /**
          * CreatePropertyDefinitionRequest
          * @description The body of `POST /registry/properties`. Every property created
          *     through this route is `origin = 'admin'` - there is no field to
@@ -921,6 +952,22 @@ export interface components {
             /** Current */
             current: unknown;
         };
+        /**
+         * FormControl
+         * @description `registry.handlers.FormControlDescriptor`, on the wire (issue #248,
+         *     ADR-0013 SS3, FR-77). `control` is typed against `ControlKind` - a
+         *     closed enum ADR-0013 sanctions precisely because it does not grow when
+         *     a datatype is added - so OpenAPI emits a union #151's generated client
+         *     can switch over exhaustively, rather than the bare `datatype` string
+         *     FR-77 forbids branching a form on.
+         */
+        FormControl: {
+            control: components["schemas"]["ControlKind"];
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -980,6 +1027,26 @@ export interface components {
             };
             /** Row Version */
             row_version: number;
+            form_control: components["schemas"]["FormControl"];
+        };
+        /**
+         * PropertyIssueItem
+         * @description One field-level problem with an attempted property-value write - the
+         *     wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`
+         *     (issue #248). `ordinal` is `None` for a cardinality issue that applies
+         *     to the property as a whole rather than one value in it.
+         */
+        PropertyIssueItem: {
+            /** Property Key */
+            property_key: string;
+            /** Label */
+            label: string;
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Ordinal */
+            ordinal: number | null;
         };
         /** PropertyList */
         PropertyList: {
@@ -992,6 +1059,22 @@ export interface components {
          */
         PropertyScope: "submission" | "maintenance" | "both";
         /**
+         * PropertyValidationResponse
+         * @description FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s
+         *     `issues[]`, declared as a model (issue #248) rather than the hand-built
+         *     dict this handler used to emit - a router naming this in its
+         *     `responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,
+         *     matching `VersionConflictResponse`/`DesignationCollisionResponse`'s own
+         *     precedent, so #151's generated client types the field-level detail
+         *     instead of a bare `{detail}`.
+         */
+        PropertyValidationResponse: {
+            /** Detail */
+            detail: string;
+            /** Issues */
+            issues: components["schemas"]["PropertyIssueItem"][];
+        };
+        /**
          * PropertyValue
          * @description One property value, rendered by its datatype's own handler.
          *
@@ -999,6 +1082,13 @@ export interface components {
          *     new datatype (FR-77) appears here correctly without this module
          *     changing. `ordinal` is meaningful for a multi-valued property: it is the
          *     position of this value among that property's values, zero-based.
+         *
+         *     `status` is the *definition's* status (issue #248) - `active` or
+         *     `deprecated` - not a fact about this value. FR-11 makes a deprecated
+         *     definition retain its recorded values, so without this field a client
+         *     reading an entry could not tell such a value apart from one recorded
+         *     against a property still open for new writes, short of a second call to
+         *     `GET /registry/properties?include_deprecated=true`.
          */
         PropertyValue: {
             /** Key */
@@ -1009,6 +1099,8 @@ export interface components {
             datatype: string;
             /** Cardinality */
             cardinality: string;
+            /** Status */
+            status: string;
             /** Ordinal */
             ordinal: number;
             /** Value */
@@ -1029,12 +1121,37 @@ export interface components {
             /** Display */
             display: string | null;
         };
+        /**
+         * PropertyValueItemRequest
+         * @description One value to save, paired with its own `justification` - FR-10's
+         *     extensible-strength case needs both together (see
+         *     `nptc.catalogue.property_values.PropertyValueInput`'s own docstring).
+         */
+        PropertyValueItemRequest: {
+            /** Value */
+            value: unknown;
+            /** Justification */
+            justification?: string | null;
+        };
         /** PropertyValuePage */
         PropertyValuePage: {
             /** Items */
             items: components["schemas"]["PropertyValueItem"][];
             /** Total */
             total: number;
+        };
+        /**
+         * PropertyValuesWriteResult
+         * @description The property's values after the write, plus the entry's new
+         *     `row_version` - mirroring `catalogue_designations.
+         *     AmendDesignationResult`, so an editing client never has to re-fetch the
+         *     entry just to learn its next lock token.
+         */
+        PropertyValuesWriteResult: {
+            /** Values */
+            values: components["schemas"]["PropertyValue"][];
+            /** Row Version */
+            row_version: number;
         };
         /**
          * ReplaceBindingRequest
@@ -1074,6 +1191,22 @@ export interface components {
             term: string;
             /** Reason */
             reason: string;
+        };
+        /**
+         * SavePropertyValuesRequest
+         * @description The body of `PUT /catalogue/entries/{business_key}/properties/{key}`.
+         *
+         *     `values` is the complete, intended value set for this property after
+         *     the write - `save_property_values` replaces the whole set, never a
+         *     diff (see that function's own module docstring).
+         */
+        SavePropertyValuesRequest: {
+            /** Values */
+            values: components["schemas"]["PropertyValueItemRequest"][];
+            /** Reason */
+            reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /**
          * SearchHit
@@ -2101,6 +2234,79 @@ export interface operations {
             };
         };
     };
+    save_property_api_v1_catalogue_entries__business_key__properties__key__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavePropertyValuesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PropertyValuesWriteResult"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, or no property definition, matches the given identifier. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                };
+            };
+        };
+    };
     read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get: {
         parameters: {
             query?: never;
@@ -2173,6 +2379,7 @@ export interface operations {
         parameters: {
             query?: {
                 include_deprecated?: boolean;
+                scope?: components["schemas"]["PropertyScope"] | null;
             };
             header?: never;
             path?: never;
