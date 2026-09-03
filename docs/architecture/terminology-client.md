@@ -272,8 +272,8 @@ the inverse of `implicit_value_set_url`** - between them they decode a property'
 `value_set_uri` back to the ECL and the `Edition` `expand` needs, so a caller never
 supplies an ECL, a value set URI, or an edition of its own. Two `value_set_uri` shapes are
 real in this codebase: a module-qualified URI (`implicit_value_set_url`'s own output) is
-self-describing, so the module id and any pinned version are read straight back out of it
-- a pinned version is never silently dropped in favour of an unpinned edition. A
+self-describing, so the module id and any pinned version are read straight back out of
+it, and a pinned version is never silently dropped in favour of an unpinned edition. A
 *bare-system* URI (PRD S6.6's own worked example, and what `nptc.db.bootstrap`'s real
 seeded `specimen` binding actually stores) carries no module at all, so the stored
 `PropertyDefinition.edition` label is matched against the two known editions instead,

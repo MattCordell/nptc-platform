@@ -112,8 +112,8 @@ shape is (issue #247 review): a mid-word needle matches on the local-code side (
 '%needle%'`) but may not on the SNOMED side (word-prefix), and typing a code matches
 neither side's `filter` at all (SNOMED's is display-only by FHIR definition;
 `list_local_codes` deliberately doesn't extend its `ILIKE` to `code`, see that function's
-own docstring). This is a real, user-visible asymmetry a picker's search box can surface
-- accepted here because both are still "server-side text narrowing over `display`", and
+own docstring). This is a real, user-visible asymmetry a picker's search box can surface,
+accepted here because both are still "server-side text narrowing over `display`", and
 because reconciling the two down to one exact matching algorithm would mean either giving
 up Ontoserver's own search relevance or reimplementing it client-side against the local
 codes, neither of which this route needs.
