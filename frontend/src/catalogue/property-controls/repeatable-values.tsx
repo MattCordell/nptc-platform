@@ -33,6 +33,16 @@ const MULTI: Record<PropertyCardinality, boolean> = {
  * `PropertyValue.ordinal`'s own contract - so `Remove` on slot 2 does not
  * leave a gap; it re-numbers everything after it, same as the server does
  * on a whole-set replace.
+ *
+ * `params.allowJustification` is read here rather than inside a control:
+ * today only the `code` handler ever sets it (`registry/datatypes/code.py`),
+ * but the justification it gates is a slot-level editorial concept - why
+ * *this recorded value* deviates from the bound list - not something tied
+ * to how any one control renders a value. Centralising it here means a
+ * future control that also needs it gets the same UI for free instead of
+ * reimplementing it; the ADR-0013 AST guard cannot see this read because it
+ * is not named `datatype` - deliberately not a proxy switch, just a param
+ * the wrapper interprets like any other in `params`.
  */
 export function RepeatableValues({
   propertyKey,

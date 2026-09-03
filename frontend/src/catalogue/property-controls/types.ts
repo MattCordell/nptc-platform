@@ -54,9 +54,22 @@ export interface PropertyValueSlot {
   justification: string | null;
 }
 
-/** A fresh, unique `PropertyValueSlot.id` for a newly created slot. */
+let nextSlotId = 0;
+
+/**
+ * A fresh, unique `PropertyValueSlot.id` for a newly created slot.
+ *
+ * A module-level counter, not `crypto.randomUUID()`: these ids carry no
+ * server meaning and need no randomness, only uniqueness for the life of
+ * the page - and `randomUUID` is undefined outside a secure context
+ * (HTTPS or `localhost`), which `docs/operations/configuration.md`
+ * explicitly anticipates this app being deployed outside of (a plain-HTTP
+ * on-prem host, per `NPTC_FRONTEND_BASE_URL`'s own note). A counter has no
+ * such dependency.
+ */
 export function newSlotId(): string {
-  return crypto.randomUUID();
+  nextSlotId += 1;
+  return `slot-${nextSlotId}`;
 }
 
 /**
