@@ -470,7 +470,9 @@ def list_properties(
     responses=_RESPONSES_GET_ONE,
     dependencies=[_READ],
 )
-def get_property(session: SessionDep, registry: RegistryDep, key: str) -> PropertyDefinitionResponse:
+def get_property(
+    session: SessionDep, registry: RegistryDep, key: str
+) -> PropertyDefinitionResponse:
     definition = load_definition(session, key)
     return _to_response(definition, registry)
 
