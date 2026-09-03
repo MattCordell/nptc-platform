@@ -2305,6 +2305,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
+            /** @description The property's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get: {
@@ -2423,6 +2432,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     create_property_api_v1_registry_properties_post: {
@@ -2483,6 +2501,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     get_property_api_v1_registry_properties__key__get: {
@@ -2539,6 +2566,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2661,6 +2697,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     deprecate_property_api_v1_registry_properties__key__deprecation_post: {
@@ -2730,6 +2775,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

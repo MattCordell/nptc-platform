@@ -140,23 +140,43 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     },
 }
 
+#: Round-2 review (issue #248): `_to_response` below resolves a stored
+#: definition's own `datatype` against the live `DatatypeRegistry` for its
+#: `form_control` - every route that returns a `PropertyDefinitionResponse`
+#: newly reaches the registry doing so, where none of them touched it at
+#: all before this PR. A definition row whose `datatype` no longer matches
+#: a registered handler (a stored-data drift, not a caller mistake) is a
+#: 500 here, matching `_RESPONSE_500_VALUES`'s own wording for the
+#: identical class of fault on the `/values` route below.
+_RESPONSE_500_DATATYPE: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The definition's own stored `datatype` no longer matches a registered "
+        "handler - a data integrity fault in the definition, not a caller mistake. "
+        "Not produced by anything a well-formed request can trigger on its own."
+    ),
+}
+
 #: Issue #223 review finding 10: each route below gets its own dict naming
 #: only the statuses it can actually produce - no route reuses a shared
 #: dict that advertises a status it cannot return any more.
 _RESPONSES_LIST: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_READ,
+    500: _RESPONSE_500_DATATYPE,
 }
 _RESPONSES_GET_ONE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_READ,
     404: _RESPONSE_404,
+    500: _RESPONSE_500_DATATYPE,
 }
 _RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_MANAGE,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500_DATATYPE,
 }
 _RESPONSES_PATCH: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
@@ -164,6 +184,7 @@ _RESPONSES_PATCH: Final[dict[int | str, dict[str, Any]]] = {
     404: _RESPONSE_404,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500_DATATYPE,
 }
 _RESPONSES_DEPRECATE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
@@ -171,6 +192,7 @@ _RESPONSES_DEPRECATE: Final[dict[int | str, dict[str, Any]]] = {
     404: _RESPONSE_404,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500_DATATYPE,
 }
 _RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,

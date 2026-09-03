@@ -449,6 +449,84 @@ def test_list_properties_returns_a_synthetic_datatypes_own_form_control(api: Api
         del api.app.dependency_overrides[get_datatype_registry]
 
 
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_get_property_returns_a_code_datatypes_form_control_from_its_binding(
+    api: ApiTestApp,
+) -> None:
+    """`string`'s `form_control` (`test_get_property_returns_a_form_control`
+    above) has empty `params` - the only shape the two existing tests cover.
+    `code`'s `form_control` is the one #151 actually consumes
+    (`valueSetUri`/`strength`/`edition`/`allowJustification`,
+    `registry/datatypes/code.py::CodeHandler.form_control`), derived from
+    the definition's own binding rather than a literal dict, so a synthetic
+    handler cannot stand in for it - `specimen`
+    (`nptc.db.bootstrap.seed_system_properties`) is a real `code` property
+    with a real `value_set` binding, already used two tests over in
+    `test_api_catalogue_properties.py`."""
+    from nptc.db.bootstrap import seed_system_properties
+
+    token = _admin_token(api, subject="sub-form-control-code")
+    seed_system_properties(api.session)
+    api.session.flush()
+
+    response = api.get("/registry/properties/specimen", token=token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["form_control"] == {
+        "control": "concept_picker",
+        "params": {
+            "valueSetUri": "http://snomed.info/sct?fhir_vs=ecl/%3C123038009",
+            "strength": "required",
+            "edition": "au",
+            "allowJustification": False,
+        },
+    }
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
+    api: ApiTestApp,
+) -> None:
+    """Round-2 review: `_to_response` resolves `registry.get(definition.
+    datatype)` per definition with no per-item tolerance, so one definition
+    row whose `datatype` no longer matches a registered handler (a stored
+    row surviving a handler's removal - most plausible for a deprecated
+    property, reached only via `?include_deprecated=true`) fails the whole
+    `GET /registry/properties` response, not just that one item. Fail-loud
+    may well be the right call under FR-16 (silently omitting a drifted
+    property from an administrator's own registry listing hides exactly
+    the drift they need to see), but nothing pinned it before this test -
+    inserted directly via the ORM, bypassing `create_definition`'s own
+    registry validation, since that validation is precisely what makes this
+    row impossible to create through the API."""
+    from nptc.db.models.property_definition import PropertyDefinition
+
+    token = _admin_token(api, subject="sub-list-drifted-datatype")
+    key = _unique_key("drifted_datatype")
+    api.session.add(
+        PropertyDefinition(
+            key=key,
+            label="Drifted Datatype",
+            datatype="no_longer_a_registered_datatype",
+            cardinality="0..1",
+            scope="both",
+            required_for_submission=False,
+            required_for_publication=False,
+            filterable=False,
+            origin="admin",
+            display_order=0,
+            constraints={},
+        )
+    )
+    api.session.flush()
+
+    response = api.get("/registry/properties", token=token)
+
+    assert response.status_code == 500, response.text
+
+
 # --- scope filter (issue #248, re-adding issue #223 review finding 8) -----
 
 

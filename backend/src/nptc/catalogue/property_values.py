@@ -142,7 +142,7 @@ class PropertyWriteIssue:
     ordinal: int | None = None
 
 
-@dataclass
+@dataclass(eq=False)
 class PropertyValidationError(ValueError):
     """Raised by `save_property_values` when one or more supplied values
     fail validation. Carries every issue found in one round trip (`nptc.
@@ -167,6 +167,14 @@ class PropertyValidationError(ValueError):
     accidental mutation, which was never worth risking exception-machinery
     breakage to guard against.
 
+    **`eq=False`, not the dataclass default** (round-2 review): a bare
+    `@dataclass` without `frozen=True` still generates `__eq__` from the
+    field list, and doing so sets `__hash__` to `None` per the `dataclasses`
+    docs' own eq/hash coupling - silently making every instance unhashable,
+    and making two unrelated raises that happen to carry the same `issues`
+    compare equal. Neither is a property an `Exception` subclass should
+    lose; `eq=False` leaves `object`'s identity-based `__eq__`/`__hash__` in
+    place while still allowing the plain attribute set above.
     """
 
     issues: tuple[PropertyWriteIssue, ...] = field(default_factory=tuple)

@@ -241,6 +241,52 @@ def test_save_property_values_with_a_stale_row_version_is_409_with_conflict_body
     assert body["current_row_version"] == entry.row_version
 
 
+# --- 404: unknown business_key / unknown property key ---------------------
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_save_property_values_unknown_business_key_is_404(api: ApiTestApp) -> None:
+    """Round-2 review: `_RESPONSE_404` names two distinct causes (an
+    unknown `business_key` and an unknown property `key`), and neither had
+    a test - mirroring `test_api_catalogue_bindings.py`'s own coverage of
+    both causes for the identical response shape."""
+    token = _admin_token(api, subject="sub-save-404-entry")
+    key = _unique_key("save_404_entry")
+    _create_string_property(api, token, key=key)
+
+    response = _put_values(
+        api,
+        token,
+        business_key="NPTC-999999",
+        property_key=key,
+        values=[{"value": "a value"}],
+        expected_row_version=1,
+    )
+
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_save_property_values_unknown_property_key_is_404(api: ApiTestApp) -> None:
+    """See `test_save_property_values_unknown_business_key_is_404`'s own
+    docstring - the other of `_RESPONSE_404`'s two causes."""
+    token = _admin_token(api, subject="sub-save-404-property")
+    entry = _new_entry(api)
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key="no_such_property_key",
+        values=[{"value": "a value"}],
+        expected_row_version=entry.row_version,
+    )
+
+    assert response.status_code == 404, response.text
+
+
 # --- FR-37: changelog note ------------------------------------------------
 
 
@@ -251,6 +297,7 @@ def test_save_property_values_with_no_reason_is_422(api: ApiTestApp) -> None:
     key = _unique_key("save_no_reason")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
+    before = _audit_event_count(api)
 
     response = _put_values(
         api,
@@ -263,6 +310,16 @@ def test_save_property_values_with_no_reason_is_422(api: ApiTestApp) -> None:
     )
 
     assert response.status_code == 422, response.text
+    # Round-2 review, minor finding: `reason: str` accepts `""` at the
+    # pydantic layer, so a status-only assertion would pass whether FR-37's
+    # server-side gate fired or a future `min_length=1` on the request
+    # model short-circuited it first. Tying the assertion to `detail` (the
+    # changelog-note refusal, not a pydantic validation error) and to the
+    # write's own acceptance criterion - no row, no audit event - pins it to
+    # the gate this test claims to cover.
+    assert "changelog note" in response.json()["detail"].lower()
+    assert _property_value_count(api, entry_id=entry.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
 
 
 # --- FR-09/FR-10: field-level validation, typed 422 -----------------------

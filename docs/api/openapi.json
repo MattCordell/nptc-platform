@@ -1424,6 +1424,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The property's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1584,6 +1594,16 @@
               }
             }
           },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1669,6 +1689,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1724,6 +1754,16 @@
           },
           "404": {
             "description": "No property definition matches the given key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1835,6 +1875,16 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1995,6 +2045,16 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

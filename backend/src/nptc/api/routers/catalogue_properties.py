@@ -130,12 +130,27 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     },
 }
 
+#: Round-2 review: `save_property_values` and the re-read below both resolve
+#: `key`'s stored `datatype` against the live `DatatypeRegistry`
+#: (`registry.get`), same as `registry.py::_to_response` - a data integrity
+#: fault (a stored `datatype` no longer registered), not a caller mistake.
+#: Matching `registry.py`'s own `_RESPONSE_500_DATATYPE` wording exactly.
+_RESPONSE_500: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The property's own stored `datatype` no longer matches a registered "
+        "handler - a data integrity fault in the definition, not a caller mistake. "
+        "Not produced by anything a well-formed request can trigger on its own."
+    ),
+}
+
 PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
     404: _RESPONSE_404,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500,
 }
 
 
