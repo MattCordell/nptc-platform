@@ -203,6 +203,36 @@ class DesignationCollisionResponse(BaseModel):
     collisions: list[CollisionItem]
 
 
+class PropertyIssueItem(BaseModel):
+    """One field-level problem with an attempted property-value write - the
+    wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`
+    (issue #248). `ordinal` is `None` for a cardinality issue that applies
+    to the property as a whole rather than one value in it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    property_key: str
+    label: str
+    code: str
+    message: str
+    ordinal: int | None
+
+
+class PropertyValidationResponse(BaseModel):
+    """FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s
+    `issues[]`, declared as a model (issue #248) rather than the hand-built
+    dict this handler used to emit - a router naming this in its
+    `responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,
+    matching `VersionConflictResponse`/`DesignationCollisionResponse`'s own
+    precedent, so #151's generated client types the field-level detail
+    instead of a bare `{detail}`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    issues: list[PropertyIssueItem]
+
+
 class StoredFSNNotRenderableError(Exception):
     """A *read* path found a stored FSN it could not render (FR-83).
 
@@ -698,21 +728,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             "property value write refused: %s",
             [(issue.property_key, issue.code) for issue in exc.issues],
         )
+        body = PropertyValidationResponse(
+            detail=_DETAIL_PROPERTY_VALIDATION,
+            issues=[
+                PropertyIssueItem(
+                    property_key=issue.property_key,
+                    label=issue.label,
+                    code=issue.code,
+                    message=issue.message,
+                    ordinal=issue.ordinal,
+                )
+                for issue in exc.issues
+            ],
+        )
         return JSONResponse(
             status_code=PropertyValidationError.http_status,
-            content={
-                "detail": _DETAIL_PROPERTY_VALIDATION,
-                "issues": [
-                    {
-                        "property_key": issue.property_key,
-                        "label": issue.label,
-                        "code": issue.code,
-                        "message": issue.message,
-                        "ordinal": issue.ordinal,
-                    }
-                    for issue in exc.issues
-                ],
-            },
+            content=body.model_dump(mode="json"),
         )
 
     @app.exception_handler(PropertyDefinitionNotFoundError)

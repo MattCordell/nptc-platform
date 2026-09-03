@@ -77,8 +77,9 @@ from nptc.db.models.property_definition import (
     PropertyDefinition,
     PropertyScope,
 )
+from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import DefinitionAudience, PropertyDefinitionDeleteRefusedError
-from nptc.registry.handlers import DatatypeRegistry
+from nptc.registry.handlers import ControlKind, DatatypeRegistry
 from nptc_shared.terminology import TerminologyClient
 
 router = APIRouter(prefix="/registry", tags=["registry"])
@@ -245,6 +246,20 @@ _MANAGE = Depends(permission_dep(Permission.REGISTRY_MANAGE))
 _READ = Depends(permission_dep(Permission.REGISTRY_READ))
 
 
+class FormControl(BaseModel):
+    """`registry.handlers.FormControlDescriptor`, on the wire (issue #248,
+    ADR-0013 SS3, FR-77). `control` is typed against `ControlKind` - a
+    closed enum ADR-0013 sanctions precisely because it does not grow when
+    a datatype is added - so OpenAPI emits a union #151's generated client
+    can switch over exhaustively, rather than the bare `datatype` string
+    FR-77 forbids branching a form on."""
+
+    model_config = ConfigDict(frozen=True)
+
+    control: ControlKind
+    params: dict[str, Any]
+
+
 class PropertyDefinitionResponse(BaseModel):
     """One `property_definition` row, on the wire. No internal id (NFR-04) -
     `key` is the one public identifier this resource is ever addressed by."""
@@ -269,6 +284,7 @@ class PropertyDefinitionResponse(BaseModel):
     display_order: int
     constraints: dict[str, Any]
     row_version: int
+    form_control: FormControl
 
 
 class PropertyDefinitionList(BaseModel):
@@ -397,7 +413,11 @@ class PropertyValuePage(BaseModel):
     total: int
 
 
-def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
+def _to_response(
+    definition: PropertyDefinition, registry: DatatypeRegistry
+) -> PropertyDefinitionResponse:
+    handler = registry.get(definition.datatype)
+    descriptor = handler.form_control(spec_for(definition))
     return PropertyDefinitionResponse(
         key=definition.key,
         label=definition.label,
@@ -417,6 +437,7 @@ def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
         display_order=definition.display_order,
         constraints=dict(definition.constraints),
         row_version=definition.row_version,
+        form_control=FormControl(control=descriptor.control, params=dict(descriptor.params)),
     )
 
 
@@ -428,11 +449,19 @@ def _to_response(definition: PropertyDefinition) -> PropertyDefinitionResponse:
 )
 def list_properties(
     session: SessionDep,
+    registry: RegistryDep,
     include_deprecated: bool = False,
+    scope: PropertyScope | None = None,
 ) -> PropertyDefinitionList:
+    """`scope` is inclusive of `PropertyScope.BOTH` (issue #248, decided
+    with the maintainer): `?scope=submission` returns `submission` and
+    `both` properties, `?scope=maintenance` returns `maintenance` and
+    `both`, and omitting it returns everything - a submission form should
+    not have to also ask for `both` to see a property meant for both
+    screens."""
     audience = DefinitionAudience.EXPORT if include_deprecated else DefinitionAudience.DATA_ENTRY
-    definitions = list_definitions(session, audience=audience)
-    return PropertyDefinitionList(items=[_to_response(d) for d in definitions])
+    definitions = list_definitions(session, audience=audience, scope=scope)
+    return PropertyDefinitionList(items=[_to_response(d, registry) for d in definitions])
 
 
 @router.get(
@@ -441,9 +470,9 @@ def list_properties(
     responses=_RESPONSES_GET_ONE,
     dependencies=[_READ],
 )
-def get_property(session: SessionDep, key: str) -> PropertyDefinitionResponse:
+def get_property(session: SessionDep, registry: RegistryDep, key: str) -> PropertyDefinitionResponse:
     definition = load_definition(session, key)
-    return _to_response(definition)
+    return _to_response(definition, registry)
 
 
 @router.post(
@@ -481,7 +510,7 @@ def create_property(
         reason=body.reason,
     )
     session.flush()
-    return _to_response(definition)
+    return _to_response(definition, registry)
 
 
 @router.patch(
@@ -508,7 +537,7 @@ def amend_property(
         **body.changes(),
     )
     session.flush()
-    return _to_response(amended)
+    return _to_response(amended, registry)
 
 
 @router.post(
@@ -520,6 +549,7 @@ def amend_property(
 def deprecate_property(
     session: SessionDep,
     ctx: AuditContextDep,
+    registry: RegistryDep,
     key: str,
     body: Annotated[DeprecatePropertyDefinitionRequest, Body()],
 ) -> PropertyDefinitionResponse:
@@ -532,7 +562,7 @@ def deprecate_property(
         reason=body.reason,
     )
     session.flush()
-    return _to_response(deprecated)
+    return _to_response(deprecated, registry)
 
 
 @router.delete(
