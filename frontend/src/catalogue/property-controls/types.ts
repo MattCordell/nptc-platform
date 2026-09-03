@@ -37,10 +37,26 @@ export interface ControlProps {
   onChange: (value: unknown) => void;
 }
 
-/** One recorded (or being-edited) value in a property's whole value set. */
+/**
+ * One recorded (or being-edited) value in a property's whole value set.
+ *
+ * `id` is a client-only key with no server meaning - stable for the life of
+ * this slot in the editor (survives re-renders, does *not* survive a Remove
+ * re-numbering the slots after it). It exists so `RepeatableValues` can key
+ * each rendered slot on slot identity rather than array position: keying on
+ * `index` made a control that owns internal state (`ConceptPickerControl`'s
+ * filter text) inherit whatever the slot that used to be at that position
+ * had typed, the moment a Remove shifted later slots up.
+ */
 export interface PropertyValueSlot {
+  id: string;
   value: unknown;
   justification: string | null;
+}
+
+/** A fresh, unique `PropertyValueSlot.id` for a newly created slot. */
+export function newSlotId(): string {
+  return crypto.randomUUID();
 }
 
 /**

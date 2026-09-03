@@ -1,10 +1,11 @@
 import type { ComponentType } from "react";
+import { useState } from "react";
 
 import type { components } from "../../api/schema.ts";
 import { Button } from "../../components/button.tsx";
 import { Field } from "../../components/field.tsx";
 import type { FormError } from "../../components/error-summary.tsx";
-import { groupFieldId, slotFieldId } from "./types.ts";
+import { groupFieldId, newSlotId, slotFieldId } from "./types.ts";
 import type { ControlProps, PropertyValueSlot } from "./types.ts";
 
 type PropertyCardinality = components["schemas"]["PropertyCardinality"];
@@ -53,8 +54,15 @@ export function RepeatableValues({
   errors: FormError[];
 }) {
   const multi = MULTI[cardinality];
+  // Stable for the component's lifetime, not regenerated each render - see
+  // `PropertyValueSlot.id`'s own doc: this placeholder is only ever shown
+  // while `slots` is empty, and the first keystroke into it carries this id
+  // into the caller's own state via `onChange` below.
+  const [placeholderId] = useState(newSlotId);
   const rendered: PropertyValueSlot[] =
-    slots.length === 0 ? [{ value: null, justification: null }] : slots;
+    slots.length === 0
+      ? [{ id: placeholderId, value: null, justification: null }]
+      : slots;
   const allowJustification = params.allowJustification === true;
   const groupError = errors.find(
     (error) => error.fieldId === groupFieldId(propertyKey),
@@ -66,7 +74,7 @@ export function RepeatableValues({
         const fieldId = slotFieldId(propertyKey, index);
         const slotLabel = multi ? `${label} ${index + 1}` : label;
         return (
-          <div key={index} className="flex items-end gap-2">
+          <div key={slot.id} className="flex items-end gap-2">
             <div className="flex-1">
               <Control
                 id={fieldId}
@@ -123,7 +131,9 @@ export function RepeatableValues({
         <Button
           type="button"
           variant="secondary"
-          onClick={() => onChange([...rendered, { value: null, justification: null }])}
+          onClick={() =>
+            onChange([...rendered, { id: newSlotId(), value: null, justification: null }])
+          }
         >
           Add another value
         </Button>

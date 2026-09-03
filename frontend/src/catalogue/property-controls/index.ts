@@ -8,7 +8,7 @@ import { UriControl } from "./uri.tsx";
 import type { ControlKind, ControlProps } from "./types.ts";
 
 export type { ControlKind, ControlProps, PropertyValueSlot } from "./types.ts";
-export { groupFieldId, isEmptySlotValue, slotFieldId } from "./types.ts";
+export { groupFieldId, isEmptySlotValue, newSlotId, slotFieldId } from "./types.ts";
 export { RepeatableValues } from "./repeatable-values.tsx";
 
 /**
