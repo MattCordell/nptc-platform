@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, code bindings and designations (issues #219, #224, #228, #227)
+# The catalogue admin API: entry read, code bindings, designations and property values (issues #219, #224, #228, #227, #248)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -371,6 +371,85 @@ constraints were previously unmapped `IntegrityError`s - see
 `nptc.api.errors`'s own former "Known gap" note) is this issue's own contribution, not
 inherited from #219.
 
+## Property values (issue #248)
+
+All under `/api/v1/catalogue`, in `nptc.api.routers.catalogue_properties` - a router
+separate from `registry.py` (which owns `PropertyDefinition`, what a property *is*) for
+the same reason `catalogue_bindings.py`/`catalogue_designations.py` stay apart from
+`catalogue.py`: this one owns `PropertyValue`, what an entry *holds* for a property.
+
+| Path | Method | Body | Returns |
+|---|---|---|---|
+| `/entries/{business_key}/properties/{key}` | `PUT` | `{values: [{value, justification?}], reason, expected_row_version}` | `200 {values: [PropertyValue], row_version}` |
+
+Everything below HTTP already existed and was already tested as a library -
+`nptc.catalogue.property_values.save_property_values` (issue #52) - so this route is
+purely the HTTP adapter: whole-property replace, cardinality bounds, FR-10 binding
+strength, FR-11 deprecation refusal, FR-89's specimen cross-field check, FR-38's
+optimistic lock and the audit event are all handled by that existing service. `key`
+addresses the `property_definition` being written, not a value's own identifier - there
+is no route for a single value in isolation, matching `save_property_values`'
+whole-set-replace posture (see that module's own docstring for why).
+
+The response carries the entry's new `row_version`, mirroring
+`/amendment`'s `AmendDesignationResult` above - so an editing client never has to
+re-fetch the entry just to learn its next lock token.
+
+### `form_control` and `scope` on the read side (issue #248)
+
+Two contract gaps blocked a generated form from consuming this route at all, closed on
+the *read* side (`GET /registry/properties`, `nptc.api.routers.registry`) alongside the
+write route above:
+
+- **`form_control: {control, params}`** on `PropertyDefinitionResponse` - the wire form
+  of each datatype handler's own `FormControlDescriptor` (ADR-0013 §3, FR-77).
+  `control` is typed against the closed `ControlKind` enum, so OpenAPI emits a union a
+  generated client can switch over exhaustively, and a form never has to branch on
+  `datatype` (which FR-77 forbids). A datatype registered nowhere in `nptc.registry.
+  datatypes.BUILTIN_DATATYPES` still appears correctly - no route or response model is
+  edited per datatype - because the value comes from resolving the live
+  `DatatypeRegistry`, not a hand-maintained mapping.
+- **`?scope=submission|maintenance`** on `GET /registry/properties` - re-added, with a
+  test, the filter issue #223 review finding 8 dropped as YAGNI. Inclusive of
+  `PropertyScope.BOTH`: `?scope=submission` returns `submission` and `both` properties,
+  `?scope=maintenance` returns `maintenance` and `both`, and omitting the parameter
+  returns everything.
+
+### The 422 body is a declared model, not a hand-built dict (issue #248)
+
+`nptc.catalogue.property_values.PropertyValidationError`'s `issues[]` - naming
+`property_key`, `label`, `code`, `message` and `ordinal` for each failing value - is now
+`PropertyIssueItem`/`PropertyValidationResponse` in `nptc.api.errors`, constructed by the
+handler rather than assembled as a raw dict. Declared in the route's `responses={422:
+...}` alongside `ErrorResponse` (via a `model` union, the same `_RESPONSE_409_AMENDMENT`
+mechanism designations use above) so both schemas actually land in
+`components/schemas` and the generated client can read the field-level detail instead of
+typing the branch as a bare `{detail}`.
+
+### Definition status travels with a recorded value (issue #248)
+
+`EntryDetail.properties[].status` (via `catalogue_shared.PropertyValue`) is the
+*definition's* status - `active` or `deprecated` - not a fact about the value itself.
+FR-11 makes a deprecated definition retain its recorded values, so without this field a
+client reading an entry could not tell such a value apart from one recorded against a
+property still open for writes, short of a second call to `GET /registry/properties
+?include_deprecated=true`.
+
+### Errors (property values)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
+| 404 | No catalogue entry with this `business_key`, or no `property_definition` with this `key`. |
+| 409 | A stale `expected_row_version` (FR-38) - the same `VersionConflictResponse` body `/amendment` returns above. |
+| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names each failing value's `property_key`, `label` and `ordinal`. |
+
+A rejected write leaves no partial `property_value` state and no audit event -
+`save_property_values` validates the whole submitted set before it touches a row (see
+that function's own docstring), the same "reject before mutating" posture `save_entry`'s
+row-version check already takes.
+
 ## What these issues do not cover
 
 - Entry-level writes other than the preferred term. `EntryChanges` also carries `status`
@@ -385,7 +464,6 @@ inherited from #219.
   silently overwriting context the other was working from. The same is true of two
   administrators editing different *designations* on one entry, since a designation
   write does not bump the entry's version.
-- Property write routes - #151's own obligation, expected to follow the same shape.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.
@@ -411,4 +489,6 @@ Issue #224's four designation routes are added to `COVERED_WRITE_ROUTES` alongsi
 three code-binding ones, with their negative-auth coverage in
 `test_api_catalogue_designations.py`. Issue #228's entry-read route is a `GET`, so
 `mutating_routes` never sees it and it needs no entry in `COVERED_WRITE_ROUTES` - its
-own negative-auth coverage is `test_api_catalogue_admin_read.py`.
+own negative-auth coverage is `test_api_catalogue_admin_read.py`. Issue #248's `PUT
+.../properties/{key}` is added the same way as the code-binding/designation routes, with
+its own negative-auth coverage in `test_api_catalogue_properties.py`.
