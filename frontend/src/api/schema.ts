@@ -2287,13 +2287,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. */
+            /** @description The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. Carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value. */

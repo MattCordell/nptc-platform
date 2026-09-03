@@ -1387,11 +1387,19 @@
             }
           },
           "409": {
-            "description": "The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded.",
+            "description": "The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. Carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Save Property Api V1 Catalogue Entries  Business Key  Properties  Key  Put"
                 }
               }
             }

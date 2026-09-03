@@ -48,7 +48,7 @@ from nptc.api.dependencies import (
     get_session,
     permission_dep,
 )
-from nptc.api.errors import PropertyValidationResponse
+from nptc.api.errors import PropertyValidationResponse, VersionConflictResponse
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
@@ -82,11 +82,21 @@ _RESPONSE_404: Final[dict[str, Any]] = {
     "description": "No catalogue entry, or no property definition, matches the given identifier.",
 }
 
+#: The stale-`expected_row_version` refusal is the same `EntryVersionConflictError`/
+#: `ConflictReport` `nptc.catalogue.entries.save_entry` raises (`save_property_values`
+#: reuses it rather than a second conflict type), and `nptc.api.errors._handle_entry_
+#: version_conflict` always builds the body as `VersionConflictResponse`, never a bare
+#: `ErrorResponse` - `model` takes the union so it actually lands in `components/schemas`
+#: (matching `catalogue_designations._RESPONSE_409_AMENDMENT`'s own precedent for the
+#: identical exception).
 _RESPONSE_409: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
+    "model": ErrorResponse | VersionConflictResponse,
     "description": (
         "The submitted `expected_row_version` no longer matches the entry's current "
-        "`row_version` (FR-38) - someone else changed this entry since it was loaded."
+        "`row_version` (FR-38) - someone else changed this entry since it was loaded. "
+        "Carries `business_key`, `expected_row_version`, `current_row_version`, "
+        "`conflicts[]` (each with `field`, `submitted` and `current`) and "
+        "`changed_by`/`changed_at`, so the caller can reconcile rather than retry blind."
     ),
 }
 
@@ -218,9 +228,13 @@ def _row_to_property_values(
     `value` via the same `property_value_from_row` the read routes use
     (`catalogue_bindings.py`'s `_row_to_binding` is the identical
     precedent), so a value renders identically whether it was just written
-    or freshly read."""
+    or freshly read.
+
+    Scoped to `property_keys=(property_key,)` - this route only ever writes
+    one property, so pulling every other property on the entry over the
+    wire just to filter it back out in Python would scale with how many
+    properties the entry carries, not with the one write being answered."""
     return [
         property_value_from_row(row, registry)
-        for row in queries.load_property_values(session, (entry_id,))
-        if row.property_key == property_key
+        for row in queries.load_property_values(session, (entry_id,), property_keys=(property_key,))
     ]

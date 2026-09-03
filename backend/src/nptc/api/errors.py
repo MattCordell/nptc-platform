@@ -113,6 +113,7 @@ from nptc.registry.definitions import (
     PropertyReactivationRefusedError,
     SystemPropertyDeprecationRefusedError,
 )
+from nptc.registry.handlers import UnknownDatatypeError
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -1010,6 +1011,30 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.http_status,
             content={"detail": _DETAIL_PROPERTY_CONSTRAINTS_INVALID},
         )
+
+    @app.exception_handler(UnknownDatatypeError)
+    async def _handle_unknown_datatype(
+        _request: Request, exc: UnknownDatatypeError
+    ) -> JSONResponse:
+        # issue #248: the *read*-path counterpart of `_handle_property_
+        # datatype_unknown` above. That handler covers `PropertyDatatypeUnknownError`,
+        # which `nptc.db.definitions` raises after translating this same
+        # `nptc.registry.handlers.UnknownDatatypeError` on a *write* - a
+        # caller-supplied `datatype` that does not resolve, correctly a 422.
+        # Reached directly (untranslated) only from a read path resolving an
+        # *already-stored* definition's own `datatype` against the live
+        # registry - `registry.py::_to_response`'s `form_control` lookup and
+        # `catalogue_shared.property_value_from_row`'s `serialise` call -
+        # where the request was well-formed and the fault is in server-side
+        # state (a stored `datatype` the running process's `DatatypeRegistry`
+        # no longer knows), matching `StoredFSNNotRenderableError`'s own
+        # read-vs-write posture (FR-83) for the identical shape of problem.
+        # ERROR, not INFO: reaching here means a definition row and this
+        # process's registry have drifted, and the endpoint now fails for
+        # every caller until somebody looks - not a routine, expected
+        # refusal.
+        _logger.error("read refused, definition names an unregistered datatype: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
 
     @app.exception_handler(ConceptNotFoundError)
     async def _handle_concept_not_found(
