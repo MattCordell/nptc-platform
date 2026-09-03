@@ -534,12 +534,11 @@ def test_save_entries_inherits_the_specimen_unconstrained_refusal(app_session: S
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_save_entry_allows_clearing_specimen_unconstrained_with_specimen_values_present(
-    app_session: Session,
-) -> None:
-    """The check only ever fires for *setting* the flag - clearing it never
-    conflicts with a recorded specimen value, whatever `save_property_values`
-    might separately have refused."""
+def test_save_entry_allows_clearing_specimen_unconstrained(app_session: Session) -> None:
+    """`assert_specimen_flag_allowed` only ever fires for *setting* the
+    flag (`if changes.specimen_unconstrained:` is falsy for `False`) - a
+    caller clearing it is never routed through the check at all, no matter
+    what specimen values the entry does or does not hold."""
     entry = create_entry(
         app_session,
         AuditContext.system(),

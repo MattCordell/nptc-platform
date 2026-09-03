@@ -181,6 +181,36 @@ def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
     assert event.after == {"specimen_unconstrained": True}
 
 
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_patch_entry_clears_specimen_unconstrained(api: ApiTestApp) -> None:
+    """`specimen_unconstrained: false` is not `None`, so `EntryChanges.
+    as_dict()` keeps it and the route applies it like any other value -
+    PATCH semantics ("absent means unchanged") must not be confused with
+    "falsy means unchanged"."""
+    token = _admin_token(api, subject="sub-patch-specimen-clear")
+    entry = _new_entry(api)
+    set_response = _patch_entry(
+        api,
+        token,
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        specimen_unconstrained=True,
+    )
+    assert set_response.status_code == 200, set_response.text
+
+    response = _patch_entry(
+        api,
+        token,
+        business_key=entry.business_key,
+        expected_row_version=set_response.json()["row_version"],
+        specimen_unconstrained=False,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["specimen_unconstrained"] is False
+
+
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
 @pytest.mark.parametrize("status", ["draft", "active", "deprecated", "withdrawn"])
@@ -222,31 +252,49 @@ def test_patch_entry_with_an_unrecognised_status_is_422(api: ApiTestApp) -> None
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_patch_entry_clears_specimen_unconstrained_end_to_end(api: ApiTestApp) -> None:
-    """Set, then clear, then record a specimen value - the full round trip
-    the plan's own verification section names."""
-    token = _admin_token(api, subject="sub-patch-specimen-cycle")
+def test_patch_entry_sets_specimen_unconstrained_after_clearing_specimen_values(
+    api: ApiTestApp,
+) -> None:
+    """The plan's own end-to-end verification: recording a specimen value
+    refuses the flag (proven by the dedicated conflict test below); once
+    that value is cleared through the property route, the same PATCH that
+    was refused now succeeds and bumps `row_version`."""
+    token = _admin_token(api, subject="sub-patch-specimen-recovery")
     entry = _new_entry(api)
+    _record_specimen_value(api, entry)
 
-    set_response = _patch_entry(
+    refused = _patch_entry(
         api,
         token,
         business_key=entry.business_key,
         expected_row_version=entry.row_version,
         specimen_unconstrained=True,
     )
-    assert set_response.status_code == 200, set_response.text
+    assert refused.status_code == 422, refused.text
 
-    clear_response = _patch_entry(
+    cleared = api.request(
+        "PUT",
+        f"/catalogue/entries/{entry.business_key}/properties/specimen",
+        token=token,
+        json={
+            "values": [],
+            "reason": "Cleared for the end-to-end recovery test.",
+            "expected_row_version": entry.row_version,
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+
+    response = _patch_entry(
         api,
         token,
         business_key=entry.business_key,
-        expected_row_version=set_response.json()["row_version"],
-        specimen_unconstrained=False,
+        expected_row_version=cleared.json()["row_version"],
+        specimen_unconstrained=True,
     )
 
-    assert clear_response.status_code == 200, clear_response.text
-    assert clear_response.json()["specimen_unconstrained"] is False
+    assert response.status_code == 200, response.text
+    assert response.json()["specimen_unconstrained"] is True
+    assert response.json()["row_version"] == cleared.json()["row_version"] + 1
 
 
 # --- FR-89: setting the flag while specimen values exist --------------------
