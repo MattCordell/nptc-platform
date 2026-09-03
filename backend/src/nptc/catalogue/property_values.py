@@ -142,7 +142,7 @@ class PropertyWriteIssue:
     ordinal: int | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(eq=False)
 class PropertyValidationError(ValueError):
     """Raised by `save_property_values` when one or more supplied values
     fail validation. Carries every issue found in one round trip (`nptc.
@@ -153,19 +153,39 @@ class PropertyValidationError(ValueError):
     already use, so `nptc.api.errors` can map this without a new pattern
     (see that module's own note that #149/#150 must not simply inherit it
     unchanged - this handler is the first purpose-built one for a
-    property-value write)."""
+    property-value write).
+
+    **Deliberately not `frozen=True`** (issue #248 review): this is the
+    first caller to raise this exception through an HTTP route, and
+    FastAPI's sync-dependency-to-thread bridge (`contextmanager_in_
+    threadpool`, used for `get_session`) reassigns `exc.__traceback__` when
+    handing a raised exception back across the thread boundary - a plain
+    attribute set every exception has to tolerate, which a frozen
+    dataclass's generated `__setattr__` refuses, turning every 422 this
+    exception should produce into an unhandled `FrozenInstanceError` (500)
+    instead. `issues` was never frozen against anything but a caller's own
+    accidental mutation, which was never worth risking exception-machinery
+    breakage to guard against.
+
+    **`eq=False`, not the dataclass default** (round-2 review): a bare
+    `@dataclass` without `frozen=True` still generates `__eq__` from the
+    field list, and doing so sets `__hash__` to `None` per the `dataclasses`
+    docs' own eq/hash coupling - silently making every instance unhashable,
+    and making two unrelated raises that happen to carry the same `issues`
+    compare equal. Neither is a property an `Exception` subclass should
+    lose; `eq=False` leaves `object`'s identity-based `__eq__`/`__hash__` in
+    place while still allowing the plain attribute set above.
+    """
 
     issues: tuple[PropertyWriteIssue, ...] = field(default_factory=tuple)
     http_status: ClassVar[int] = 422
 
     def __post_init__(self) -> None:
-        # A frozen dataclass subclassing `ValueError` never runs
-        # `Exception.__init__`, so `self.args` stays `()` - `repr()` and a
-        # bare `logging.exception(exc)` would otherwise show nothing about
-        # which issues were raised. `object.__setattr__` is required here:
-        # `frozen=True` blocks the plain assignment `self.args = ...` even
-        # inside `__post_init__`.
-        object.__setattr__(self, "args", (str(self),))
+        # `Exception.__init__` never runs for a dataclass subclassing
+        # `ValueError`, so `self.args` stays `()` - `repr()` and a bare
+        # `logging.exception(exc)` would otherwise show nothing about which
+        # issues were raised.
+        self.args = (str(self),)
 
     def __str__(self) -> str:
         return f"{len(self.issues)} property value issue(s): " + "; ".join(

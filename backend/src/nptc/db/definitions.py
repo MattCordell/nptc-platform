@@ -58,7 +58,7 @@ from nptc.audit.writer import AuditContext
 from nptc.catalogue.errors import ConflictReport, EntryVersionConflictError
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError
 from nptc.db.errors import unique_violation_constraint
-from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
+from nptc.db.models.property_definition import PropertyDefinition, PropertyScope, PropertyStatus
 from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import (
     DefinitionAudience,
@@ -201,7 +201,7 @@ def load_definition(session: Session, key: str) -> PropertyDefinition:
 
 
 def list_definitions(
-    session: Session, *, audience: DefinitionAudience
+    session: Session, *, audience: DefinitionAudience, scope: PropertyScope | None = None
 ) -> Sequence[PropertyDefinition]:
     """Ordered by `display_order, key` (matching `nptc.db.bootstrap`'s own
     seeded ordering). `audience=DATA_ENTRY` excludes a `deprecated` property
@@ -209,14 +209,19 @@ def list_definitions(
     `DefinitionAudience`'s own docstring for why these two callers need
     different sets.
 
-    There is deliberately no `scope` filter parameter - issue #223 review
-    finding 8: it had no caller and no test in this PR (YAGNI); #151 can add
-    it back, with a test, when it actually needs it."""
+    `scope`, when given, is inclusive of `PropertyScope.BOTH` - filtering to
+    exactly `scope` would silently drop a property meant for both screens
+    from either one. Issue #223 review finding 8 dropped this filter as
+    YAGNI (no caller, no test); issue #248 (`GET /registry/properties
+    ?scope=`) is that caller, re-adding it with a test as that finding
+    anticipated."""
     stmt = select(PropertyDefinition).order_by(
         PropertyDefinition.display_order, PropertyDefinition.key
     )
     if audience is DefinitionAudience.DATA_ENTRY:
         stmt = stmt.where(PropertyDefinition.status == PropertyStatus.ACTIVE)
+    if scope is not None:
+        stmt = stmt.where(PropertyDefinition.scope.in_((scope, PropertyScope.BOTH)))
     return session.execute(stmt).scalars().all()
 
 

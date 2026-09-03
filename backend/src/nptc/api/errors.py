@@ -113,6 +113,7 @@ from nptc.registry.definitions import (
     PropertyReactivationRefusedError,
     SystemPropertyDeprecationRefusedError,
 )
+from nptc.registry.handlers import UnknownDatatypeError
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -201,6 +202,36 @@ class DesignationCollisionResponse(BaseModel):
 
     detail: str
     collisions: list[CollisionItem]
+
+
+class PropertyIssueItem(BaseModel):
+    """One field-level problem with an attempted property-value write - the
+    wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`
+    (issue #248). `ordinal` is `None` for a cardinality issue that applies
+    to the property as a whole rather than one value in it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    property_key: str
+    label: str
+    code: str
+    message: str
+    ordinal: int | None
+
+
+class PropertyValidationResponse(BaseModel):
+    """FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s
+    `issues[]`, declared as a model (issue #248) rather than the hand-built
+    dict this handler used to emit - a router naming this in its
+    `responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,
+    matching `VersionConflictResponse`/`DesignationCollisionResponse`'s own
+    precedent, so #151's generated client types the field-level detail
+    instead of a bare `{detail}`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    issues: list[PropertyIssueItem]
 
 
 class StoredFSNNotRenderableError(Exception):
@@ -698,21 +729,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             "property value write refused: %s",
             [(issue.property_key, issue.code) for issue in exc.issues],
         )
+        body = PropertyValidationResponse(
+            detail=_DETAIL_PROPERTY_VALIDATION,
+            issues=[
+                PropertyIssueItem(
+                    property_key=issue.property_key,
+                    label=issue.label,
+                    code=issue.code,
+                    message=issue.message,
+                    ordinal=issue.ordinal,
+                )
+                for issue in exc.issues
+            ],
+        )
         return JSONResponse(
             status_code=PropertyValidationError.http_status,
-            content={
-                "detail": _DETAIL_PROPERTY_VALIDATION,
-                "issues": [
-                    {
-                        "property_key": issue.property_key,
-                        "label": issue.label,
-                        "code": issue.code,
-                        "message": issue.message,
-                        "ordinal": issue.ordinal,
-                    }
-                    for issue in exc.issues
-                ],
-            },
+            content=body.model_dump(mode="json"),
         )
 
     @app.exception_handler(PropertyDefinitionNotFoundError)
@@ -979,6 +1011,30 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.http_status,
             content={"detail": _DETAIL_PROPERTY_CONSTRAINTS_INVALID},
         )
+
+    @app.exception_handler(UnknownDatatypeError)
+    async def _handle_unknown_datatype(
+        _request: Request, exc: UnknownDatatypeError
+    ) -> JSONResponse:
+        # issue #248: the *read*-path counterpart of `_handle_property_
+        # datatype_unknown` above. That handler covers `PropertyDatatypeUnknownError`,
+        # which `nptc.db.definitions` raises after translating this same
+        # `nptc.registry.handlers.UnknownDatatypeError` on a *write* - a
+        # caller-supplied `datatype` that does not resolve, correctly a 422.
+        # Reached directly (untranslated) only from a read path resolving an
+        # *already-stored* definition's own `datatype` against the live
+        # registry - `registry.py::_to_response`'s `form_control` lookup and
+        # `catalogue_shared.property_value_from_row`'s `serialise` call -
+        # where the request was well-formed and the fault is in server-side
+        # state (a stored `datatype` the running process's `DatatypeRegistry`
+        # no longer knows), matching `StoredFSNNotRenderableError`'s own
+        # read-vs-write posture (FR-83) for the identical shape of problem.
+        # ERROR, not INFO: reaching here means a definition row and this
+        # process's registry have drifted, and the endpoint now fails for
+        # every caller until somebody looks - not a routine, expected
+        # refusal.
+        _logger.error("read refused, definition names an unregistered datatype: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
 
     @app.exception_handler(ConceptNotFoundError)
     async def _handle_concept_not_found(

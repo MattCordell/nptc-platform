@@ -33,6 +33,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -427,6 +428,65 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
         assert response.status_code in (200, 201), response.text
         found_uuid = _UUID_RE.search(response.text)
         assert found_uuid is None, f"{response.request.url}: {found_uuid and found_uuid.group()}"
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_property_value_write_response_contains_no_uuid(api: ApiTestApp) -> None:
+    """The property-value write analogue of the binding/designation write
+    hygiene tests above (issue #248)."""
+    token = api.token(subject="sub-property-write-hygiene")
+    api.get("/auth/me", token=token)
+    user = api.session.query(User).order_by(User.created_at.desc()).first()
+    assert user is not None
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    admin_token = api.token(subject="sub-property-write-hygiene", extra_claims={"acr": "2"})
+
+    key = f"hygiene_property_{uuid.uuid4().hex[:8]}"
+    create_response = api.post(
+        "/registry/properties",
+        token=admin_token,
+        json={
+            "key": key,
+            "label": "Hygiene property",
+            "datatype": "string",
+            "cardinality": "0..1",
+            "scope": "both",
+            "display_order": 0,
+            "reason": "Created for issue #248 write-hygiene test.",
+        },
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    entry = create_entry(
+        api.session,
+        AuditContext.system(),
+        preferred_term="Property write hygiene fixture",
+        reason="Created for issue #248 hygiene test",
+    )
+    api.session.flush()
+
+    save_response = api.request(
+        "PUT",
+        f"/catalogue/entries/{entry.business_key}/properties/{key}",
+        token=admin_token,
+        json={
+            "values": [{"value": "a recorded value"}],
+            "reason": "Saved for the property write-hygiene test.",
+            "expected_row_version": entry.row_version,
+        },
+    )
+
+    assert save_response.status_code == 200, save_response.text
+    found_uuid = _UUID_RE.search(save_response.text)
+    assert found_uuid is None, f"{save_response.request.url}: {found_uuid and found_uuid.group()}"
 
 
 # --- issue #228's admin read route: the same two invariants, on a draft --

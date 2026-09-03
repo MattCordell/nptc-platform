@@ -153,6 +153,12 @@ class PropertyValueRow:
     handler's job, not this module's (FR-77/ADR-0013), so `datatype` is
     carried through for the caller to resolve a handler with. There is
     deliberately no `switch` on it here.
+
+    `status` is the *definition's* status (issue #248), not the value's own
+    - `property_value` has no status column of its own. A client cannot
+    otherwise tell a deprecated property's recorded values apart from an
+    active one's without a second, cross-referencing call to `GET
+    /registry/properties?include_deprecated=true`.
     """
 
     entry_id: uuid.UUID
@@ -160,6 +166,7 @@ class PropertyValueRow:
     label: str
     datatype: str
     cardinality: str
+    status: str
     ordinal: int
     value: object
     justification: str | None
@@ -371,7 +378,10 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
 
 
 def load_property_values(
-    session: Session, entry_ids: Iterable[uuid.UUID]
+    session: Session,
+    entry_ids: Iterable[uuid.UUID],
+    *,
+    property_keys: Iterable[str] | None = None,
 ) -> tuple[PropertyValueRow, ...]:
     """Every property value for the given entries, joined to its definition.
 
@@ -393,11 +403,20 @@ def load_property_values(
     `(property_key, ordinal)` order: `ordinal` is meaningful within a
     multi-valued property (`nptc.db.models.property_value`: zero-based, and
     the order the values are in), so sorting by it is not cosmetic.
+
+    `property_keys`, when given, narrows the result to those properties only
+    - `EntryDetail`'s assembly (issue #228, `catalogue.py`/`catalogue_admin.py`)
+    wants every property on the entry and leaves it `None`; issue #248's
+    write route re-reads only the one property it just wrote, and passing
+    every other property on the entry over the wire (and building a
+    `PropertyValueRow`/`PropertyValue` for each) just to discard them in
+    Python would scale with how many properties the entry carries, not with
+    the one write the caller actually asked about.
     """
     ids = tuple(entry_ids)
     if not ids:
         return ()
-    rows = session.execute(
+    stmt = (
         select(
             PropertyValue.entry_id,
             PropertyValue.property_key,
@@ -407,11 +426,15 @@ def load_property_values(
             PropertyDefinition.label,
             PropertyDefinition.datatype,
             PropertyDefinition.cardinality,
+            PropertyDefinition.status,
         )
         .join(PropertyDefinition, PropertyValue.property_key == PropertyDefinition.key)
         .where(PropertyValue.entry_id.in_(ids))
         .order_by(PropertyValue.property_key, PropertyValue.ordinal)
-    ).all()
+    )
+    if property_keys is not None:
+        stmt = stmt.where(PropertyValue.property_key.in_(tuple(property_keys)))
+    rows = session.execute(stmt).all()
     return tuple(
         PropertyValueRow(
             entry_id=row.entry_id,
@@ -419,6 +442,7 @@ def load_property_values(
             label=row.label,
             datatype=row.datatype,
             cardinality=row.cardinality,
+            status=row.status,
             ordinal=row.ordinal,
             value=row.value,
             justification=row.justification,

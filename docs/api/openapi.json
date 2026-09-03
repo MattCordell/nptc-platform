@@ -1302,6 +1302,142 @@
         }
       }
     },
+    "/api/v1/catalogue/entries/{business_key}/properties/{key}": {
+      "put": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Replace a property's recorded values on a catalogue entry",
+        "operationId": "save_property_api_v1_catalogue_entries__business_key__properties__key__put",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavePropertyValuesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyValuesWriteResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, or no property definition, matches the given identifier.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The submitted `expected_row_version` no longer matches the entry's current `row_version` (FR-38) - someone else changed this entry since it was loaded. Carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Save Property Api V1 Catalogue Entries  Business Key  Properties  Key  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PropertyValidationResponse"
+                    }
+                  ],
+                  "title": "Response 422 Save Property Api V1 Catalogue Entries  Business Key  Properties  Key  Put"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/admin/entries/{business_key}": {
       "get": {
         "tags": [
@@ -1397,6 +1533,7 @@
           "registry"
         ],
         "summary": "List property definitions",
+        "description": "`scope` is inclusive of `PropertyScope.BOTH` (issue #248, decided\nwith the maintainer): `?scope=submission` returns `submission` and\n`both` properties, `?scope=maintenance` returns `maintenance` and\n`both`, and omitting it returns everything - a submission form should\nnot have to also ask for `both` to see a property meant for both\nscreens.",
         "operationId": "list_properties_api_v1_registry_properties_get",
         "parameters": [
           {
@@ -1407,6 +1544,22 @@
               "type": "boolean",
               "default": false,
               "title": "Include Deprecated"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PropertyScope"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
             }
           }
         ],
@@ -1433,6 +1586,16 @@
           },
           "403": {
             "description": "The caller is authenticated but does not hold `registry.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1526,6 +1689,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1581,6 +1754,16 @@
           },
           "404": {
             "description": "No property definition matches the given key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1692,6 +1875,16 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1852,6 +2045,16 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -2637,6 +2840,18 @@
         "title": "ConceptLookup",
         "description": "One `$lookup`'s answer, on the wire.\n\n`code` is a string end-to-end (FR-06), echoed back rather than assumed\n- `$lookup` itself does not echo it, and a caller matching a late\nresponse to the field that asked needs it. `fsn` keeps its semantic\ntag intact and is nullable: the server may return no FSN designation\nat all, and `LookupResult.fully_specified_name` never falls back to\n`display`, which is a different thing. `active` is tri-state\n(`bool | None`) - `None` means the server did not report the\n`inactive` property, which is not the same as active (hazard H-05).\n`edition` is always `\"au\"` today - the honest source for a client's\nown `edition_hint`, so `\"unknown\"` stops being a value a form has to\nproduce. `resolved_version` is FR-48: which release actually answered.\n\nDeliberately carries no `display_term` - see\n`nptc.terminology.concepts`'s own module docstring for why computing\none here would risk a permanent 500 on a later read of whatever this\nvalue feeds."
       },
+      "ControlKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "textarea",
+          "number",
+          "uri",
+          "concept_picker"
+        ],
+        "title": "ControlKind",
+        "description": "Named after the interaction, never after a datatype (ADR-0013 SS3)."
+      },
       "CreatePropertyDefinitionRequest": {
         "properties": {
           "key": {
@@ -3048,6 +3263,25 @@
         "title": "FieldConflictItem",
         "description": "One field whose stored value moved under a caller between their read\nand their write. `submitted`/`current` are whatever that field holds -\na term, a status, a flag - so they are deliberately untyped here."
       },
+      "FormControl": {
+        "properties": {
+          "control": {
+            "$ref": "#/components/schemas/ControlKind"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "control",
+          "params"
+        ],
+        "title": "FormControl",
+        "description": "`registry.handlers.FormControlDescriptor`, on the wire (issue #248,\nADR-0013 SS3, FR-77). `control` is typed against `ControlKind` - a\nclosed enum ADR-0013 sanctions precisely because it does not grow when\na datatype is added - so OpenAPI emits a union #151's generated client\ncan switch over exhaustively, rather than the bare `datatype` string\nFR-77 forbids branching a form on."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3196,6 +3430,9 @@
           "row_version": {
             "type": "integer",
             "title": "Row Version"
+          },
+          "form_control": {
+            "$ref": "#/components/schemas/FormControl"
           }
         },
         "type": "object",
@@ -3217,10 +3454,52 @@
           "status",
           "display_order",
           "constraints",
-          "row_version"
+          "row_version",
+          "form_control"
         ],
         "title": "PropertyDefinitionResponse",
         "description": "One `property_definition` row, on the wire. No internal id (NFR-04) -\n`key` is the one public identifier this resource is ever addressed by."
+      },
+      "PropertyIssueItem": {
+        "properties": {
+          "property_key": {
+            "type": "string",
+            "title": "Property Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ordinal"
+          }
+        },
+        "type": "object",
+        "required": [
+          "property_key",
+          "label",
+          "code",
+          "message",
+          "ordinal"
+        ],
+        "title": "PropertyIssueItem",
+        "description": "One field-level problem with an attempted property-value write - the\nwire shape of `nptc.catalogue.property_values.PropertyWriteIssue`\n(issue #248). `ordinal` is `None` for a cardinality issue that applies\nto the property as a whole rather than one value in it."
       },
       "PropertyList": {
         "properties": {
@@ -3247,6 +3526,28 @@
         ],
         "title": "PropertyScope"
       },
+      "PropertyValidationResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyIssueItem"
+            },
+            "type": "array",
+            "title": "Issues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "issues"
+        ],
+        "title": "PropertyValidationResponse",
+        "description": "FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s\n`issues[]`, declared as a model (issue #248) rather than the hand-built\ndict this handler used to emit - a router naming this in its\n`responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,\nmatching `VersionConflictResponse`/`DesignationCollisionResponse`'s own\nprecedent, so #151's generated client types the field-level detail\ninstead of a bare `{detail}`."
+      },
       "PropertyValue": {
         "properties": {
           "key": {
@@ -3264,6 +3565,10 @@
           "cardinality": {
             "type": "string",
             "title": "Cardinality"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
           },
           "ordinal": {
             "type": "integer",
@@ -3290,12 +3595,13 @@
           "label",
           "datatype",
           "cardinality",
+          "status",
           "ordinal",
           "value",
           "justification"
         ],
         "title": "PropertyValue",
-        "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based."
+        "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based.\n\n`status` is the *definition's* status (issue #248) - `active` or\n`deprecated` - not a fact about this value. FR-11 makes a deprecated\ndefinition retain its recorded values, so without this field a client\nreading an entry could not tell such a value apart from one recorded\nagainst a property still open for new writes, short of a second call to\n`GET /registry/properties?include_deprecated=true`."
       },
       "PropertyValueItem": {
         "properties": {
@@ -3323,6 +3629,30 @@
         "title": "PropertyValueItem",
         "description": "One offerable value for a coded property (issue #247) - identical in\nshape whether it came from a SNOMED value set or a local code system;\nnothing here names `binding_target` (the acceptance criterion, on the\nwire)."
       },
+      "PropertyValueItemRequest": {
+        "properties": {
+          "value": {
+            "title": "Value"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "PropertyValueItemRequest",
+        "description": "One value to save, paired with its own `justification` - FR-10's\nextensible-strength case needs both together (see\n`nptc.catalogue.property_values.PropertyValueInput`'s own docstring)."
+      },
       "PropertyValuePage": {
         "properties": {
           "items": {
@@ -3343,6 +3673,28 @@
           "total"
         ],
         "title": "PropertyValuePage"
+      },
+      "PropertyValuesWriteResult": {
+        "properties": {
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValue"
+            },
+            "type": "array",
+            "title": "Values"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "values",
+          "row_version"
+        ],
+        "title": "PropertyValuesWriteResult",
+        "description": "The property's values after the write, plus the entry's new\n`row_version` - mirroring `catalogue_designations.\nAmendDesignationResult`, so an editing client never has to re-fetch the\nentry just to learn its next lock token."
       },
       "ReplaceBindingRequest": {
         "properties": {
@@ -3432,6 +3784,33 @@
           "reason"
         ],
         "title": "RetireDesignationRequest"
+      },
+      "SavePropertyValuesRequest": {
+        "properties": {
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValueItemRequest"
+            },
+            "type": "array",
+            "title": "Values"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "title": "Expected Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "values",
+          "reason",
+          "expected_row_version"
+        ],
+        "title": "SavePropertyValuesRequest",
+        "description": "The body of `PUT /catalogue/entries/{business_key}/properties/{key}`.\n\n`values` is the complete, intended value set for this property after\nthe write - `save_property_values` replaces the whole set, never a\ndiff (see that function's own module docstring)."
       },
       "SearchHit": {
         "properties": {
