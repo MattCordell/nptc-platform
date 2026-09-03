@@ -139,12 +139,21 @@ function terminologyRoute(
   code: string,
   overrides: {
     status?: number;
-    fsn?: string;
-    au_preferred_term?: string;
+    fsn?: string | null;
+    au_preferred_term?: string | null;
+    active?: boolean | null;
+    edition?: string;
     body?: unknown;
   } = {},
 ): Route {
-  const { status = 200, fsn = FSN, au_preferred_term = AU_PT, body } = overrides;
+  const {
+    status = 200,
+    fsn = FSN,
+    au_preferred_term = AU_PT,
+    active = true,
+    edition = "au",
+    body,
+  } = overrides;
   return {
     method: "GET",
     path: `${TERMINOLOGY_PATH}${code}`,
@@ -154,8 +163,8 @@ function terminologyRoute(
       code,
       fsn,
       au_preferred_term,
-      active: true,
-      edition: "au",
+      active,
+      edition,
       resolved_version: "http://snomed.info/sct/32506021000036107/version/20260101",
     },
   };
@@ -1329,6 +1338,139 @@ describe("code bindings", () => {
     // The wire text itself, not the parsed value: `JSON.parse` cannot tell a
     // quoted SCTID from a bare number once parsed either way.
     expect(call?.text).toContain(`"code":"${FSN_CODE}"`);
+  });
+
+  it("shows an inactive code as inactive, and still lets it be bound", async () => {
+    // The partial H-05 mitigation this PR offers: the editor is told, but
+    // the FR-45 sweep-time check (out of scope here) is what actually blocks.
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, { active: false }),
+      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+    ]);
+    await renderLoaded();
+
+    // `ResolvedConcept` isolates each resolved value in its own `<span>`
+    // (`getByText`'s default matcher only ever sees an element's own direct
+    // text-node children, never text carried by a nested element) - so the
+    // status is checked as that span's exact, standalone content, not a
+    // phrase spanning the surrounding sentence.
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(inBindingsPanel().getByText("inactive")).toBeInTheDocument();
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await waitFor(() => expect(callsTo(calls, BIND_PATH)).toHaveLength(1));
+  });
+
+  it("shows an unreported active status distinctly from active or inactive", async () => {
+    // `active: null` (the tri-state `ConceptLookup.active` can genuinely be)
+    // must not be misread as "active" - that is hazard H-05's whole concern.
+    const user = userEvent.setup();
+    stubApi([READ_OK, terminologyRoute(FSN_CODE, { active: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(
+      inBindingsPanel().getByText("not reported by the terminology server"),
+    ).toBeInTheDocument();
+    expect(inBindingsPanel().queryByText("active")).not.toBeInTheDocument();
+    expect(inBindingsPanel().queryByText("inactive")).not.toBeInTheDocument();
+  });
+
+  it("shows a missing AU preferred term as not reported", async () => {
+    const user = userEvent.setup();
+    stubApi([READ_OK, terminologyRoute(FSN_CODE, { au_preferred_term: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    expect(inBindingsPanel().getByText("not reported")).toBeInTheDocument();
+  });
+
+  it("refuses to bind a code the server resolved with no name, and sends no request", async () => {
+    // `ConceptLookup.fsn` is nullable - the server may report no FSN
+    // designation at all. A `null` here must refuse to prefill rather than
+    // substitute anything (never falling back to `display`/au_preferred_term).
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE, { fsn: null })]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      /did not return a name/,
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      await screen.findAllByText(/must resolve against the terminology server/),
+    ).toHaveLength(2);
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
+  });
+
+  it("falls back to an unknown edition hint when the server reports an edition this screen does not recognise", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE, { edition: "gb" }),
+      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await waitFor(() => expect(callsTo(calls, BIND_PATH)).toHaveLength(1));
+    expect(callsTo(calls, BIND_PATH)[0]?.body).toMatchObject({ edition_hint: "unknown" });
+  });
+
+  it("tells the editor a code is still checking, rather than reading as a rejection", async () => {
+    // The debounce window means "hasn't fired yet" and "does not resolve"
+    // would otherwise read identically - submitting right after pasting a
+    // code, before the 400ms debounce fires, is a realistic sequence.
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
+    await renderLoaded();
+
+    await user.type(inBindingsPanel().getByLabelText("SNOMED CT code"), FSN_CODE);
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      await screen.findAllByText(/Wait for the code to finish checking/),
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText(/must resolve against the terminology server/),
+    ).not.toBeInTheDocument();
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
   });
 
   it("refuses to bind a code that does not resolve, and sends no request", async () => {

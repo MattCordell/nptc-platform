@@ -1,7 +1,13 @@
+// Scoped to this file rather than `tsconfig.app.json`'s `types` array
+// (review finding): `include` there is all of `src`, so a project-wide
+// `"types": ["node"]` would let `process.env.SOMETHING`/`Buffer` typecheck
+// clean in browser code too, leaving only `assert-no-secret-in-bundle.mjs`
+// and review between that and a real secret in the bundle (NFR-26).
+/// <reference types="node" />
+
 // `node:fs`/`node:path`/`node:url`: a Vitest source-scanning guard, not app
 // code - Vite's build never resolves a `node:*` specifier into the browser
-// bundle. `@types/node` and `tsconfig.app.json`'s `"types": ["node"]` exist
-// because of this file.
+// bundle.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

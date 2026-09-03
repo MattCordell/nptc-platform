@@ -140,8 +140,8 @@ function ResolvedConcept({
         : "inactive";
   return (
     <>
-      Fully specified name: <span>{concept.fsn}</span>. AU preferred term:{" "}
-      <span>{concept.au_preferred_term ?? "not reported"}</span>. Status:{" "}
+      {code}: fully specified name <span>{concept.fsn}</span>, AU preferred term{" "}
+      <span>{concept.au_preferred_term ?? "not reported"}</span>, status{" "}
       <span>{status}</span>.
     </>
   );
@@ -156,6 +156,22 @@ function isBindable(
   data: NonNullable<ReturnType<typeof useConceptLookup>["data"]> & { fsn: string };
 } {
   return code === debouncedCode && lookup.isSuccess && lookup.data.fsn !== null;
+}
+
+/**
+ * True while a non-empty code has not yet had its say: still waiting out the
+ * debounce, or the lookup it fired has not settled. Distinguished from
+ * "does not resolve" (`!isBindable`) because the two read very differently to
+ * an editor - pasting a code and clicking Bind inside the debounce window is
+ * a realistic sequence, and "this code must resolve" reads as a rejection of
+ * a code that has not actually been checked yet (review finding).
+ */
+function isStillChecking(
+  code: string,
+  debouncedCode: string,
+  lookup: ReturnType<typeof useConceptLookup>,
+): boolean {
+  return code.length > 0 && (code !== debouncedCode || lookup.isPending);
 }
 
 function BindCodeForm({
@@ -173,6 +189,7 @@ function BindCodeForm({
   const lookup = useConceptLookup(debouncedCode);
   const bind = useBindCode(businessKey);
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
+  const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
 
   return (
     <Form
@@ -186,15 +203,22 @@ function BindCodeForm({
         const found: FormError[] = [
           ...(trimmedCode.length === 0
             ? [{ fieldId: "bind-code", message: "Enter the SNOMED CT code to bind." }]
-            : !bindable
+            : stillChecking
               ? [
                   {
                     fieldId: "bind-code",
-                    message:
-                      "This code must resolve against the terminology server before it can be bound.",
+                    message: "Wait for the code to finish checking before saving.",
                   },
                 ]
-              : []),
+              : !bindable
+                ? [
+                    {
+                      fieldId: "bind-code",
+                      message:
+                        "This code must resolve against the terminology server before it can be bound.",
+                    },
+                  ]
+                : []),
           ...reasonError(note, "bind-note"),
         ];
         setErrors(found);
@@ -339,6 +363,7 @@ function ReplaceBindingDialog({
   const lookup = useConceptLookup(debouncedCode);
   const replace = useReplaceBinding(businessKey);
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
+  const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
 
   return (
     <Dialog open onClose={onClose} title={`Replace ${binding.code}`}>
@@ -363,15 +388,22 @@ function ReplaceBindingDialog({
                     message: "Enter the successor's SNOMED CT code.",
                   },
                 ]
-              : !bindable
+              : stillChecking
                 ? [
                     {
                       fieldId: "replace-code",
-                      message:
-                        "The successor must resolve against the terminology server before it can be bound.",
+                      message: "Wait for the code to finish checking before saving.",
                     },
                   ]
-                : []),
+                : !bindable
+                  ? [
+                      {
+                        fieldId: "replace-code",
+                        message:
+                          "The successor must resolve against the terminology server before it can be bound.",
+                      },
+                    ]
+                  : []),
             ...reasonError(note, "replace-note"),
           ];
           setErrors(found);
@@ -514,7 +546,15 @@ export function BindingsPanel({ entry }: { entry: EntryDetail }) {
           },
         ]}
         rows={rows}
-        getRowKey={(row) => `${row.code}:${row.status}`}
+        // `code` + `status` is not unique on its own: both of `code_binding`'s
+        // uniqueness indexes are partial on `status = 'active'`
+        // (`ix_code_binding_one_active_per_entry`,
+        // `ix_code_binding_one_active_entry_per_code`), so nothing stops the
+        // same code being bound, retired, bound again and retired again -
+        // two rows with identical code and status: "retired" (review
+        // finding). `Binding` carries no id, so the row's own position in
+        // this render's stable `rows` array is what disambiguates.
+        getRowKey={(row) => `${row.code}:${row.status}:${rows.indexOf(row)}`}
         emptyState="This entry has no code bindings."
       />
 
