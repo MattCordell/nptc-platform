@@ -13,7 +13,11 @@ import {
   useAmendDesignation,
   useEntriesList,
   useEntryDetail,
+  usePatchEntryCore,
+  usePropertyDefinitions,
+  usePropertyValueOptions,
   useRetireDesignation,
+  useSavePropertyValues,
 } from "./queries.ts";
 
 /**
@@ -351,5 +355,176 @@ describe("useAcknowledgeCollision", () => {
       "/api/v1/catalogue/entries/NPTC-000247/designations/acknowledgement",
     );
     expect(result.current.data).toMatchObject({ created: true });
+  });
+});
+
+/**
+ * The registry-properties hooks (issue #151) - generated-form data plus the
+ * two writes the panel needs (a property's values, and the entry's own core
+ * columns). Same infrastructure-only scope as the write hooks above.
+ */
+
+describe("usePropertyDefinitions", () => {
+  it("always asks for deprecated properties too, so FR-11 values still render", async () => {
+    const list = { items: [] };
+    const fetchMock = stubFetch(200, list);
+
+    const { result } = renderHook(() => usePropertyDefinitions(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(list);
+    const requestUrl = new URL(requestFor(fetchMock).url);
+    expect(requestUrl.pathname).toBe("/api/v1/registry/properties");
+    expect(requestUrl.searchParams.get("include_deprecated")).toBe("true");
+  });
+});
+
+describe("usePropertyValueOptions", () => {
+  it("fetches a coded property's offerable values by key", async () => {
+    const page = { items: [{ code: "119361006", display: "Plasma specimen" }], total: 1 };
+    const fetchMock = stubFetch(200, page);
+
+    const { result } = renderHook(() => usePropertyValueOptions("specimen", ""), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(page);
+    expect(new URL(requestFor(fetchMock).url).pathname).toBe(
+      "/api/v1/registry/properties/specimen/values",
+    );
+  });
+
+  it("passes a non-empty filter through as a query param", async () => {
+    const fetchMock = stubFetch(200, { items: [], total: 0 });
+
+    renderHook(() => usePropertyValueOptions("specimen", "plasma"), { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(new URL(requestFor(fetchMock).url).searchParams.get("filter")).toBe("plasma");
+  });
+
+  it("does not fetch for a blank property key", () => {
+    const fetchMock = stubFetch(200, { items: [], total: 0 });
+
+    renderHook(() => usePropertyValueOptions("", ""), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSavePropertyValues", () => {
+  it("PUTs the whole value set to the property's own route and invalidates the entry", async () => {
+    const fetchMock = stubFetch(200, {
+      values: [{ key: "discipline", label: "Discipline", ordinal: 0, value: "HAEM" }],
+      row_version: 4,
+    });
+    const { result } = renderHook(
+      () => ({
+        save: useSavePropertyValues("NPTC-000247", "discipline"),
+        entry: useAdminEntryDetail("NPTC-000247"),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.entry.isSuccess).toBe(true));
+
+    result.current.save.mutate({
+      values: [{ value: "HAEM" }],
+      reason: "Record the discipline",
+      expected_row_version: 3,
+    });
+    await waitFor(() => expect(result.current.save.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock, 1);
+    expect(new URL(request.url).pathname).toBe(
+      "/api/v1/catalogue/entries/NPTC-000247/properties/discipline",
+    );
+    expect(request.method).toBe("PUT");
+    expect(await bodyOf(request)).toEqual({
+      values: [{ value: "HAEM" }],
+      reason: "Record the discipline",
+      expected_row_version: 3,
+    });
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(3));
+    expect(new URL(requestFor(fetchMock, 2).url).pathname).toBe(
+      "/api/v1/catalogue/admin/entries/NPTC-000247",
+    );
+  });
+
+  // Principal failure mode: FR-38's optimistic lock. The cached entry must be
+  // refetched, matching useAmendDesignation - otherwise a retry from the same
+  // open dialog fails identically against the same stale row_version.
+  it("refetches the entry on a version conflict", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "NPTC-000247",
+      expected_row_version: 3,
+      current_row_version: 4,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-09-02T00:00:00Z",
+    });
+    const { result } = renderHook(
+      () => useSavePropertyValues("NPTC-000247", "discipline"),
+      { wrapper },
+    );
+
+    result.current.mutate({
+      values: [{ value: "HAEM" }],
+      reason: "Record the discipline",
+      expected_row_version: 3,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(4);
+  });
+});
+
+describe("usePatchEntryCore", () => {
+  it("PATCHes the entry's own status/specimen_unconstrained columns", async () => {
+    const fetchMock = stubFetch(200, {
+      status: "active",
+      specimen_unconstrained: true,
+      row_version: 4,
+    });
+    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      specimen_unconstrained: true,
+      reason: "This entry accepts any specimen",
+      expected_row_version: 3,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock);
+    expect(new URL(request.url).pathname).toBe("/api/v1/catalogue/entries/NPTC-000247");
+    expect(request.method).toBe("PATCH");
+    expect(await bodyOf(request)).toEqual({
+      specimen_unconstrained: true,
+      reason: "This entry accepts any specimen",
+      expected_row_version: 3,
+    });
+  });
+
+  it("refetches the entry on a version conflict", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "NPTC-000247",
+      expected_row_version: 3,
+      current_row_version: 4,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-09-02T00:00:00Z",
+    });
+    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      specimen_unconstrained: true,
+      reason: "This entry accepts any specimen",
+      expected_row_version: 3,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(4);
   });
 });
