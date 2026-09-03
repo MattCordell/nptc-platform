@@ -245,6 +245,22 @@ def test_expand_count_and_offset_page_the_derived_result_and_report_the_full_tot
     assert not result.is_complete
 
 
+@pytest.mark.req("FR-10")
+def test_expand_records_offset_count_and_display_language_on_the_request_log() -> None:
+    """`StubRequest.offset`/`.count`/`.display_language` (issue #247
+    review) let a caller of the stub prove what it actually passed to
+    `expand`, independent of what a seeded or derived response returns -
+    without this, a caller silently dropping or transposing any of the
+    three would pass unnoticed."""
+    client = _client(StubConcept(code="122192001", fsn="Acanthamoeba culture (procedure)"))
+    client.expand(
+        "122192001", edition=SNOMED_CT_AU, count=5, offset=2, display_language="en-x-test"
+    )
+    assert client.requests[-1].offset == 2
+    assert client.requests[-1].count == 5
+    assert client.requests[-1].display_language == "en-x-test"
+
+
 def test_expand_literal_code_disjunction_respects_edition_membership() -> None:
     """Unlike the '<<'/'<' branches, the plain-disjunction branch used to be
     edition-blind - FR-47's dual-edition diff needs every branch to agree."""

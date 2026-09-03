@@ -365,12 +365,19 @@ def list_local_codes(
     FR-90 read path issue #247's coded-property values route serves a
     `binding_target = 'local_code_system'` property from.
 
-    Active-only, mirroring `TerminologyClient.expand(active_only=True)` on
-    the SNOMED side of that same route: a deprecated code is not offered
-    for entry, but stays resolvable through `DatabaseLocalCodeLookup.resolve`
-    unchanged (FR-11 posture) - this function is additive, not a replacement
-    for that read path. Ordered by `display_order` then `code`, matching how
-    a governed vocabulary is curated to read.
+    Active-only on both the code and its owning system: a deprecated code is
+    excluded (mirroring `TerminologyClient.expand(active_only=True)` on the
+    SNOMED side of that same route), and so is every code belonging to a
+    deprecated system - `deprecate_local_code_system` deliberately does not
+    cascade to member codes (see `find_local_code_with_system_status`'s own
+    docstring), but a retired vocabulary must not keep offering its codes
+    for new entry, which is exactly the "not offered for entry" posture
+    this function's active-only filtering exists for. Either way, a value
+    already recorded against a since-deprecated code or system stays
+    resolvable through `DatabaseLocalCodeLookup.resolve` unchanged (FR-11
+    posture) - this function is additive, not a replacement for that read
+    path. Ordered by `display_order` then `code`, matching how a governed
+    vocabulary is curated to read.
 
     `filter`, when given, is a case-insensitive substring match against
     `display` - proportionate to a governed vocabulary's size (a handful of
@@ -386,6 +393,7 @@ def list_local_codes(
     """
     where_clauses = [
         LocalCodeSystem.key == system_key,
+        LocalCodeSystem.status == str(LocalCodeSystemStatus.ACTIVE),
         LocalCode.status == str(LocalCodeStatus.ACTIVE),
     ]
     if filter:

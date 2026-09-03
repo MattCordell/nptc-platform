@@ -194,6 +194,26 @@ def test_discipline_count_query_param_pages_results(api: ApiTestApp) -> None:
     assert body["total"] > 1
 
 
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_specimen_offset_query_param_is_forwarded_to_expand(api: ApiTestApp) -> None:
+    """HTTP-level proof that the `offset` query parameter actually reaches
+    `expand`, not just the service layer's own unit test (issue #247
+    review)."""
+    _seed(api)
+    api.terminology.seed_expansion(
+        _SPECIMEN_ECL,
+        _expansion([("122192001", "Acanthamoeba culture")]),
+        edition=SNOMED_CT_AU,
+    )
+    token = _role_token(api, subject="sub-values-offset-forwarded", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, offset=5)
+
+    assert response.status_code == 200, response.text
+    assert api.terminology.requests[-1].offset == 5
+
+
 # --- errors --------------------------------------------------------------
 
 

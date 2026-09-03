@@ -27,13 +27,13 @@ query could support keyset paging in isolation, but forcing an artificial
 two-shape inconsistency onto what must be identical wire behaviour would
 defeat the whole point of one shared route.
 
-**Active-only on both sides.** A deprecated local code is excluded by
-`list_local_codes` itself; the SNOMED side passes `active_only=True` to
-`expand` for the same reason. Either way, a value already recorded against
-a since-deprecated code still renders, unchanged, through the existing
-resolution paths (`DatabaseLocalCodeLookup.resolve` /
-`CodeHandler.serialise`) - this module is additive, a new read path, not a
-replacement for either.
+**Active-only on both sides.** A deprecated local code, or one belonging to
+a deprecated local code system, is excluded by `list_local_codes` itself;
+the SNOMED side passes `active_only=True` to `expand` for the same reason.
+Either way, a value already recorded against a since-deprecated code (or
+system) still renders, unchanged, through the existing resolution paths
+(`DatabaseLocalCodeLookup.resolve` / `CodeHandler.serialise`) - this module
+is additive, a new read path, not a replacement for either.
 """
 
 from __future__ import annotations
@@ -47,15 +47,11 @@ from nptc.catalogue.local_codes import list_local_codes
 from nptc.db.definitions import load_definition
 from nptc.db.property_specs import spec_for
 from nptc.terminology.concepts import classify_terminology_error
-from nptc_shared.terminology import (
-    SNOMED_CT_AU,
-    SNOMED_CT_INTERNATIONAL,
-    Edition,
-    TerminologyClient,
-    TerminologyConfigError,
-    TerminologyError,
+from nptc_shared.terminology import TerminologyClient, TerminologyConfigError, TerminologyError
+from nptc_shared.terminology.snomed import (
+    ecl_from_implicit_value_set_url,
+    edition_from_implicit_value_set_url,
 )
-from nptc_shared.terminology.snomed import ecl_from_implicit_value_set_url
 
 __all__ = [
     "PropertyNotCodeTypeError",
@@ -83,13 +79,18 @@ class PropertyNotCodeTypeError(ValueError):
 
 class PropertyValueSourceMisconfiguredError(Exception):
     """Raised when `key` names a coded property whose own stored
-    `value_set_uri` is not a well-formed SNOMED implicit ECL value set URI.
+    `value_set_uri`/`edition` pair cannot be resolved to a real SNOMED
+    `Edition` - see `nptc_shared.terminology.snomed.
+    edition_from_implicit_value_set_url` for the two recognised
+    `value_set_uri` shapes and when each one needs `edition` to agree with
+    a known label.
 
-    A data-integrity fault in the definition itself, never a caller mistake
-    - every `value_set_uri` in this database is written by the one builder
-    (`nptc_shared.terminology.snomed.implicit_value_set_url`) this parses
-    the inverse of. This path exists for defence in depth, not a reachable
-    client scenario; matches `nptc.terminology.errors.TerminologyConfigError`'s
+    A data-integrity fault in the stored definition, never a caller mistake
+    - a well-formed row always resolves (every real `value_set_uri` in this
+    database is either module-qualified, self-describing, or the PRD's own
+    bare-system shape paired with a real `edition` label). This path exists
+    for defence in depth, not a reachable client scenario for a
+    well-formed row; matches `nptc.terminology.errors.TerminologyConfigError`'s
     own "service is misconfigured, not a caller mistake" posture.
     """
 
@@ -111,30 +112,6 @@ class ValuePage:
     total: int
 
 
-def _edition_for(label: str) -> Edition:
-    """`BindingSpec.edition` stores an edition *label* ("au"/"int"), not a
-    module id - `nptc.db.bootstrap`'s own seeded `specimen` binding writes
-    `edition="au"` verbatim (PRD S6.6). Recognising the two well-known
-    labels gives a real `Edition`, with `display_language` set for AU
-    (FR-82) - a concept picker needs a real preferred term to render.
-
-    Note this reads `binding.edition` differently from `CodeHandler.
-    _validate_binding`, which builds `Edition(module_id=binding.edition,
-    label=binding.edition)` - i.e. treats the same stored label as a module
-    id. That is a pre-existing question for `$validate-code`'s own
-    `systemVersion` parameter, not one this route depends on: `expand`
-    below is driven entirely by the ECL parsed out of `value_set_uri`
-    itself, which already fully identifies the value set, so this
-    function's only job is recovering `display_language` for a nicer
-    picker label - never mind which edition module actually resolves the
-    request."""
-    if label == SNOMED_CT_AU.label:
-        return SNOMED_CT_AU
-    if label == SNOMED_CT_INTERNATIONAL.label:
-        return SNOMED_CT_INTERNATIONAL
-    return Edition(module_id=label, label=label)
-
-
 def _value_set_page(
     client: TerminologyClient,
     *,
@@ -145,15 +122,25 @@ def _value_set_page(
     offset: int,
     count: int,
 ) -> ValuePage:
+    # The ECL always comes from value_set_uri. The edition does too when
+    # the URI is module-qualified (a pinned version, if present, must never
+    # be silently dropped) - `edition_label` (the stored `binding.edition`)
+    # is only consulted as a fallback for the PRD S6.6 bare-system URI
+    # shape, which carries no module of its own at all (see
+    # `edition_from_implicit_value_set_url`'s own docstring for both
+    # shapes, and why a label-only reconstruction was wrong: issue #247
+    # review). Both parses fail the same way for the same reason - a
+    # `value_set_uri`/`edition` pair that is not this builder's own output
+    # shape - so both share one except clause.
     try:
         ecl = ecl_from_implicit_value_set_url(value_set_uri)
+        edition = edition_from_implicit_value_set_url(value_set_uri, label=edition_label)
     except ValueError as exc:
         raise PropertyValueSourceMisconfiguredError(
-            f"property {key!r}'s stored value_set_uri could not be interpreted as a "
-            "SNOMED implicit ECL value set URI"
+            f"property {key!r}'s stored value_set_uri/edition could not be interpreted as a "
+            "SNOMED implicit ECL value set URI naming a recognised edition"
         ) from exc
 
-    edition = _edition_for(edition_label)
     try:
         expansion = client.expand(
             ecl,
@@ -162,6 +149,11 @@ def _value_set_page(
             offset=offset,
             active_only=True,
             filter=filter,
+            # FR-82: a picker needs the edition's own preferred term, not
+            # whatever the server defaults to - `edition.display_language`
+            # is `None` for editions (e.g. international) that don't set
+            # one, which `expand` already treats as "server default".
+            display_language=edition.display_language,
         )
     except TerminologyConfigError:
         # Already mapped to 500 by nptc.api.errors - must never reach
@@ -178,7 +170,11 @@ def _value_set_page(
     items = tuple(
         ValueItem(code=concept.code, display=concept.display) for concept in expansion.concepts
     )
-    total = expansion.total if expansion.total is not None else len(items)
+    # `expansion.total` is `None` when the server didn't report one -
+    # `offset + len(items)` is the honest floor (at least this many exist),
+    # never `len(items)` alone, which at offset > 0 reads to a paging
+    # client as fewer rows than it has already seen.
+    total = expansion.total if expansion.total is not None else offset + len(items)
     return ValuePage(items=items, total=total)
 
 

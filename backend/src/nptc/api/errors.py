@@ -746,7 +746,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         # caller mistake, matching `_handle_terminology_config_error`'s own
         # posture and detail string above.
         _logger.error("property values refused, value source misconfigured: %s", exc)
-        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
+        return JSONResponse(
+            status_code=PropertyValueSourceMisconfiguredError.http_status,
+            content={"detail": _DETAIL_SERVER_MISCONFIGURED},
+        )
 
     @app.exception_handler(DesignationCollisionError)
     async def _handle_designation_collision_error(

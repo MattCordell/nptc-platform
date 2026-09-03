@@ -267,21 +267,34 @@ backend that reads `binding_target` at all; a router or frontend branch on it wo
 `datatype == "code"` in disguise, the exact proxy-switch ADR-0013 SS5 names as its
 hardest-to-catch violation class.
 
-**`ecl_from_implicit_value_set_url` (`snomed.py`) is the inverse of
-`implicit_value_set_url`** - it decodes a property's stored `value_set_uri` back to the
-ECL `expand` needs, so a caller never supplies an ECL or a value set URI of its own. Only
-the `?fhir_vs=ecl/<percent-encoded ECL>` form is recognised; anything else raises
-`ValueError`, surfaced by the route as a 500 (`PropertyValueSourceMisconfiguredError`) -
-a data-integrity fault in the stored definition, never a caller mistake, since every real
-`value_set_uri` in this database is written by the one builder this parses the inverse of.
+**`ecl_from_implicit_value_set_url`/`edition_from_implicit_value_set_url` (`snomed.py`) are
+the inverse of `implicit_value_set_url`** - between them they decode a property's stored
+`value_set_uri` back to the ECL and the `Edition` `expand` needs, so a caller never
+supplies an ECL, a value set URI, or an edition of its own. Two `value_set_uri` shapes are
+real in this codebase: a module-qualified URI (`implicit_value_set_url`'s own output) is
+self-describing, so the module id and any pinned version are read straight back out of it
+- a pinned version is never silently dropped in favour of an unpinned edition. A
+*bare-system* URI (PRD S6.6's own worked example, and what `nptc.db.bootstrap`'s real
+seeded `specimen` binding actually stores) carries no module at all, so the stored
+`PropertyDefinition.edition` label is matched against the two known editions instead,
+raising rather than fabricating an `Edition` for a label that matches neither. Either way,
+anything else raises `ValueError`, surfaced by the route as a 500
+(`PropertyValueSourceMisconfiguredError`) - a data-integrity fault in the stored
+definition, never a caller mistake. The resolved edition's `display_language` is passed
+to `expand` too (FR-82), so the picker renders a real preferred term rather than the
+server's default display.
 
 **`filter` is a fifth parameter on `expand`** (all three implementations, contract-tested
-in `test_terminology_contract.py`): FHIR `$expand`'s own server-side, case-insensitive
-substring match against each candidate's display, so a picker's search-as-you-type
-narrows results without pulling the whole expansion client-side first.
-`list_local_codes`'s own `filter` is a plain `ILIKE` - proportionate to a governed
-vocabulary's handful of codes, not `nptc.catalogue.search`'s trigram/full-text ranking
-built for the whole catalogue.
+in `test_terminology_contract.py`): FHIR `$expand`'s own server-side text filter -
+Ontoserver's implementation is a word-prefix match against each candidate's display, not
+a general substring match - so a picker's search-as-you-type narrows results without
+pulling the whole expansion client-side first. `list_local_codes`'s own `filter` is a
+plain, case-insensitive `ILIKE` substring match against `display` only (never `code`) -
+proportionate to a governed vocabulary's handful of codes, not `nptc.catalogue.search`'s
+trigram/full-text ranking built for the whole catalogue. The two branches' matching
+semantics are therefore not identical even though the response shape is - see
+[ADR-0031](../adr/0031-coded-property-values-addressed-by-property-key.md) for why that
+asymmetry is accepted rather than reconciled.
 
 **Paging is offset/count, not the catalogue's own opaque keyset cursor** (contrast
 [ADR-0024](../adr/0024-catalogue-search-and-pagination.md)). `expand` only speaks
@@ -290,10 +303,12 @@ could page by keyset in isolation, but forcing a second, inconsistent shape onto
 be one uniform route would defeat the point of serving both targets identically.
 
 **Active-only on both sides**, mirroring FR-11's posture: `expand(active_only=True)` on
-the SNOMED side, `status = 'active'` on the `LocalCode` side. A deprecated value is not
-offered by this route, but stays resolvable, unchanged, through the existing paths
-(`DatabaseLocalCodeLookup.resolve`, `CodeHandler.serialise`) - this route is a new read
-path, not a replacement for either.
+the SNOMED side, `status = 'active'` on both `LocalCode` and its owning
+`LocalCodeSystem` on the local side - a code belonging to a deprecated system is excluded
+too, even though `deprecate_local_code_system` deliberately doesn't cascade to member
+codes' own `status`. A deprecated value is not offered by this route, but stays
+resolvable, unchanged, through the existing paths (`DatabaseLocalCodeLookup.resolve`,
+`CodeHandler.serialise`) - this route is a new read path, not a replacement for either.
 
 Gated on `Permission.REGISTRY_READ` (ADR-0028), the same audience as this document's own
 FR-26 route above and for the same reason: a concept picker is submission-form tooling,
@@ -304,7 +319,7 @@ not public catalogue browsing.
 | Unknown `key` | 404 (`PropertyDefinitionNotFoundError`, reused from `nptc.catalogue.property_values`) |
 | `key` names a real property that is not `datatype == "code"` | 422 (`PropertyNotCodeTypeError`) |
 | `offset`/`count` query parameter fails validation | 422 (FastAPI's own `HTTPValidationError`) |
-| The property's stored `value_set_uri` is not a well-formed implicit ECL value set URI | 500 (`PropertyValueSourceMisconfiguredError`) |
+| The property's stored `value_set_uri` is not a well-formed implicit ECL value set URI, or names a SNOMED module id this codebase does not recognise | 500 (`PropertyValueSourceMisconfiguredError`) |
 | `is_concept_absence`, or any other terminology failure, on the `value_set` branch | 502 (`TerminologyUpstreamError`) - no `not_found` factory is passed to `classify_terminology_error` here, since an unresolved value set has no single code to report absent, unlike FR-26's own route |
 | `TerminologyRateLimitError`, or a timeout/transport failure, or another retryable `TerminologyStatusError` | 503 (`Retry-After` when the server supplied one) - only reachable on the `value_set` branch |
 

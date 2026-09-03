@@ -26,6 +26,7 @@ from nptc.catalogue.local_codes import (
     DatabaseLocalCodeLookup,
     create_local_code,
     deprecate_local_code,
+    deprecate_local_code_system,
 )
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
@@ -47,6 +48,7 @@ from nptc.db.models.property_definition import (
 )
 from nptc.terminology.errors import TerminologyUnavailableError, TerminologyUpstreamError
 from nptc_shared.terminology import (
+    AU_LANGUAGE_TAG,
     SNOMED_CT_AU,
     ExpandedConcept,
     Expansion,
@@ -178,6 +180,127 @@ def test_list_property_values_passes_the_caller_filter_through_to_expand(
 
 
 @pytest.mark.req("FR-10")
+@pytest.mark.req("FR-82")
+def test_list_property_values_passes_the_editions_display_language_to_expand(
+    app_session: Session,
+) -> None:
+    """`specimen`'s stored `value_set_uri` is the PRD S6.6 bare-system
+    shape (`nptc.db.bootstrap`'s real seeded literal), which carries no
+    edition of its own - `binding.edition` ("au") is what resolves it to
+    `SNOMED_CT_AU`, and that edition's `display_language` must actually
+    reach `expand` (FR-82), not just be recovered and discarded (issue
+    #247 review)."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_expansion(_SPECIMEN_ECL, _expansion([]), edition=SNOMED_CT_AU)
+
+    list_property_values(app_session, client, key="specimen")
+
+    assert client.requests[-1].display_language == AU_LANGUAGE_TAG
+
+
+@pytest.mark.req("FR-10")
+def test_list_property_values_forwards_offset_and_count_to_expand(app_session: Session) -> None:
+    """Offset/count paging (ADR-0031) is meaningless if it silently stops
+    at the service boundary - `StubRequest.offset`/`.count` prove what was
+    actually passed to `expand`, independent of what a seeded response
+    returns (issue #247 review: previously nothing could tell a caller
+    that dropped or transposed `offset`/`count` from one that forwarded
+    them correctly)."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_expansion(_SPECIMEN_ECL, _expansion([]), edition=SNOMED_CT_AU)
+
+    list_property_values(app_session, client, key="specimen", offset=5, count=2)
+
+    assert client.requests[-1].offset == 5
+    assert client.requests[-1].count == 2
+
+
+@pytest.mark.req("FR-10")
+def test_list_property_values_reports_a_total_floor_when_the_server_omits_it(
+    app_session: Session,
+) -> None:
+    """`Expansion.total` is `None` when the server didn't report one - the
+    honest floor is `offset + len(items)` (at least this many exist), never
+    `len(items)` alone, which at `offset > 0` reads to a paging client as
+    fewer rows than it has already seen (issue #247 review)."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    concepts = (ExpandedConcept(code="122192001", system="http://snomed.info/sct", display="x"),)
+    client.seed_expansion(
+        _SPECIMEN_ECL, Expansion(concepts=concepts, total=None, offset=10), edition=SNOMED_CT_AU
+    )
+
+    page = list_property_values(app_session, client, key="specimen", offset=10)
+
+    assert page.total == 11
+
+
+@pytest.mark.req("FR-10")
+def test_list_property_values_rejects_a_value_set_uri_naming_an_unrecognised_module_id(
+    app_session: Session,
+) -> None:
+    """A module-qualified `value_set_uri` is self-describing - an
+    unrecognised module id must raise, not fabricate an `Edition` from it
+    (`Edition(module_id=label, label=label)`'s original defect, issue #247
+    review)."""
+    definition = PropertyDefinition(
+        key="unrecognised_module_test",
+        label="Unrecognised module test",
+        datatype="code",
+        cardinality=PropertyCardinality.ZERO_OR_MANY,
+        scope=PropertyScope.MAINTENANCE,
+        required_for_submission=False,
+        required_for_publication=False,
+        filterable=False,
+        origin=PropertyOrigin.ADMIN,
+        display_order=0,
+        binding_target=BindingTarget.VALUE_SET,
+        value_set_uri="http://snomed.info/sct/99999999999999999?fhir_vs=ecl/122192001",
+        strength=BindingStrength.REQUIRED,
+        edition="au",
+        constraints={},
+    )
+    app_session.add(definition)
+    app_session.flush()
+
+    with pytest.raises(PropertyValueSourceMisconfiguredError):
+        list_property_values(app_session, StubTerminologyClient(), key="unrecognised_module_test")
+
+
+@pytest.mark.req("FR-10")
+def test_list_property_values_rejects_a_bare_system_uri_with_an_unrecognised_edition(
+    app_session: Session,
+) -> None:
+    """The bare-system `value_set_uri` shape (PRD S6.6's own worked
+    example) carries no module at all - `binding.edition` must name a real
+    edition, or this raises rather than fabricating one."""
+    definition = PropertyDefinition(
+        key="unrecognised_edition_test",
+        label="Unrecognised edition test",
+        datatype="code",
+        cardinality=PropertyCardinality.ZERO_OR_MANY,
+        scope=PropertyScope.MAINTENANCE,
+        required_for_submission=False,
+        required_for_publication=False,
+        filterable=False,
+        origin=PropertyOrigin.ADMIN,
+        display_order=0,
+        binding_target=BindingTarget.VALUE_SET,
+        value_set_uri="http://snomed.info/sct?fhir_vs=ecl/122192001",
+        strength=BindingStrength.REQUIRED,
+        edition="not-a-real-edition",
+        constraints={},
+    )
+    app_session.add(definition)
+    app_session.flush()
+
+    with pytest.raises(PropertyValueSourceMisconfiguredError):
+        list_property_values(app_session, StubTerminologyClient(), key="unrecognised_edition_test")
+
+
+@pytest.mark.req("FR-10")
 def test_list_property_values_rejects_a_malformed_stored_value_set_uri(
     app_session: Session,
 ) -> None:
@@ -304,6 +427,46 @@ def test_list_property_values_paginates_local_code_system_results(app_session: S
 
     assert len(first_page.items) == 1
     assert first_page.total > 1
+
+
+@pytest.mark.req("FR-10")
+def test_list_property_values_forwards_offset_for_local_code_system_results(
+    app_session: Session,
+) -> None:
+    """`offset` must actually reach `list_local_codes`, not just `count` -
+    the only existing paging test before this one covered `count` alone
+    (issue #247 review)."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+
+    first_page = list_property_values(app_session, client, key="discipline", offset=0, count=1)
+    second_page = list_property_values(app_session, client, key="discipline", offset=1, count=1)
+
+    assert first_page.items != second_page.items
+    assert first_page.total == second_page.total
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
+def test_list_property_values_excludes_codes_from_a_deprecated_local_code_system(
+    app_session: Session,
+) -> None:
+    _seed(app_session)
+    system = app_session.execute(
+        select(LocalCodeSystem).where(LocalCodeSystem.key == "discipline")
+    ).scalar_one()
+    deprecate_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        reason="retiring this vocabulary for the test",
+    )
+    app_session.flush()
+
+    page = list_property_values(app_session, StubTerminologyClient(), key="discipline")
+
+    assert page.items == ()
 
 
 # --- response shape parity ----------------------------------------------------

@@ -8,6 +8,7 @@ from nptc_shared.terminology.models import SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL
 from nptc_shared.terminology.snomed import (
     ecl_from_implicit_value_set_url,
     ecl_set_of,
+    edition_from_implicit_value_set_url,
     implicit_value_set_url,
     semantic_tag,
     strip_semantic_tag,
@@ -53,6 +54,75 @@ def test_ecl_from_implicit_value_set_url_rejects_a_non_ecl_implicit_value_set() 
 def test_ecl_from_implicit_value_set_url_rejects_a_uri_with_no_fhir_vs_parameter() -> None:
     with pytest.raises(ValueError, match="not a SNOMED implicit ECL value set URI"):
         ecl_from_implicit_value_set_url("http://snomed.info/sct/32506021000036107")
+
+
+@pytest.mark.req("FR-10")
+def test_edition_from_implicit_value_set_url_round_trips_with_the_builder() -> None:
+    """`implicit_value_set_url` always writes a module-qualified base
+    (`Edition.system_version_uri`), so `label` is never needed to resolve
+    one of its own outputs - the URI alone is already authoritative,
+    including any pinned version."""
+    for ecl, edition in (
+        ("122192001", SNOMED_CT_AU),
+        ("<<71388002", SNOMED_CT_INTERNATIONAL),
+        ("(122192001 OR 71388002) MINUS <<71388002", SNOMED_CT_AU.pinned_to("20260531")),
+    ):
+        assert edition_from_implicit_value_set_url(implicit_value_set_url(ecl, edition)) == edition
+
+
+@pytest.mark.req("FR-10")
+def test_edition_from_implicit_value_set_url_recovers_display_language() -> None:
+    """The whole reason this function exists rather than reconstructing an
+    `Edition` from a label: `display_language` (FR-82) isn't encoded in the
+    URI at all, so it has to come from matching `known_editions`, not from
+    a caller-supplied default."""
+    url = implicit_value_set_url("122192001", SNOMED_CT_AU)
+    assert (
+        edition_from_implicit_value_set_url(url).display_language == SNOMED_CT_AU.display_language
+    )
+
+
+@pytest.mark.req("FR-10")
+def test_edition_from_implicit_value_set_url_resolves_the_bare_system_shape_by_label() -> None:
+    """PRD S6.6's own worked example (line 417) and `nptc.db.bootstrap`'s
+    real seeded `specimen` binding both store `value_set_uri` in this bare,
+    module-less form - the edition isn't in the URI at all here, so `label`
+    (the property's own stored `binding.edition`) is what resolves it."""
+    bare = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+    assert edition_from_implicit_value_set_url(bare, label="au") == SNOMED_CT_AU
+    assert edition_from_implicit_value_set_url(bare, label="int") == SNOMED_CT_INTERNATIONAL
+
+
+def test_edition_from_implicit_value_set_url_rejects_a_bare_system_uri_with_no_label() -> None:
+    with pytest.raises(ValueError, match="does not match a recognised edition"):
+        edition_from_implicit_value_set_url("http://snomed.info/sct?fhir_vs=ecl/%3C123038009")
+
+
+def test_edition_from_implicit_value_set_url_rejects_a_bare_system_uri_with_an_unknown_label() -> (
+    None
+):
+    """The defect issue #247's review found: a label-only reconstruction
+    (`Edition(module_id=label, label=label)`) would have silently
+    fabricated a nonsense `Edition` for any label at all, instead of
+    raising for one that names no real edition."""
+    with pytest.raises(ValueError, match="does not match a recognised edition"):
+        edition_from_implicit_value_set_url(
+            "http://snomed.info/sct?fhir_vs=ecl/%3C123038009", label="not-a-real-edition"
+        )
+
+
+def test_edition_from_implicit_value_set_url_rejects_a_non_ecl_implicit_value_set() -> None:
+    with pytest.raises(ValueError, match="not a SNOMED implicit ECL value set URI"):
+        edition_from_implicit_value_set_url(
+            "http://snomed.info/sct/32506021000036107?fhir_vs=isa/71388002"
+        )
+
+
+def test_edition_from_implicit_value_set_url_rejects_an_unrecognised_module_id() -> None:
+    with pytest.raises(ValueError, match="unrecognised SNOMED module id"):
+        edition_from_implicit_value_set_url(
+            "http://snomed.info/sct/99999999999999999?fhir_vs=ecl/122192001"
+        )
 
 
 def test_ecl_set_of_joins_codes_with_or() -> None:

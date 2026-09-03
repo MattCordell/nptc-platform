@@ -90,10 +90,19 @@ class StubConcept:
 @dataclass(frozen=True, slots=True)
 class StubRequest:
     """One call made against the stub, for #27-style "one request, not N"
-    assertions to work identically against the stub and the real client."""
+    assertions to work identically against the stub and the real client.
+
+    `offset`/`count`/`display_language` are recorded for `expand` calls
+    only (every other operation leaves them at their defaults) - issue
+    #247's review found that without this, a caller silently dropping or
+    transposing `offset`/`count`, or never forwarding `display_language`,
+    could not be told apart from a correct call through this stub."""
 
     operation: Operation
     detail: str
+    offset: int = 0
+    count: int | None = None
+    display_language: str | None = None
 
 
 #: FR-75's two attribute-refinement forms: ``* : <attr> = *`` and
@@ -202,7 +211,15 @@ class StubTerminologyClient:
         active_only: bool | None = None,
         filter: str | None = None,
     ) -> Expansion:
-        self._requests.append(StubRequest(Operation.EXPAND, ecl))
+        self._requests.append(
+            StubRequest(
+                Operation.EXPAND,
+                ecl,
+                offset=offset,
+                count=count,
+                display_language=display_language,
+            )
+        )
         self._raise_if_seeded_error(Operation.EXPAND, ecl)
 
         # Edition falls back to "any edition" (as before filter existed), but

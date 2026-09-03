@@ -597,6 +597,48 @@ def test_list_local_codes_excludes_a_deprecated_code(app_session: Session) -> No
     assert resolved.status == str(LocalCodeStatus.DEPRECATED)
 
 
+@pytest.mark.req("FR-90")
+def test_list_local_codes_excludes_every_code_of_a_deprecated_system(app_session: Session) -> None:
+    """`deprecate_local_code_system` deliberately does not cascade to
+    member codes' own `status` (`find_local_code_with_system_status`'s own
+    docstring) - but a retired vocabulary must not keep offering its codes
+    for new entry, so this function filters on the system's status too, not
+    just the code's. `DatabaseLocalCodeLookup.resolve` still resolves the
+    code unchanged, matching `test_lookup_surfaces_system_deprecation_
+    independently_of_the_code` above - this function is additive."""
+    system = _system(app_session, "list_deprecated_system_test")
+    create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="orphaned_by_system",
+        display="Orphaned by system",
+        reason="test fixture",
+    )
+    app_session.flush()
+    deprecate_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        reason="retiring this vocabulary",
+    )
+    app_session.flush()
+
+    codes, total = list_local_codes(app_session, system_key=system.key)
+
+    assert list(codes) == []
+    assert total == 0
+
+    resolved = DatabaseLocalCodeLookup(app_session).resolve(
+        "list_deprecated_system_test", "orphaned_by_system"
+    )
+    assert resolved is not None
+    assert resolved.status == str(LocalCodeStatus.ACTIVE)
+    assert resolved.system_status == str(LocalCodeSystemStatus.DEPRECATED)
+
+
 def test_list_local_codes_filters_by_display_text_case_insensitively(app_session: Session) -> None:
     system = _system(app_session, "list_filter_test")
     create_local_code(
