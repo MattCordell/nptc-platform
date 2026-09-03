@@ -10,6 +10,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Default 5000ms leaves no margin under --coverage's v8 instrumentation
+    // overhead once the suite grows large route test files (issue #244).
+    testTimeout: 20000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
