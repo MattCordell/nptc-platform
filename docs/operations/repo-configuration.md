@@ -180,3 +180,40 @@ developer joins.
 gh api repos/aehrc/nptc-platform/rulesets
 git push origin main   # rejected: direct pushes are blocked
 ```
+
+## `frontend-audit` retries on registry timeouts (issue #255)
+
+`pnpm audit`'s POST to `registry.npmjs.org/-/npm/v1/security/advisories/bulk`
+intermittently timed out under pnpm's defaults, failing the
+`pnpm audit (production dependencies)` job - and with it the
+`Required (Security)` aggregator - on PRs that touched no dependency manifest
+at all. Two layers now guard against that:
+
+- The repo-root `pnpm-workspace.yaml` raises `fetchTimeout` and `fetchRetries`
+  above pnpm's defaults for every `pnpm` invocation (install and audit alike,
+  in CI and locally). These are pnpm-specific settings, not npm's - testing
+  against an unreachable registry showed pnpm 11.20 reads them from here, not
+  from the same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...)
+  in a `.npmrc` file, which it silently ignores.
+- `frontend-audit`'s audit step in
+  [`security.yml`](../../.github/workflows/security.yml) runs `pnpm audit`
+  through [`scripts/audit_retry_guard.py`](../../scripts/audit_retry_guard.py)
+  (unit-tested under
+  [`scripts/tests/test_audit_retry_guard.py`](../../scripts/tests/test_audit_retry_guard.py)),
+  which inspects the failure output: a registry-timeout signature
+  (`TimeoutError`, `operation was aborted`, or a raw network error code such
+  as `ETIMEDOUT`/`ECONNRESET`) retries once more after a short sleep;
+  anything else - including a real high/critical advisory, or a
+  deterministic HTTP-status failure like pnpm's `ERR_PNPM_FETCH_401` - fails
+  immediately, on the first attempt, with no retry. The job's
+  `timeout-minutes` is sized to the worst-case retry wall time (see the
+  comment above that job in `security.yml` for the budget).
+
+`fetchTimeout`/`fetchRetries` are workspace-global (`pnpm-workspace.yaml`
+applies to every package, not just `frontend`), so every other job's own
+`pnpm install --frozen-lockfile` step inherits the same raised worst case per
+request - not just `frontend-audit`'s. `ci.yml`'s `Frontend (lint, typecheck,
+test, build)` job and `openapi.yml`'s `client` (generated-client-is-current)
+job both had their `timeout-minutes` padded for this in the same PR that
+introduced the setting (#258); a future job that adds its own `pnpm install`
+step should budget the same way rather than assume pnpm's original defaults.

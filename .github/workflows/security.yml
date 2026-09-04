@@ -91,7 +91,29 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Worst case (issue #255, PR #258 review - the first version of this
+    # budget under-allotted both figures below). One `pnpm audit` process
+    # now retries up to 4 times (../../pnpm-workspace.yaml's fetchRetries: 3)
+    # with a fetchTimeout of 90s and backoffs of ~10s/60s/60s (pnpm's
+    # fetchRetryMintimeout/-Maxtimeout defaults, observed directly against
+    # an unreachable registry - not 3 x fetchRetryMaxtimeout, which
+    # over-simplified an exponential-backoff schedule that's capped, not
+    # constant): 4 x 90s + (10+60+60)s = ~8.5 minutes per process.
+    # scripts/audit_retry_guard.py retries that whole process once more (2
+    # attempts, 30s apart): 2 x 8.5min + 30s = ~17.5 minutes.
+    # The same fetchTimeout/fetchRetries apply to every `pnpm` invocation,
+    # including "Install dependencies" below - a worst case there is harder
+    # to bound exactly (it depends on how many packages the pnpm store
+    # cache didn't already have), but is unlikely to exceed one such
+    # process's worth of wall time even under a total outage, since pnpm
+    # fetches concurrently rather than one dependency at a time: another
+    # ~8.5 minutes, plus ~1 minute for checkout/pnpm/node setup.
+    # Total: ~17.5 + ~8.5 + ~1 = ~27 minutes. 30 leaves margin above that
+    # without masking a real outage as a job cancellation (a cancelled job
+    # fails `Required (Security)` just as a failed one does). See
+    # docs/operations/repo-configuration.md for the same reasoning applied
+    # to ci.yml's and openapi.yml's own `pnpm install` steps.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
@@ -113,7 +135,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: pnpm audit (fails on high/critical - NFR-25)
-        run: pnpm audit --prod --audit-level=high
+        # Retries only a registry-timeout/network failure against
+        # registry.npmjs.org's advisories/bulk endpoint (issue #255); a real
+        # advisory (or any other failure) prints and exits on the first
+        # attempt, exactly as before this change. The retry/classification
+        # logic lives in scripts/audit_retry_guard.py, not inline here (PR
+        # #258 review) - it has a real failure mode (retrying a deterministic
+        # error, or failing fast on a genuine flake) and needed committed
+        # regression coverage (scripts/tests/test_audit_retry_guard.py) more
+        # than it needed to stay a one-off workflow step. Working directory
+        # is repo root, not `frontend` (this job's default), so the script
+        # path below is plain - `pnpm audit` still targets `frontend`'s
+        # manifest/lockfile via `--dir`.
+        working-directory: .
+        run: python3 scripts/audit_retry_guard.py -- pnpm --dir frontend audit --prod --audit-level=high
 
   gitleaks:
     name: gitleaks (secret scanning)

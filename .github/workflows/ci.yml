@@ -234,7 +234,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 -> 20 (issue #255, PR #258 review): "Install dependencies" below is
+    # a `pnpm` invocation like any other, so it inherits
+    # ../../pnpm-workspace.yaml's raised fetchTimeout/fetchRetries - see
+    # security.yml's frontend-audit job for the worst-case-per-request
+    # arithmetic (~8.5 minutes) this pads against, on top of this job's own
+    # normal lint/typecheck/test/build time.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
