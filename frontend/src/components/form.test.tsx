@@ -571,6 +571,46 @@ describe("Form", () => {
     expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
   });
 
+  it("does not re-announce blockedReason on its own after the gate lifts and re-blocks", async () => {
+    // Regression: `blockedAttempted` must reset when `submitBlocked` clears,
+    // not just live for the component's lifetime - otherwise reintroducing
+    // the same failure without a fresh submit click (fixing a field, then
+    // undoing the fix) would silently reannounce the old attempt.
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    function ReblockingForm() {
+      const [blocked, setBlocked] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setBlocked(false)}>
+            Fix
+          </button>
+          <button type="button" onClick={() => setBlocked(true)}>
+            Break again
+          </button>
+          <Form
+            submitLabel="Save entry"
+            submitBlocked={blocked}
+            blockedReason="Enter a changelog note"
+            onSubmit={onSubmit}
+          >
+            <p>Fields</p>
+          </Form>
+        </>
+      );
+    }
+    render(<ReblockingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    expect(screen.getByText("Enter a changelog note")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Fix" }));
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Break again" }));
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+  });
+
   it("has no automated accessibility violations, with the summary showing", async () => {
     const user = userEvent.setup();
     const { container } = render(<ValidatingForm />);

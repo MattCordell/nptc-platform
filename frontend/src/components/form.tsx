@@ -96,8 +96,24 @@ export function Form({
   const [submitCount, setSubmitCount] = useState(0);
   // Whether the user has actually attempted a submit while blocked - the
   // gate is announced only from that point, never merely because the field
-  // is currently empty (see `blockedReason`'s doc comment).
+  // is currently empty (see `blockedReason`'s doc comment). Reset the
+  // moment the gate itself lifts, not just on a fresh mount: without this,
+  // a user who fixes the field, then reintroduces the same failure without
+  // clicking submit again (backspacing a just-fixed note back to empty, say)
+  // would see the reason reappear on its own - a second attempt has to
+  // actually happen for it to be announced again.
+  //
+  // Adjusted during render rather than in an effect (React's own documented
+  // "adjusting state when a prop changes" recipe): comparing against state
+  // rather than a ref, since a ref may not be read or written during render.
   const [blockedAttempted, setBlockedAttempted] = useState(false);
+  const [previousSubmitBlocked, setPreviousSubmitBlocked] = useState(submitBlocked);
+  if (submitBlocked !== previousSubmitBlocked) {
+    setPreviousSubmitBlocked(submitBlocked);
+    if (!submitBlocked && blockedAttempted) {
+      setBlockedAttempted(false);
+    }
+  }
   const showBlockedReason = submitBlocked && blockedAttempted && Boolean(blockedReason);
   const blockedFieldErrors: FormError[] =
     showBlockedReason && blockedFieldId
