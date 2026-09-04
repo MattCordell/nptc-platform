@@ -498,6 +498,79 @@ describe("Form", () => {
     expect(summaryElement()).toHaveFocus();
   });
 
+  it("marks the submit button aria-disabled while submitBlocked, without disabling it", () => {
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={vi.fn()}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    const button = screen.getByRole("button", { name: "Save entry" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+  });
+
+  it("refuses a submit while submitBlocked and announces blockedReason", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={onSubmit}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Enter a changelog note")).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("lifts the blocked gate once submitBlocked clears, letting submit through", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    function GateLiftingForm() {
+      const [blocked, setBlocked] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setBlocked(false)}>
+            Fix the note
+          </button>
+          <Form
+            submitLabel="Save entry"
+            submitBlocked={blocked}
+            blockedReason="Enter a changelog note"
+            onSubmit={onSubmit}
+          >
+            <p>Fields</p>
+          </Form>
+        </>
+      );
+    }
+    render(<GateLiftingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Fix the note" }));
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+  });
+
   it("has no automated accessibility violations, with the summary showing", async () => {
     const user = userEvent.setup();
     const { container } = render(<ValidatingForm />);

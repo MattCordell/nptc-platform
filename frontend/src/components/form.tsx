@@ -23,6 +23,20 @@ type FormProps = {
    * the focus contract below, deliberately, so a caller that never sets it
    * still gets a summary announced when its refusal arrives. */
   pending?: boolean;
+  /** True while the caller's own client-side gate (issue #62 - a missing or
+   * invalid changelog note) refuses submission. Unlike `pending`, this *is*
+   * part of the focus contract: an attempted submit while blocked is
+   * treated the same as a validation failure, and `blockedReason` is
+   * announced through the same summary path. The caller owns validation
+   * ("guidance while typing" belongs on the field itself, gated on blur,
+   * never here); `Form` owns only the one submit path that must refuse it
+   * (ADR-0026). */
+  submitBlocked?: boolean;
+  /** Why submission is refused while `submitBlocked` is true. Shown in the
+   * error summary only once the user actually attempts a submit - never
+   * before, so an empty required field does not accuse the user of an
+   * error before they have done anything. */
+  blockedReason?: string;
   /** Required - `Form` renders its own submit button, so "one submit path"
    * is structural rather than a convention a screen has to remember. */
   submitLabel: string;
@@ -54,6 +68,8 @@ export function Form({
   errors,
   formError,
   pending = false,
+  submitBlocked = false,
+  blockedReason,
   submitLabel,
   pendingLabel,
   secondaryActions,
@@ -71,8 +87,14 @@ export function Form({
   // would submit an invalid form a second time and get no announcement at
   // all, because nothing React can see changed between the two attempts.
   const [submitCount, setSubmitCount] = useState(0);
+  // Whether the user has actually attempted a submit while blocked - the
+  // gate is announced only from that point, never merely because the field
+  // is currently empty (see `blockedReason`'s doc comment).
+  const [blockedAttempted, setBlockedAttempted] = useState(false);
   const fieldErrors = errors ?? [];
-  const hasErrors = fieldErrors.length > 0 || Boolean(formError);
+  const showBlockedReason = submitBlocked && blockedAttempted && Boolean(blockedReason);
+  const effectiveFormError = formError ?? (showBlockedReason ? blockedReason : undefined);
+  const hasErrors = fieldErrors.length > 0 || Boolean(effectiveFormError);
 
   // Focus is moved in an effect, not in the submit handler, because the
   // errors are the caller's to compute: they arrive as props on the render
@@ -104,7 +126,7 @@ export function Form({
     }
     awaitingResultRef.current = false;
     summaryRef.current?.focus();
-  }, [submitCount, errors, formError, hasErrors]);
+  }, [submitCount, errors, effectiveFormError, hasErrors]);
 
   return (
     <form
@@ -120,6 +142,12 @@ export function Form({
         if (pending) {
           return;
         }
+        if (submitBlocked) {
+          setBlockedAttempted(true);
+          awaitingResultRef.current = true;
+          setSubmitCount((count) => count + 1);
+          return;
+        }
         awaitingResultRef.current = true;
         setSubmitCount((count) => count + 1);
         onSubmit();
@@ -133,7 +161,7 @@ export function Form({
       <ErrorSummary
         ref={summaryRef}
         errors={fieldErrors}
-        formError={formError}
+        formError={effectiveFormError}
         title={errorSummaryTitle}
         headingLevel={errorSummaryHeadingLevel}
       />
@@ -147,8 +175,9 @@ export function Form({
             needs to *say* it is unavailable - and an aria-disabled control
             stays focusable and stays announced. `Button` styles
             aria-disabled the same way it styles disabled, so there is
-            nothing to reproduce here. */}
-        <Button type="submit" aria-disabled={pending || undefined}>
+            nothing to reproduce here. `submitBlocked` (issue #62) joins
+            `pending` here for the same reason. */}
+        <Button type="submit" aria-disabled={pending || submitBlocked || undefined}>
           {pending && pendingLabel ? pendingLabel : submitLabel}
         </Button>
         {secondaryActions}
