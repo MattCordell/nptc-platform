@@ -634,4 +634,21 @@ describe("specimen_unconstrained", () => {
       expected_row_version: 4,
     });
   });
+
+  it("gates Save on a changelog note (FR-37, issue #62)", async () => {
+    const calls = stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByLabelText("This entry accepts any specimen (Any)"));
+    expect(dialog.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+  });
 });

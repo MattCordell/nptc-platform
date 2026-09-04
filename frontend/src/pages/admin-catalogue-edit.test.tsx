@@ -725,6 +725,24 @@ describe("a warning-severity collision", () => {
       ).not.toBeInTheDocument(),
     );
   });
+
+  it("gates Acknowledge on a changelog note (FR-37, issue #62)", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, WARNED]);
+    await renderLoaded();
+    await addWarnedTerm(user);
+    await screen.findByRole("heading", { name: "Possible duplicates" });
+
+    await user.click(screen.getByRole("button", { name: "Acknowledge Ferritin assay" }));
+    const dialog = inDialog();
+    expect(dialog.getByRole("button", { name: "Acknowledge" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(dialog.getByRole("button", { name: "Acknowledge" }));
+    expect(callsTo(calls, ACK_PATH)).toHaveLength(0);
+  });
 });
 
 describe("amending a term", () => {
@@ -1059,6 +1077,25 @@ describe("amending a term", () => {
     expect(within(dialog).queryByLabelText(/length/i)).not.toBeInTheDocument();
     expect(within(dialog).getAllByRole("textbox")).toHaveLength(2);
   });
+
+  it("gates Save term on a changelog note (FR-37, issue #62)", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "Save term" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.type(dialog.getByLabelText("Changelog note"), "Correct the term");
+    expect(dialog.getByRole("button", { name: "Save term" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+    expect(callsTo(calls, AMEND_PATH)).toHaveLength(0);
+  });
 });
 
 describe("retiring a term", () => {
@@ -1253,6 +1290,26 @@ describe("code bindings", () => {
     expect(
       screen.queryByRole("heading", { name: "Bind a code" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("gates Bind code on a changelog note (FR-37, issue #62)", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      /fully specified name/,
+    );
+    expect(inBindingsPanel().getByRole("button", { name: "Bind code" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
   });
 
   it("resolves a code before binding it: the FSN keeps its tag, and the code is sent as a quoted string", async () => {
@@ -1634,6 +1691,34 @@ describe("code bindings", () => {
       },
       reason: "Superseded by the new method",
     });
+  });
+
+  it("gates Replace on a changelog note (FR-37, issue #62)", async () => {
+    const user = userEvent.setup();
+    const SUCCESSOR_CODE = "165288007";
+    const calls = stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } },
+      terminologyRoute(SUCCESSOR_CODE, {
+        fsn: "Basophil count (procedure)",
+        au_preferred_term: "Basophil count",
+      }),
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Replace ${FSN_CODE}` }));
+    await typeCodeAndWait(
+      user,
+      inDialog().getByLabelText("Successor SNOMED CT code"),
+      SUCCESSOR_CODE,
+      "Basophil count (procedure)",
+    );
+    expect(inDialog().getByRole("button", { name: "Replace" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(inDialog().getByRole("button", { name: "Replace" }));
+    expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/replacement`)).toHaveLength(0);
   });
 
   it("keeps a retired binding visible, with its reason and successor code (FR-08)", async () => {
