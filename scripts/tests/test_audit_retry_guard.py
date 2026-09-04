@@ -174,21 +174,61 @@ def test_registry_timeout_recovers_on_retry() -> None:
 
 
 def test_output_streams_line_by_line_not_only_at_exit() -> None:
-    """The buffering complaint this guard's bash predecessor drew: a run
-    sitting in retry backoff should still show progress in the log."""
-    written: list[str] = []
+    """The buffering complaint this guard's bash predecessor drew, which its
+    first Python version *also* had despite writing line-by-line: Python's
+    stdout is block-buffered, not line-buffered, whenever it isn't a TTY -
+    which a GitHub Actions step's stdout never is. Confirmed live on PR #258
+    itself: a 20-minute CI run whose every log line carried the same
+    timestamp, all printed only once the process finally exited. Each write
+    must be paired with an immediate flush, not just happen in write order,
+    or the log genuinely goes dark for the whole run."""
+    calls: list[tuple[str, str]] = []
 
     class RecordingWriter(io.StringIO):
         def write(self, s: str) -> int:
-            written.append(s)
+            calls.append(("write", s))
             return super().write(s)
+
+        def flush(self) -> None:
+            calls.append(("flush", ""))
+            super().flush()
 
     out = RecordingWriter()
     popen = _popen_sequence([(["line one\n", "line two\n"], 0)])
 
     guard.run_with_retries(["pnpm", "audit"], popen=popen, sleep=lambda _: None, out=out)
 
-    assert written == ["line one\n", "line two\n"]
+    assert calls == [
+        ("write", "line one\n"),
+        ("flush", ""),
+        ("write", "line two\n"),
+        ("flush", ""),
+    ]
+
+
+def test_retry_and_error_messages_are_also_flushed_immediately() -> None:
+    calls: list[str] = []
+
+    class RecordingWriter(io.StringIO):
+        def flush(self) -> None:
+            calls.append("flush")
+            super().flush()
+
+    out = RecordingWriter()
+    popen = _popen_sequence(
+        [
+            (["TimeoutError: The operation was aborted due to timeout\n"], 1),
+            (["TimeoutError: The operation was aborted due to timeout\n"], 1),
+        ]
+    )
+
+    guard.run_with_retries(
+        ["pnpm", "audit"], max_attempts=2, popen=popen, sleep=lambda _: None, out=out
+    )
+
+    # One flush per streamed line (2), plus one for the "retrying" message
+    # and one for the final ::error:: annotation.
+    assert calls.count("flush") == 4
 
 
 # --- main --------------------------------------------------------------------------------

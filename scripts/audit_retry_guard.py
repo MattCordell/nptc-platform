@@ -92,6 +92,7 @@ def run_with_retries(
         assert process.stdout is not None
         for line in process.stdout:
             out.write(line)
+            out.flush()
             lines.append(line)
         returncode = process.wait()
         output = "".join(lines)
@@ -106,12 +107,14 @@ def run_with_retries(
                 "registry-timeout signature - registry.npmjs.org appears "
                 "unreachable (see issue #255)",
                 file=out,
+                flush=True,
             )
             return returncode
         print(
             f"pnpm audit hit a registry timeout (attempt {attempt}/{max_attempts}) "
             f"- retrying in {sleep_seconds}s",
             file=out,
+            flush=True,
         )
         attempt += 1
         sleep(sleep_seconds)
