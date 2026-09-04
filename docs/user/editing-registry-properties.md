@@ -53,7 +53,9 @@ takes at most one value shows a single input.
 
 Give a changelog note and choose **Save**. Saving replaces this property's entire set of
 values in one step — there is no way to add or remove a single value without resaving the
-rest, which is also why one save covers everything shown in the dialog.
+rest, which is also why one save covers everything shown in the dialog. Save stays
+unavailable — with a message under the note explaining why — until the note is a real
+sentence describing the change; single words like "update" or "fix" are refused.
 
 If a value you entered fails validation, the message appears against that value, not as a
 generic refusal — you can see exactly which one to fix.
@@ -71,8 +73,10 @@ and save. Turning this on while the entry already has specimen values recorded i
 
 ## If something goes wrong
 
-**"Enter a changelog note describing this change."** The note was empty. Write a sentence
-saying what changed and why.
+**Save stays unavailable, with a message under the changelog note.** The note is empty,
+too short, or a single low-information word such as "update" or "fix" — the screen tells
+you which, before you try to save. Write a sentence saying what changed and why; Save
+becomes available as soon as the note passes.
 
 **A message naming one of your values directly** (for example, "This value is too long.")
 — that value failed validation. The message tells you what is wrong with it; the rest of

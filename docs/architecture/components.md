@@ -111,7 +111,11 @@ records why there is no form library behind these and what was rejected.
   and friends. While pending, that button is `aria-disabled`, not `disabled` — a
   `disabled` control leaves the tab order mid-save and drops the keyboard user's focus to
   `<body>` with nothing announced; the submit handler's own guard is what refuses the
-  second submit.
+  second submit. `submitBlocked` (issue #62) is the same idea for a caller-side gate
+  computed before any submit is attempted — a missing or invalid changelog note, today —
+  joining `pending` on `aria-disabled` and in the re-entry guard; `blockedReason` (with
+  `blockedFieldId`, to make it a real summary link rather than a plain sentence) is
+  announced only once an attempted submit is actually refused, per ADR-0026's amendment.
 
 ### Composing a form
 

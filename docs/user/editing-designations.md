@@ -51,7 +51,8 @@ terms: “Zovirax”, “Cyclir”"* — so you can check the split matches what
 
 Every change needs a **changelog note**. It becomes the published History text for the
 entry, so write a sentence describing the change. Single words like "update" or "fix" are
-refused.
+refused, and Save stays unavailable — and tells you why, in the note's own field — until
+you write one, rather than only reporting it after you try to save.
 
 ## Editing a term
 
@@ -120,8 +121,10 @@ saved. Choose a different term, or resolve it on the entry named in the message.
 punctuation are ignored."** The entry already holds this term. Check the Terms table — you
 may be adding something that is already there under slightly different capitalisation.
 
-**"A changelog note is required and must describe the change."** The note was empty, too
-short, or a single low-information word. Write a sentence saying what changed and why.
+**Save stays unavailable, with a message under the changelog note.** The note is empty,
+too short, or a single low-information word such as "update" or "fix" — the screen tells
+you which, before you try to save. Write a sentence saying what changed and why; Save
+becomes available as soon as the note passes.
 
 **"This term could not be saved."** The term contains a character that has no single
 correct repair — a zero-width space, or a control character — usually picked up by pasting

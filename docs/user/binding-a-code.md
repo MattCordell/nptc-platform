@@ -61,7 +61,9 @@ one. If the entry already has one, retire or replace it first.
 
 Every change needs a **changelog note**. It is the same field as the changelog note
 elsewhere on this screen, and it becomes the published History text for the entry, so
-write a sentence describing the change. Single words like "update" or "fix" are refused.
+write a sentence describing the change. Single words like "update" or "fix" are refused,
+and the button stays unavailable — with a message under the note explaining why — until
+you write one.
 
 ## Retiring a binding
 
@@ -95,8 +97,10 @@ the SNOMED CT Australian edition as far as the terminology server knows. Check t
 **"The terminology server could not be reached…"** A live check could not be completed
 right now. Every other part of this screen is unaffected — wait a moment and try again.
 
-**"Enter a changelog note describing this change."** The note was empty. Write a sentence
-saying what changed and why.
+**The button stays unavailable, with a message under the changelog note.** The note is
+empty, too short, or a single low-information word such as "update" or "fix" — the screen
+tells you which, before you try to save. Write a sentence saying what changed and why; the
+button becomes available as soon as the note passes.
 
 **"This entry already has an active code binding."** Someone else bound a code to this
 entry while you had the screen open, or a second Bind attempt reached the server anyway.

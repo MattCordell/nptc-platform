@@ -122,3 +122,39 @@ an OpenAPI change first.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.
+
+## Amendment (2026-09-04): `submitBlocked` for a caller-side client gate
+
+Issue #62 needed a second thing from `Form`, beyond validate-on-submit: a changelog note
+that fails FR-37 (mirrored client-side per ADR-0030) must refuse submission *before* a
+request goes out, not only report a failure after one comes back. The nine edit forms this
+issue touches (`designations-panel.tsx`, `bindings-panel.tsx`, `properties-panel.tsx`) all
+need it, which is exactly this ADR's "the caller owns validation, `Form` owns the submit
+path" split, extended to a validity a caller can compute *before* any submit is attempted.
+
+**Decision: `Form` gained `submitBlocked?: boolean`, `blockedReason?: string` and
+`blockedFieldId?: string`, alongside `pending`.** `submitBlocked` joins `pending` on the
+submit button's `aria-disabled` and in the re-entry guard, so a caller cannot forget to
+wire the refusal itself — the same argument that made `Form` render its own submit button
+in the first place. Critically, the guard refuses the submit *before* calling `onSubmit`,
+so a tenth form composing `ChangelogNoteField` gets the gate for free rather than having to
+remember to check `blocked` itself.
+
+`blockedReason` is announced through the same summary-focus path a validation failure
+already uses, but only once an attempted submit is actually refused — never merely because
+a required field starts empty, which would accuse the user of an error before they had done
+anything. That gating is state private to `Form` (`blockedAttempted`), not something a
+caller can observe or needs to.
+
+`blockedFieldId` was added after the first attempt shipped without it: `blockedReason` alone
+rendered as a plain, unlinked sentence (the same slot `formError` uses), which meant the
+gate's refusal did not get the "click the summary entry, land on the named field" affordance
+every other field-level error gets. Passing the id the caller already gave `ChangelogNoteField`
+turns it into a real summary link, consistent with the rest of `ErrorSummary`'s contract.
+
+**Why this belongs on `Form` and not as a fourth thing each caller re-implements:** the
+alternative was each of the nine forms computing its own "is the note valid" check and
+manually short-circuiting `onSubmit`, which is exactly the kind of easy-to-get-subtly-wrong
+accessibility wiring this ADR already declined to leave to convention. `useChangelogNote`
+(`frontend/src/catalogue/changelog-note-field.tsx`) computes the validity; `Form` is the one
+place that enforces it cannot be bypassed by a click on an `aria-disabled` button.
