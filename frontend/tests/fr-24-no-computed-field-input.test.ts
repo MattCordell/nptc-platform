@@ -112,13 +112,40 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
       if (attrName !== "id" && attrName !== "name") {
         continue;
       }
-      const initializer = prop.initializer;
-      if (initializer && ts.isStringLiteral(initializer)) {
-        if (COMPUTED_FIELD_NAMES.has(initializer.text)) {
-          found.add(initializer.text);
-        }
+      const literal = stringLiteralValue(prop.initializer);
+      if (literal !== null && COMPUTED_FIELD_NAMES.has(literal)) {
+        found.add(literal);
       }
     }
+  }
+
+  /**
+   * The literal string an `id`/`name` attribute's initializer holds, or
+   * `null` if it is not a plain string. Handles both JSX attribute value
+   * shapes - `id="length"` (the initializer is a `StringLiteral` node
+   * directly, every real instance in this codebase today) and `id={"length"}`
+   * (the initializer is a `JsxExpression` wrapping one) - so a future control
+   * built from a template rather than a bare attribute string cannot slip
+   * past this guard on syntax alone. Anything else (a variable, a template
+   * literal with substitutions, a ternary) is not a literal this guard can
+   * resolve and is left unflagged, same as `fr-83-no-semantic-tag-
+   * stripping.test.ts`'s own identifier-only walk leaves a computed name
+   * unflagged.
+   */
+  function stringLiteralValue(initializer: ts.JsxAttribute["initializer"]): string | null {
+    if (!initializer) {
+      return null;
+    }
+    if (ts.isStringLiteral(initializer)) {
+      return initializer.text;
+    }
+    if (ts.isJsxExpression(initializer) && initializer.expression) {
+      const expression = initializer.expression;
+      if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+        return expression.text;
+      }
+    }
+    return null;
   }
 
   function visit(node: ts.Node) {
@@ -146,6 +173,15 @@ describe("FR-24: no form control on the entry-edit screens offers a computed fie
   it("flags the codebase's own Field wrapper the same way as a native control", () => {
     const violation = `<Field id="row_version" label="Row version">{(props) => <input {...props} />}</Field>`;
     expect(computedFieldInputs(violation, "control-field.tsx").size).toBeGreaterThan(0);
+  });
+
+  it("flags an id/name given as a JSX expression, not only a bare attribute string", () => {
+    // `id="length"` and `id={"length"}` are different AST shapes (a plain
+    // `StringLiteral` initializer vs. a `JsxExpression` wrapping one) - both
+    // must trip this guard, or a control built from a template rather than
+    // a bare attribute string slips past on syntax alone.
+    const violation = `<input name={"row_version"} />`;
+    expect(computedFieldInputs(violation, "control-expr.tsx").size).toBeGreaterThan(0);
   });
 
   it("does not flag a plain property read that happens to share a computed field's name", () => {
