@@ -346,6 +346,7 @@ function PropertyEditDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -422,6 +423,7 @@ function SpecimenUnconstrainedDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>

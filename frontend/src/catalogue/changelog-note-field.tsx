@@ -28,19 +28,27 @@ export interface UseChangelogNoteResult {
    * present whenever `blocked` is true, shown by `Form` only once a submit
    * is actually attempted. */
   blockedReason: string | undefined;
-  /** The same message, but gated on the field having been blurred at least
-   * once - so a fresh, empty field is not shouted at before the user has
-   * done anything (ADR-0026's `Form` assumes validate-on-submit; routing
-   * this through `errors` on every keystroke would pull focus out of the
-   * field). Render this as the field's own inline text, never as a submit-
-   * time summary entry. */
+  /** The same message, but gated on the field having been blurred, or a
+   * submit having been attempted while blocked, at least once - so a fresh,
+   * empty field is not shouted at before the user has done anything
+   * (ADR-0026's `Form` assumes validate-on-submit; routing this through
+   * `errors` on every keystroke would pull focus out of the field). Render
+   * this as the field's own inline text, never as a submit-time summary
+   * entry. */
   guidance: string | undefined;
   /** For a caller that wants the note's failure to also appear as a linked
    * entry in the form's own error summary, keyed to this field's id.
    * Empty while the note is valid. */
   errors: FormError[];
   onBlur: () => void;
-  /** Clears the note and blur-tracking - call after a successful save. */
+  /** Call unconditionally from `Form`'s `onSubmitBlocked` (never from
+   * `onSubmit` - a non-blocked submit needs no extra prompt). Without this,
+   * a submit attempted on a note the user never focused links the summary
+   * to a field whose own error slot is empty - unlike every other
+   * field-level error in this codebase (issue #62 review). */
+  markSubmitAttempted: () => void;
+  /** Clears the note, blur-tracking and attempted-submit tracking - call
+   * after a successful save. */
   reset: () => void;
 }
 
@@ -49,6 +57,7 @@ export interface UseChangelogNoteResult {
 export function useChangelogNote(fieldId: string): UseChangelogNoteResult {
   const [note, setNote] = useState("");
   const [blurred, setBlurred] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const result = validateChangelogNote(note);
   const message = result.status === "ok" ? undefined : result.message;
 
@@ -58,12 +67,14 @@ export function useChangelogNote(fieldId: string): UseChangelogNoteResult {
     setNote,
     blocked: result.status !== "ok",
     blockedReason: message,
-    guidance: blurred ? message : undefined,
+    guidance: blurred || submitAttempted ? message : undefined,
     errors: message ? [{ fieldId, message }] : [],
     onBlur: () => setBlurred(true),
+    markSubmitAttempted: () => setSubmitAttempted(true),
     reset: () => {
       setNote("");
       setBlurred(false);
+      setSubmitAttempted(false);
     },
   };
 }

@@ -168,6 +168,32 @@ function BindCodeForm({
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
   const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
 
+  // Computed outside `onSubmit` (issue #62 review) so a blocked submit can
+  // recompute and display it too - `onSubmit` never runs while blocked, and
+  // this used to be the only place that called `setErrors`.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(trimmedCode.length === 0
+        ? [{ fieldId: "bind-code", message: "Enter the SNOMED CT code to bind." }]
+        : stillChecking
+          ? [
+              {
+                fieldId: "bind-code",
+                message: "Wait for the code to finish checking before saving.",
+              },
+            ]
+          : !bindable
+            ? [
+                {
+                  fieldId: "bind-code",
+                  message:
+                    "This code must resolve against the terminology server before it can be bound.",
+                },
+              ]
+            : []),
+    ];
+  }
+
   return (
     <Form
       submitLabel="Bind code"
@@ -178,28 +204,13 @@ function BindCodeForm({
       submitBlocked={changelogNote.blocked}
       blockedReason={changelogNote.blockedReason}
       blockedFieldId={changelogNote.fieldId}
+      onSubmitBlocked={() => {
+        changelogNote.markSubmitAttempted();
+        setErrors(ownFieldErrors());
+      }}
       errorSummaryHeadingLevel={3}
       onSubmit={() => {
-        const found: FormError[] = [
-          ...(trimmedCode.length === 0
-            ? [{ fieldId: "bind-code", message: "Enter the SNOMED CT code to bind." }]
-            : stillChecking
-              ? [
-                  {
-                    fieldId: "bind-code",
-                    message: "Wait for the code to finish checking before saving.",
-                  },
-                ]
-              : !bindable
-                ? [
-                    {
-                      fieldId: "bind-code",
-                      message:
-                        "This code must resolve against the terminology server before it can be bound.",
-                    },
-                  ]
-                : []),
-        ];
+        const found = ownFieldErrors();
         setErrors(found);
         if (found.length > 0 || !bindable) {
           return;
@@ -268,6 +279,7 @@ function RetireBindingDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -312,6 +324,36 @@ function ReplaceBindingDialog({
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
   const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
 
+  // See `BindCodeForm`'s identical note (issue #62 review): computed outside
+  // `onSubmit` so a blocked submit can recompute and display it too.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(trimmedCode.length === 0
+        ? [
+            {
+              fieldId: "replace-code",
+              message: "Enter the successor's SNOMED CT code.",
+            },
+          ]
+        : stillChecking
+          ? [
+              {
+                fieldId: "replace-code",
+                message: "Wait for the code to finish checking before saving.",
+              },
+            ]
+          : !bindable
+            ? [
+                {
+                  fieldId: "replace-code",
+                  message:
+                    "The successor must resolve against the terminology server before it can be bound.",
+                },
+              ]
+            : []),
+    ];
+  }
+
   return (
     <Dialog open onClose={onClose} title={`Replace ${binding.code}`}>
       <Form
@@ -323,6 +365,10 @@ function ReplaceBindingDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={() => {
+          changelogNote.markSubmitAttempted();
+          setErrors(ownFieldErrors());
+        }}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -330,31 +376,7 @@ function ReplaceBindingDialog({
           </Button>
         }
         onSubmit={() => {
-          const found: FormError[] = [
-            ...(trimmedCode.length === 0
-              ? [
-                  {
-                    fieldId: "replace-code",
-                    message: "Enter the successor's SNOMED CT code.",
-                  },
-                ]
-              : stillChecking
-                ? [
-                    {
-                      fieldId: "replace-code",
-                      message: "Wait for the code to finish checking before saving.",
-                    },
-                  ]
-                : !bindable
-                  ? [
-                      {
-                        fieldId: "replace-code",
-                        message:
-                          "The successor must resolve against the terminology server before it can be bound.",
-                      },
-                    ]
-                  : []),
-          ];
+          const found = ownFieldErrors();
           setErrors(found);
           if (found.length > 0 || !bindable) {
             return;

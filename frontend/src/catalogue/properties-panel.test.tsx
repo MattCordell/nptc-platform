@@ -365,10 +365,10 @@ describe("editing a property's values", () => {
     await user.click(screen.getByRole("dialog").querySelector("button[type=submit]")!);
 
     // The gate (issue #62) refuses the submit before it reaches the server,
-    // and the reason is announced through the error summary.
-    expect(await screen.findAllByText("A changelog note is required.")).not.toHaveLength(
-      0,
-    );
+    // and the reason is announced through the error summary - twice over,
+    // once as the summary link and once as the field's own inline message,
+    // even though the note field was never focused (issue #62 review).
+    expect(await screen.findAllByText("A changelog note is required.")).toHaveLength(2);
   });
 
   // Principal failure mode: FR-89's specimen cross-field / FR-10's cardinality

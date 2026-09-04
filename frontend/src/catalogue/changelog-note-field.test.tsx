@@ -14,6 +14,7 @@ function TestForm({ onSubmit }: { onSubmit: () => void }) {
       submitBlocked={changelogNote.blocked}
       blockedReason={changelogNote.blockedReason}
       blockedFieldId={changelogNote.fieldId}
+      onSubmitBlocked={changelogNote.markSubmitAttempted}
       onSubmit={onSubmit}
     >
       <ChangelogNoteField id="test-note" changelogNote={changelogNote} />
@@ -76,6 +77,20 @@ describe("ChangelogNoteField", () => {
     // Both the field's own inline guidance and the summary's blockedReason
     // carry the message once a blocked submit is attempted.
     expect(screen.getAllByText(/describe what actually changed/)).toHaveLength(2);
+  });
+
+  it("shows guidance on a submit attempt even if the field was never focused (issue #62 review)", async () => {
+    // No typing, no blur - the summary link's `blockedFieldId` would
+    // otherwise point at a field whose own error slot is empty, since
+    // `guidance` used to be gated on `blurred` alone.
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<TestForm onSubmit={onSubmit} />);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getAllByText("A changelog note is required.")).toHaveLength(2);
   });
 
   it("has no automated accessibility violations, gated and ungated", async () => {

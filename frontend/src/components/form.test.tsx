@@ -611,6 +611,85 @@ describe("Form", () => {
     expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
   });
 
+  it("calls onSubmitBlocked, not onSubmit, when a submit is attempted while blocked", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onSubmitBlocked = vi.fn();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={onSubmit}
+        onSubmitBlocked={onSubmitBlocked}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmitBlocked).toHaveBeenCalledTimes(1);
+  });
+
+  it("never calls onSubmitBlocked while submitBlocked is false", async () => {
+    const user = userEvent.setup();
+    const onSubmitBlocked = vi.fn();
+    render(
+      <Form submitLabel="Save entry" onSubmit={vi.fn()} onSubmitBlocked={onSubmitBlocked}>
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a generic message when submitBlocked is true without blockedReason", async () => {
+    // A caller omitting `blockedReason` is not honouring the documented
+    // contract, but this is the safety net: without it, a blocked attempted
+    // submit would announce nothing at all and leave the focus-move effect
+    // armed forever (issue #62 review).
+    const user = userEvent.setup();
+    render(
+      <Form submitLabel="Save entry" submitBlocked onSubmit={vi.fn()}>
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(screen.getByText("This field is not ready to submit.")).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("renders both a server refusal and blockedReason, rather than one swallowing the other", async () => {
+    // Two different failures - a rejected save (`formError`) and a blocked
+    // gate with no `blockedFieldId` - used to be combined with `??`, which
+    // silently dropped whichever one it did not pick (issue #62 review).
+    const user = userEvent.setup();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        formError="The catalogue rejected this entry."
+        onSubmit={vi.fn()}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // Both live in the same unlinked-fallback slot, so assert on the
+    // summary's combined text rather than an exact match on either alone.
+    expect(summaryElement()).toHaveTextContent("The catalogue rejected this entry.");
+    expect(summaryElement()).toHaveTextContent("Enter a changelog note");
+  });
+
   it("has no automated accessibility violations, with a blocked submit attempted", async () => {
     const user = userEvent.setup();
     const { container } = render(

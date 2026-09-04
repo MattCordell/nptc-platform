@@ -529,6 +529,27 @@ describe("adding synonyms", () => {
     await user.click(screen.getByRole("link", { name: /changelog note/i }));
     expect(inTermsPanel().getByLabelText(/Changelog note/)).toHaveFocus();
   });
+
+  it("shows the cell's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
+    // Before this was fixed, the cell's own validation lived inside
+    // `onSubmit`, which never ran while the note gate was blocked - so an
+    // empty cell and an empty note together surfaced only the note's
+    // failure on this first click.
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+    expect(
+      (await inTermsPanel().findAllByText(/Enter at least one term/)).length,
+    ).toBeGreaterThan(0);
+    expect(
+      inTermsPanel().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
+    expect(callsTo(calls, ADD_PATH)).toHaveLength(0);
+  });
+
   it("refuses a paste over the server's batch cap, saying by how much", async () => {
     // `_MAX_TERMS_PER_BATCH` is 100 and a 422 for it carries FastAPI's
     // `ValidationError` array, which `refusalDetail` cannot turn into a
@@ -1096,6 +1117,30 @@ describe("amending a term", () => {
     );
     expect(callsTo(calls, AMEND_PATH)).toHaveLength(0);
   });
+
+  it("shows the term's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
+    // Before this was fixed, the term's own validation lived inside
+    // `onSubmit`, which never ran while the note gate was blocked - so an
+    // empty term and an empty note together surfaced only the note's
+    // failure on this first click, and the empty-term error only appeared
+    // on a second click, after the note was fixed.
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    const dialog = inDialog();
+    await user.clear(dialog.getByLabelText("Term"));
+    await user.click(dialog.getByRole("button", { name: "Save term" }));
+
+    expect(
+      (await dialog.findAllByText("Enter the term this should become.")).length,
+    ).toBeGreaterThan(0);
+    expect(dialog.getAllByText(/A changelog note is required\./).length).toBeGreaterThan(
+      0,
+    );
+    expect(callsTo(calls, AMEND_PATH)).toHaveLength(0);
+  });
 });
 
 describe("retiring a term", () => {
@@ -1210,9 +1255,13 @@ describe("retiring a term", () => {
     );
     await user.click(inDialog().getByRole("button", { name: "Retire term" }));
 
-    expect(
-      await inDialog().findAllByText(/A changelog note is required\./),
-    ).not.toHaveLength(0);
+    // Once in the summary link, once as the field's own inline message -
+    // the note field was never focused, so before the fix (issue #62
+    // review) only the summary link showed and this field's own error slot
+    // was empty.
+    expect(await inDialog().findAllByText(/A changelog note is required\./)).toHaveLength(
+      2,
+    );
     expect(callsTo(calls, RETIRE_PATH)).toHaveLength(0);
   });
 
@@ -1309,6 +1358,26 @@ describe("code bindings", () => {
     );
 
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+    expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
+  });
+
+  it("shows the code's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
+    // Before this was fixed, the code's own validation lived inside
+    // `onSubmit`, which never ran while the note gate was blocked - so an
+    // empty code and an empty note together surfaced only the note's
+    // failure on this first click.
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    expect(
+      (await inBindingsPanel().findAllByText("Enter the SNOMED CT code to bind.")).length,
+    ).toBeGreaterThan(0);
+    expect(
+      inBindingsPanel().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
     expect(callsTo(calls, BIND_PATH)).toHaveLength(0);
   });
 
@@ -1615,9 +1684,12 @@ describe("code bindings", () => {
     await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
     await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
 
-    expect(
-      await inDialog().findAllByText(/A changelog note is required\./),
-    ).not.toHaveLength(0);
+    // Once in the summary link, once as the field's own inline message - see
+    // the identical note on the designations panel's "refuses to retire
+    // without a reason" test (issue #62 review).
+    expect(await inDialog().findAllByText(/A changelog note is required\./)).toHaveLength(
+      2,
+    );
     expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)).toHaveLength(0);
   });
 
@@ -1718,6 +1790,26 @@ describe("code bindings", () => {
     );
 
     await user.click(inDialog().getByRole("button", { name: "Replace" }));
+    expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/replacement`)).toHaveLength(0);
+  });
+
+  it("shows the successor code's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
+    // See the identical note on the Bind code test above.
+    const user = userEvent.setup();
+    const calls = stubApi([
+      { ...READ_OK, body: { ...ENTRY, bindings: [ACTIVE_BINDING] } },
+    ]);
+    await renderLoaded();
+
+    await user.click(screen.getByRole("button", { name: `Replace ${FSN_CODE}` }));
+    await user.click(inDialog().getByRole("button", { name: "Replace" }));
+
+    expect(
+      (await inDialog().findAllByText("Enter the successor's SNOMED CT code.")).length,
+    ).toBeGreaterThan(0);
+    expect(
+      inDialog().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
     expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/replacement`)).toHaveLength(0);
   });
 

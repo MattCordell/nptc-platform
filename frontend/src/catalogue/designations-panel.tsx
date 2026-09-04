@@ -295,6 +295,34 @@ function AddSynonymsForm({
 
   const terms = splitSynonyms(cell);
 
+  // Computed outside `onSubmit` (issue #62 review) so a blocked submit can
+  // recompute and display these the same way a non-blocked one does -
+  // `onSubmit` never runs while blocked, and this used to be the only place
+  // that called `setErrors`.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(terms.length === 0
+        ? [
+            {
+              fieldId: "add-terms",
+              message: "Enter at least one term. A cell of only delimiters adds nothing.",
+            },
+          ]
+        : []),
+      ...(terms.length > MAX_TERMS_PER_BATCH
+        ? [
+            {
+              fieldId: "add-terms",
+              message:
+                `This adds ${terms.length} terms, and at most ` +
+                `${MAX_TERMS_PER_BATCH} can be added at once. Split the paste ` +
+                "into smaller batches.",
+            },
+          ]
+        : []),
+    ];
+  }
+
   return (
     <Form
       submitLabel="Add terms"
@@ -305,30 +333,13 @@ function AddSynonymsForm({
       submitBlocked={changelogNote.blocked}
       blockedReason={changelogNote.blockedReason}
       blockedFieldId={changelogNote.fieldId}
+      onSubmitBlocked={() => {
+        changelogNote.markSubmitAttempted();
+        setErrors(ownFieldErrors());
+      }}
       errorSummaryHeadingLevel={3}
       onSubmit={() => {
-        const found: FormError[] = [
-          ...(terms.length === 0
-            ? [
-                {
-                  fieldId: "add-terms",
-                  message:
-                    "Enter at least one term. A cell of only delimiters adds nothing.",
-                },
-              ]
-            : []),
-          ...(terms.length > MAX_TERMS_PER_BATCH
-            ? [
-                {
-                  fieldId: "add-terms",
-                  message:
-                    `This adds ${terms.length} terms, and at most ` +
-                    `${MAX_TERMS_PER_BATCH} can be added at once. Split the paste ` +
-                    "into smaller batches.",
-                },
-              ]
-            : []),
-        ];
+        const found = ownFieldErrors();
         setErrors(found);
         if (found.length > 0) {
           return;
@@ -406,6 +417,16 @@ function AmendDialog({
   const [errors, setErrors] = useState<FormError[]>([]);
   const amend = useAmendDesignation(entry.business_key);
 
+  // See `AddSynonymsForm`'s identical note (issue #62 review): computed
+  // outside `onSubmit` so a blocked submit can recompute and display it too.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(newTerm.trim().length === 0
+        ? [{ fieldId: "amend-term", message: "Enter the term this should become." }]
+        : []),
+    ];
+  }
+
   return (
     <Dialog open onClose={onClose} title={`Edit ${row.term}`}>
       <Form
@@ -417,6 +438,10 @@ function AmendDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={() => {
+          changelogNote.markSubmitAttempted();
+          setErrors(ownFieldErrors());
+        }}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -424,11 +449,7 @@ function AmendDialog({
           </Button>
         }
         onSubmit={() => {
-          const found: FormError[] = [
-            ...(newTerm.trim().length === 0
-              ? [{ fieldId: "amend-term", message: "Enter the term this should become." }]
-              : []),
-          ];
+          const found = ownFieldErrors();
           setErrors(found);
           if (found.length > 0) {
             return;
@@ -511,6 +532,7 @@ function RetireDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -608,6 +630,7 @@ function AcknowledgeDialog({
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
