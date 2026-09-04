@@ -59,13 +59,15 @@ const NON_ASCII_ZS_SPACE = new RegExp(
   "gu",
 );
 
-//: The same Python `str.strip()` character class `split-synonyms.ts`
-//: defines as `PYTHON_SPACE_CLASS`, reused here for the edge-trim
-//: `normalise_for_comparison` applies after collapsing `Zs` spaces - see
-//: that file for why `String.prototype.trim()` is not equivalent.
-const PYTHON_SPACE_CLASS =
-  "[\\t\\n\\v\\f\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a" +
-  "\\u2028\\u2029\\u202f\\u205f\\u3000]";
+//: The inner character-class content of the same Python `str.strip()`/`\s`
+//: set `split-synonyms.ts` defines as `PYTHON_SPACE_CLASS` - kept as the bare
+//: escapes (no surrounding `[]`) so both the edge-trim below and `fold`'s
+//: punctuation-strip/word-split (issue #62 review) can build their own
+//: character classes from the one definition rather than drifting apart.
+const PYTHON_SPACE_CHARS =
+  "\\t\\n\\v\\f\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a" +
+  "\\u2028\\u2029\\u202f\\u205f\\u3000";
+const PYTHON_SPACE_CLASS = `[${PYTHON_SPACE_CHARS}]`;
 const PYTHON_EDGE_WHITESPACE = new RegExp(
   `^${PYTHON_SPACE_CLASS}+|${PYTHON_SPACE_CLASS}+$`,
   "gu",
@@ -88,11 +90,18 @@ function normaliseForComparison(text: string): string {
 //: JavaScript equivalent. Every `LOW_INFORMATION_NOTES` entry is plain
 //: ASCII, so this only needs to agree with Python on the boundary of
 //: stripping punctuation around those words, not on the full Unicode `\w`
-//: definition.
-const STRIP_PUNCTUATION_RE = /[^\p{L}\p{N}_\s]/gu;
+//: definition. Python's `\s` half is spelled out as `PYTHON_SPACE_CHARS`
+//: rather than JavaScript's narrower `\s`, which - unlike Python's - does not
+//: treat U+001C-U+001F or U+0085 as whitespace and would otherwise strip
+//: them as punctuation instead of preserving them as a word boundary for
+//: `fold`'s split below (issue #62 review).
+const STRIP_PUNCTUATION_RE = new RegExp(`[^\\p{L}\\p{N}_${PYTHON_SPACE_CHARS}]`, "gu");
 //: Mirrors `_HAS_LETTER_RE` (`[^\W\d_]`, Unicode) - true if the note has no
-//: letter at all.
-const HAS_LETTER_RE = /\p{L}/u;
+//: letter at all. Python's Unicode `\w` counts `Nl`/`No` (Roman numerals like
+//: "Ⅷ", vulgar fractions like "½") as word characters alongside `\p{L}`, so
+//: `\p{L}` alone under-matches what Python accepts as "contains a letter"
+//: (issue #62 review).
+const HAS_LETTER_RE = /[\p{L}\p{Nl}\p{No}]/u;
 
 /**
  * Mirrors `_fold`: casefolded, punctuation-stripped, whitespace-collapsed
@@ -104,10 +113,15 @@ const HAS_LETTER_RE = /\p{L}/u;
  * `casefold()` than under `toLowerCase()` - none of the shared fixtures
  * exercise that case, and the divergence is the same kind ADR-0030 flags
  * as a standing, accepted cost of mirroring.
+ *
+ * Splits on runs of `PYTHON_SPACE_CLASS`, not JavaScript's `\s`, for the same
+ * reason `STRIP_PUNCTUATION_RE` above does - Python's `str.split()` (no
+ * arguments) breaks on its own, wider whitespace definition.
  */
+const PYTHON_WHITESPACE_RUN = new RegExp(`${PYTHON_SPACE_CLASS}+`, "gu");
 function fold(note: string): string {
   const stripped = note.replace(STRIP_PUNCTUATION_RE, "");
-  return stripped.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  return stripped.toLowerCase().split(PYTHON_WHITESPACE_RUN).filter(Boolean).join(" ");
 }
 
 export type ChangelogNoteResult =

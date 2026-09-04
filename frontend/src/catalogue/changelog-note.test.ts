@@ -73,4 +73,23 @@ describe("validateChangelogNote", () => {
       note: "Corrected the specimen for the RBC assay",
     });
   });
+
+  it("folds on Python's wider whitespace, not JavaScript's narrower \\s (issue #62 review)", () => {
+    // U+001E (record separator) has Python's `str.isspace()` true (and so is
+    // a word boundary for `str.split()`) but is not JavaScript `\s` - before
+    // this was fixed, `fold` stripped it as punctuation and concatenated
+    // across it, matching "fixed" on the low-information list even though
+    // Python sees two words ("fix", "ed") and does not.
+    const note = "fix" + String.fromCharCode(0x1e) + "ed";
+    expect(validateChangelogNote(note).status).toBe("too-short");
+  });
+
+  it("counts a vulgar fraction as a letter, matching Python's \\w (issue #62 review)", () => {
+    // U+00BD ("½") is Unicode category `No`; Python's `[^\W\d_]` counts it as
+    // a word character the same way it counts a Roman numeral like "Ⅷ"
+    // (category `Nl`) - both pass `str.isalnum()` without being a decimal
+    // digit. `\p{L}` alone does not include either category.
+    const note = "½".repeat(MINIMUM_NOTE_LENGTH);
+    expect(validateChangelogNote(note)).toEqual({ status: "ok", note });
+  });
 });
