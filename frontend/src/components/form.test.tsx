@@ -611,6 +611,27 @@ describe("Form", () => {
     expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
   });
 
+  it("has no automated accessibility violations, with a blocked submit attempted", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        blockedFieldId="requesting-term"
+        onSubmit={vi.fn()}
+      >
+        <Field id="requesting-term" label="Requesting term">
+          {(controlProps) => <input {...controlProps} type="text" />}
+        </Field>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    await expectNoA11yViolations(container);
+  });
+
   it("has no automated accessibility violations, with the summary showing", async () => {
     const user = userEvent.setup();
     const { container } = render(<ValidatingForm />);
