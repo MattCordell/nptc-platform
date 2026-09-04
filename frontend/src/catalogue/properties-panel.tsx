@@ -12,10 +12,10 @@ import { Checkbox } from "../components/checkbox.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { Dialog } from "../components/dialog.tsx";
 import type { FormError } from "../components/error-summary.tsx";
-import { Field } from "../components/field.tsx";
 import { Form } from "../components/form.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
 import {
   CONTROLS,
@@ -144,16 +144,6 @@ function nonEmptySlotIndexes(slots: PropertyValueSlot[]): number[] {
     }
     return indexes;
   }, []);
-}
-
-const NOTE_HINT =
-  "This becomes the published History text, so describe the change - single words " +
-  "like “update” or “fix” are not accepted.";
-
-function noteError(note: string, fieldId: string): FormError[] {
-  return note.trim().length === 0
-    ? [{ fieldId, message: "Enter a changelog note describing this change." }]
-    : [];
 }
 
 export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
@@ -314,11 +304,10 @@ function PropertyEditDialog({
       justification: value.justification,
     })),
   );
-  const [note, setNote] = useState("");
-  const [clientErrors, setClientErrors] = useState<FormError[]>([]);
+  const noteFieldId = `${definition.key}-note`;
+  const changelogNote = useChangelogNote(noteFieldId);
   const save = useSavePropertyValues(businessKey, definition.key);
   const Control = CONTROLS[definition.form_control.control];
-  const noteFieldId = `${definition.key}-note`;
 
   // `save.mutate` below sends only the slots `isEmptySlotValue` keeps, so a
   // `PropertyIssueItem.ordinal` from the server indexes *that* filtered
@@ -329,7 +318,7 @@ function PropertyEditDialog({
   // raw ordinal (wrong the moment an earlier slot is left blank).
   const submittedIndexes = nonEmptySlotIndexes(slots);
   const validation = asPropertyValidationError(save.error);
-  const serverErrors: FormError[] =
+  const errors: FormError[] =
     validation?.issues.map((issue) => ({
       fieldId:
         issue.ordinal === null
@@ -337,7 +326,6 @@ function PropertyEditDialog({
           : slotFieldId(definition.key, submittedIndexes[issue.ordinal] ?? issue.ordinal),
       message: issue.message,
     })) ?? [];
-  const errors = [...clientErrors, ...serverErrors];
 
   return (
     <Dialog open onClose={onClose} title={`Edit ${definition.label}`}>
@@ -348,13 +336,17 @@ function PropertyEditDialog({
         errors={errors}
         // The field-level 422 (`validation`) is already rendered per-field via
         // `errors` above; the generic slot only carries a refusal with no
-        // field attribution (a rejected note, a write against a now-
-        // deprecated property, FR-38's conflict).
+        // field attribution (a write against a now-deprecated property,
+        // FR-38's conflict).
         formError={
           save.isError && validation === null ? (
             <RefusalNotice error={save.error} />
           ) : undefined
         }
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -362,17 +354,16 @@ function PropertyEditDialog({
           </Button>
         }
         onSubmit={() => {
-          const found = noteError(note, noteFieldId);
-          setClientErrors(found);
-          if (found.length > 0) {
-            return;
-          }
           const submitted = submittedIndexes.map((index) => ({
             value: slots[index].value,
             justification: slots[index].justification,
           }));
           save.mutate(
-            { values: submitted, reason: note, expected_row_version: rowVersion },
+            {
+              values: submitted,
+              reason: changelogNote.note,
+              expected_row_version: rowVersion,
+            },
             { onSuccess: () => onSaved() },
           );
         }}
@@ -398,21 +389,7 @@ function PropertyEditDialog({
           }}
           errors={errors}
         />
-        <Field
-          id={noteFieldId}
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === noteFieldId)?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id={noteFieldId} changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );
@@ -432,10 +409,9 @@ function SpecimenUnconstrainedDialog({
   onSaved: () => void;
 }) {
   const [checked, setChecked] = useState(current);
-  const [note, setNote] = useState("");
-  const [errors, setErrors] = useState<FormError[]>([]);
-  const patch = usePatchEntryCore(businessKey);
   const noteFieldId = "specimen-unconstrained-note";
+  const changelogNote = useChangelogNote(noteFieldId);
+  const patch = usePatchEntryCore(businessKey);
 
   return (
     <Dialog open onClose={onClose} title="Accepts any specimen (Any)">
@@ -443,8 +419,11 @@ function SpecimenUnconstrainedDialog({
         submitLabel="Save"
         pendingLabel="Saving"
         pending={patch.isPending}
-        errors={errors}
         formError={patch.isError ? <RefusalNotice error={patch.error} /> : undefined}
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -452,15 +431,10 @@ function SpecimenUnconstrainedDialog({
           </Button>
         }
         onSubmit={() => {
-          const found = noteError(note, noteFieldId);
-          setErrors(found);
-          if (found.length > 0) {
-            return;
-          }
           patch.mutate(
             {
               specimen_unconstrained: checked,
-              reason: note,
+              reason: changelogNote.note,
               expected_row_version: rowVersion,
             },
             { onSuccess: () => onSaved() },
@@ -473,21 +447,7 @@ function SpecimenUnconstrainedDialog({
           onChange={(event) => setChecked(event.target.checked)}
           hint="Turning this on while specimen codes are already recorded on this entry will be refused - clear them first."
         />
-        <Field
-          id={noteFieldId}
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === noteFieldId)?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id={noteFieldId} changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );

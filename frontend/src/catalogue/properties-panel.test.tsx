@@ -364,11 +364,11 @@ describe("editing a property's values", () => {
     await user.click(panel().getByRole("button", { name: "Edit Usage guidance" }));
     await user.click(screen.getByRole("dialog").querySelector("button[type=submit]")!);
 
-    // Appears twice by design: once in the error summary link, once as the
-    // field's own inline message (`ErrorSummary`'s own contract).
-    expect(
-      await screen.findAllByText("Enter a changelog note describing this change."),
-    ).not.toHaveLength(0);
+    // The gate (issue #62) refuses the submit before it reaches the server,
+    // and the reason is announced through the error summary - twice over,
+    // once as the summary link and once as the field's own inline message,
+    // even though the note field was never focused (issue #62 review).
+    expect(await screen.findAllByText("A changelog note is required.")).toHaveLength(2);
   });
 
   // Principal failure mode: FR-89's specimen cross-field / FR-10's cardinality
@@ -633,5 +633,22 @@ describe("specimen_unconstrained", () => {
       reason: "This entry accepts any specimen",
       expected_row_version: 4,
     });
+  });
+
+  it("gates Save on a changelog note (FR-37, issue #62)", async () => {
+    const calls = stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByLabelText("This entry accepts any specimen (Any)"));
+    expect(dialog.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
   });
 });

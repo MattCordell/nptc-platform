@@ -498,6 +498,219 @@ describe("Form", () => {
     expect(summaryElement()).toHaveFocus();
   });
 
+  it("marks the submit button aria-disabled while submitBlocked, without disabling it", () => {
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={vi.fn()}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    const button = screen.getByRole("button", { name: "Save entry" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+  });
+
+  it("refuses a submit while submitBlocked and announces blockedReason", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={onSubmit}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Enter a changelog note")).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("lifts the blocked gate once submitBlocked clears, letting submit through", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    function GateLiftingForm() {
+      const [blocked, setBlocked] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setBlocked(false)}>
+            Fix the note
+          </button>
+          <Form
+            submitLabel="Save entry"
+            submitBlocked={blocked}
+            blockedReason="Enter a changelog note"
+            onSubmit={onSubmit}
+          >
+            <p>Fields</p>
+          </Form>
+        </>
+      );
+    }
+    render(<GateLiftingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Fix the note" }));
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+  });
+
+  it("does not re-announce blockedReason on its own after the gate lifts and re-blocks", async () => {
+    // Regression: `blockedAttempted` must reset when `submitBlocked` clears,
+    // not just live for the component's lifetime - otherwise reintroducing
+    // the same failure without a fresh submit click (fixing a field, then
+    // undoing the fix) would silently reannounce the old attempt.
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    function ReblockingForm() {
+      const [blocked, setBlocked] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setBlocked(false)}>
+            Fix
+          </button>
+          <button type="button" onClick={() => setBlocked(true)}>
+            Break again
+          </button>
+          <Form
+            submitLabel="Save entry"
+            submitBlocked={blocked}
+            blockedReason="Enter a changelog note"
+            onSubmit={onSubmit}
+          >
+            <p>Fields</p>
+          </Form>
+        </>
+      );
+    }
+    render(<ReblockingForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    expect(screen.getByText("Enter a changelog note")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Fix" }));
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Break again" }));
+    expect(screen.queryByText("Enter a changelog note")).not.toBeInTheDocument();
+  });
+
+  it("calls onSubmitBlocked, not onSubmit, when a submit is attempted while blocked", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onSubmitBlocked = vi.fn();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        onSubmit={onSubmit}
+        onSubmitBlocked={onSubmitBlocked}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmitBlocked).toHaveBeenCalledTimes(1);
+  });
+
+  it("never calls onSubmitBlocked while submitBlocked is false", async () => {
+    const user = userEvent.setup();
+    const onSubmitBlocked = vi.fn();
+    render(
+      <Form submitLabel="Save entry" onSubmit={vi.fn()} onSubmitBlocked={onSubmitBlocked}>
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a generic message when submitBlocked is true without blockedReason", async () => {
+    // A caller omitting `blockedReason` is not honouring the documented
+    // contract, but this is the safety net: without it, a blocked attempted
+    // submit would announce nothing at all and leave the focus-move effect
+    // armed forever (issue #62 review).
+    const user = userEvent.setup();
+    render(
+      <Form submitLabel="Save entry" submitBlocked onSubmit={vi.fn()}>
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(screen.getByText("This field is not ready to submit.")).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("renders both a server refusal and blockedReason, rather than one swallowing the other", async () => {
+    // Two different failures - a rejected save (`formError`) and a blocked
+    // gate with no `blockedFieldId` - used to be combined with `??`, which
+    // silently dropped whichever one it did not pick (issue #62 review).
+    const user = userEvent.setup();
+    render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        formError="The catalogue rejected this entry."
+        onSubmit={vi.fn()}
+      >
+        <p>Fields</p>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // Both live in the same unlinked-fallback slot, so assert on the
+    // summary's combined text rather than an exact match on either alone.
+    expect(summaryElement()).toHaveTextContent("The catalogue rejected this entry.");
+    expect(summaryElement()).toHaveTextContent("Enter a changelog note");
+  });
+
+  it("has no automated accessibility violations, with a blocked submit attempted", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <Form
+        submitLabel="Save entry"
+        submitBlocked
+        blockedReason="Enter a changelog note"
+        blockedFieldId="requesting-term"
+        onSubmit={vi.fn()}
+      >
+        <Field id="requesting-term" label="Requesting term">
+          {(controlProps) => <input {...controlProps} type="text" />}
+        </Field>
+      </Form>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    await expectNoA11yViolations(container);
+  });
+
   it("has no automated accessibility violations, with the summary showing", async () => {
     const user = userEvent.setup();
     const { container } = render(<ValidatingForm />);

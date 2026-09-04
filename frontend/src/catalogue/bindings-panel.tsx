@@ -16,6 +16,7 @@ import { Field } from "../components/field.tsx";
 import { Form } from "../components/form.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
 import { useDebouncedValue } from "./use-debounced-value.ts";
 
@@ -52,17 +53,6 @@ import { useDebouncedValue } from "./use-debounced-value.ts";
 type EntryDetail = components["schemas"]["EntryDetail"];
 type Binding = components["schemas"]["Binding"];
 type CodeBindingEditionHint = components["schemas"]["CodeBindingEditionHint"];
-
-const NOTE_HINT =
-  "This becomes the published History text, so describe the change - single words " +
-  "like “update” or “fix” are not accepted.";
-
-/** Client-side check only for emptiness; FR-37's substance is the server's. */
-function reasonError(reason: string, fieldId: string): FormError[] {
-  return reason.trim().length === 0
-    ? [{ fieldId, message: "Enter a changelog note describing this change." }]
-    : [];
-}
 
 /**
  * `ConceptLookup.edition` is a bare `string` (always `"au"` today, per its
@@ -169,7 +159,7 @@ function BindCodeForm({
   onSaved: () => void;
 }) {
   const [code, setCode] = useState("");
-  const [note, setNote] = useState("");
+  const changelogNote = useChangelogNote("bind-note");
   const [errors, setErrors] = useState<FormError[]>([]);
   const trimmedCode = code.trim();
   const debouncedCode = useDebouncedValue(trimmedCode, 400);
@@ -178,6 +168,32 @@ function BindCodeForm({
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
   const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
 
+  // Computed outside `onSubmit` (issue #62 review) so a blocked submit can
+  // recompute and display it too - `onSubmit` never runs while blocked, and
+  // this used to be the only place that called `setErrors`.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(trimmedCode.length === 0
+        ? [{ fieldId: "bind-code", message: "Enter the SNOMED CT code to bind." }]
+        : stillChecking
+          ? [
+              {
+                fieldId: "bind-code",
+                message: "Wait for the code to finish checking before saving.",
+              },
+            ]
+          : !bindable
+            ? [
+                {
+                  fieldId: "bind-code",
+                  message:
+                    "This code must resolve against the terminology server before it can be bound.",
+                },
+              ]
+            : []),
+    ];
+  }
+
   return (
     <Form
       submitLabel="Bind code"
@@ -185,29 +201,16 @@ function BindCodeForm({
       pending={bind.isPending}
       errors={errors}
       formError={bind.isError ? <RefusalNotice error={bind.error} /> : undefined}
+      submitBlocked={changelogNote.blocked}
+      blockedReason={changelogNote.blockedReason}
+      blockedFieldId={changelogNote.fieldId}
+      onSubmitBlocked={() => {
+        changelogNote.markSubmitAttempted();
+        setErrors(ownFieldErrors());
+      }}
       errorSummaryHeadingLevel={3}
       onSubmit={() => {
-        const found: FormError[] = [
-          ...(trimmedCode.length === 0
-            ? [{ fieldId: "bind-code", message: "Enter the SNOMED CT code to bind." }]
-            : stillChecking
-              ? [
-                  {
-                    fieldId: "bind-code",
-                    message: "Wait for the code to finish checking before saving.",
-                  },
-                ]
-              : !bindable
-                ? [
-                    {
-                      fieldId: "bind-code",
-                      message:
-                        "This code must resolve against the terminology server before it can be bound.",
-                    },
-                  ]
-                : []),
-          ...reasonError(note, "bind-note"),
-        ];
+        const found = ownFieldErrors();
         setErrors(found);
         if (found.length > 0 || !bindable) {
           return;
@@ -218,12 +221,12 @@ function BindCodeForm({
             fsn: lookup.data.fsn,
             au_preferred_term: lookup.data.au_preferred_term,
             edition_hint: toEditionHint(lookup.data.edition),
-            reason: note,
+            reason: changelogNote.note,
           },
           {
             onSuccess: () => {
               setCode("");
-              setNote("");
+              changelogNote.reset();
               onSaved();
             },
           },
@@ -247,21 +250,7 @@ function BindCodeForm({
           />
         )}
       </Field>
-      <Field
-        id="bind-note"
-        label="Changelog note"
-        hint={NOTE_HINT}
-        error={errors.find((error) => error.fieldId === "bind-note")?.message}
-      >
-        {(controlProps) => (
-          <input
-            {...controlProps}
-            type="text"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-          />
-        )}
-      </Field>
+      <ChangelogNoteField id="bind-note" changelogNote={changelogNote} />
     </Form>
   );
 }
@@ -277,8 +266,7 @@ function RetireBindingDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [note, setNote] = useState("");
-  const [errors, setErrors] = useState<FormError[]>([]);
+  const changelogNote = useChangelogNote("retire-binding-note");
   const retire = useRetireBinding(businessKey);
 
   return (
@@ -287,8 +275,11 @@ function RetireBindingDialog({
         submitLabel="Retire binding"
         pendingLabel="Retiring"
         pending={retire.isPending}
-        errors={errors}
         formError={retire.isError ? <RefusalNotice error={retire.error} /> : undefined}
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -296,13 +287,8 @@ function RetireBindingDialog({
           </Button>
         }
         onSubmit={() => {
-          const found = reasonError(note, "retire-binding-note");
-          setErrors(found);
-          if (found.length > 0) {
-            return;
-          }
           retire.mutate(
-            { code: binding.code, body: { reason: note } },
+            { code: binding.code, body: { reason: changelogNote.note } },
             { onSuccess: () => onSaved() },
           );
         }}
@@ -311,21 +297,7 @@ function RetireBindingDialog({
           This stops {binding.code} being this entry&rsquo;s active binding. It is not
           deleted: the row stays in the table above, retired, with this reason (FR-08).
         </p>
-        <Field
-          id="retire-binding-note"
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === "retire-binding-note")?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id="retire-binding-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );
@@ -343,7 +315,7 @@ function ReplaceBindingDialog({
   onSaved: () => void;
 }) {
   const [code, setCode] = useState("");
-  const [note, setNote] = useState("");
+  const changelogNote = useChangelogNote("replace-note");
   const [errors, setErrors] = useState<FormError[]>([]);
   const trimmedCode = code.trim();
   const debouncedCode = useDebouncedValue(trimmedCode, 400);
@@ -351,6 +323,36 @@ function ReplaceBindingDialog({
   const replace = useReplaceBinding(businessKey);
   const bindable = isBindable(trimmedCode, debouncedCode, lookup);
   const stillChecking = !bindable && isStillChecking(trimmedCode, debouncedCode, lookup);
+
+  // See `BindCodeForm`'s identical note (issue #62 review): computed outside
+  // `onSubmit` so a blocked submit can recompute and display it too.
+  function ownFieldErrors(): FormError[] {
+    return [
+      ...(trimmedCode.length === 0
+        ? [
+            {
+              fieldId: "replace-code",
+              message: "Enter the successor's SNOMED CT code.",
+            },
+          ]
+        : stillChecking
+          ? [
+              {
+                fieldId: "replace-code",
+                message: "Wait for the code to finish checking before saving.",
+              },
+            ]
+          : !bindable
+            ? [
+                {
+                  fieldId: "replace-code",
+                  message:
+                    "The successor must resolve against the terminology server before it can be bound.",
+                },
+              ]
+            : []),
+    ];
+  }
 
   return (
     <Dialog open onClose={onClose} title={`Replace ${binding.code}`}>
@@ -360,6 +362,13 @@ function ReplaceBindingDialog({
         pending={replace.isPending}
         errors={errors}
         formError={replace.isError ? <RefusalNotice error={replace.error} /> : undefined}
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={() => {
+          changelogNote.markSubmitAttempted();
+          setErrors(ownFieldErrors());
+        }}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -367,32 +376,7 @@ function ReplaceBindingDialog({
           </Button>
         }
         onSubmit={() => {
-          const found: FormError[] = [
-            ...(trimmedCode.length === 0
-              ? [
-                  {
-                    fieldId: "replace-code",
-                    message: "Enter the successor's SNOMED CT code.",
-                  },
-                ]
-              : stillChecking
-                ? [
-                    {
-                      fieldId: "replace-code",
-                      message: "Wait for the code to finish checking before saving.",
-                    },
-                  ]
-                : !bindable
-                  ? [
-                      {
-                        fieldId: "replace-code",
-                        message:
-                          "The successor must resolve against the terminology server before it can be bound.",
-                      },
-                    ]
-                  : []),
-            ...reasonError(note, "replace-note"),
-          ];
+          const found = ownFieldErrors();
           setErrors(found);
           if (found.length > 0 || !bindable) {
             return;
@@ -407,7 +391,7 @@ function ReplaceBindingDialog({
                   au_preferred_term: lookup.data.au_preferred_term,
                   edition_hint: toEditionHint(lookup.data.edition),
                 },
-                reason: note,
+                reason: changelogNote.note,
               },
             },
             { onSuccess: () => onSaved() },
@@ -434,21 +418,7 @@ function ReplaceBindingDialog({
             />
           )}
         </Field>
-        <Field
-          id="replace-note"
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === "replace-note")?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id="replace-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );

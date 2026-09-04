@@ -158,3 +158,79 @@ forces a round trip to the authority for an overlapping question before mirrorin
 narrower check locally. A mirror earns its keep by being the *only* thing standing between
 the browser and a slow round trip - not when a round trip for a related, stronger check is
 already unavoidable.
+
+## Amendment (2026-09-04): a second mirror - `changelog-note.ts` (issue #62)
+
+The Consequences above name `split-synonyms.ts` as the only mirror this ADR has produced,
+and the withdrawn SCTID check as the candidate that did not become a second. Issue #62 is
+an actual second: `frontend/src/catalogue/changelog-note.ts` mirrors
+`validate_changelog_note` (`backend/src/nptc/catalogue/changelog.py`, issue #47) - FR-37's
+minimum length, low-information phrase list, and "contains a letter" checks.
+
+Checked against the three conditions:
+
+1. **Small enough to read against the original in one sitting.** Four checks in a fixed
+   order (empty, low-information, length, missing-letter), one small constant list, and one
+   normalisation helper (`nptc_shared.text.normalise_for_comparison`) - the same shape
+   `split-synonyms.ts` already set the bar at.
+2. **The mirror's test uses the same fixtures, quoted verbatim.**
+   `changelog-note.test.ts`'s header comment names `backend/tests/test_changelog_note.py`
+   as its counterpart and quotes its parametrised cases directly, including the
+   non-breaking-space-padding regression.
+3. **The server stays the authority.** `changelog-note.ts` never persists anything and
+   returns a discriminated result the caller only ever reads; the write routes
+   `nptc.catalogue.changelog.validate_changelog_note` already guards (issue #47, wired in
+   by #219/#224/#248/#249) still run unconditionally, and NFR-20 requires they refuse an
+   unchanged, invalid note that bypasses the browser entirely.
+
+This mirror exists for a different reason than `split-synonyms.ts` did. That one exists
+because the split has to happen somewhere before the request is built at all (there is no
+narrower server round trip that would make the split redundant). This one exists because
+the server's own 422 (`api/errors.py`'s `_DETAIL_CHANGELOG_NOTE`) is a single generic
+sentence that never says *which* FR-37 rule failed - so without the mirror, the only way
+to give an editor a rule-specific message is to widen the API contract (considered and
+rejected in #62's plan as larger than the issue, and named there as a follow-up if it ever
+lands). The amendment above about the withdrawn SCTID mirror asked future candidates to
+check for an unavoidable round trip to a *stronger* check first; FR-37 has no such
+round trip standing in its way; there is no live-server question to defer to, since a
+changelog note's validity is a pure function of the string itself.
+
+Two divergences the mirror closes explicitly rather than inheriting a platform default,
+continuing the pattern `split-synonyms.ts` set:
+
+- **Casefolding.** Python's `str.casefold()` is full Unicode casefolding; JavaScript has no
+  equivalent, so `changelog-note.ts` uses `toLowerCase()`. Every `LOW_INFORMATION_NOTES`
+  entry is plain ASCII, so this only risks disagreeing with the server for a non-ASCII note
+  whose casefold and lowercase forms differ - not exercised by the shared fixtures, and
+  recorded in the module as a known, accepted gap rather than a silent one.
+- **Unicode `\w`.** Python's `\w` (used to strip punctuation before matching the
+  low-information list) is Unicode-aware; the closest JavaScript equivalent is
+  `\p{L}\p{N}_`, which is not a byte-for-byte match of Python's word-character class. Same
+  reasoning as above: every list entry is ASCII, so this only matters at a boundary the
+  fixtures do not cover.
+
+This is also the second data point for this ADR's standing, unmechanised cost: nothing
+enforces that a change to `changelog.py`'s constants updates `changelog-note.ts` in the same
+PR. The shared fixtures catch a behaviour change on a *covered* input, not a new phrase
+added to `LOW_INFORMATION_NOTES` on one side only - the same partial mitigation the
+Consequences section already names for the first mirror.
+
+**Review found two more divergences beyond the two above, both closed rather than
+recorded as accepted gaps** (2026-09-04):
+
+- **`fold`'s word-split used JavaScript's `\s`.** `_fold` in `changelog.py` splits on
+  Python's own whitespace definition (`str.split()` with no arguments), which - like the
+  `str.strip()` class `split-synonyms.ts` already spells out as `PYTHON_SPACE_CLASS` -
+  includes U+001C-U+001F and U+0085, characters JavaScript's `\s` does not treat as
+  whitespace. A note built as `"fix" + "" + "ed"` folded to `"fixed"` (matching the
+  low-information list) instead of Python's two words, `"fix ed"` (not on it). Closed by
+  building `STRIP_PUNCTUATION_RE` and `fold`'s word-split from the same
+  `PYTHON_SPACE_CHARS` constant, rather than JavaScript's `\s`.
+- **`HAS_LETTER_RE` under-matched Python's `\w`.** Python's `[^\W\d_]` counts `Nl`/`No`
+  category characters (a Roman numeral like "Ⅷ", a vulgar fraction like "½") as word
+  characters via `str.isalnum()`; `\p{L}` alone does not. Closed by widening the regex to
+  `[\p{L}\p{Nl}\p{No}]`.
+
+Both were reachable only through inputs the shared fixtures do not cover (a control
+character or an exotic numeric symbol in a changelog note), which is exactly the standing,
+unmechanised cost named above - a second reviewer, not the fixtures, is what caught these.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 import { Button } from "./button.tsx";
@@ -23,6 +23,39 @@ type FormProps = {
    * the focus contract below, deliberately, so a caller that never sets it
    * still gets a summary announced when its refusal arrives. */
   pending?: boolean;
+  /** True while the caller's own client-side gate (issue #62 - a missing or
+   * invalid changelog note) refuses submission. Unlike `pending`, this *is*
+   * part of the focus contract: an attempted submit while blocked is
+   * treated the same as a validation failure, and `blockedReason` is
+   * announced through the same summary path. The caller owns validation
+   * ("guidance while typing" belongs on the field itself, gated on blur,
+   * never here); `Form` owns only the one submit path that must refuse it
+   * (ADR-0026). */
+  submitBlocked?: boolean;
+  /** Why submission is refused while `submitBlocked` is true. Shown in the
+   * error summary only once the user actually attempts a submit - never
+   * before, so an empty required field does not accuse the user of an
+   * error before they have done anything. Documented as required whenever a
+   * caller sets `submitBlocked` - omitting it falls back to a generic
+   * message rather than announcing nothing at all (issue #62 review: a
+   * blocked, attempted submit that announced nothing left the focus-move
+   * effect armed with no error ever arriving to satisfy it). */
+  blockedReason?: string;
+  /** The id of the field `blockedReason` is about. Given, the reason is
+   * rendered as a real summary link that moves focus to that field - the
+   * same affordance every other field-level error gets (`ErrorSummary`'s
+   * own contract). Omitted, it falls back to a plain, unlinked sentence,
+   * the way `formError` already renders. */
+  blockedFieldId?: string;
+  /** Called when a submit is attempted while `submitBlocked` is true, in
+   * place of `onSubmit` (which never runs in that case). Lets a caller with
+   * its own additional field validation - computed inside `onSubmit` and
+   * otherwise never recomputed while blocked - recompute and display it on
+   * the same click, and mark its own field's guidance visible, the way a
+   * blocked-but-attempted submit does for every other field (issue #62
+   * review). Never called while `pending`; not called when `submitBlocked`
+   * is false, since that path already reaches `onSubmit`. */
+  onSubmitBlocked?: () => void;
   /** Required - `Form` renders its own submit button, so "one submit path"
    * is structural rather than a convention a screen has to remember. */
   submitLabel: string;
@@ -54,6 +87,10 @@ export function Form({
   errors,
   formError,
   pending = false,
+  submitBlocked = false,
+  blockedReason,
+  blockedFieldId,
+  onSubmitBlocked,
   submitLabel,
   pendingLabel,
   secondaryActions,
@@ -71,8 +108,64 @@ export function Form({
   // would submit an invalid form a second time and get no announcement at
   // all, because nothing React can see changed between the two attempts.
   const [submitCount, setSubmitCount] = useState(0);
-  const fieldErrors = errors ?? [];
-  const hasErrors = fieldErrors.length > 0 || Boolean(formError);
+  // Whether the user has actually attempted a submit while blocked - the
+  // gate is announced only from that point, never merely because the field
+  // is currently empty (see `blockedReason`'s doc comment). Reset the
+  // moment the gate itself lifts, not just on a fresh mount: without this,
+  // a user who fixes the field, then reintroduces the same failure without
+  // clicking submit again (backspacing a just-fixed note back to empty, say)
+  // would see the reason reappear on its own - a second attempt has to
+  // actually happen for it to be announced again.
+  //
+  // Adjusted during render rather than in an effect (React's own documented
+  // "adjusting state when a prop changes" recipe): comparing against state
+  // rather than a ref, since a ref may not be read or written during render.
+  const [blockedAttempted, setBlockedAttempted] = useState(false);
+  const [previousSubmitBlocked, setPreviousSubmitBlocked] = useState(submitBlocked);
+  if (submitBlocked !== previousSubmitBlocked) {
+    setPreviousSubmitBlocked(submitBlocked);
+    if (!submitBlocked && blockedAttempted) {
+      setBlockedAttempted(false);
+    }
+  }
+  const showBlockedReason = submitBlocked && blockedAttempted;
+  // A caller that sets `submitBlocked` without `blockedReason` is not
+  // honouring the documented contract (see the prop's own doc comment), but
+  // this fallback keeps a blocked, attempted submit from announcing nothing
+  // at all - which would otherwise leave the focus-move effect below armed
+  // forever, waiting for an error that will never arrive (issue #62 review).
+  const announcedBlockedReason = blockedReason ?? "This field is not ready to submit.";
+  const blockedFieldErrors: FormError[] =
+    showBlockedReason && blockedFieldId
+      ? [{ fieldId: blockedFieldId, message: announcedBlockedReason }]
+      : [];
+  // Linked to a field via `blockedFieldId` when the caller gives one - the
+  // same summary-link affordance every other field error gets - and falls
+  // back to a plain sentence (like `formError`) only when it does not. Both
+  // render together when both are present: a rejected save (`formError`) and
+  // a blocked gate are two different failures, and showing only one would
+  // silently drop whichever `??` picked last (issue #62 review).
+  const unlinkedBlockedReason =
+    showBlockedReason && !blockedFieldId ? announcedBlockedReason : undefined;
+  // Memoised: the effect below depends on this, and the combined-message
+  // branch below would otherwise build a new element every render, forcing
+  // that effect to re-run - and re-focus the summary - on every keystroke
+  // in an unrelated field, not just when the message itself changes.
+  const effectiveFormError = useMemo(
+    () =>
+      formError && unlinkedBlockedReason ? (
+        <>
+          {formError}
+          <br />
+          {unlinkedBlockedReason}
+        </>
+      ) : (
+        (formError ?? unlinkedBlockedReason)
+      ),
+    [formError, unlinkedBlockedReason],
+  );
+  const fieldErrors = [...(errors ?? []), ...blockedFieldErrors];
+  const hasErrors = fieldErrors.length > 0 || Boolean(effectiveFormError);
 
   // Focus is moved in an effect, not in the submit handler, because the
   // errors are the caller's to compute: they arrive as props on the render
@@ -104,7 +197,7 @@ export function Form({
     }
     awaitingResultRef.current = false;
     summaryRef.current?.focus();
-  }, [submitCount, errors, formError, hasErrors]);
+  }, [submitCount, errors, effectiveFormError, hasErrors]);
 
   return (
     <form
@@ -120,6 +213,13 @@ export function Form({
         if (pending) {
           return;
         }
+        if (submitBlocked) {
+          setBlockedAttempted(true);
+          onSubmitBlocked?.();
+          awaitingResultRef.current = true;
+          setSubmitCount((count) => count + 1);
+          return;
+        }
         awaitingResultRef.current = true;
         setSubmitCount((count) => count + 1);
         onSubmit();
@@ -133,7 +233,7 @@ export function Form({
       <ErrorSummary
         ref={summaryRef}
         errors={fieldErrors}
-        formError={formError}
+        formError={effectiveFormError}
         title={errorSummaryTitle}
         headingLevel={errorSummaryHeadingLevel}
       />
@@ -147,8 +247,9 @@ export function Form({
             needs to *say* it is unavailable - and an aria-disabled control
             stays focusable and stays announced. `Button` styles
             aria-disabled the same way it styles disabled, so there is
-            nothing to reproduce here. */}
-        <Button type="submit" aria-disabled={pending || undefined}>
+            nothing to reproduce here. `submitBlocked` (issue #62) joins
+            `pending` here for the same reason. */}
+        <Button type="submit" aria-disabled={pending || submitBlocked || undefined}>
           {pending && pendingLabel ? pendingLabel : submitLabel}
         </Button>
         {secondaryActions}
