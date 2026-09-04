@@ -124,22 +124,29 @@ jobs:
       - name: pnpm audit (fails on high/critical - NFR-25)
         # Retries only a registry-timeout/network failure against
         # registry.npmjs.org's advisories/bulk endpoint (issue #255) - not
-        # `set -e`, so a failing `pnpm audit` doesn't abort the shell before
-        # its output can be classified as "registry flake" vs "real finding".
+        # `set -e` (GitHub's default `bash` step already runs with `-e`, so
+        # this explicitly turns it back off): otherwise `output=$(pnpm audit
+        # ...)` failing would abort the shell right there, before the output
+        # could be classified as "registry flake" vs "real finding", and
+        # before it could even be echoed. The `if output=$(...)` form below
+        # is also deliberate over a bare assignment for the same reason - a
+        # command's exit status inside an `if` condition doesn't trigger
+        # `-e` even when it isn't turned off some other way.
         # A real advisory (or any other failure) prints and exits on the
         # first attempt, exactly as before this change.
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           max_attempts=2
           sleep_seconds=30
           attempt=1
           while true; do
-            output=$(pnpm audit --prod --audit-level=high 2>&1)
-            status=$?
-            echo "$output"
-            if [ "$status" -eq 0 ]; then
+            if output=$(pnpm audit --prod --audit-level=high 2>&1); then
+              echo "$output"
               exit 0
+            else
+              status=$?
             fi
+            echo "$output"
             if ! echo "$output" | grep -qE 'TimeoutError|operation was aborted|ERR_PNPM_[A-Z_]*FETCH'; then
               exit "$status"
             fi
