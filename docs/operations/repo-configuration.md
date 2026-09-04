@@ -198,8 +198,10 @@ at all. Two layers now guard against that:
 - `frontend-audit`'s audit step in
   [`security.yml`](../../.github/workflows/security.yml) wraps `pnpm audit`
   in a retry loop that inspects the failure output: a registry-timeout
-  signature (`TimeoutError`, `operation was aborted`, an `ERR_PNPM_*_FETCH`
-  code) retries once more after a short sleep; anything else - including a
-  real high/critical advisory - fails immediately, on the first attempt, with
-  no retry. The job's `timeout-minutes` is sized to the worst-case retry wall
-  time (see the comment above that job in `security.yml` for the budget).
+  signature (`TimeoutError`, `operation was aborted`, or a raw network error
+  code such as `ETIMEDOUT`/`ECONNRESET`) retries once more after a short
+  sleep; anything else - including a real high/critical advisory, or a
+  deterministic HTTP-status failure like pnpm's `ERR_PNPM_FETCH_401` - fails
+  immediately, on the first attempt, with no retry. The job's
+  `timeout-minutes` is sized to the worst-case retry wall time (see the
+  comment above that job in `security.yml` for the budget).

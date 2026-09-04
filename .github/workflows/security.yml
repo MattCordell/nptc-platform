@@ -148,7 +148,7 @@ jobs:
               status=$?
             fi
             echo "$output"
-            if ! echo "$output" | grep -qE 'TimeoutError|operation was aborted|ERR_PNPM_[A-Z_]*FETCH'; then
+            if ! echo "$output" | grep -qE 'TimeoutError|operation was aborted|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN'; then
               exit "$status"
             fi
             if [ "$attempt" -ge "$max_attempts" ]; then
