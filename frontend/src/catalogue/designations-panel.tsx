@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import type { CollisionWarning } from "./collision-notice.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
 import { MAX_TERMS_PER_BATCH } from "./limits.ts";
@@ -108,17 +109,6 @@ function termRows(entry: EntryDetail): TermRow[] {
     isEntryPreferredTerm: false,
   }));
   return [preferred, ...designations];
-}
-
-const NOTE_HINT =
-  "This becomes the published History text, so describe the change - single words " +
-  "like “update” or “fix” are not accepted.";
-
-/** Client-side check only for emptiness; FR-37's substance is the server's. */
-function noteError(note: string, fieldId: string): FormError[] {
-  return note.trim().length === 0
-    ? [{ fieldId, message: "Enter a changelog note describing this change." }]
-    : [];
 }
 
 export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
@@ -299,7 +289,7 @@ function AddSynonymsForm({
   onSaved: (created: number, warnings: CollisionWarning[]) => void;
 }) {
   const [cell, setCell] = useState("");
-  const [note, setNote] = useState("");
+  const changelogNote = useChangelogNote("add-note");
   const [errors, setErrors] = useState<FormError[]>([]);
   const add = useAddDesignations(businessKey);
 
@@ -312,6 +302,9 @@ function AddSynonymsForm({
       pending={add.isPending}
       errors={errors}
       formError={add.isError ? <RefusalNotice error={add.error} /> : undefined}
+      submitBlocked={changelogNote.blocked}
+      blockedReason={changelogNote.blockedReason}
+      blockedFieldId={changelogNote.fieldId}
       errorSummaryHeadingLevel={3}
       onSubmit={() => {
         const found: FormError[] = [
@@ -335,7 +328,6 @@ function AddSynonymsForm({
                 },
               ]
             : []),
-          ...noteError(note, "add-note"),
         ];
         setErrors(found);
         if (found.length > 0) {
@@ -346,12 +338,12 @@ function AddSynonymsForm({
             language: DEFAULT_LANGUAGE,
             terms,
             use: "synonym",
-            reason: note,
+            reason: changelogNote.note,
           },
           {
             onSuccess: (result) => {
               setCell("");
-              setNote("");
+              changelogNote.reset();
               onSaved(result.designations.length, result.warnings);
             },
           },
@@ -393,21 +385,7 @@ function AddSynonymsForm({
               .map((term) => `“${term}”`)
               .join(", ")}`}
       </p>
-      <Field
-        id="add-note"
-        label="Changelog note"
-        hint={NOTE_HINT}
-        error={errors.find((error) => error.fieldId === "add-note")?.message}
-      >
-        {(controlProps) => (
-          <input
-            {...controlProps}
-            type="text"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-          />
-        )}
-      </Field>
+      <ChangelogNoteField id="add-note" changelogNote={changelogNote} />
     </Form>
   );
 }
@@ -424,7 +402,7 @@ function AmendDialog({
   onSaved: (warnings: CollisionWarning[]) => void;
 }) {
   const [newTerm, setNewTerm] = useState(row.term);
-  const [note, setNote] = useState("");
+  const changelogNote = useChangelogNote("amend-note");
   const [errors, setErrors] = useState<FormError[]>([]);
   const amend = useAmendDesignation(entry.business_key);
 
@@ -436,6 +414,9 @@ function AmendDialog({
         pending={amend.isPending}
         errors={errors}
         formError={amend.isError ? <RefusalNotice error={amend.error} /> : undefined}
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -447,7 +428,6 @@ function AmendDialog({
             ...(newTerm.trim().length === 0
               ? [{ fieldId: "amend-term", message: "Enter the term this should become." }]
               : []),
-            ...noteError(note, "amend-note"),
           ];
           setErrors(found);
           if (found.length > 0) {
@@ -476,7 +456,7 @@ function AmendDialog({
               // the entry's own term, honoured (not discarded) when it does
               // not. One code path, and no save that skips the lock.
               expected_row_version: entry.row_version,
-              reason: note,
+              reason: changelogNote.note,
             },
             { onSuccess: (result) => onSaved(result.warnings) },
           );
@@ -501,21 +481,7 @@ function AmendDialog({
             />
           )}
         </Field>
-        <Field
-          id="amend-note"
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === "amend-note")?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id="amend-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );
@@ -532,8 +498,7 @@ function RetireDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [note, setNote] = useState("");
-  const [errors, setErrors] = useState<FormError[]>([]);
+  const changelogNote = useChangelogNote("retire-note");
   const retire = useRetireDesignation(businessKey);
 
   return (
@@ -542,8 +507,10 @@ function RetireDialog({
         submitLabel="Retire term"
         pendingLabel="Retiring"
         pending={retire.isPending}
-        errors={errors}
         formError={retire.isError ? <RefusalNotice error={retire.error} /> : undefined}
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -551,13 +518,8 @@ function RetireDialog({
           </Button>
         }
         onSubmit={() => {
-          const found = noteError(note, "retire-note");
-          setErrors(found);
-          if (found.length > 0) {
-            return;
-          }
           retire.mutate(
-            { language: row.language, term: row.term, reason: note },
+            { language: row.language, term: row.term, reason: changelogNote.note },
             { onSuccess: () => onSaved() },
           );
         }}
@@ -572,21 +534,7 @@ function RetireDialog({
           This stops the term being published and removes it from the list. It is not
           deleted: the catalogue keeps it, and the change, in the entry&rsquo;s history.
         </p>
-        <Field
-          id="retire-note"
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === "retire-note")?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id="retire-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );
@@ -645,8 +593,7 @@ function AcknowledgeDialog({
   onClose: () => void;
   onSaved: (term: string) => void;
 }) {
-  const [note, setNote] = useState("");
-  const [errors, setErrors] = useState<FormError[]>([]);
+  const changelogNote = useChangelogNote("acknowledge-note");
   const acknowledge = useAcknowledgeCollision(businessKey);
 
   return (
@@ -655,10 +602,12 @@ function AcknowledgeDialog({
         submitLabel="Acknowledge"
         pendingLabel="Acknowledging"
         pending={acknowledge.isPending}
-        errors={errors}
         formError={
           acknowledge.isError ? <RefusalNotice error={acknowledge.error} /> : undefined
         }
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
         errorSummaryHeadingLevel={3}
         secondaryActions={
           <Button type="button" variant="secondary" onClick={onClose}>
@@ -666,16 +615,15 @@ function AcknowledgeDialog({
           </Button>
         }
         onSubmit={() => {
-          const found = noteError(note, "acknowledge-note");
-          setErrors(found);
-          if (found.length > 0) {
-            return;
-          }
           acknowledge.mutate(
             // The language of the write this warning came back from, not an
             // assumed default: an acknowledgement addresses
             // `(entry, language, term)` (review finding 1).
-            { language: warning.language, term: warning.term, reason: note },
+            {
+              language: warning.language,
+              term: warning.term,
+              reason: changelogNote.note,
+            },
             { onSuccess: () => onSaved(warning.term) },
           );
         }}
@@ -685,21 +633,7 @@ function AcknowledgeDialog({
           {warning.preferred_term}. Acknowledging records that this is intended, on this
           entry, and stops it being reported here again.
         </p>
-        <Field
-          id="acknowledge-note"
-          label="Changelog note"
-          hint={NOTE_HINT}
-          error={errors.find((error) => error.fieldId === "acknowledge-note")?.message}
-        >
-          {(controlProps) => (
-            <input
-              {...controlProps}
-              type="text"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-            />
-          )}
-        </Field>
+        <ChangelogNoteField id="acknowledge-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );

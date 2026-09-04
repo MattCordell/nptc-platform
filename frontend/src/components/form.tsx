@@ -37,6 +37,12 @@ type FormProps = {
    * before, so an empty required field does not accuse the user of an
    * error before they have done anything. */
   blockedReason?: string;
+  /** The id of the field `blockedReason` is about. Given, the reason is
+   * rendered as a real summary link that moves focus to that field - the
+   * same affordance every other field-level error gets (`ErrorSummary`'s
+   * own contract). Omitted, it falls back to a plain, unlinked sentence,
+   * the way `formError` already renders. */
+  blockedFieldId?: string;
   /** Required - `Form` renders its own submit button, so "one submit path"
    * is structural rather than a convention a screen has to remember. */
   submitLabel: string;
@@ -70,6 +76,7 @@ export function Form({
   pending = false,
   submitBlocked = false,
   blockedReason,
+  blockedFieldId,
   submitLabel,
   pendingLabel,
   secondaryActions,
@@ -91,9 +98,17 @@ export function Form({
   // gate is announced only from that point, never merely because the field
   // is currently empty (see `blockedReason`'s doc comment).
   const [blockedAttempted, setBlockedAttempted] = useState(false);
-  const fieldErrors = errors ?? [];
   const showBlockedReason = submitBlocked && blockedAttempted && Boolean(blockedReason);
-  const effectiveFormError = formError ?? (showBlockedReason ? blockedReason : undefined);
+  const blockedFieldErrors: FormError[] =
+    showBlockedReason && blockedFieldId
+      ? [{ fieldId: blockedFieldId, message: blockedReason! }]
+      : [];
+  // Linked to a field via `blockedFieldId` when the caller gives one - the
+  // same summary-link affordance every other field error gets - and falls
+  // back to a plain sentence (like `formError`) only when it does not.
+  const effectiveFormError =
+    formError ?? (showBlockedReason && !blockedFieldId ? blockedReason : undefined);
+  const fieldErrors = [...(errors ?? []), ...blockedFieldErrors];
   const hasErrors = fieldErrors.length > 0 || Boolean(effectiveFormError);
 
   // Focus is moved in an effect, not in the submit handler, because the

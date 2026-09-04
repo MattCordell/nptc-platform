@@ -13,6 +13,7 @@ function TestForm({ onSubmit }: { onSubmit: () => void }) {
       submitLabel="Save"
       submitBlocked={changelogNote.blocked}
       blockedReason={changelogNote.blockedReason}
+      blockedFieldId={changelogNote.fieldId}
       onSubmit={onSubmit}
     >
       <ChangelogNoteField id="test-note" changelogNote={changelogNote} />
@@ -59,9 +60,7 @@ describe("ChangelogNoteField", () => {
     await user.type(screen.getByLabelText("Changelog note"), "fix");
     await user.tab();
 
-    expect(
-      await screen.findByText(/describe what actually changed/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/describe what actually changed/)).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 

@@ -123,7 +123,9 @@ export type ChangelogNoteResult =
  * note like `"fix"` gets the more specific message), then length, then
  * "contains a letter".
  */
-export function validateChangelogNote(note: string | null | undefined): ChangelogNoteResult {
+export function validateChangelogNote(
+  note: string | null | undefined,
+): ChangelogNoteResult {
   if (note === null || note === undefined) {
     return { status: "empty", message: "A changelog note is required." };
   }

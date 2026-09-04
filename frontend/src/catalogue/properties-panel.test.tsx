@@ -364,11 +364,11 @@ describe("editing a property's values", () => {
     await user.click(panel().getByRole("button", { name: "Edit Usage guidance" }));
     await user.click(screen.getByRole("dialog").querySelector("button[type=submit]")!);
 
-    // Appears twice by design: once in the error summary link, once as the
-    // field's own inline message (`ErrorSummary`'s own contract).
-    expect(
-      await screen.findAllByText("Enter a changelog note describing this change."),
-    ).not.toHaveLength(0);
+    // The gate (issue #62) refuses the submit before it reaches the server,
+    // and the reason is announced through the error summary.
+    expect(await screen.findAllByText("A changelog note is required.")).not.toHaveLength(
+      0,
+    );
   });
 
   // Principal failure mode: FR-89's specimen cross-field / FR-10's cardinality

@@ -15,6 +15,10 @@ const NOTE_HINT =
   'like "update" or "fix" are not accepted.';
 
 export interface UseChangelogNoteResult {
+  /** The id passed to `useChangelogNote` - ready for `Form`'s
+   * `blockedFieldId`, so the summary's blocked-reason entry links to this
+   * field the same way every other field error does. */
+  fieldId: string;
   note: string;
   setNote: (note: string) => void;
   /** True unless the current note passes FR-37 - feeds `Form`'s
@@ -49,6 +53,7 @@ export function useChangelogNote(fieldId: string): UseChangelogNoteResult {
   const message = result.status === "ok" ? undefined : result.message;
 
   return {
+    fieldId,
     note,
     setNote,
     blocked: result.status !== "ok",

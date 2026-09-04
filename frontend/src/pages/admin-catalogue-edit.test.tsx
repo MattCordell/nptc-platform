@@ -1173,11 +1173,18 @@ describe("retiring a term", () => {
     );
     await user.click(inDialog().getByRole("button", { name: "Retire term" }));
 
-    expect(await inDialog().findAllByText(/Enter a changelog note/)).toHaveLength(2);
+    expect(
+      await inDialog().findAllByText(/A changelog note is required\./),
+    ).not.toHaveLength(0);
     expect(callsTo(calls, RETIRE_PATH)).toHaveLength(0);
   });
 
   it("surfaces the server's own sentence when it refuses", async () => {
+    // The note here passes the client-side gate (issue #62) on its own
+    // merits - a low-information note like "update" never reaches the
+    // server at all any more, since the gate refuses it first. This test is
+    // for a refusal the *server* is still the authority on (FR-38's
+    // row-version conflict, in this stub), not FR-37 itself.
     const user = userEvent.setup();
     stubApi([
       READ_OK,
@@ -1186,9 +1193,7 @@ describe("retiring a term", () => {
         path: RETIRE_PATH,
         status: 422,
         body: {
-          detail:
-            "A changelog note is required and must describe the change. It becomes the " +
-            'published History text, so single words like "update" or "fix" are not accepted.',
+          detail: "This entry has changed since it was loaded. Reload and try again.",
         },
       },
     ]);
@@ -1197,10 +1202,15 @@ describe("retiring a term", () => {
     await user.click(
       screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
     );
-    await user.type(inDialog().getByLabelText(/Changelog note/), "update");
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Retire the duplicate synonym",
+    );
     await user.click(inDialog().getByRole("button", { name: "Retire term" }));
 
-    expect(await screen.findByText(/must describe the change/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/This entry has changed since it was loaded/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -1367,6 +1377,12 @@ describe("code bindings", () => {
       FSN_CODE,
       /did not return a name/,
     );
+    // A valid changelog note, so the FR-37 gate (issue #62) does not
+    // intercept the submit before the code's own validation runs.
+    await user.type(
+      inBindingsPanel().getByLabelText("Changelog note"),
+      "Bind the new code",
+    );
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
 
     expect(
@@ -1418,6 +1434,12 @@ describe("code bindings", () => {
 
     await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
     await user.paste(FSN_CODE);
+    // A valid changelog note, so the FR-37 gate (issue #62) does not
+    // intercept the submit before the code's own validation runs.
+    await user.type(
+      inBindingsPanel().getByLabelText("Changelog note"),
+      "Bind the new code",
+    );
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
 
     expect(
@@ -1447,6 +1469,12 @@ describe("code bindings", () => {
       inBindingsPanel().getByLabelText("SNOMED CT code"),
       FSN_CODE,
       /was not found in the AU edition/,
+    );
+    // A valid changelog note, so the FR-37 gate (issue #62) does not
+    // intercept the submit before the code's own validation runs.
+    await user.type(
+      inBindingsPanel().getByLabelText("Changelog note"),
+      "Bind the new code",
     );
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
 
@@ -1530,7 +1558,9 @@ describe("code bindings", () => {
     await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
     await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
 
-    expect(await inDialog().findAllByText(/Enter a changelog note/)).toHaveLength(2);
+    expect(
+      await inDialog().findAllByText(/A changelog note is required\./),
+    ).not.toHaveLength(0);
     expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)).toHaveLength(0);
   });
 

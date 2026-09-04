@@ -65,7 +65,9 @@ describe("validateChangelogNote", () => {
   });
 
   it("accepts and normalises a meaningful note", () => {
-    const result = validateChangelogNote("Corrected the specimen for the RBC assay" + NBSP);
+    const result = validateChangelogNote(
+      "Corrected the specimen for the RBC assay" + NBSP,
+    );
     expect(result).toEqual({
       status: "ok",
       note: "Corrected the specimen for the RBC assay",
