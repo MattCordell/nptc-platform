@@ -122,7 +122,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.client == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 -> 15 (issue #255, PR #258 review): "Install dependencies" below
+    # inherits ../../pnpm-workspace.yaml's raised fetchTimeout/fetchRetries
+    # like any other `pnpm` invocation - see security.yml's frontend-audit
+    # job for the worst-case-per-request arithmetic (~8.5 minutes) this pads
+    # against, on top of this job's own normally-fast codegen+diff.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

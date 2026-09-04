@@ -196,12 +196,24 @@ at all. Two layers now guard against that:
   from the same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...)
   in a `.npmrc` file, which it silently ignores.
 - `frontend-audit`'s audit step in
-  [`security.yml`](../../.github/workflows/security.yml) wraps `pnpm audit`
-  in a retry loop that inspects the failure output: a registry-timeout
-  signature (`TimeoutError`, `operation was aborted`, or a raw network error
-  code such as `ETIMEDOUT`/`ECONNRESET`) retries once more after a short
-  sleep; anything else - including a real high/critical advisory, or a
+  [`security.yml`](../../.github/workflows/security.yml) runs `pnpm audit`
+  through [`scripts/audit_retry_guard.py`](../../scripts/audit_retry_guard.py)
+  (unit-tested under
+  [`scripts/tests/test_audit_retry_guard.py`](../../scripts/tests/test_audit_retry_guard.py)),
+  which inspects the failure output: a registry-timeout signature
+  (`TimeoutError`, `operation was aborted`, or a raw network error code such
+  as `ETIMEDOUT`/`ECONNRESET`) retries once more after a short sleep;
+  anything else - including a real high/critical advisory, or a
   deterministic HTTP-status failure like pnpm's `ERR_PNPM_FETCH_401` - fails
   immediately, on the first attempt, with no retry. The job's
   `timeout-minutes` is sized to the worst-case retry wall time (see the
   comment above that job in `security.yml` for the budget).
+
+`fetchTimeout`/`fetchRetries` are workspace-global (`pnpm-workspace.yaml`
+applies to every package, not just `frontend`), so every other job's own
+`pnpm install --frozen-lockfile` step inherits the same raised worst case per
+request - not just `frontend-audit`'s. `ci.yml`'s `Frontend (lint, typecheck,
+test, build)` job and `openapi.yml`'s `client` (generated-client-is-current)
+job both had their `timeout-minutes` padded for this in the same PR that
+introduced the setting (#258); a future job that adds its own `pnpm install`
+step should budget the same way rather than assume pnpm's original defaults.
