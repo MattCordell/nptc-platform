@@ -32,6 +32,11 @@ from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
+from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.designation import Designation
+from nptc.db.models.designation_collision_acknowledgement import (
+    DesignationCollisionAcknowledgement,
+)
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 
@@ -107,6 +112,34 @@ def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
 
 
+def _latest_audit_event(session: Any, *, entity_type: str, entity_id: Any) -> AuditEvent:
+    """Scoped per CLAUDE.md - keyed on `entity_type` + `entity_id`, not a
+    whole-table read, so this cannot pick up another test's row in the
+    shared session-scoped container. This module's writes never key the
+    audit event on the entry itself (see `record_change`'s default
+    `entity_id`): `designation`, `code_binding` and
+    `designation_collision_acknowledgement` are each keyed on their own
+    row's id."""
+    return session.execute(
+        select(AuditEvent)
+        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == str(entity_id))
+        .order_by(AuditEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one()
+
+
+def _entry_id(api: ApiTestApp, business_key: str) -> Any:
+    return api.session.execute(
+        select(CatalogueEntry.id).where(CatalogueEntry.business_key == business_key)
+    ).scalar_one()
+
+
+def _designation_id(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
+    return api.session.execute(
+        select(Designation.id).where(Designation.entry_id == entry_id, Designation.term == term)
+    ).scalar_one()
+
+
 def _add(api: ApiTestApp, business_key: str, token: str | None, **overrides: object) -> Any:
     body: dict[str, object] = {"terms": ["FBC"], "reason": _REASON}
     body.update(overrides)
@@ -134,6 +167,38 @@ def test_add_designations_returns_201_with_the_batch_as_stored(api: ApiTestApp) 
     assert all(d["status"] == "active" for d in body["designations"])
     assert body["warnings"] == []
     assert _audit_event_count(api) == before + 2
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_add_designation_audits_the_created_row_with_reason(api: ApiTestApp) -> None:
+    """The parent-level acceptance criterion #61 owns: an add is a
+    `ChangeKind.CREATED` diff, so `before` is `None` and `after` carries
+    every non-null auditable field `Designation.__audit_fields__`
+    declares - and the changelog note supplied on the request reaches
+    `AuditEvent.reason` verbatim (FR-37, PRD SS13.2)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-add-audit")
+    entry_id = _entry_id(api, business_key)
+    reason = "Adding the SPIA-current synonym for this entry."
+
+    response = _add(api, business_key, token, terms=["FBC"], reason=reason)
+
+    assert response.status_code == 201, response.text
+    designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
+    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    assert event.action == "designation.created"
+    assert event.before is None
+    assert event.after == {
+        "entry_id": str(entry_id),
+        "term": "FBC",
+        "use": "synonym",
+        "language": "en-AU",
+        "status": "active",
+    }
+    assert event.reason == reason
 
 
 @pytest.mark.req("FR-04")
@@ -200,6 +265,37 @@ def test_amend_designation_edits_the_term_and_returns_it(api: ApiTestApp) -> Non
 
 
 @pytest.mark.req("FR-04")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_amend_designation_audits_only_the_term_field_with_reason(api: ApiTestApp) -> None:
+    """An amendment is an `UPDATED` diff over one row that keeps its
+    identity (the module docstring's own reasoning) - only `term` actually
+    changed, so `before`/`after` must each carry that one field, not a
+    whole-record snapshot (PRD SS13.2's "field-level, not whole-record
+    blobs")."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-amend-audit")
+    _add(api, business_key, token)
+    entry_id = _entry_id(api, business_key)
+    designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
+    reason = "Spelling out the abbreviation for this SPIA edition."
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/designations/amendment",
+        token=token,
+        json={"term": "FBC", "new_term": "Full Blood Count", "reason": reason},
+    )
+
+    assert response.status_code == 200, response.text
+    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    assert event.action == "designation.amended"
+    assert event.before == {"term": "FBC"}
+    assert event.after == {"term": "Full Blood Count"}
+    assert event.reason == reason
+
+
+@pytest.mark.req("FR-04")
 @pytest.mark.integration
 def test_amend_resolves_a_case_and_punctuation_variant_of_the_stored_term(
     api: ApiTestApp,
@@ -245,6 +341,32 @@ def test_retire_designation_requires_and_records_a_reason(api: ApiTestApp) -> No
     assert _audit_event_count(api) == before + 1
 
 
+@pytest.mark.req("FR-04")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_retire_designation_audits_the_status_change_with_reason(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-retire-audit")
+    _add(api, business_key, token)
+    entry_id = _entry_id(api, business_key)
+    designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
+    reason = "Superseded during SPIA edition update, retirement audit test."
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/designations/retirement",
+        token=token,
+        json={"term": "FBC", "reason": reason},
+    )
+
+    assert response.status_code == 200, response.text
+    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    assert event.action == "designation.retired"
+    assert event.before == {"status": "active"}
+    assert event.after == {"status": "retired"}
+    assert event.reason == reason
+
+
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
@@ -286,6 +408,59 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     recheck = _add(api, third_entry, token, terms=["ADA2"])
     assert recheck.status_code == 201, recheck.text
     assert recheck.json()["warnings"] == []
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_acknowledge_collision_audits_the_created_row_with_reason(api: ApiTestApp) -> None:
+    """The fourth of #61's four write paths: `designation_collision_
+    acknowledgement` is its own auditable entity (a `CREATED` diff), and
+    unusually `reason` is *both* the audit event's own `reason` column and
+    a declared auditable field on the row itself (see the model's own
+    docstring) - both must carry the note supplied."""
+    token = _admin_token(api, subject="sub-ack-audit")
+    first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
+    second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
+    third_entry = _seed_entry(api, preferred_term="Adenosine deaminase pleural fluid")
+    _add(api, first_entry, token, terms=["ADA2"])
+    _add(api, second_entry, token, terms=["ADA2"])
+    _add(api, third_entry, token, terms=["ADA2"])
+    entry_id = _entry_id(api, third_entry)
+    reason = "Genuinely ambiguous, disambiguated by specimen - audit test."
+
+    response = api.post(
+        f"/catalogue/entries/{third_entry}/designations/acknowledgement",
+        token=token,
+        json={"term": "ADA2", "reason": reason},
+    )
+
+    assert response.status_code == 200, response.text
+    ack_id = api.session.execute(
+        select(DesignationCollisionAcknowledgement.id).where(
+            DesignationCollisionAcknowledgement.entry_id == entry_id
+        )
+    ).scalar_one()
+    event = _latest_audit_event(
+        api.session, entity_type="designation_collision_acknowledgement", entity_id=ack_id
+    )
+    assert event.action == "designation_collision.acknowledged"
+    assert event.before is None
+    # `reason` is a declared auditable field on the row itself (see the
+    # model's own docstring), so it appears twice: once as the field-level
+    # change below, and once as `AuditEvent.reason` (asserted after).
+    # `acknowledged_by_user_id` is a withheld field that also changed, so
+    # it is named in `_redacted`, not present with its real value
+    # (NFR-04/NFR-26).
+    assert event.after == {
+        "entry_id": str(entry_id),
+        "term_key": "ada2",
+        "language": "en-AU",
+        "reason": reason,
+        "_redacted": ["acknowledged_by_user_id"],
+    }
+    assert event.reason == reason
 
 
 # --- domain refusals -----------------------------------------------------

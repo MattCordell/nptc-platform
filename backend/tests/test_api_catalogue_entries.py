@@ -179,6 +179,10 @@ def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
     assert event.action == "catalogue_entry.updated"
     assert event.before == {"specimen_unconstrained": False}
     assert event.after == {"specimen_unconstrained": True}
+    # FR-37/PRD SS13.2: the changelog note supplied on the request must
+    # reach `AuditEvent.reason` verbatim, not just get accepted at the
+    # 200 - the second of #61's two parent-level acceptance criteria.
+    assert event.reason == _REASON
 
 
 @pytest.mark.req("FR-89")
