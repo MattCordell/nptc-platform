@@ -7,3 +7,16 @@ packages:
 # widely-audited dependency of vite/vitest and is safe to allow.
 allowBuilds:
   esbuild: true
+
+# Registry fetch headroom (issue #255, NFR-25). registry.npmjs.org's
+# advisory-bulk endpoint (used by `pnpm audit`) has intermittently timed out
+# under pnpm's defaults (fetchRetries: 2, fetchTimeout: 60000), failing CI's
+# `Required (Security)` gate on PRs that touch no dependency manifest at all.
+# These are pnpm-specific settings, not npm's - confirmed by testing against
+# an unreachable registry that pnpm 11.20 reads them from here, not from a
+# same-named kebab-case key (fetch-retries, fetch-timeout, ...) in .npmrc,
+# which it silently ignores. fetchRetryMintimeout/-Maxtimeout are left at
+# pnpm's defaults - see .github/workflows/security.yml's frontend-audit job
+# for the worst-case wall-time budget these two feed into.
+fetchTimeout: 90000
+fetchRetries: 3

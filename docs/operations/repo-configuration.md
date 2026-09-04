@@ -189,9 +189,12 @@ intermittently timed out under pnpm's defaults, failing the
 `Required (Security)` aggregator - on PRs that touched no dependency manifest
 at all. Two layers now guard against that:
 
-- The repo-root `.npmrc` raises `fetch-timeout` and `fetch-retries` above
-  pnpm's defaults for every `pnpm` invocation (install and audit alike, in CI
-  and locally).
+- The repo-root `pnpm-workspace.yaml` raises `fetchTimeout` and `fetchRetries`
+  above pnpm's defaults for every `pnpm` invocation (install and audit alike,
+  in CI and locally). These are pnpm-specific settings, not npm's - testing
+  against an unreachable registry showed pnpm 11.20 reads them from here, not
+  from the same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...)
+  in a `.npmrc` file, which it silently ignores.
 - `frontend-audit`'s audit step in
   [`security.yml`](../../.github/workflows/security.yml) wraps `pnpm audit`
   in a retry loop that inspects the failure output: a registry-timeout

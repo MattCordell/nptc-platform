@@ -93,8 +93,9 @@ jobs:
     runs-on: ubuntu-latest
     # Worst case (issue #255): the audit step below retries up to 2 times
     # (1 extra attempt) on a registry timeout, and each `pnpm audit` process
-    # itself now retries up to 4 times (../.npmrc's fetch-retries=3) with a
-    # fetch-timeout of 90s and a 60s max backoff - 4 x 90s + 3 x 60s = 9
+    # itself now retries up to 4 times (../../pnpm-workspace.yaml's
+    # fetchRetries: 3) with a fetchTimeout of 90s and a 60s max backoff -
+    # 4 x 90s + 3 x 60s = 9
     # minutes per process. 2 outer attempts + a 30s sleep between them is
     # 2 x 9min + 30s = ~18.5 minutes, plus ~2 minutes for checkout/install.
     # 22 minutes leaves margin above that without masking a real outage as
