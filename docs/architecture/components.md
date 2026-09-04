@@ -116,6 +116,9 @@ records why there is no form library behind these and what was rejected.
   joining `pending` on `aria-disabled` and in the re-entry guard; `blockedReason` (with
   `blockedFieldId`, to make it a real summary link rather than a plain sentence) is
   announced only once an attempted submit is actually refused, per ADR-0026's amendment.
+  `onSubmitBlocked` is called in place of `onSubmit` on a blocked attempt, so a caller with
+  its own extra field validation can recompute and display it the same way a non-blocked
+  submit does, per ADR-0026's addendum.
 
 ### Composing a form
 

@@ -158,3 +158,31 @@ manually short-circuiting `onSubmit`, which is exactly the kind of easy-to-get-s
 accessibility wiring this ADR already declined to leave to convention. `useChangelogNote`
 (`frontend/src/catalogue/changelog-note-field.tsx`) computes the validity; `Form` is the one
 place that enforces it cannot be bypassed by a click on an `aria-disabled` button.
+
+### Addendum (2026-09-04): `onSubmitBlocked`, after review found the gate hid other fields
+
+The first cut of the gate had a real gap, found in review before this PR left draft: four
+of the nine forms (`AddSynonymsForm`, `AmendDialog`, `BindCodeForm`, `ReplaceBindingDialog`)
+compute their *own* extra field validation - "enter a term", "this code must resolve" -
+inside `onSubmit`, and `onSubmit` never runs while blocked. So a first click on a form with
+both an empty other field and an empty note reported only the note's failure; the other
+field's error surfaced only on a second click, after the note was fixed. The same gap meant
+`useChangelogNote`'s own `guidance` (gated on the field having been blurred) never showed
+on a submit attempt against a note field the user had not yet touched, even though the
+summary linked to it - unlike every other field-level error in this codebase, whose inline
+message and summary link appear together.
+
+**Decision: `Form` gained `onSubmitBlocked?: () => void`, called in place of `onSubmit`
+when a submit is attempted while blocked.** A caller with its own extra field validation
+moves that computation out of `onSubmit` into a plain function the component body can call
+from *both* `onSubmit` and `onSubmitBlocked`, so a blocked click recomputes and displays it
+exactly like a non-blocked one does. Every one of the nine forms passes
+`onSubmitBlocked={changelogNote.markSubmitAttempted}` (the four with extra fields also
+recompute and `setErrors` their own), which is what makes the note's own `guidance` visible
+on a blocked attempt regardless of blur.
+
+This keeps `onSubmit` never running while blocked - the property the first cut promised and
+this ADR's existing tests assert - rather than the alternative the review offered (always
+call `onSubmit` and let `Form` merge the blocked reason into the announced errors), which
+would have required every caller to add its own "don't actually mutate while blocked" guard
+in exchange for removing one already-tested guarantee.

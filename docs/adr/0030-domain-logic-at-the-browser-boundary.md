@@ -214,3 +214,23 @@ enforces that a change to `changelog.py`'s constants updates `changelog-note.ts`
 PR. The shared fixtures catch a behaviour change on a *covered* input, not a new phrase
 added to `LOW_INFORMATION_NOTES` on one side only - the same partial mitigation the
 Consequences section already names for the first mirror.
+
+**Review found two more divergences beyond the two above, both closed rather than
+recorded as accepted gaps** (2026-09-04):
+
+- **`fold`'s word-split used JavaScript's `\s`.** `_fold` in `changelog.py` splits on
+  Python's own whitespace definition (`str.split()` with no arguments), which - like the
+  `str.strip()` class `split-synonyms.ts` already spells out as `PYTHON_SPACE_CLASS` -
+  includes U+001C-U+001F and U+0085, characters JavaScript's `\s` does not treat as
+  whitespace. A note built as `"fix" + "" + "ed"` folded to `"fixed"` (matching the
+  low-information list) instead of Python's two words, `"fix ed"` (not on it). Closed by
+  building `STRIP_PUNCTUATION_RE` and `fold`'s word-split from the same
+  `PYTHON_SPACE_CHARS` constant, rather than JavaScript's `\s`.
+- **`HAS_LETTER_RE` under-matched Python's `\w`.** Python's `[^\W\d_]` counts `Nl`/`No`
+  category characters (a Roman numeral like "Ⅷ", a vulgar fraction like "½") as word
+  characters via `str.isalnum()`; `\p{L}` alone does not. Closed by widening the regex to
+  `[\p{L}\p{Nl}\p{No}]`.
+
+Both were reachable only through inputs the shared fixtures do not cover (a control
+character or an exotic numeric symbol in a changelog note), which is exactly the standing,
+unmechanised cost named above - a second reviewer, not the fixtures, is what caught these.
