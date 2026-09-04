@@ -132,7 +132,9 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
    * stripping.test.ts`'s own identifier-only walk leaves a computed name
    * unflagged.
    */
-  function stringLiteralValue(initializer: ts.JsxAttribute["initializer"]): string | null {
+  function stringLiteralValue(
+    initializer: ts.JsxAttribute["initializer"],
+  ): string | null {
     if (!initializer) {
       return null;
     }
@@ -141,7 +143,10 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
     }
     if (ts.isJsxExpression(initializer) && initializer.expression) {
       const expression = initializer.expression;
-      if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      if (
+        ts.isStringLiteral(expression) ||
+        ts.isNoSubstitutionTemplateLiteral(expression)
+      ) {
         return expression.text;
       }
     }
