@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +52,7 @@ def _module_to_path(module_name: str) -> Path | None:
     return None
 
 
-@lru_cache(maxsize=None)
+@cache
 def _parse_module(module_name: str) -> ast.Module | None:
     path = _module_to_path(module_name)
     if path is None:
@@ -97,9 +97,7 @@ def _build_import_table(module_name: str, tree: ast.Module) -> _Imports:
         elif isinstance(node, ast.ImportFrom):
             if node.module is None and not node.level:
                 continue
-            base_module = (
-                _resolve_relative_module(module_name, node) if node.level else node.module
-            )
+            base_module = _resolve_relative_module(module_name, node) if node.level else node.module
             assert base_module is not None
             for alias in node.names:
                 local = alias.asname or alias.name
@@ -140,9 +138,7 @@ def _find_function(
     return None
 
 
-def _call_targets(
-    call: ast.Call, module_name: str, imports: _Imports
-) -> list[tuple[str, str]]:
+def _call_targets(call: ast.Call, module_name: str, imports: _Imports) -> list[tuple[str, str]]:
     """Every `(module, qualname)` this call could resolve to, most likely
     first. A `Name` call not in the import table is assumed to be a
     same-module function/class (verified, or discarded, by `_find_function`
@@ -204,9 +200,7 @@ def reachable(
                 return True
             if not target_module.startswith("nptc."):
                 continue
-            if reachable(
-                target_module, target_qualname, targets=targets, _visited=_visited
-            ):
+            if reachable(target_module, target_qualname, targets=targets, _visited=_visited):
                 return True
 
     return False
