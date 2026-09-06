@@ -226,10 +226,12 @@ recorded as accepted gaps** (2026-09-04):
   low-information list) instead of Python's two words, `"fix ed"` (not on it). Closed by
   building `STRIP_PUNCTUATION_RE` and `fold`'s word-split from the same
   `PYTHON_SPACE_CHARS` constant, rather than JavaScript's `\s`.
-- **`HAS_LETTER_RE` under-matched Python's `\w`.** Python's `[^\W\d_]` counts `Nl`/`No`
-  category characters (a Roman numeral like "Ⅷ", a vulgar fraction like "½") as word
-  characters via `str.isalnum()`; `\p{L}` alone does not. Closed by widening the regex to
-  `[\p{L}\p{Nl}\p{No}]`.
+- **`HAS_LETTER_RE` under-matched Python's `\w` (verified 2026-09-07 - see the amendment
+  below).** Python's `[^\W\d_]` counts `Nl`/`No` category characters (a Roman numeral like
+  "Ⅷ", a vulgar fraction like "½") as word characters via `str.isalnum()`; `\p{L}` alone
+  does not. Closed by widening the regex to `[\p{L}\p{Nl}\p{No}]`. Issue #262 was filed
+  claiming this widening still left a gap; the amendment below records that it does not,
+  and mechanises the check.
 
 Both were reachable only through inputs the shared fixtures do not cover (a control
 character or an exotic numeric symbol in a changelog note), which is exactly the standing,
