@@ -415,7 +415,7 @@ def test_a_repeat_login_that_changes_only_display_name_emits_one_renamed_event(
         issuer=_UNTRUSTED,
         subject="sub-repeat-name-only",
         preferred_username="ivy",
-        display_name="Ivy Renamed",
+        display_name="Renamed Person",
         email="ivy@example.com",
         email_verified=True,
     )
@@ -432,7 +432,7 @@ def test_a_repeat_login_that_changes_only_display_name_emits_one_renamed_event(
     )
     session.flush()
     assert second.user is not None
-    assert second.user.display_name == "Ivy Renamed"
+    assert second.user.display_name == "Renamed Person"
 
     events = _events_for_action(session, user_id, "user.renamed")
     assert len(events) == 1
@@ -441,7 +441,8 @@ def test_a_repeat_login_that_changes_only_display_name_emits_one_renamed_event(
     assert event["before"] == {"_redacted": ["display_name"]}
     assert event["after"] == {"_redacted": ["display_name"]}
     full_row_text = str(event)
-    assert "Ivy Renamed" not in full_row_text
+    assert "Ivy" not in full_row_text
+    assert "Renamed Person" not in full_row_text
 
 
 @pytest.mark.req("NFR-08")
@@ -464,6 +465,10 @@ def test_a_repeat_login_that_changes_nothing_emits_no_renamed_event(app_db: Conn
     assert first.user is not None
     user_id = first.user.id
 
+    identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": user_id}
+    ).scalar_one()
+
     second = resolve_user_for_claims(
         session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
     )
@@ -471,7 +476,7 @@ def test_a_repeat_login_that_changes_nothing_emits_no_renamed_event(app_db: Conn
     assert second.user is not None
 
     assert _events_for_action(session, user_id, "user.renamed") == []
-    assert _events_for_action(session, user_id, "user_identity.refreshed") == []
+    assert _events_for_action(session, identity_id, "user_identity.refreshed") == []
 
 
 @pytest.mark.req("NFR-08")
