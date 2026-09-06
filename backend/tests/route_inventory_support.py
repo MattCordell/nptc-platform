@@ -11,9 +11,8 @@ Not a `test_*.py` module - imported by path via `importlib`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -91,13 +90,14 @@ def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
     return frozenset(key for key, _ in _iter_mutating_api_routes(app))
 
 
-def mutating_routes_with_endpoints(app: FastAPI) -> dict[RouteKey, Callable[..., Any]]:
-    """Like `mutating_routes`, but keeping each route's `endpoint` callable
-    - issue #165's call-graph inventory needs it to find the route's source
-    (`endpoint.__module__` + `endpoint.__qualname__`); `mutating_routes`
-    itself does not, so it stays a plain `frozenset` for #44's simpler
-    coverage-set comparison."""
-    return {key: route.endpoint for key, route in _iter_mutating_api_routes(app)}
+def mutating_routes_with_endpoints(app: FastAPI) -> dict[RouteKey, APIRoute]:
+    """Like `mutating_routes`, but keeping each route's whole `APIRoute` -
+    issue #165's call-graph inventory needs `route.endpoint.__module__` +
+    `.__qualname__` to find the route's source, and a future consumer
+    reporting `route.name` or another attribute gets it for free without a
+    third walker; `mutating_routes` itself needs none of this, so it stays
+    a plain `frozenset` for #44's simpler coverage-set comparison."""
+    return dict(_iter_mutating_api_routes(app))
 
 
 def assert_inventory_covers_every_mutating_route(

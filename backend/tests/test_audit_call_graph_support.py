@@ -174,3 +174,105 @@ def test_missing_function_is_not_reachable(tmp_path: Path) -> None:
     _write(tmp_path, "nptc/endpoint.py", "def handler():\n    pass\n")
 
     assert walker.reachable("nptc.endpoint", "nonexistent", targets=TARGET) is False
+
+
+def test_relative_import_from_a_package_init_resolves_within_the_package(
+    tmp_path: Path,
+) -> None:
+    """PR #270 review: the importing module here is a *package's*
+    `__init__.py` (`nptc.pkg`), whose own dotted name already is the
+    package a `from .` inside it counts levels from - unlike a plain
+    module, where the package is the parent. Getting this wrong resolves
+    `from .svc import save` in `nptc/pkg/__init__.py` to `nptc.svc`
+    instead of `nptc.pkg.svc`."""
+    _write(
+        tmp_path, "nptc/pkg/__init__.py", "from .svc import save\n\n\ndef handler():\n    save()\n"
+    )
+    _write(
+        tmp_path,
+        "nptc/pkg/svc.py",
+        "from nptc.audit import record_change\n\n\ndef save():\n    record_change()\n",
+    )
+    _write(tmp_path, "nptc/audit.py", "def record_change(*a, **k):\n    pass\n")
+
+    assert walker.reachable("nptc.pkg", "handler", targets=TARGET)
+
+
+def test_dotted_import_binds_only_the_top_level_name(tmp_path: Path) -> None:
+    """PR #270 review: `import nptc.audit.recording` binds only the local
+    name `nptc` (to the top package) - never the dotted path itself - so a
+    call written as `nptc.audit.recording.record_change(...)` has to be
+    resolved by folding the whole attribute chain back into a module path,
+    not by treating the import statement's own dotted name as what got
+    bound locally."""
+    _write(tmp_path, "nptc/audit/__init__.py", "")
+    _write(tmp_path, "nptc/audit/recording.py", "def record_change(*a, **k):\n    pass\n")
+    _write(
+        tmp_path,
+        "nptc/endpoint.py",
+        "import nptc.audit.recording\n\n\n"
+        "def handler():\n    nptc.audit.recording.record_change()\n",
+    )
+
+    assert walker.reachable(
+        "nptc.endpoint", "handler", targets=frozenset({("nptc.audit.recording", "record_change")})
+    )
+
+
+def test_function_scoped_import_is_visible_to_the_walker(tmp_path: Path) -> None:
+    """PR #270 review: an import inside the function body (a real shape
+    used in this repo, e.g. `nptc/catalogue/designations.py`) must not be
+    invisible just because the walker's import table was only ever built
+    from top-level statements."""
+    _write(tmp_path, "nptc/audit.py", "def record_change(*a, **k):\n    pass\n")
+    _write(
+        tmp_path,
+        "nptc/endpoint.py",
+        "def handler():\n    from nptc.audit import record_change\n\n    record_change()\n",
+    )
+
+    assert walker.reachable("nptc.endpoint", "handler", targets=TARGET)
+
+
+def test_async_endpoint_reaches_target(tmp_path: Path) -> None:
+    """Every real route handler is `async def` - `_find_function`'s
+    `AsyncFunctionDef` branch needs its own direct test, not only indirect
+    coverage through the real app."""
+    _write(tmp_path, "nptc/audit.py", "def record_change(*a, **k):\n    pass\n")
+    _write(
+        tmp_path,
+        "nptc/endpoint.py",
+        "from nptc.audit import record_change\n\n\nasync def handler():\n    record_change()\n",
+    )
+
+    assert walker.reachable("nptc.endpoint", "handler", targets=TARGET)
+
+
+def test_class_method_qualname_reaches_target(tmp_path: Path) -> None:
+    """`_find_function` explicitly supports a dotted `Class.method`
+    qualname; nothing else in this file exercised it."""
+    _write(tmp_path, "nptc/audit.py", "def record_change(*a, **k):\n    pass\n")
+    _write(
+        tmp_path,
+        "nptc/endpoint.py",
+        "from nptc.audit import record_change\n\n\n"
+        "class Handler:\n    def method(self):\n        record_change()\n",
+    )
+
+    assert walker.reachable("nptc.endpoint", "Handler.method", targets=TARGET)
+
+
+def test_is_resolvable_true_for_a_real_function(tmp_path: Path) -> None:
+    _write(tmp_path, "nptc/endpoint.py", "def handler():\n    pass\n")
+
+    assert walker.is_resolvable("nptc.endpoint", "handler")
+
+
+def test_is_resolvable_false_for_a_module_with_no_source_on_disk(tmp_path: Path) -> None:
+    assert walker.is_resolvable("nptc.nonexistent", "handler") is False
+
+
+def test_is_resolvable_false_for_a_function_missing_from_a_real_module(tmp_path: Path) -> None:
+    _write(tmp_path, "nptc/endpoint.py", "def handler():\n    pass\n")
+
+    assert walker.is_resolvable("nptc.endpoint", "nonexistent") is False
