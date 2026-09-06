@@ -62,7 +62,7 @@ uv run mypy                          # strict type check, whole workspace
 uv run pytest                        # all tests (backend/transform/shared/scripts)
 uv run pytest --cov --cov-report=term-missing --cov-fail-under=80
 uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
-uv run pytest -m "req('FR-07')"      # tests tagged against a specific requirement
+uv run pytest --req=FR-07            # tests tagged against a specific requirement (conftest.py; -m has no call syntax)
 ```
 
 Fast iteration vs. full sweep (issue #190): most of the wall time is the ~220
