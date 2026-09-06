@@ -54,19 +54,7 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
-# `latest_audit_event` is loaded from `conftest.py` by file path, not
-# `_load("conftest")`: that helper's own sys.modules key is tied to the name
-# argument, and registering under the bare key "conftest" risks colliding
-# with pytest's own conftest import machinery - the same reasoning
-# `test_keycloak_realm.py` already documents for its own `image_from_
-# compose`/`compose_config` import.
-_conftest_spec = importlib.util.spec_from_file_location(
-    "_test_api_catalogue_designations_conftest", Path(__file__).parent / "conftest.py"
-)
-assert _conftest_spec is not None and _conftest_spec.loader is not None
-_conftest = importlib.util.module_from_spec(_conftest_spec)
-_conftest_spec.loader.exec_module(_conftest)
-latest_audit_event = _conftest.latest_audit_event
+latest_audit_event = _load("audit_support").latest_audit_event
 
 _REASON = "Adding a synonym seen in the current SPIA edition."
 

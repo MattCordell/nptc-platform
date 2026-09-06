@@ -48,17 +48,7 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
-# See `test_api_catalogue_designations.py`'s identical comment: loaded by
-# file path under a synthetic name, not `_load("conftest")`, to avoid the
-# bare sys.modules key "conftest" colliding with pytest's own conftest
-# import machinery.
-_conftest_spec = importlib.util.spec_from_file_location(
-    "_test_api_catalogue_properties_conftest", Path(__file__).parent / "conftest.py"
-)
-assert _conftest_spec is not None and _conftest_spec.loader is not None
-_conftest = importlib.util.module_from_spec(_conftest_spec)
-_conftest_spec.loader.exec_module(_conftest)
-latest_audit_event = _conftest.latest_audit_event
+latest_audit_event = _load("audit_support").latest_audit_event
 
 _REASON = "Created for issue #248 property-value write route test."
 _SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
