@@ -188,6 +188,18 @@ function inBindingsPanel() {
   return within(screen.getByRole("region", { name: "Code bindings" }));
 }
 
+/**
+ * Queries scoped to the registry properties panel (issue #61's plan) - the
+ * same reason as `inTermsPanel()`/`inBindingsPanel()`. Unlike those two,
+ * nothing in this file stubbed `GET /registry/properties` before, so every
+ * test that rendered this far actually exercised `PropertiesPanel`'s error
+ * branch ("Registry properties could not be loaded") rather than its real
+ * content - see the "cross-panel" describe block below.
+ */
+function inPropertiesPanel() {
+  return within(screen.getByRole("region", { name: "Registry properties" }));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -1842,6 +1854,203 @@ describe("code bindings", () => {
     // `fr-83-no-semantic-tag-stripping.test.ts`, which walks every module
     // under `frontend/src` rather than relying on one screen's rendering.
     expect(FSN).not.toBe(ACTIVE_BINDING.display_term);
+  });
+});
+
+describe("cross-panel", () => {
+  // Issue #61's plan: today's fixture leaves `bindings: []`, `properties: []`
+  // and never stubs `GET /registry/properties`, so `PropertiesPanel` always
+  // renders its error branch and every other test/axe sweep in this file
+  // runs against a screen with a broken third panel. This is the one case
+  // that populates all three and proves they genuinely coexist.
+  const PROPERTIES_DEFINITIONS = {
+    items: [
+      {
+        key: "usage_guidance",
+        label: "Usage guidance",
+        datatype: "string",
+        cardinality: "0..1",
+        scope: "both",
+        required_for_submission: false,
+        required_for_publication: false,
+        binding_target: null,
+        value_set_uri: null,
+        strength: null,
+        edition: null,
+        local_code_system_key: null,
+        filterable: false,
+        origin: "system",
+        status: "active",
+        display_order: 10,
+        constraints: {},
+        row_version: 1,
+        form_control: { control: "text", params: {} },
+      },
+    ],
+  };
+
+  const POPULATED_ENTRY = {
+    ...ENTRY,
+    bindings: [ACTIVE_BINDING],
+    properties: [
+      {
+        key: "usage_guidance",
+        label: "Usage guidance",
+        datatype: "string",
+        cardinality: "0..1",
+        status: "active",
+        ordinal: 0,
+        value: "Needs review",
+        justification: null,
+      },
+    ],
+  };
+
+  const POPULATED_READ_OK: Route = { ...READ_OK, body: POPULATED_ENTRY };
+
+  const PROPERTIES_OK: Route = {
+    method: "GET",
+    path: "/registry/properties",
+    status: 200,
+    body: PROPERTIES_DEFINITIONS,
+  };
+
+  const PROPERTIES_SAVE_PATH = `/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`;
+
+  it("renders all three panels populated, each individually reachable, and a save in one leaves the others working against the bumped row_version", async () => {
+    const user = userEvent.setup();
+    // The entry-core amend (`AMEND_PATH`, addressing the preferred term) is
+    // the write; `expected_row_version` bumps from 3 to 4 in its response,
+    // and every mutation's `onSuccess` invalidates the admin entry-detail
+    // query (`nptc/api/queries.ts`), so the refetch below is what actually
+    // carries the bumped version to the other two panels' own `entry.row_
+    // version` prop - not anything either of them computes itself.
+    let amended = false;
+    const calls = stubApi(
+      [
+        POPULATED_READ_OK,
+        PROPERTIES_OK,
+        {
+          method: "POST",
+          path: AMEND_PATH,
+          status: 200,
+          body: {
+            designation: {
+              term: "Ferritin, renamed",
+              use: "preferred",
+              language: "en-AU",
+              status: "active",
+              length: 17,
+            },
+            warnings: [],
+            row_version: 4,
+          },
+        },
+        {
+          method: "PUT",
+          path: PROPERTIES_SAVE_PATH,
+          status: 200,
+          body: {
+            values: [{ ordinal: 0, value: "Reviewed and updated", justification: null }],
+            row_version: 5,
+          },
+        },
+      ],
+      {
+        vary: (call) => {
+          if (call.method === "POST" && call.path.endsWith(AMEND_PATH)) {
+            amended = true;
+            return null;
+          }
+          if (call.method === "GET" && call.path.endsWith(READ_OK.path) && amended) {
+            return {
+              ...POPULATED_READ_OK,
+              body: {
+                ...POPULATED_ENTRY,
+                row_version: 4,
+                preferred_term: "Ferritin, renamed",
+              },
+            };
+          }
+          return null;
+        },
+      },
+    );
+    await renderLoaded();
+    // `getByRole("region", ...)` resolves as soon as the panel's own heading
+    // exists, which is unconditional - waiting on its *content* is what
+    // actually proves `GET /registry/properties` landed and the panel left
+    // its "Loading…"/error branch.
+    await inPropertiesPanel().findByText("Needs review");
+
+    // All three panels coexist and are each individually reachable - the
+    // AC's own wording. Scoped queries, not merely "does not throw": each
+    // must find its own content, not another panel's.
+    expect(
+      inTermsPanel().getByRole("table", { name: `Terms on ${BUSINESS_KEY}` }),
+    ).toBeInTheDocument();
+    expect(
+      inBindingsPanel().getByRole("rowheader", { name: FSN_CODE }),
+    ).toBeInTheDocument();
+    expect(inPropertiesPanel().getByText("Needs review")).toBeInTheDocument();
+
+    // The save: amend the entry's own preferred term, which bumps row_version.
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    const term = inDialog().getByLabelText("Term");
+    await user.clear(term);
+    await user.type(term, "Ferritin, renamed");
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Cross-panel audit test",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    // Waiting on the refetched heading, not merely on the POST call landing:
+    // the row_version this test cares about only reaches the other panels
+    // once the invalidated query's refetch has actually resolved and
+    // re-rendered - the heading text changing is that refetch's own,
+    // externally-observable signal (the stubbed refetch body renames the
+    // entry, deliberately, so this has something to wait for).
+    await screen.findByRole("heading", { name: "Ferritin, renamed", level: 1 });
+
+    // The other two panels are still working, against the entry the
+    // invalidated query refetched - not stuck on the pre-save render.
+    expect(
+      inBindingsPanel().getByRole("rowheader", { name: FSN_CODE }),
+    ).toBeInTheDocument();
+
+    // The propagation the plan's own gap calls out: the properties panel's
+    // *next* save must carry the bumped `row_version` (4), not the stale
+    // value (3) the page first loaded with.
+    await user.click(
+      inPropertiesPanel().getByRole("button", { name: "Edit Usage guidance" }),
+    );
+    const value = inDialog().getByLabelText("Usage guidance");
+    await user.clear(value);
+    await user.type(value, "Reviewed and updated");
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Update after review");
+    await user.click(inDialog().getByRole("button", { name: "Save" }));
+
+    // `callsTo` (used everywhere else in this file) only matches `POST` -
+    // this write is a `PUT` (`useSavePropertyValues`), so it is filtered
+    // directly rather than through that helper.
+    const propertySaveCalls = () =>
+      calls.filter(
+        (call) => call.method === "PUT" && call.path.endsWith(PROPERTIES_SAVE_PATH),
+      );
+    await waitFor(() => expect(propertySaveCalls()).toHaveLength(1));
+    expect(propertySaveCalls()[0]?.body).toMatchObject({
+      expected_row_version: 4,
+    });
+  });
+
+  it("has no automated accessibility violations with all three panels populated", async () => {
+    stubApi([POPULATED_READ_OK, PROPERTIES_OK]);
+
+    const { container } = await renderLoaded();
+    await inPropertiesPanel().findByText("Needs review");
+
+    await expectNoA11yViolations(container);
   });
 });
 

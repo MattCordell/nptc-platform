@@ -48,6 +48,8 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
+latest_audit_event = _load("audit_support").latest_audit_event
+
 _REASON = "Created for issue #248 property-value write route test."
 _SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
 _SPECIMEN_EDITION = Edition(module_id="au", label="au")
@@ -81,6 +83,13 @@ def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str
 
 def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
+
+
+#: `save_property_values` keys its audit event on `f"{entry.id}:
+#: {property_key}"` under `entity_type="property_value_set"` (see that
+#: function's own `record_snapshot_change` call) - not on the entry alone,
+#: since one entry can hold many properties.
+_PROPERTY_VALUE_SET_ENTITY_TYPE = "property_value_set"
 
 
 def _property_value_count(api: ApiTestApp, *, entry_id: uuid.UUID, property_key: str) -> int:
@@ -180,6 +189,94 @@ def test_save_property_values_replaces_whole_set_bumps_row_version_one_audit_eve
     assert body["values"][0]["status"] == "active"
     assert body["row_version"] == starting_row_version + 1
     assert _audit_event_count(api) == before + 1
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_save_property_values_first_write_audits_a_whole_set_snapshot_with_reason(
+    api: ApiTestApp,
+) -> None:
+    """The parent-level acceptance criterion #61 owns for property values -
+    with the shape this path actually produces flagged, not assumed:
+    `save_property_values` diffs via `record_snapshot_change` over the
+    *whole value set*, not a field-level diff of one changed value (see
+    that function's own `before_payload`/`after_payload` construction). For
+    a first write, `existing` is empty so `before` is `None` (the
+    `before=before_payload if existing else None` branch) and `after` is
+    the one value just stored. The changelog note supplied still reaches
+    `AuditEvent.reason` verbatim."""
+    token = _admin_token(api, subject="sub-save-audit")
+    key = _unique_key("save_audit")
+    _create_string_property(api, token, key=key)
+    entry = _new_entry(api)
+    reason = "Recording the value for issue #61 audit coverage."
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key=key,
+        values=[{"value": "first value"}],
+        expected_row_version=entry.row_version,
+        reason=reason,
+    )
+
+    assert response.status_code == 200, response.text
+    event = latest_audit_event(
+        api.session, entity_type=_PROPERTY_VALUE_SET_ENTITY_TYPE, entity_id=f"{entry.id}:{key}"
+    )
+    assert event.action == "property_value.set"
+    assert event.before is None
+    assert event.after == {
+        "values": [{"ordinal": 0, "value": "first value", "justification": None}]
+    }
+    assert event.reason == reason
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_save_property_values_second_write_audits_before_and_after_the_replacement(
+    api: ApiTestApp,
+) -> None:
+    """The other half of the snapshot shape: once a value already exists,
+    `before` is the whole prior set (`_value_payload` reading the stored
+    row back, not the request's own submitted shape), not `None`."""
+    token = _admin_token(api, subject="sub-save-replace-audit")
+    key = _unique_key("save_replace_audit")
+    _create_string_property(api, token, key=key)
+    entry = _new_entry(api)
+    first = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key=key,
+        values=[{"value": "old"}],
+        expected_row_version=entry.row_version,
+    )
+    assert first.status_code == 200, first.text
+    reason = "Replacing the value for issue #61 audit coverage."
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key=key,
+        values=[{"value": "new"}],
+        expected_row_version=first.json()["row_version"],
+        reason=reason,
+    )
+
+    assert response.status_code == 200, response.text
+    event = latest_audit_event(
+        api.session, entity_type=_PROPERTY_VALUE_SET_ENTITY_TYPE, entity_id=f"{entry.id}:{key}"
+    )
+    assert event.action == "property_value.set"
+    assert event.before == {"values": [{"ordinal": 0, "value": "old", "justification": None}]}
+    assert event.after == {"values": [{"ordinal": 0, "value": "new", "justification": None}]}
+    assert event.reason == reason
 
 
 @pytest.mark.req("FR-09")
