@@ -84,20 +84,13 @@ describe("validateChangelogNote", () => {
     expect(validateChangelogNote(note).status).toBe("too-short");
   });
 
-  it("counts a vulgar fraction as a letter, matching Python's \\w (issue #62 review)", () => {
-    // U+00BD ("½") is Unicode category `No`; Python's `[^\W\d_]` counts it as
-    // a word character the same way it counts a Roman numeral like "Ⅷ"
-    // (category `Nl`) - both pass `str.isalnum()` without being a decimal
-    // digit. `\p{L}` alone does not include either category.
-    const note = "½".repeat(MINIMUM_NOTE_LENGTH);
-    expect(validateChangelogNote(note)).toEqual({ status: "ok", note });
-  });
-
   // Boundary characters quoted verbatim from the codepoint enumeration in
   // backend/tests/test_changelog_note.py (issue #262, ADR-0030 condition 2):
   // GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No} is exactly what `_HAS_LETTER_RE` and
-  // `HAS_LETTER_RE` both match. One case per category the two constants
-  // agree on beyond ordinary `L*` letters.
+  // `HAS_LETTER_RE` both match - each of these passes Python's `str.isalnum()`
+  // (via `[^\W\d_]`) without being a decimal digit, and `\p{L}` alone would
+  // not match any of them. One case per category the two constants agree on
+  // beyond ordinary `L*` letters.
   it.each([
     ["Ⅷ", "Nl", "ROMAN NUMERAL EIGHT"],
     ["½", "No", "VULGAR FRACTION ONE HALF"],

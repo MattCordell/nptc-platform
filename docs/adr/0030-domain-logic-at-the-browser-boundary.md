@@ -259,14 +259,19 @@ all 1,114,112 codepoints under CPython 3.12 / UCD 15.0
 **What is real, and was previously unrecorded:** the identity holds *per Unicode Character
 Database version*, and CPython's UCD and a browser engine's UCD are independently versioned.
 A future CPython (or a future browser) shipping a newer UCD than the other could reintroduce
-a real gap that today's identity check would not have predicted. That residual is now
-mechanised on the side that can mechanise it -
-`backend/tests/test_changelog_note.py` enumerates every codepoint against
-`unicodedata.category` and fails, naming the offending codepoints, if CPython's own `re` ever
-diverges from the category sets above. `changelog-note.test.ts` cannot make the equivalent
-claim about a browser engine's UCD without the shared-fixture-generation machinery this ADR
-already rejected (see Rejected alternatives), so it instead carries the boundary characters
-this amendment named, quoted from the Python test (condition 2).
+a real gap that today's identity check would not have predicted. **That residual stays
+unmechanised, and cannot be closed from the Python side alone:** `re` and `unicodedata` in
+CPython are fed by the same bundled UCD, so if a future CPython ships a newer one, both move
+together and `backend/tests/test_changelog_note.py`'s enumeration test still passes - while a
+browser shipping a different UCD would silently disagree, undetected by either side's own
+tests. What that enumeration test actually mechanises is narrower, and still worth having:
+that CPython's `re` engine agrees with CPython's own `unicodedata` module, i.e. that
+`_HAS_LETTER_RE` and `\w` really are shorthand for the category sets this amendment names -
+the check that would have caught the original wrong claim, since it was never run against
+`unicodedata` at all. `changelog-note.test.ts` cannot make the cross-engine claim without the
+shared-fixture-generation machinery this ADR already rejected (see Rejected alternatives), so
+it instead carries the boundary characters this amendment named, quoted from the Python test
+(condition 2) - a fixed, hand-picked sample, not a substitute for the residual above.
 
 Both `_HAS_LETTER_RE` (`changelog.py`) and `HAS_LETTER_RE`/`STRIP_PUNCTUATION_RE`
 (`changelog-note.ts`) now carry a comment pointing at this amendment and the enumeration test,

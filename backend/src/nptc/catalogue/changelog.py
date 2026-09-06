@@ -86,11 +86,12 @@ SEED_IMPORT_NOTE: Final[str] = "Seeded from the RCPA-QAP baseline catalogue impo
 _STRIP_PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
 #: True if the note contains no letter at all - catches "." , "---", "2026",
 #: which would otherwise slip past the length check with no informative
-#: content whatsoever. Mirrored in ``frontend/src/catalogue/changelog-note.ts``
-#: as ``HAS_LETTER_RE`` (see ``docs/adr/0030-domain-logic-at-the-browser-
-#: boundary.md``); ``test_has_letter_re_matches_exactly_letter_and_numeric_
-#: categories`` in ``backend/tests/test_changelog_note.py`` verifies this
-#: matches exactly ``GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No}`` (issue #262).
+#: content whatsoever. Mirrored in
+#: ``frontend/src/catalogue/changelog-note.ts`` as ``HAS_LETTER_RE`` (see
+#: ``docs/adr/0030-domain-logic-at-the-browser-boundary.md``). Verified by
+#: ``backend/tests/test_changelog_note.py``'s
+#: ``test_has_letter_re_matches_exactly_letter_and_numeric_categories`` to
+#: match exactly ``GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No}`` (issue #262).
 _HAS_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 
 

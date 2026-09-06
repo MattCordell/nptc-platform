@@ -86,8 +86,10 @@ function normaliseForComparison(text: string): string {
 }
 
 //: Mirrors `_STRIP_PUNCTUATION_RE` (`[^\w\s]`, Unicode). CPython's Unicode
-//: `\w` matches exactly `GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No}` plus `_` - verified
-//: by enumerating all 1,114,112 codepoints on CPython 3.12 / UCD 15.0
+//: `\w` matches exactly `GC ∈ {L*, N*}` (letters and *every* numeric
+//: category, including `Nd` - an ordinary decimal digit - not just `Nl`/`No`)
+//: plus `_` - verified by enumerating all 1,114,112 codepoints on CPython
+//: 3.12 / UCD 15.0
 //: (`test_word_char_matches_exactly_letter_and_number_categories_plus_underscore`
 //: in `backend/tests/test_changelog_note.py`, issue #262) - and `\p{L}\p{N}_`
 //: is exactly that set in JavaScript's Unicode property syntax (`\p{N}`
