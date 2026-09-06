@@ -6,9 +6,13 @@ dependency on a session or model.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 import pytest
 
 from nptc.catalogue.changelog import (
+    _HAS_LETTER_RE,
     MINIMUM_NOTE_LENGTH,
     SEED_IMPORT_NOTE,
     ChangelogNoteMissingLetterError,
@@ -103,6 +107,88 @@ def test_meaningful_note_is_accepted_and_normalised() -> None:
     result = validate_changelog_note("Corrected the specimen for the RBC assay" + _NBSP)
     assert result == "Corrected the specimen for the RBC assay"
     assert len(result) >= MINIMUM_NOTE_LENGTH
+
+
+#: The set `changelog.py`'s `_HAS_LETTER_RE` (`[^\W\d_]`) is claimed to match
+#: exactly - see the enumeration fixture below. Kept local to the test rather
+#: than exported from the module: it is a fact about CPython's `re`/
+#: `unicodedata`, not a constant the module needs at runtime.
+_LETTER_AND_NUMERIC_CATEGORIES = frozenset({"Lu", "Ll", "Lt", "Lm", "Lo", "Nl", "No"})
+
+
+def _format_mismatches(mismatches: list[str]) -> str:
+    return str(mismatches[:20]) + (
+        f" (+{len(mismatches) - 20} more)" if len(mismatches) > 20 else ""
+    )
+
+
+@pytest.fixture(scope="module")
+def unicode_category_mismatches() -> tuple[list[str], list[str]]:
+    """Enumerates all 1,114,112 Unicode codepoints once and checks both
+    `_HAS_LETTER_RE` and `\\w` against `unicodedata.category` in the same
+    pass, rather than walking the full codepoint range twice for two
+    otherwise-independent identities (issue #262 review)."""
+    word_re = re.compile(r"\w", re.UNICODE)
+    has_letter_mismatches: list[str] = []
+    word_mismatches: list[str] = []
+    for codepoint in range(0x110000):
+        char = chr(codepoint)
+        category = unicodedata.category(char)
+
+        has_letter_expected = category in _LETTER_AND_NUMERIC_CATEGORIES
+        has_letter_actual = bool(_HAS_LETTER_RE.fullmatch(char))
+        if has_letter_expected != has_letter_actual:
+            has_letter_mismatches.append(
+                f"U+{codepoint:04X} ({category}): "
+                f"expected={has_letter_expected} actual={has_letter_actual}"
+            )
+
+        word_expected = category[0] in ("L", "N") or char == "_"
+        word_actual = bool(word_re.fullmatch(char))
+        if word_expected != word_actual:
+            word_mismatches.append(
+                f"U+{codepoint:04X} ({category}): expected={word_expected} actual={word_actual}"
+            )
+
+    return has_letter_mismatches, word_mismatches
+
+
+@pytest.mark.req("FR-37")
+def test_has_letter_re_matches_exactly_letter_and_numeric_categories(
+    unicode_category_mismatches: tuple[list[str], list[str]],
+) -> None:
+    """Issue #262 was filed claiming `_HAS_LETTER_RE` (`[^\\W\\d_]`) misses some
+    numeric codepoint outside `L*`/`N*` categories (naming U+3007 IDEOGRAPHIC
+    NUMBER ZERO, which turned out to already be `Nl`). Verification found no
+    such codepoint on CPython 3.12 / UCD 15.0 - this asserts the identity
+    holds over every codepoint, so a future UCD update that actually breaks
+    it fails here with the offending codepoints named, rather than surfacing
+    as another unverified issue report."""
+    mismatches, _ = unicode_category_mismatches
+    assert not mismatches, (
+        "_HAS_LETTER_RE diverged from GC in "
+        f"{sorted(_LETTER_AND_NUMERIC_CATEGORIES)} on Unicode "
+        f"{unicodedata.unidata_version} - report this, do not widen the "
+        f"expected set: {_format_mismatches(mismatches)}"
+    )
+
+
+@pytest.mark.req("FR-37")
+def test_word_char_matches_exactly_letter_and_number_categories_plus_underscore(
+    unicode_category_mismatches: tuple[list[str], list[str]],
+) -> None:
+    """ADR-0030 previously claimed JavaScript's `\\p{L}\\p{N}_` is not a
+    byte-for-byte match for Python's Unicode `\\w`. Verification (#262) found
+    the two are identical on CPython 3.12 / UCD 15.0: `\\w` matches exactly
+    `GC ∈ {L*, N*}` plus the literal `_`. This asserts that identity over
+    every codepoint, so a UCD update that actually breaks it is caught here
+    rather than resting on an unverified claim in the ADR."""
+    _, mismatches = unicode_category_mismatches
+    assert not mismatches, (
+        "Unicode \\w diverged from GC starting with L or N (or '_') on "
+        f"Unicode {unicodedata.unidata_version} - report this, do not widen "
+        f"the expected set: {_format_mismatches(mismatches)}"
+    )
 
 
 @pytest.mark.req("FR-37")

@@ -84,12 +84,23 @@ describe("validateChangelogNote", () => {
     expect(validateChangelogNote(note).status).toBe("too-short");
   });
 
-  it("counts a vulgar fraction as a letter, matching Python's \\w (issue #62 review)", () => {
-    // U+00BD ("½") is Unicode category `No`; Python's `[^\W\d_]` counts it as
-    // a word character the same way it counts a Roman numeral like "Ⅷ"
-    // (category `Nl`) - both pass `str.isalnum()` without being a decimal
-    // digit. `\p{L}` alone does not include either category.
-    const note = "½".repeat(MINIMUM_NOTE_LENGTH);
+  // Boundary characters quoted verbatim from the codepoint enumeration in
+  // backend/tests/test_changelog_note.py (issue #262, ADR-0030 condition 2):
+  // GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No} is exactly what `_HAS_LETTER_RE` and
+  // `HAS_LETTER_RE` both match - each of these passes Python's `str.isalnum()`
+  // (via `[^\W\d_]`) without being a decimal digit. `\p{L}` alone would not
+  // match the `Nl`/`No` cases (Ⅷ, ½, 〇, ²). `一` is included too even though
+  // it *is* `Lo` and so already matches `\p{L}` - issue #262 assumed CJK
+  // ideographs fall outside `L*`; they don't, and this is the counter-example
+  // to that assumption, not another case beyond it.
+  it.each([
+    ["Ⅷ", "Nl", "ROMAN NUMERAL EIGHT"],
+    ["½", "No", "VULGAR FRACTION ONE HALF"],
+    ["一", "Lo", "CJK UNIFIED IDEOGRAPH-4E00"],
+    ["〇", "Nl", "IDEOGRAPHIC NUMBER ZERO"],
+    ["²", "No", "SUPERSCRIPT TWO"],
+  ])("counts %p (%s, %s) as a letter (issue #262)", (char) => {
+    const note = char.repeat(MINIMUM_NOTE_LENGTH);
     expect(validateChangelogNote(note)).toEqual({ status: "ok", note });
   });
 });

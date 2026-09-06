@@ -85,22 +85,32 @@ function normaliseForComparison(text: string): string {
   return collapsed.replace(PYTHON_EDGE_WHITESPACE, "");
 }
 
-//: Mirrors `_STRIP_PUNCTUATION_RE` (`[^\w\s]`, Unicode). Python's Unicode
-//: `\w` is letters, digits and underscore; `\p{L}\p{N}_` is the closest
-//: JavaScript equivalent. Every `LOW_INFORMATION_NOTES` entry is plain
-//: ASCII, so this only needs to agree with Python on the boundary of
-//: stripping punctuation around those words, not on the full Unicode `\w`
-//: definition. Python's `\s` half is spelled out as `PYTHON_SPACE_CHARS`
-//: rather than JavaScript's narrower `\s`, which - unlike Python's - does not
-//: treat U+001C-U+001F or U+0085 as whitespace and would otherwise strip
-//: them as punctuation instead of preserving them as a word boundary for
-//: `fold`'s split below (issue #62 review).
+//: Mirrors `_STRIP_PUNCTUATION_RE` (`[^\w\s]`, Unicode). CPython's Unicode
+//: `\w` matches exactly `GC ∈ {L*, N*}` (letters and *every* numeric
+//: category, including `Nd` - an ordinary decimal digit - not just `Nl`/`No`)
+//: plus `_` - verified by enumerating all 1,114,112 codepoints on CPython
+//: 3.12 / UCD 15.0
+//: (`test_word_char_matches_exactly_letter_and_number_categories_plus_underscore`
+//: in `backend/tests/test_changelog_note.py`, issue #262) - and `\p{L}\p{N}_`
+//: is exactly that set in JavaScript's Unicode property syntax (`\p{N}`
+//: covers `Nd`/`Nl`/`No` together, same as `\w`'s `N*`). The two engines can
+//: still disagree if they ship different Unicode Character Database
+//: versions - that residual is unmechanised on this side (ADR-0030). Python's
+//: `\s` half is spelled out as `PYTHON_SPACE_CHARS` rather than JavaScript's
+//: narrower `\s`, which - unlike Python's - does not treat U+001C-U+001F or
+//: U+0085 as whitespace and would otherwise strip them as punctuation instead
+//: of preserving them as a word boundary for `fold`'s split below (issue #62
+//: review).
 const STRIP_PUNCTUATION_RE = new RegExp(`[^\\p{L}\\p{N}_${PYTHON_SPACE_CHARS}]`, "gu");
 //: Mirrors `_HAS_LETTER_RE` (`[^\W\d_]`, Unicode) - true if the note has no
-//: letter at all. Python's Unicode `\w` counts `Nl`/`No` (Roman numerals like
-//: "Ⅷ", vulgar fractions like "½") as word characters alongside `\p{L}`, so
-//: `\p{L}` alone under-matches what Python accepts as "contains a letter"
-//: (issue #62 review).
+//: letter at all. `[^\W\d_]` is `\w` minus `\d` minus `_`, i.e. exactly
+//: `GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No}` - verified by the same enumeration
+//: named above (`test_has_letter_re_matches_exactly_letter_and_numeric_categories`),
+//: which is why this is spelled `\p{L}\p{Nl}\p{No}` rather than `\p{L}\p{N}`:
+//: `\p{N}` would also admit `Nd` (an ordinary decimal digit), which
+//: `[^\W\d_]` excludes. Same UCD-version residual as `STRIP_PUNCTUATION_RE`
+//: above: this is an identity on one Unicode Character Database, not a
+//: guarantee across every version the two engines might ship independently.
 const HAS_LETTER_RE = /[\p{L}\p{Nl}\p{No}]/u;
 
 /**

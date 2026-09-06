@@ -203,11 +203,11 @@ continuing the pattern `split-synonyms.ts` set:
   entry is plain ASCII, so this only risks disagreeing with the server for a non-ASCII note
   whose casefold and lowercase forms differ - not exercised by the shared fixtures, and
   recorded in the module as a known, accepted gap rather than a silent one.
-- **Unicode `\w`.** Python's `\w` (used to strip punctuation before matching the
-  low-information list) is Unicode-aware; the closest JavaScript equivalent is
-  `\p{L}\p{N}_`, which is not a byte-for-byte match of Python's word-character class. Same
-  reasoning as above: every list entry is ASCII, so this only matters at a boundary the
-  fixtures do not cover.
+- **Unicode `\w` (corrected 2026-09-07 - see the amendment below).** This bullet originally
+  claimed `\p{L}\p{N}_` is "not a byte-for-byte match" of Python's Unicode `\w`. Issue #262
+  verified that claim was wrong: the two are identical on CPython 3.12 / UCD 15.0. What is
+  real, and what this bullet should have said, is a UCD-version residual - see the
+  amendment.
 
 This is also the second data point for this ADR's standing, unmechanised cost: nothing
 enforces that a change to `changelog.py`'s constants updates `changelog-note.ts` in the same
@@ -226,11 +226,54 @@ recorded as accepted gaps** (2026-09-04):
   low-information list) instead of Python's two words, `"fix ed"` (not on it). Closed by
   building `STRIP_PUNCTUATION_RE` and `fold`'s word-split from the same
   `PYTHON_SPACE_CHARS` constant, rather than JavaScript's `\s`.
-- **`HAS_LETTER_RE` under-matched Python's `\w`.** Python's `[^\W\d_]` counts `Nl`/`No`
-  category characters (a Roman numeral like "Ⅷ", a vulgar fraction like "½") as word
-  characters via `str.isalnum()`; `\p{L}` alone does not. Closed by widening the regex to
-  `[\p{L}\p{Nl}\p{No}]`.
+- **`HAS_LETTER_RE` under-matched Python's `\w` (verified 2026-09-07 - see the amendment
+  below).** Python's `[^\W\d_]` counts `Nl`/`No` category characters (a Roman numeral like
+  "Ⅷ", a vulgar fraction like "½") as word characters via `str.isalnum()`; `\p{L}` alone
+  does not. Closed by widening the regex to `[\p{L}\p{Nl}\p{No}]`. Issue #262 was filed
+  claiming this widening still left a gap; the amendment below records that it does not,
+  and mechanises the check.
 
 Both were reachable only through inputs the shared fixtures do not cover (a control
 character or an exotic numeric symbol in a changelog note), which is exactly the standing,
 unmechanised cost named above - a second reviewer, not the fixtures, is what caught these.
+
+## Amendment (2026-09-07): #262 verified the two remaining claims, found both wrong
+
+Issue #262 was filed from an automated review of this amendment, claiming `HAS_LETTER_RE`
+still misses a numeric codepoint outside `L*`/`N*` categories (naming U+3007 IDEOGRAPHIC
+NUMBER ZERO) even after the 2026-09-04 widening above. **The premise was false.** Enumerating
+all 1,114,112 codepoints under CPython 3.12 / UCD 15.0
+(`backend/tests/test_changelog_note.py`'s
+`test_has_letter_re_matches_exactly_letter_and_numeric_categories`):
+
+- `re.compile(r"[^\W\d_]", re.UNICODE)` matches **exactly** `GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl,
+  No}` - zero codepoints differ. U+3007 is `Nl`, not outside `N*`; CJK ideographs such as
+  "一" (U+4E00) are `Lo`. Both were already covered by the 2026-09-04 widening.
+- The same enumeration
+  (`test_word_char_matches_exactly_letter_and_number_categories_plus_underscore`) shows
+  CPython's `\w` is **exactly** `[\p{L}\p{N}_]` - so the "Unicode `\w`" bullet above, asserting
+  a gap, was also wrong. Both bullets are corrected in place above rather than deleted, per
+  this ADR's own standard for a mirror's recorded divergences: a claim later shown false is
+  still worth keeping as the record of what someone believed and how it was checked.
+
+**What is real, and was previously unrecorded:** the identity holds *per Unicode Character
+Database version*, and CPython's UCD and a browser engine's UCD are independently versioned.
+A future CPython (or a future browser) shipping a newer UCD than the other could reintroduce
+a real gap that today's identity check would not have predicted. **That residual stays
+unmechanised, and cannot be closed from the Python side alone:** `re` and `unicodedata` in
+CPython are fed by the same bundled UCD, so if a future CPython ships a newer one, both move
+together and `backend/tests/test_changelog_note.py`'s enumeration test still passes - while a
+browser shipping a different UCD would silently disagree, undetected by either side's own
+tests. What that enumeration test actually mechanises is narrower, and still worth having:
+that CPython's `re` engine agrees with CPython's own `unicodedata` module, i.e. that
+`_HAS_LETTER_RE` and `\w` really are shorthand for the category sets this amendment names -
+the check that would have caught the original wrong claim, since it was never run against
+`unicodedata` at all. `changelog-note.test.ts` cannot make the cross-engine claim without the
+shared-fixture-generation machinery this ADR already rejected (see Rejected alternatives), so
+it instead carries the boundary characters this amendment named, quoted from the Python test
+(condition 2) - a fixed, hand-picked sample, not a substitute for the residual above.
+
+Both `_HAS_LETTER_RE` (`changelog.py`) and `HAS_LETTER_RE`/`STRIP_PUNCTUATION_RE`
+(`changelog-note.ts`) now carry a comment pointing at this amendment and the enumeration test,
+so a reader who doubts the identity again finds the verification rather than re-filing the
+same claim.
