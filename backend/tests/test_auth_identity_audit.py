@@ -1,6 +1,9 @@
 """`user_identity` audit emit sites (issue #163, NFR-08): created on login
 (first login and the auto-link path), refreshed on a repeat login that
-actually changes something, and deleted on account closure.
+actually changes something, and deleted on account closure. Also the
+`user.renamed` emit site (issue #167): a repeat login that changes only
+`display_name` still mutates `User`, and must emit its own `user.*` event
+rather than the login going unaudited entirely.
 
 `Session(bind=app_db)` joins the existing testcontainers fixture
 connection - see test_auth_identity_resolution.py's module docstring for
@@ -392,3 +395,181 @@ def test_user_identity_deleted_event_never_carries_the_withheld_values(
     assert "gary-issuer" not in full_row_text
     assert "gary-subject-value" not in full_row_text
     assert "gary-email" not in full_row_text
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_repeat_login_that_changes_only_display_name_emits_one_renamed_event(
+    app_db: Connection,
+) -> None:
+    session = Session(bind=app_db)
+    first_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-name-only",
+        preferred_username="ivy",
+        display_name="Ivy",
+        email="ivy@example.com",
+        email_verified=True,
+    )
+    second_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-name-only",
+        preferred_username="ivy",
+        display_name="Renamed Person",
+        email="ivy@example.com",
+        email_verified=True,
+    )
+
+    first = resolve_user_for_claims(
+        session, first_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert first.user is not None
+    user_id = first.user.id
+
+    second = resolve_user_for_claims(
+        session, second_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert second.user is not None
+    assert second.user.display_name == "Renamed Person"
+
+    events = _events_for_action(session, user_id, "user.renamed")
+    assert len(events) == 1
+    event = events[0]
+    assert event["entity_type"] == "app_user"
+    assert event["before"] == {"_redacted": ["display_name"]}
+    assert event["after"] == {"_redacted": ["display_name"]}
+    full_row_text = str(event)
+    assert "Ivy" not in full_row_text
+    assert "Renamed Person" not in full_row_text
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_repeat_login_that_changes_nothing_emits_no_renamed_event(app_db: Connection) -> None:
+    session = Session(bind=app_db)
+    claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-name-unchanged",
+        preferred_username="jack",
+        display_name="Jack",
+        email="jack@example.com",
+        email_verified=True,
+    )
+
+    first = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert first.user is not None
+    user_id = first.user.id
+
+    identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": user_id}
+    ).scalar_one()
+
+    second = resolve_user_for_claims(
+        session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert second.user is not None
+
+    assert _events_for_action(session, user_id, "user.renamed") == []
+    assert _events_for_action(session, identity_id, "user_identity.refreshed") == []
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_repeat_login_with_display_name_none_emits_nothing_and_keeps_the_stored_name(
+    app_db: Connection,
+) -> None:
+    session = Session(bind=app_db)
+    first_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-name-none",
+        preferred_username="kate",
+        display_name="Kate",
+        email="kate@example.com",
+        email_verified=True,
+    )
+    second_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-name-none",
+        preferred_username="kate",
+        display_name=None,
+        email="kate@example.com",
+        email_verified=True,
+    )
+
+    first = resolve_user_for_claims(
+        session, first_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert first.user is not None
+    user_id = first.user.id
+
+    second = resolve_user_for_claims(
+        session, second_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert second.user is not None
+    assert second.user.display_name == "Kate"
+
+    assert _events_for_action(session, user_id, "user.renamed") == []
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_repeat_login_that_changes_both_email_and_display_name_emits_both_events(
+    app_db: Connection,
+) -> None:
+    """The principal failure mode this issue's restructure exists to fix:
+    `append_audit_event` flushes the session before reading the chain tail,
+    so a `display_name` assignment made *before* the identity's
+    `user_identity.refreshed` record_change would have its attribute
+    history committed away by that flush - `record_change` for
+    `user.renamed` would then see an empty diff and raise `AuditNoOpError`.
+    A naive implementation that assigns `user.display_name` above the
+    identity event fails this test; this is what pins the ordering."""
+    session = Session(bind=app_db)
+    first_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-both",
+        preferred_username="liam",
+        display_name="Liam",
+        email="liam-old@example.com",
+        email_verified=False,
+    )
+    second_claims = _claims(
+        issuer=_UNTRUSTED,
+        subject="sub-repeat-both",
+        preferred_username="liam",
+        display_name="Liam Renamed",
+        email="liam-new@example.com",
+        email_verified=True,
+    )
+
+    first = resolve_user_for_claims(
+        session, first_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert first.user is not None
+    user_id = first.user.id
+
+    identity_id = session.execute(
+        text("SELECT id FROM user_identity WHERE user_id = :id"), {"id": user_id}
+    ).scalar_one()
+
+    second = resolve_user_for_claims(
+        session, second_claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
+    )
+    session.flush()
+    assert second.user is not None
+    assert second.user.display_name == "Liam Renamed"
+
+    identity_events = _events_for_action(session, identity_id, "user_identity.refreshed")
+    assert len(identity_events) == 1
+
+    renamed_events = _events_for_action(session, user_id, "user.renamed")
+    assert len(renamed_events) == 1
