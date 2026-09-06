@@ -88,9 +88,11 @@ describe("validateChangelogNote", () => {
   // backend/tests/test_changelog_note.py (issue #262, ADR-0030 condition 2):
   // GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No} is exactly what `_HAS_LETTER_RE` and
   // `HAS_LETTER_RE` both match - each of these passes Python's `str.isalnum()`
-  // (via `[^\W\d_]`) without being a decimal digit, and `\p{L}` alone would
-  // not match any of them. One case per category the two constants agree on
-  // beyond ordinary `L*` letters.
+  // (via `[^\W\d_]`) without being a decimal digit. `\p{L}` alone would not
+  // match the `Nl`/`No` cases (Ⅷ, ½, 〇, ²). `一` is included too even though
+  // it *is* `Lo` and so already matches `\p{L}` - issue #262 assumed CJK
+  // ideographs fall outside `L*`; they don't, and this is the counter-example
+  // to that assumption, not another case beyond it.
   it.each([
     ["Ⅷ", "Nl", "ROMAN NUMERAL EIGHT"],
     ["½", "No", "VULGAR FRACTION ONE HALF"],
