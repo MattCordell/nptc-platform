@@ -54,6 +54,20 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
+# `latest_audit_event` is loaded from `conftest.py` by file path, not
+# `_load("conftest")`: that helper's own sys.modules key is tied to the name
+# argument, and registering under the bare key "conftest" risks colliding
+# with pytest's own conftest import machinery - the same reasoning
+# `test_keycloak_realm.py` already documents for its own `image_from_
+# compose`/`compose_config` import.
+_conftest_spec = importlib.util.spec_from_file_location(
+    "_test_api_catalogue_designations_conftest", Path(__file__).parent / "conftest.py"
+)
+assert _conftest_spec is not None and _conftest_spec.loader is not None
+_conftest = importlib.util.module_from_spec(_conftest_spec)
+_conftest_spec.loader.exec_module(_conftest)
+latest_audit_event = _conftest.latest_audit_event
+
 _REASON = "Adding a synonym seen in the current SPIA edition."
 
 
@@ -112,22 +126,6 @@ def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
 
 
-def _latest_audit_event(session: Any, *, entity_type: str, entity_id: Any) -> AuditEvent:
-    """Scoped per CLAUDE.md - keyed on `entity_type` + `entity_id`, not a
-    whole-table read, so this cannot pick up another test's row in the
-    shared session-scoped container. This module's writes never key the
-    audit event on the entry itself (see `record_change`'s default
-    `entity_id`): `designation`, `code_binding` and
-    `designation_collision_acknowledgement` are each keyed on their own
-    row's id."""
-    return session.execute(
-        select(AuditEvent)
-        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == str(entity_id))
-        .order_by(AuditEvent.sequence.desc())
-        .limit(1)
-    ).scalar_one()
-
-
 def _entry_id(api: ApiTestApp, business_key: str) -> Any:
     return api.session.execute(
         select(CatalogueEntry.id).where(CatalogueEntry.business_key == business_key)
@@ -135,8 +133,21 @@ def _entry_id(api: ApiTestApp, business_key: str) -> Any:
 
 
 def _designation_id(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
+    """The id of the *active* designation matching `term` on `entry_id`.
+
+    `status == "active"` matters, not just `entry_id`/`term`: a term that
+    was retired and re-added (a real sequence `test_acknowledging_the_
+    same_collision_twice_returns_created_false_the_second_time`'s own
+    neighbours in this file exercise) leaves more than one row sharing that
+    `(entry_id, term)` pair, differing only by `status` - `.scalar_one()`
+    would raise `MultipleResultsFound` against a fixture like that (issue
+    #61 review), not just a hypothetically-unrelated one."""
     return api.session.execute(
-        select(Designation.id).where(Designation.entry_id == entry_id, Designation.term == term)
+        select(Designation.id).where(
+            Designation.entry_id == entry_id,
+            Designation.term == term,
+            Designation.status == "active",
+        )
     ).scalar_one()
 
 
@@ -188,7 +199,7 @@ def test_add_designation_audits_the_created_row_with_reason(api: ApiTestApp) -> 
 
     assert response.status_code == 201, response.text
     designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
-    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    event = latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
     assert event.action == "designation.created"
     assert event.before is None
     assert event.after == {
@@ -288,7 +299,7 @@ def test_amend_designation_audits_only_the_term_field_with_reason(api: ApiTestAp
     )
 
     assert response.status_code == 200, response.text
-    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    event = latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
     assert event.action == "designation.amended"
     assert event.before == {"term": "FBC"}
     assert event.after == {"term": "Full Blood Count"}
@@ -360,7 +371,7 @@ def test_retire_designation_audits_the_status_change_with_reason(api: ApiTestApp
     )
 
     assert response.status_code == 200, response.text
-    event = _latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    event = latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
     assert event.action == "designation.retired"
     assert event.before == {"status": "active"}
     assert event.after == {"status": "retired"}
@@ -437,12 +448,16 @@ def test_acknowledge_collision_audits_the_created_row_with_reason(api: ApiTestAp
     )
 
     assert response.status_code == 200, response.text
+    # `term_key` alongside `entry_id`: an entry can acknowledge more than one
+    # colliding term (issue #61 review) - `entry_id` alone would raise
+    # `MultipleResultsFound` the moment a fixture acknowledges two.
     ack_id = api.session.execute(
         select(DesignationCollisionAcknowledgement.id).where(
-            DesignationCollisionAcknowledgement.entry_id == entry_id
+            DesignationCollisionAcknowledgement.entry_id == entry_id,
+            DesignationCollisionAcknowledgement.term_key == "ada2",
         )
     ).scalar_one()
-    event = _latest_audit_event(
+    event = latest_audit_event(
         api.session, entity_type="designation_collision_acknowledgement", entity_id=ack_id
     )
     assert event.action == "designation_collision.acknowledged"

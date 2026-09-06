@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
@@ -49,6 +48,18 @@ def _load(name: str) -> Any:
 _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
+
+# See `test_api_catalogue_designations.py`'s identical comment: loaded by
+# file path under a synthetic name, not `_load("conftest")`, to avoid the
+# bare sys.modules key "conftest" colliding with pytest's own conftest
+# import machinery.
+_conftest_spec = importlib.util.spec_from_file_location(
+    "_test_api_catalogue_entries_conftest", Path(__file__).parent / "conftest.py"
+)
+assert _conftest_spec is not None and _conftest_spec.loader is not None
+_conftest = importlib.util.module_from_spec(_conftest_spec)
+_conftest_spec.loader.exec_module(_conftest)
+latest_audit_event = _conftest.latest_audit_event
 
 _REASON = "Created for issue #249 entry core write route test."
 _SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
@@ -109,15 +120,6 @@ def _patch_entry(
     return api.request("PATCH", f"/catalogue/entries/{business_key}", token=token, json=body)
 
 
-def _latest_audit_event(session: Session, entry_id: Any) -> AuditEvent:
-    return session.execute(
-        select(AuditEvent)
-        .where(AuditEvent.entity_type == "catalogue_entry", AuditEvent.entity_id == str(entry_id))
-        .order_by(AuditEvent.sequence.desc())
-        .limit(1)
-    ).scalar_one()
-
-
 def _record_specimen_value(api: ApiTestApp, entry: CatalogueEntry) -> None:
     seed_system_properties(api.session)
     api.session.flush()
@@ -175,7 +177,7 @@ def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
     assert body["specimen_unconstrained"] is True
     assert body["row_version"] == starting_row_version + 1
 
-    event = _latest_audit_event(api.session, entry.id)
+    event = latest_audit_event(api.session, entity_type="catalogue_entry", entity_id=entry.id)
     assert event.action == "catalogue_entry.updated"
     assert event.before == {"specimen_unconstrained": False}
     assert event.after == {"specimen_unconstrained": True}
@@ -248,7 +250,7 @@ def test_patch_entry_sets_status_to_every_recognised_value(api: ApiTestApp, stat
         return
 
     assert response.json()["row_version"] == starting_row_version + 1
-    event = _latest_audit_event(api.session, entry.id)
+    event = latest_audit_event(api.session, entity_type="catalogue_entry", entity_id=entry.id)
     assert event.action == "catalogue_entry.updated"
     assert event.before == {"status": "draft"}
     assert event.after == {"status": status}

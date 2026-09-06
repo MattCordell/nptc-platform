@@ -32,6 +32,7 @@ from nptc.catalogue import queries
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 
@@ -50,6 +51,18 @@ def _load(name: str) -> Any:
 _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
+
+# See `test_api_catalogue_designations.py`'s identical comment: loaded by
+# file path under a synthetic name, not `_load("conftest")`, to avoid the
+# bare sys.modules key "conftest" colliding with pytest's own conftest
+# import machinery.
+_conftest_spec = importlib.util.spec_from_file_location(
+    "_test_api_catalogue_bindings_conftest", Path(__file__).parent / "conftest.py"
+)
+assert _conftest_spec is not None and _conftest_spec.loader is not None
+_conftest = importlib.util.module_from_spec(_conftest_spec)
+_conftest_spec.loader.exec_module(_conftest)
+latest_audit_event = _conftest.latest_audit_event
 
 #: Real, Verhoeff-valid SCTIDs - the same two `test_catalogue_bindings.py`
 #: and `public_catalogue_support.py` already use, plus one more for the
@@ -121,19 +134,6 @@ def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
 
 
-def _latest_audit_event(session: Any, *, entity_type: str, entity_id: Any) -> AuditEvent:
-    """Scoped per CLAUDE.md - keyed on `entity_type` + `entity_id`, not a
-    whole-table read. This router's writes key the audit event on the
-    `code_binding` row itself, never on the entry (see `record_change`'s
-    default `entity_id`)."""
-    return session.execute(
-        select(AuditEvent)
-        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == str(entity_id))
-        .order_by(AuditEvent.sequence.desc())
-        .limit(1)
-    ).scalar_one()
-
-
 def _entry_id(api: ApiTestApp, business_key: str) -> Any:
     return api.session.execute(
         select(CatalogueEntry.id).where(CatalogueEntry.business_key == business_key)
@@ -141,8 +141,6 @@ def _entry_id(api: ApiTestApp, business_key: str) -> Any:
 
 
 def _binding_id(api: ApiTestApp, *, entry_id: Any, code: str, status: str = "active") -> Any:
-    from nptc.db.models.code_binding import CodeBinding
-
     return api.session.execute(
         select(CodeBinding.id).where(
             CodeBinding.entry_id == entry_id, CodeBinding.code == code, CodeBinding.status == status
@@ -199,7 +197,7 @@ def test_bind_code_audits_the_created_row_with_reason(api: ApiTestApp) -> None:
 
     assert response.status_code == 201, response.text
     binding_id = _binding_id(api, entry_id=entry_id, code=CODE_A)
-    event = _latest_audit_event(api.session, entity_type="code_binding", entity_id=binding_id)
+    event = latest_audit_event(api.session, entity_type="code_binding", entity_id=binding_id)
     assert event.action == "code_binding.created"
     assert event.before is None
     assert event.after == {
@@ -281,7 +279,7 @@ def test_retire_binding_audits_the_status_change_with_reason(api: ApiTestApp) ->
     )
 
     assert response.status_code == 200, response.text
-    event = _latest_audit_event(api.session, entity_type="code_binding", entity_id=binding_id)
+    event = latest_audit_event(api.session, entity_type="code_binding", entity_id=binding_id)
     assert event.action == "code_binding.retired"
     assert event.before == {"status": "active", "retirement_reason": None}
     assert event.after == {"status": "retired", "retirement_reason": reason}

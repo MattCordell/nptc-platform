@@ -48,6 +48,18 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
+# See `test_api_catalogue_designations.py`'s identical comment: loaded by
+# file path under a synthetic name, not `_load("conftest")`, to avoid the
+# bare sys.modules key "conftest" colliding with pytest's own conftest
+# import machinery.
+_conftest_spec = importlib.util.spec_from_file_location(
+    "_test_api_catalogue_properties_conftest", Path(__file__).parent / "conftest.py"
+)
+assert _conftest_spec is not None and _conftest_spec.loader is not None
+_conftest = importlib.util.module_from_spec(_conftest_spec)
+_conftest_spec.loader.exec_module(_conftest)
+latest_audit_event = _conftest.latest_audit_event
+
 _REASON = "Created for issue #248 property-value write route test."
 _SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
 _SPECIMEN_EDITION = Edition(module_id="au", label="au")
@@ -83,18 +95,11 @@ def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
 
 
-def _latest_audit_event(session: Any, *, entity_id: str) -> AuditEvent:
-    """Scoped per CLAUDE.md - keyed on `entity_type` + `entity_id`, not a
-    whole-table read. `save_property_values` keys its audit event on
-    `f"{entry.id}:{property_key}"` under `entity_type="property_value_set"`
-    (see that function's own `record_snapshot_change` call) - not on the
-    entry alone, since one entry can hold many properties."""
-    return session.execute(
-        select(AuditEvent)
-        .where(AuditEvent.entity_type == "property_value_set", AuditEvent.entity_id == entity_id)
-        .order_by(AuditEvent.sequence.desc())
-        .limit(1)
-    ).scalar_one()
+#: `save_property_values` keys its audit event on `f"{entry.id}:
+#: {property_key}"` under `entity_type="property_value_set"` (see that
+#: function's own `record_snapshot_change` call) - not on the entry alone,
+#: since one entry can hold many properties.
+_PROPERTY_VALUE_SET_ENTITY_TYPE = "property_value_set"
 
 
 def _property_value_count(api: ApiTestApp, *, entry_id: uuid.UUID, property_key: str) -> int:
@@ -229,7 +234,9 @@ def test_save_property_values_first_write_audits_a_whole_set_snapshot_with_reaso
     )
 
     assert response.status_code == 200, response.text
-    event = _latest_audit_event(api.session, entity_id=f"{entry.id}:{key}")
+    event = latest_audit_event(
+        api.session, entity_type=_PROPERTY_VALUE_SET_ENTITY_TYPE, entity_id=f"{entry.id}:{key}"
+    )
     assert event.action == "property_value.set"
     assert event.before is None
     assert event.after == {
@@ -273,7 +280,9 @@ def test_save_property_values_second_write_audits_before_and_after_the_replaceme
     )
 
     assert response.status_code == 200, response.text
-    event = _latest_audit_event(api.session, entity_id=f"{entry.id}:{key}")
+    event = latest_audit_event(
+        api.session, entity_type=_PROPERTY_VALUE_SET_ENTITY_TYPE, entity_id=f"{entry.id}:{key}"
+    )
     assert event.action == "property_value.set"
     assert event.before == {"values": [{"ordinal": 0, "value": "old", "justification": None}]}
     assert event.after == {"values": [{"ordinal": 0, "value": "new", "justification": None}]}

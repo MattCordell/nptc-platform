@@ -38,6 +38,7 @@ no egress, not the container).
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -46,9 +47,12 @@ import pytest
 import yaml
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
+
+from nptc.db.models.audit import AuditEvent
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
@@ -63,6 +67,43 @@ APP_LOGIN_ROLE = "nptc_app_login"
 #: Obviously-synthetic, local-only credential - this role exists only
 #: inside a disposable test container, never a real deployment (NFR-26).
 APP_LOGIN_PASSWORD = "nptc-app-login-test-only-not-a-real-secret"
+
+
+def latest_audit_event(
+    session: Session, *, entity_type: str, entity_id: uuid.UUID | str
+) -> AuditEvent:
+    """The most recent `AuditEvent` for one entity - scoped by `entity_type`
+    and `entity_id`, never a whole-table read, so this cannot pick up
+    another test's row in the shared session-scoped container (issue #190,
+    CLAUDE.md's own testing convention).
+
+    Extracted (issue #61 review) from three near-identical copies that had
+    drifted into three different signatures across `test_api_catalogue_
+    designations.py`, `test_api_catalogue_bindings.py` and `test_api_
+    catalogue_entries.py`, plus a fourth in `test_api_catalogue_properties.py`
+    that additionally hardcoded `entity_type`. `entity_id` accepts a `UUID`
+    or a `str` since callers hold it either way - an ORM instance's own
+    `.id` (a `UUID`), or one just read back via `session.execute(select(...)
+    ).scalar_one()` (whatever that column's Python type is) - and
+    `AuditEvent.entity_id` is itself always a string column (FR-06's
+    string-end-to-end rule extends to every identifier this module writes,
+    not only SCTIDs), so the comparison always coerces to `str` here rather
+    than asking every caller to remember to.
+
+    Loaded from test modules via `importlib.util.spec_from_file_location`
+    (see any of the four modules above), not `from conftest import ...`:
+    `backend/tests` has no `__init__.py` and pytest runs with
+    `--import-mode=importlib` (CLAUDE.md's testing conventions), under which
+    a bare `import conftest` raises `ModuleNotFoundError` - the same reason
+    `test_keycloak_realm.py` already loads `image_from_compose`/
+    `compose_config` this way.
+    """
+    return session.execute(
+        select(AuditEvent)
+        .where(AuditEvent.entity_type == entity_type, AuditEvent.entity_id == str(entity_id))
+        .order_by(AuditEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one()
 
 
 def compose_config() -> dict[str, Any]:
