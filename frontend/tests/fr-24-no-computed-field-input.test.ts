@@ -28,15 +28,35 @@ import { describe, expect, it } from "vitest";
  * (`admin-catalogue-edit.tsx`) - a property read, not a form control - and
  * this guard must not flag it.
  *
- * So the walk looks specifically for a JSX form control - `input`,
- * `textarea`, `select`, or this codebase's own `Field` wrapper
- * (`components/field.tsx`, which carries the control's `id` as its own JSX
- * attribute rather than on the native element - see `designations-panel.tsx`'s
- * `<Field id="add-terms" .../>` for the pattern) - whose `id` or `name`
- * attribute names a computed field. An AST walk, not a text search: a panel
- * docstring is free to *name* these fields in prose (several already do,
- * explaining why there is no control for them), and `ts.forEachChild` does
- * not descend into comment trivia, so mentioning one there cannot trip this.
+ * So the walk looks for a JSX form control - a native `input`/`textarea`/
+ * `select`, or any component wrapping one whose own tag name ends in `Field`
+ * (`components/field.tsx`'s own `Field`, and `ChangelogNoteField`, which
+ * forwards its `id` straight through to a `Field` inside - see
+ * `changelog-note-field.tsx`) - whose `id` or `name` attribute *names* a
+ * computed field. "Names" is not exact-string equality: `id`s in this
+ * codebase are prefixed and hyphenated (`add-terms`, `amend-note`,
+ * `retire-binding-note`), so a future computed-field control would plausibly
+ * be `id="amend-length"` or `id="bind-au-preferred-term"`, not a bare
+ * `id="length"`. The walk tokenises on `-`/`_` and matches a computed
+ * field's own tokens as a contiguous run inside the attribute's tokens, so
+ * either shape trips it.
+ *
+ * An AST walk, not a text search: a panel docstring is free to *name* these
+ * fields in prose (several already do, explaining why there is no control
+ * for them), and `ts.forEachChild` does not descend into comment trivia, so
+ * mentioning one there cannot trip this.
+ *
+ * **Known limit, deliberately not chased further (issue #61 review).** Every
+ * `property-controls/*` component (`text.tsx`, `textarea.tsx`, `uri.tsx`,
+ * `number.tsx`, `concept-picker.tsx`) and `repeatable-values.tsx` itself
+ * forwards `id={id}` - a parameter, not a literal - down to its own inner
+ * `Field`. A registry-defined property's `key` is runtime data (from
+ * `GET /registry/properties`), never a string literal anywhere in this
+ * frontend's source, so there is no literal for a syntactic walk to read at
+ * the one call site that would actually matter. Resolving `id={id}` back to
+ * its origin is full dataflow analysis, out of proportion for this guard;
+ * see `docs/requirements/requirements.yaml`'s own FR-24 note for how this
+ * limit is represented in the traceability record rather than overclaimed.
  */
 
 const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
@@ -48,8 +68,11 @@ const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 //: term` (FR-83's server-stripped value, already banned outright by the
 //: FR-83 guard - named here too since it is also never a form control's
 //: `id`/`name`), and `row_version`/`version`/`history` (concurrency and
-//: audit bookkeeping, never something an editor types).
-const COMPUTED_FIELD_NAMES = new Set([
+//: audit bookkeeping, never something an editor types). Each name's own
+//: `_`-separated words are what `containsComputedField` looks for as a
+//: contiguous run of tokens, so `au_preferred_term` also matches an id
+//: tokenising to `["bind", "au", "preferred", "term"]`.
+const COMPUTED_FIELD_NAMES = [
   "length",
   "fsn",
   "au_preferred_term",
@@ -57,13 +80,54 @@ const COMPUTED_FIELD_NAMES = new Set([
   "row_version",
   "version",
   "history",
-]);
+];
 
-//: Tag names this guard treats as a form control. Lower-case native
-//: elements plus this codebase's own `Field` wrapper - see the module
-//: docstring for why `Field` has to be included alongside the natives it
-//: wraps.
-const FORM_CONTROL_TAGS = new Set(["input", "textarea", "select", "Field"]);
+const COMPUTED_FIELD_TOKENS: string[][] = COMPUTED_FIELD_NAMES.map((name) =>
+  name.split("_"),
+);
+
+/** `value` split on `-`/`_` into lower-case tokens, dropping empty runs from
+ * a leading/doubled separator. */
+function tokenise(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[-_]/)
+    .filter((token) => token.length > 0);
+}
+
+/**
+ * The computed field name matched inside `value`'s own tokens, or `null`.
+ * Matches a whole, contiguous run of tokens - `"amend-length"` matches
+ * `length` (single-token run), `"bind-au-preferred-term"` matches
+ * `au_preferred_term` (three-token run) - never a mere substring, so
+ * `"add-terms"` does not match `length`/`term`/anything else in the list
+ * (`terms` is not `term`, and neither is one of the banned names anyway).
+ */
+function containsComputedField(value: string): string | null {
+  const valueTokens = tokenise(value);
+  for (const fieldTokens of COMPUTED_FIELD_TOKENS) {
+    for (let start = 0; start + fieldTokens.length <= valueTokens.length; start += 1) {
+      if (fieldTokens.every((token, offset) => valueTokens[start + offset] === token)) {
+        return fieldTokens.join("_");
+      }
+    }
+  }
+  return null;
+}
+
+//: Native elements this guard always treats as a form control.
+const NATIVE_FORM_CONTROL_TAGS = new Set(["input", "textarea", "select"]);
+
+/** A form control for this guard's purposes: a native element, or any
+ * component whose own tag name ends in `Field` - this codebase's own
+ * convention for a field wrapper (`Field` itself, `ChangelogNoteField`, and
+ * any future `XyzField`) that carries the control's `id`/`name` as its own
+ * JSX attribute rather than on the native element nested inside it. See the
+ * module docstring for why a plain `Control`-named component (the
+ * `property-controls/*` family) is not covered the same way. */
+function isFormControlTag(tagName: string): boolean {
+  return NATIVE_FORM_CONTROL_TAGS.has(tagName) || tagName.endsWith("Field");
+}
 
 function collectSourceFiles(dir: string): string[] {
   const files: string[] = [];
@@ -74,7 +138,12 @@ function collectSourceFiles(dir: string): string[] {
       files.push(...collectSourceFiles(full));
       continue;
     }
-    if (/\.tsx$/.test(entry) && !/\.test\.tsx$/.test(entry)) {
+    // `.(ts|tsx)`, matching `fr-83-no-semantic-tag-stripping.test.ts`'s own
+    // filter exactly - a plain `.ts` file cannot contain JSX syntax at all
+    // (the parser needs `.tsx` for that), so no `.ts` file will ever trip
+    // the JSX-attribute walk below, but there is no reason to diverge from
+    // the sibling guard's own file selection to save checking that.
+    if (/\.(ts|tsx)$/.test(entry) && !/\.test\.(ts|tsx)$/.test(entry)) {
       files.push(full);
     }
   }
@@ -83,12 +152,18 @@ function collectSourceFiles(dir: string): string[] {
 
 /**
  * The computed-field names found on an `id`/`name` attribute of a form
- * control (`FORM_CONTROL_TAGS`) anywhere in `source`. Walks both a
+ * control (`isFormControlTag`) anywhere in `source`. Walks both a
  * self-closing form control (`<input id="length" />`) and an opening tag of
  * one with children (`<Field id="length">...</Field>`) - `ts.forEachChild`
  * still reaches both shapes' attributes either way, but the two are
  * distinct node kinds in the TypeScript AST and each needs its own
  * `isJsxAttributes`-bearing parent checked explicitly.
+ *
+ * Parsed as `.tsx` only when `filePath` actually is one, mirroring
+ * `fr-83-no-semantic-tag-stripping.test.ts`'s own per-file `ScriptKind`
+ * choice - forcing TSX parsing on a `.ts` file risks misreading a generic
+ * type-assertion (`<T>value`) as a JSX opening tag, the exact ambiguity the
+ * two script kinds exist to keep apart.
  */
 function computedFieldInputs(source: string, filePath: string): Set<string> {
   const sourceFile = ts.createSourceFile(
@@ -96,12 +171,12 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
     source,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TSX,
+    filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const found = new Set<string>();
 
   function checkAttributes(tagName: string, attributes: ts.JsxAttributes) {
-    if (!FORM_CONTROL_TAGS.has(tagName)) {
+    if (!isFormControlTag(tagName)) {
       return;
     }
     for (const prop of attributes.properties) {
@@ -113,8 +188,12 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
         continue;
       }
       const literal = stringLiteralValue(prop.initializer);
-      if (literal !== null && COMPUTED_FIELD_NAMES.has(literal)) {
-        found.add(literal);
+      if (literal === null) {
+        continue;
+      }
+      const matched = containsComputedField(literal);
+      if (matched !== null) {
+        found.add(matched);
       }
     }
   }
@@ -124,13 +203,12 @@ function computedFieldInputs(source: string, filePath: string): Set<string> {
    * `null` if it is not a plain string. Handles both JSX attribute value
    * shapes - `id="length"` (the initializer is a `StringLiteral` node
    * directly, every real instance in this codebase today) and `id={"length"}`
-   * (the initializer is a `JsxExpression` wrapping one) - so a future control
-   * built from a template rather than a bare attribute string cannot slip
-   * past this guard on syntax alone. Anything else (a variable, a template
+   * (the initializer is a `JsxExpression` wrapping one) - so a control built
+   * from a template rather than a bare attribute string cannot slip past
+   * this guard on syntax alone. Anything else (a variable, a template
    * literal with substitutions, a ternary) is not a literal this guard can
-   * resolve and is left unflagged, same as `fr-83-no-semantic-tag-
-   * stripping.test.ts`'s own identifier-only walk leaves a computed name
-   * unflagged.
+   * resolve and is left unflagged - see the module docstring's own note on
+   * `property-controls/*`'s `id={id}`, the one real instance of that limit.
    */
   function stringLiteralValue(
     initializer: ts.JsxAttribute["initializer"],
@@ -189,6 +267,35 @@ describe("FR-24: no form control on the entry-edit screens offers a computed fie
     expect(computedFieldInputs(violation, "control-expr.tsx").size).toBeGreaterThan(0);
   });
 
+  it("flags a realistically prefixed id, not only a bare computed-field name", () => {
+    // Issue #61 review: real ids in this codebase are hyphenated and
+    // prefixed (`add-terms`, `amend-note`) - a future computed-field control
+    // would plausibly be `id="amend-length"`, not a bare `id="length"`.
+    const violation = `<input id="amend-length" />`;
+    expect(computedFieldInputs(violation, "control-prefixed.tsx").size).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("flags a multi-word computed field spread across hyphenated tokens", () => {
+    // `au_preferred_term`'s own three tokens, found as a contiguous run
+    // inside a longer, differently-prefixed id.
+    const violation = `<input id="bind-au-preferred-term" />`;
+    expect(computedFieldInputs(violation, "control-multiword.tsx").size).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("flags any wrapper component whose tag name ends in Field, not only Field itself", () => {
+    // `ChangelogNoteField` forwards its own `id` straight through to a
+    // `Field` inside it (`changelog-note-field.tsx`) - a hypothetical future
+    // `LengthField` would follow the same shape, and this guard has to
+    // catch the call site's own literal `id`, not only `Field`'s literal
+    // name.
+    const violation = `<ChangelogNoteField id="amend-length" changelogNote={note} />`;
+    expect(computedFieldInputs(violation, "control-wrapper.tsx").size).toBeGreaterThan(0);
+  });
+
   it("does not flag a plain property read that happens to share a computed field's name", () => {
     // The exact shape at `admin-catalogue-edit.tsx`'s own `<dd>{entry.data.
     // length}</dd>` - a rendered value, not a form control, and this guard
@@ -220,9 +327,33 @@ describe("FR-24: no form control on the entry-edit screens offers a computed fie
     // `id="add-terms"` (a real id in `designations-panel.tsx`) must not
     // match `terms`-shaped names, and an unrelated field name entirely
     // (`"preferred_term"`, not one of the banned names) must not match
-    // either - the comparison is by exact set membership, not `includes`.
+    // either - the comparison is by whole-token runs, not raw substring.
     const unrelated = `<input id="add-terms" name="preferred_term" />`;
     expect(computedFieldInputs(unrelated, "unrelated.tsx").size).toBe(0);
+  });
+
+  it("does not flag a real, un-prefixed changelog-note id sharing no tokens with a computed field", () => {
+    // The real ids this guard's own widened tag match now newly reaches -
+    // `bind-note`, `retire-binding-note`, `replace-note` (`bindings-panel.
+    // tsx`) - must still read as clean.
+    const notes = `
+      <ChangelogNoteField id="bind-note" changelogNote={a} />
+      <ChangelogNoteField id="retire-binding-note" changelogNote={b} />
+      <ChangelogNoteField id="replace-note" changelogNote={c} />
+    `;
+    expect(computedFieldInputs(notes, "notes.tsx").size).toBe(0);
+  });
+
+  it("does not flag property-controls' own id={id} forwarding (the documented limit)", () => {
+    // The module docstring's own accepted gap: a parameter, not a literal,
+    // so there is nothing for a syntactic walk to read here even though
+    // `id` is passed straight to a `Field`.
+    const forwarded = `
+      function TextControl({ id, label }: ControlProps) {
+        return <Field id={id} label={label}>{(props) => <input {...props} />}</Field>;
+      }
+    `;
+    expect(computedFieldInputs(forwarded, "text-control.tsx").size).toBe(0);
   });
 
   const files = collectSourceFiles(SRC_ROOT);
@@ -235,7 +366,7 @@ describe("FR-24: no form control on the entry-edit screens offers a computed fie
     // failure mode `fr-83-no-semantic-tag-stripping.test.ts`'s own positive
     // control is written to catch on the walker itself. This asserts the
     // other half: that the walker actually got handed real files to run on.
-    expect(files.length).toBeGreaterThan(0);
+    expect(files.some((file) => file.endsWith(".tsx"))).toBe(true);
   });
 
   it.each(files)("%s", (file) => {
