@@ -231,15 +231,9 @@ def resolve_user_for_claims(
         identity_changed = (
             existing.email != claims.email or existing.email_verified != claims.email_verified
         )
+        name_changed = claims.display_name is not None and user.display_name != claims.display_name
         existing.email = claims.email
         existing.email_verified = claims.email_verified
-        if claims.display_name is not None:
-            # Deliberately unaudited for now: this mutates `User`, not
-            # `UserIdentity`, so it falls outside #163's scope. A login
-            # that changes only `display_name` still emits no `user.*`
-            # event, which is an NFR-08 gap, not merely an unaudited
-            # field - see issue #167.
-            user.display_name = claims.display_name
         if identity_changed:
             # Guarded rather than unconditional: an ordinary repeat login
             # changes nothing, and record_change refuses an empty diff by
@@ -250,6 +244,23 @@ def resolve_user_for_claims(
                 audit,
                 action="user_identity.refreshed",
                 instance=existing,
+                kind=ChangeKind.UPDATED,
+            )
+        # `user.display_name` must be assigned *after* the identity's
+        # record_change above, not before: append_audit_event flushes the
+        # session before reading the chain tail, and a flush commits away
+        # the attribute history diff_instance needs. Assigning here first
+        # would make this event's own diff empty - AuditNoOpError - the
+        # exact ordering close_account already follows (identity/role
+        # events first, `user` mutated last). Do not hoist this back above
+        # the identity block.
+        if name_changed:
+            user.display_name = claims.display_name
+            record_change(
+                session,
+                audit,
+                action="user.renamed",
+                instance=user,
                 kind=ChangeKind.UPDATED,
             )
         return Resolution(outcome=LinkOutcome.EXISTING, user=user)

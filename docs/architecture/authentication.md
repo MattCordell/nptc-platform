@@ -125,6 +125,13 @@ So the resolution uses a bootstrap `AuditContext` with `actor_user_id=None` — 
 IP and user agent, so the event is still attributable to a request. Writes made *after*
 resolution use `audit_context`, which carries the resolved `user_id` (NFR-08).
 
+On a repeat login (an existing `UserIdentity` row), resolution emits `user_identity.refreshed`
+when `email`/`email_verified` actually changed, and `user.renamed` when `display_name`
+actually changed — each guarded so an unchanged login emits nothing. The `display_name`
+assignment runs *after* the identity's own `record_change`, not before: `append_audit_event`
+flushes the session before reading the chain tail, which would otherwise commit away the
+attribute history the `user.renamed` diff needs (issue #167).
+
 `request.client.host` is not always an IP (Starlette's `TestClient` reports
 `"testclient"`; a unix-socket deployment reports a path), and `AuditContext.actor_ip`
 feeds a parser that raises on anything else — so a non-IP value is recorded as `None`

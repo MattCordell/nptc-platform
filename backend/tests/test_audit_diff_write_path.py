@@ -250,7 +250,12 @@ def test_sctid_in_a_diff_is_stored_as_a_jsonb_string(app_db: Connection) -> None
 @pytest.mark.integration
 def test_a_withheld_field_change_is_recorded_by_name_only(app_db: Connection) -> None:
     """AC-4 in the database: a withheld field that changed is named under
-    `_redacted`, and its value appears nowhere in the row."""
+    `_redacted`, and its value appears nowhere in the row.
+
+    `user.renamed` is not a fictitious action invented for this test - it is
+    also the real production emit site in
+    `nptc.auth.identity.resolve_user_for_claims`'s EXISTING-login branch
+    (issue #167)."""
     session = Session(bind=app_db)
     user = _create_active_user(session, "june")
     user_id = user.id
