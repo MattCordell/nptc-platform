@@ -454,7 +454,7 @@ row-version check already takes.
 
 | Path | Method | Body | Returns |
 |---|---|---|---|
-| `/entries/bulk/properties/{property_key}` | `POST` | `{values: [{value, justification?}], reason, entries: [{business_key, expected_row_version}]}` | `200 {outcomes: [BulkPropertyOutcomeItem], applied, unchanged, conflict, not_found}` |
+| `/entries/bulk/properties/{key}` | `POST` | `{values: [{value, justification?}], reason, entries: [{business_key, expected_row_version}]}` | `200 {outcomes: [BulkPropertyOutcomeItem], applied, unchanged, conflict, not_found}` |
 
 The server half of #63's bulk reclassify - discipline, across a set of entries an
 editor selected on screen, is the motivating case, but the route is generic over
@@ -505,7 +505,8 @@ entry would repeat the request N times over for no new information.
 
 **Whole-request vs per-entry, one rule.** Anything derivable from `property_key`/
 `values`/`reason` alone - with no dependency on any one entry's state - is validated
-once, before any entry is touched: an unknown or deprecated `property_key` (404/FR-11),
+once, before any entry is touched: an unknown or deprecated property (404/FR-11, named
+`key` in the route's own path segment, `property_key` in the seam it calls),
 a missing or low-information `reason` (FR-37, checked first of all), and the shared
 `values` set's own schema/cardinality/binding-strength validation. This is what keeps
 the batch order-independent: a batch whose first several entries all conflict must still
@@ -528,15 +529,32 @@ applies. A whole-request failure (an unhandled exception, including FR-89's abor
 discards the entire batch, applied entries included: `nptc.db.session.session_scope`
 commits once per request and rolls back on any exception.
 
-**One audit event per applied entry, plus one batch header.** Every entry that reaches
-`applied` or `unchanged` goes through `save_property_values` itself, so it gets the same
-`property_value.set` event the singular route produces. A diff-free
+**One audit event per applied entry, plus one batch header when at least one entry
+applied.** Every entry that reaches `applied` goes through `save_property_values` itself,
+so it gets the same `property_value.set` event the singular route produces (an
+`unchanged` entry is a no-op and, like the singular route, emits nothing). A diff-free
 `property_value.bulk_set` event (`entity_type="property_value_bulk"`, deliberately
 distinct from `property_value_set` so a value-diff history query cannot pick up a header
-it cannot render as one; `entity_id=property_key`) is appended once per accepted batch,
-naming the outcome tallies in its `reason`. All of it shares one `correlation_id` for
-free - minted once per request (NFR-08), not per audit call - so the whole batch is
-reconstructable from the log via that one value.
+it cannot render as one; `entity_id=key`) is appended once, after the loop, carrying the
+outcome tallies structurally in its `after` payload
+(`{"applied": n, "unchanged": n, "conflict": n, "not-found": n}`) via `nptc.audit.
+recording.record_batch_summary` - `reason` stays the operator's own changelog note,
+identical to the per-entry events', never decorated with counts. A batch where nothing
+applied (every target `conflict`/`not-found`) emits no header at all, matching ADR-0018's
+no-op posture at the batch level. All of it shares one `correlation_id` for free - minted
+once per request (NFR-08), not per audit call - so the whole batch is reconstructable
+from the log via that one value. See ADR-0035's addendum.
+
+**Lock ordering (issue #265 round-2 review).** This route is the first HTTP surface that
+can hold row-exclusive locks on more than one `catalogue_entry` row in one transaction,
+which makes a cycle against `nptc.audit.writer`'s own `pg_advisory_xact_lock` reachable:
+a bulk request already holding that lock (from an earlier entry's audit append) can
+block on a row a concurrent single-entry writer holds, while that writer blocks on the
+same advisory lock. `save_property_values_for_entries` now acquires the lock once,
+deterministically, before its loop (`nptc.audit.writer.acquire_append_lock`) - this
+closes the bulk-vs-bulk case but not bulk-vs-a-concurrent-singular-write, which Postgres
+resolves safely (aborts one transaction, no corruption) rather than correctly (no
+deadlock at all). See ADR-0035's own addendum and issue #281 for the complete fix.
 
 ### Errors (bulk property-value write)
 
@@ -544,7 +562,7 @@ reconstructable from the log via that one value.
 |---|---|
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
-| 404 | No `property_definition` with `property_key`. An unknown `business_key` among `entries` is a `not-found` outcome in the 200 body, never a 404 for the whole request. |
+| 404 | No `property_definition` with `key`. An unknown `business_key` among `entries` is a `not-found` outcome in the 200 body, never a 404 for the whole request - and so is one deleted by a concurrent transaction mid-batch, rather than an uncaught `EntryNotFoundError` escaping as a whole-request 404. |
 | 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), the shared `values` set failing its property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check (aborts the whole batch - see above), a `business_key` not shaped `NPTC-nnnnnn` (the same `BusinessKeyPath` pattern the singular route's path segment enforces - a malformed key is never a `not-found` outcome, indistinguishable from a well-formed one that simply does not exist), a repeated `business_key`, or more than 100 `entries`. |
 
 ## Entry core columns (issue #249)
@@ -668,7 +686,7 @@ coverage in `test_api_catalogue_entries.py` - it shares a path with the public `
 `catalogue.py` already serves at that same URL, but the two are independent route
 objects with independent method keys, so this is no different from any other route
 sharing a path with a differently-methoded one. Issue #265's `POST .../entries/bulk/
-properties/{property_key}` is added the same way, with its own negative-auth coverage
+properties/{key}` is added the same way, with its own negative-auth coverage
 in `test_api_catalogue_properties.py` alongside the singular route's - no path
 collision with `PUT .../entries/{business_key}/properties/{key}`, since `bulk` is a
 literal path segment (not a `{business_key}` match) and the two routes use different
