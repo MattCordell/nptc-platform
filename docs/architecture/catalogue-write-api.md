@@ -545,7 +545,7 @@ reconstructable from the log via that one value.
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No `property_definition` with `property_key`. An unknown `business_key` among `entries` is a `not-found` outcome in the 200 body, never a 404 for the whole request. |
-| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), the shared `values` set failing its property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check (aborts the whole batch - see above), a repeated `business_key`, or more than 100 `entries`. |
+| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), the shared `values` set failing its property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check (aborts the whole batch - see above), a `business_key` not shaped `NPTC-nnnnnn` (the same `BusinessKeyPath` pattern the singular route's path segment enforces - a malformed key is never a `not-found` outcome, indistinguishable from a well-formed one that simply does not exist), a repeated `business_key`, or more than 100 `entries`. |
 
 ## Entry core columns (issue #249)
 

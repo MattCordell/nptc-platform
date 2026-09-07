@@ -61,7 +61,7 @@ from nptc.api.routers.catalogue_shared import (
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
-from nptc.catalogue.entries import load_entry_for_update
+from nptc.catalogue.entries import BUSINESS_KEY_PATTERN, load_entry_for_update
 from nptc.catalogue.property_values import (
     EntryPropertyTarget,
     PropertyValueInput,
@@ -277,11 +277,18 @@ class BulkPropertyEntryTarget(BaseModel):
     write - the version this entry held when the caller selected it, not
     resolved server-side (see `nptc.catalogue.property_values.
     EntryPropertyTarget`'s own docstring for why a filter expression could
-    never do this instead, ADR-0035)."""
+    never do this instead, ADR-0035).
+
+    `business_key`'s shape is validated here, in the request body, the same
+    pattern `BusinessKeyPath` enforces on the singular route's path segment
+    - derivable from the request alone, so it belongs on the whole-request
+    side of the split (see `BulkSavePropertyValuesRequest`'s own docstring):
+    a malformed key is a 422 for the whole batch, not a `not-found` outcome
+    indistinguishable from a well-formed key that simply does not exist."""
 
     model_config = ConfigDict(frozen=True)
 
-    business_key: str
+    business_key: str = Field(pattern=BUSINESS_KEY_PATTERN.pattern)
     expected_row_version: int
 
 

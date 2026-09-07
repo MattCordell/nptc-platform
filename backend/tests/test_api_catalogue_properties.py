@@ -782,6 +782,31 @@ def test_bulk_save_a_missing_business_key_is_a_not_found_outcome(api: ApiTestApp
 
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
+def test_bulk_save_a_malformed_business_key_is_422_not_a_not_found_outcome(
+    api: ApiTestApp,
+) -> None:
+    """`business_key` shape is derivable from the request alone, so it is a
+    whole-request 422 (matching the singular route's own `BusinessKeyPath`
+    422 on a malformed path segment) - never a `not-found` outcome, which
+    would make a typo indistinguishable from a well-formed key that simply
+    does not exist."""
+    token = _admin_token(api, subject="sub-bulk-malformed-key")
+    key = _unique_key("bulk_malformed_key")
+    _create_string_property(api, token, key=key)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": "not-a-business-key", "expected_row_version": 1}],
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
 def test_bulk_save_unknown_property_key_is_404(api: ApiTestApp) -> None:
     token = _admin_token(api, subject="sub-bulk-404")
     entry = _new_entry(api, "Bulk HTTP 404 entry")

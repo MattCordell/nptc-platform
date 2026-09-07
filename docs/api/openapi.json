@@ -3174,6 +3174,7 @@
         "properties": {
           "business_key": {
             "type": "string",
+            "pattern": "^NPTC-([0-9]{6,})$",
             "title": "Business Key"
           },
           "expected_row_version": {
@@ -3187,7 +3188,7 @@
           "expected_row_version"
         ],
         "title": "BulkPropertyEntryTarget",
-        "description": "One `(business_key, expected_row_version)` selection for the bulk\nwrite - the version this entry held when the caller selected it, not\nresolved server-side (see `nptc.catalogue.property_values.\nEntryPropertyTarget`'s own docstring for why a filter expression could\nnever do this instead, ADR-0035)."
+        "description": "One `(business_key, expected_row_version)` selection for the bulk\nwrite - the version this entry held when the caller selected it, not\nresolved server-side (see `nptc.catalogue.property_values.\nEntryPropertyTarget`'s own docstring for why a filter expression could\nnever do this instead, ADR-0035).\n\n`business_key`'s shape is validated here, in the request body, the same\npattern `BusinessKeyPath` enforces on the singular route's path segment\n- derivable from the request alone, so it belongs on the whole-request\nside of the split (see `BulkSavePropertyValuesRequest`'s own docstring):\na malformed key is a 422 for the whole batch, not a `not-found` outcome\nindistinguishable from a well-formed key that simply does not exist."
       },
       "BulkPropertyOutcomeItem": {
         "properties": {
