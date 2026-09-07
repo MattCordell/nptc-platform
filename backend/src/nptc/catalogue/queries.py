@@ -37,12 +37,27 @@ Keyset pagination, never `OFFSET`: see `docs/adr/
 more than the caller wanted, and that extra row is what decides whether
 there is a next page - so no endpoint here ever runs a `COUNT(*)` over the
 catalogue to answer a question the client asked about one page.
+
+**The one exception to that `COUNT` ban, and why it is not one** (issue
+#139, FR-16). `nptc.catalogue.facets.compute_facets` does count, and this
+paragraph exists so that reads as a considered exception rather than an
+oversight. The ban above is on a *page total*: a number the client did not
+ask for, that costs a scan of everything the page did not serve, and that
+ADR-0024 deliberately does without because keyset paging has no use for it.
+A facet count is the opposite on every point. It is the answer to the
+question - a facet with no count is a list of words, not a filter, and
+FR-16 asks for counts by name. It is bounded, to `FACET_BUCKET_CAP` buckets
+per facet. And it is served from issue #54's per-property partial index
+rather than a scan of `catalogue_entry`, which is what
+`test_db_property_index_plan.py` `EXPLAIN`s. `list_entries` below still
+runs no count of any kind: it accepts filters, and returns no facets at all
+(ADR-0032).
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -50,6 +65,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
 from nptc.catalogue.errors import EntryNotFoundError
+from nptc.catalogue.facets import FilterSelection, filter_predicates
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.designation import Designation, DesignationStatus
@@ -172,7 +188,13 @@ class PropertyValueRow:
     justification: str | None
 
 
-def list_entries(session: Session, *, limit: int, after: str | None = None) -> EntryPage:
+def list_entries(
+    session: Session,
+    *,
+    limit: int,
+    after: str | None = None,
+    filters: Sequence[FilterSelection] = (),
+) -> EntryPage:
     """One keyset page of active entries, ordered by `business_key`.
 
     `after` is the last `business_key` of the previous page (exclusive).
@@ -180,10 +202,25 @@ def list_entries(session: Session, *, limit: int, after: str | None = None) -> E
     ordering is total: no two rows can tie, so no row can be skipped or
     served twice across a page boundary - which is the failure `OFFSET`
     exhibits the moment a concurrent insert lands mid-scan.
+
+    `filters` are FR-16's facet selections, composed by
+    `nptc.catalogue.facets` from the same descriptors `/catalogue/search`
+    uses - the same builder over `catalogue_entry` directly, since a browse
+    has no scored CTE to hang them off.
+
+    **The cursor is unaffected by the filter set, unlike the search one.**
+    A search cursor carries a relevance score and has to be refused under a
+    changed filter set, because the score means nothing there. This cursor
+    is a `business_key`: the ordering is on that column alone and is total
+    whatever the filters are, so a cursor replayed under a different filter
+    set still names an unambiguous position. The client gets a differently
+    filtered page from the same point in the ordering, which is precisely
+    what they asked for and not a silently meaningless window.
     """
     statement = (
         select(CatalogueEntry)
         .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
+        .where(*filter_predicates(filters))
         .order_by(CatalogueEntry.business_key)
         # One more row than asked for: its existence *is* the answer to
         # "is there a next page", at the cost of one extra row rather than
