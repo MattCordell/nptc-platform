@@ -368,25 +368,21 @@ user-supplied text (FR-44, NFR-04, NFR-26).
 | 401 | A credential was presented and could not be verified. Sending none is not an error. |
 | 404 | No published entry has this business key - including one that exists but is not published. On `/catalogue/code/{system_token}/{code}` and `/catalogue/lookup`, the identical fixed sentence also covers an unregistered `system_token`/`system` (see "Exact-code lookup" above). Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
 | 422 | A malformed `business_key` or `system_token`, a blank `q`/`system`/`code`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
-| 500 | A published code binding's stored FSN is not renderable (below). `/catalogue/entries/{business_key}`, its `/bindings` sub-resource, and the two exact-code lookup routes can all produce it. |
 
 Every status each endpoint can produce is declared in `docs/api/openapi.json`, and only
 the ones it can actually produce - so a generated client (#147) has no branch for a
 response that never arrives.
 
-The 500 is worth calling out, because it is the one error here that is not a caller
-mistake at all. `display_term` is derived from the stored FSN by FR-83's single sanctioned
-strip, which refuses a value carrying no semantic tag - by FR-82 every stored `fsn` came
-from the terminology server, and a served FSN always has one. The API fails loudly for
-that entry rather than blanking the label, because a blanked label hides a corrupted
-binding indefinitely.
-
-It is deliberately a 5xx and not a 422 even though the underlying check is a validation
-refusal: the request was well-formed and the fault is entirely in the platform's own
-stored data. A 422 would tell a vendor's client that *it* sent something wrong, so the
-client would neither retry nor escalate - and getting an administrator to look at the
-binding is the entire purpose of failing loudly. Retrying will not clear it. It is logged
-at `ERROR`, unlike every other refusal here.
+**A published code binding's `fsn` is never re-derived, so it can never fail to render
+(issue #144, FR-98).** An earlier revision of this API computed a `display_term` from the
+stored `fsn` on every read, using FR-83's semantic-tag stripper, and refused with a 500 if
+that strip failed - the one 5xx this document used to describe. That field is gone: `fsn`
+is served exactly as stored (FR-82), and `label_provenance` declares what it is instead of
+a second, derived copy of it - `label_provenance.fsn` is `{"designation": "fsn",
+"semantic_tag": "intact"}` by default (`NPTC_FSN_SEMANTIC_TAG`, see
+`docs/operations/configuration.md`), or `"stripped"` if a future FR-66 export
+configuration ever makes that true. There is nothing left on this read path that can fail
+this way.
 
 ## Rate limiting and caching
 
