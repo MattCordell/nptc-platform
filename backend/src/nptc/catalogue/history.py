@@ -52,6 +52,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import ClassVar, Final
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
@@ -64,7 +65,29 @@ from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.designation import Designation
 from nptc.db.models.user import User
 
-__all__ = ["HistoryEventRow", "HistoryPage", "load_history"]
+__all__ = ["HistoryEventRow", "HistoryPage", "MalformedHistoryCursorError", "load_history"]
+
+#: The largest value `AuditEvent.sequence` (`BigInteger`, signed 64-bit) can
+#: hold. A real `next_cursor` never exceeds this - `sequence` cannot hold a
+#: larger value to begin with - so `load_history` refuses one that does
+#: (PR #278 review) rather than pass it to the query, where it would either
+#: overflow the driver's own bigint bind parameter or, worse, silently
+#: compare true against every row.
+_BIGINT_MAX: Final = 2**63 - 1
+
+
+class MalformedHistoryCursorError(ValueError):
+    """Raised for a `before` cursor exceeding `_BIGINT_MAX`.
+
+    `nptc.api.routers.catalogue.HistoryCursorQuery`'s own `pattern`/
+    `max_length` already reject anything that is not a short digit string;
+    this catches the remainder - a well-formed but out-of-range digit
+    string - matching `nptc.catalogue.search.MalformedSearchCursorError`'s
+    own "refused, never silently reinterpreted" precedent.
+    """
+
+    http_status: ClassVar[int] = 422
+
 
 #: `nptc.catalogue.property_values`'s own entity type for a property's
 #: whole value set - no exported constant there to import, so this
@@ -109,15 +132,27 @@ def _changed_field_names(
 ) -> tuple[str, ...]:
     """Every field name in `before`/`after`, with `REDACTED_KEY` unpacked
     into the names it lists rather than kept as a literal key of its own -
-    see the module docstring's redaction note."""
+    see the module docstring's redaction note.
+
+    Raises rather than silently dropping names if `REDACTED_KEY`'s value is
+    not the `list` shape `nptc.audit.diffing._payload` writes (PR #278
+    review): a redacted field name is what proves a withheld value changed
+    at all, so a shape this function does not recognise must fail loudly,
+    not vanish from a public, otherwise-complete-looking response with
+    nothing to signal the gap.
+    """
     names: set[str] = set()
     for payload in (before, after):
         if payload is None:
             continue
         for key, value in payload.items():
             if key == REDACTED_KEY:
-                if isinstance(value, list):
-                    names.update(str(name) for name in value)
+                if not isinstance(value, list):
+                    raise TypeError(
+                        f"{REDACTED_KEY!r} value must be a list of field names, "
+                        f"got {type(value).__name__}"
+                    )
+                names.update(str(name) for name in value)
             else:
                 names.add(key)
     return tuple(sorted(names))
@@ -135,17 +170,26 @@ def load_history(
     `before` is the `sequence` of the last event on the previous page
     (exclusive) - `sequence` is a globally monotonic identity column, so
     it makes a total order with no possible tie.
+
+    Raises `MalformedHistoryCursorError` if `before` exceeds `_BIGINT_MAX` -
+    see that error's own docstring.
     """
+    if before is not None and before > _BIGINT_MAX:
+        raise MalformedHistoryCursorError(f"history cursor {before} exceeds bigint range")
+
     designation_ids: Sequence[str] = tuple(
         str(row.id) for row in queries.load_designations_for_write(session, (entry.id,))
     )
     binding_ids: Sequence[str] = tuple(
         str(row.id) for row in queries.load_bindings(session, (entry.id,))
     )
-    property_value_set_ids: Sequence[str] = tuple(
-        f"{entry.id}:{row.property_key}"
-        for row in queries.load_property_values(session, (entry.id,))
-    )
+    # A set, not a plain tuple comprehension: `load_property_values` returns
+    # one row per *value*, so a multi-valued property would otherwise repeat
+    # its own `f"{entry.id}:{property_key}"` once per value (PR #278
+    # review) - harmless semantically (an `IN` list tolerates a repeat) but
+    # bloats the predicate for no reason.
+    property_keys = {row.property_key for row in queries.load_property_values(session, (entry.id,))}
+    property_value_set_ids: Sequence[str] = tuple(f"{entry.id}:{key}" for key in property_keys)
 
     predicates = [
         and_(

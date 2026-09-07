@@ -1110,6 +1110,7 @@
               "anyOf": [
                 {
                   "type": "string",
+                  "maxLength": 19,
                   "pattern": "^[0-9]+$"
                 },
                 {

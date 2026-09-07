@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Index, Text
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -51,6 +51,23 @@ class AuditEvent(Base):
         # characters is the textual shape of a SHA-256 digest.
         CheckConstraint("prev_hash ~ '^[0-9a-f]{64}$'", name="prev_hash_hex"),
         CheckConstraint("entry_hash ~ '^[0-9a-f]{64}$'", name="entry_hash_hex"),
+        # Added by migration 0018 (issue #141 PR review): `nptc.catalogue.
+        # history.load_history` is the first read against this table from an
+        # anonymous, unauthenticated endpoint, and the only index that
+        # existed before this one was `sequence`'s own `UNIQUE`, useless
+        # against a query that equates on `entity_type`/`entity_id` first.
+        # Plain ascending, not `sequence DESC`: a btree index is scanned
+        # backwards at the same cost as forwards, so `ORDER BY sequence
+        # DESC` is served by this index either direction - and ascending
+        # keeps the ORM declaration and the migration's plain
+        # `op.create_index` textually identical, which is what
+        # `test_upgrade_head_matches_models` compares.
+        Index(
+            "ix_audit_event_entity_type_entity_id_sequence",
+            "entity_type",
+            "entity_id",
+            "sequence",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

@@ -154,9 +154,7 @@ def read_entry_any_status(
     the #224 write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
-    has_open_finding = entry.business_key in queries.open_finding_business_keys(
-        session, (entry.business_key,)
-    )
+    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,

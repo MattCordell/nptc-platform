@@ -11,6 +11,8 @@ that key, alongside any auditable field's real value).
 
 from __future__ import annotations
 
+import pytest
+
 from nptc.audit.diffing import REDACTED_KEY
 from nptc.catalogue.history import _changed_field_names
 
@@ -46,3 +48,15 @@ def test_none_after_is_a_deleted_event() -> None:
 
 def test_both_none_yields_no_changed_fields() -> None:
     assert _changed_field_names(None, None) == ()
+
+
+def test_redacted_key_with_a_non_list_value_raises_rather_than_drops_silently() -> None:
+    """`diffing._payload` always writes a `list` under `REDACTED_KEY` today,
+    but a shape change - a tuple, or a payload round-tripped through a
+    different decoder - must not make redacted field names vanish from the
+    result with nothing to signal it (PR #278 review)."""
+    before = {REDACTED_KEY: ("acknowledged_by_user_id",)}
+    after = {REDACTED_KEY: ("acknowledged_by_user_id",)}
+
+    with pytest.raises(TypeError):
+        _changed_field_names(before, after)

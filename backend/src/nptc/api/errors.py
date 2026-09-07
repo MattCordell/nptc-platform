@@ -100,6 +100,7 @@ from nptc.catalogue.errors import (
     EntryVersionConflictError,
 )
 from nptc.catalogue.facets import FilterRefusedError
+from nptc.catalogue.history import MalformedHistoryCursorError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
     PropertyValueSourceMisconfiguredError,
@@ -351,6 +352,10 @@ _DETAIL_SEARCH_CURSOR = (
     "search. Pass a `next_cursor` value back unmodified alongside the same query and "
     "filters, or start again from the first page."
 )
+_DETAIL_HISTORY_CURSOR = (
+    "This page cursor is not one this API issued. Pass a `next_cursor` value back "
+    "unmodified, or start again from the first page."
+)
 #: FR-16. Names no property key and no value: the parameter is caller-supplied
 #: text on a public, unauthenticated endpoint (NFR-26/NFR-35), and which
 #: properties exist but are not offered as filters is editorial state this
@@ -594,6 +599,19 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=MalformedSearchCursorError.http_status,
             content={"detail": _DETAIL_SEARCH_CURSOR},
+        )
+
+    @app.exception_handler(MalformedHistoryCursorError)
+    async def _handle_malformed_history_cursor(
+        _request: Request, exc: MalformedHistoryCursorError
+    ) -> JSONResponse:
+        # The class only, never `str(exc)` - matching
+        # `_handle_malformed_search_cursor`'s own reasoning: the message
+        # quotes the caller-supplied cursor value.
+        _logger.info("history cursor refused: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=MalformedHistoryCursorError.http_status,
+            content={"detail": _DETAIL_HISTORY_CURSOR},
         )
 
     @app.exception_handler(FilterRefusedError)

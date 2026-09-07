@@ -236,10 +236,20 @@ EntryCursorQuery = Annotated[
 #: string makes a total order with no possible tie. Exclusive: the next
 #: page is every event *older* than this one (the endpoint serves most
 #: recent first).
+#:
+#: `max_length=19`: `AuditEvent.sequence` is `BigInteger` (signed 64-bit,
+#: max `9223372036854775807`, 19 digits) - bounding the digit count here is
+#: what stops a pathologically long cursor from ever reaching `int(before)`
+#: in `read_history` (PR #278 review). Not every 19-digit string is itself
+#: in range (`9999999999999999999` is not); `history.load_history` raises
+#: `MalformedHistoryCursorError` (422, matching `MalformedSearchCursorError`'s
+#: own precedent) for a value that survives this bound but is still too
+#: large - this bound only rules out the unbounded case.
 HistoryCursorQuery = Annotated[
     str | None,
     Query(
         pattern=r"^[0-9]+$",
+        max_length=19,
         description=(
             "The `next_cursor` from the previous page. Pass it back unmodified, "
             "and do not construct one."

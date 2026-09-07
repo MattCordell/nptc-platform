@@ -104,10 +104,10 @@ class ValidationFinding(Base):
         CheckConstraint(_SEVERITY_CHECK_SQL, name="severity"),
         CheckConstraint(_STATUS_CHECK_SQL, name="status"),
         # The only access pattern P1 has: `nptc.catalogue.queries.
-        # open_finding_entry_ids` batches `entry_id IN (...) AND status =
-        # 'open'` for a page of search/list results - partial, not a plain
-        # index on `entry_id`, since every read this table serves in P1
-        # carries that same `status = 'open'` predicate.
+        # open_finding_business_keys` joins in `entry_id`/`status = 'open'`
+        # for a page of search/list results - partial, not a plain index on
+        # `entry_id`, since every read this table serves in P1 carries that
+        # same `status = 'open'` predicate.
         Index(
             "ix_validation_finding_open_entry_id",
             "entry_id",

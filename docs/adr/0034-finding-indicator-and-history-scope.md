@@ -136,5 +136,13 @@ filled.
 | `nptc_app` granted `SELECT, INSERT` on `validation_finding`, matching every other table | Nothing in P1 has a write path that would ever use the INSERT grant; granting it now is privilege the interactive role does not need and P3 may want to route through a different role entirely. |
 | Gate `GET .../history` on `Permission.REGISTRY_READ` (ADR-0028) | `REGISTRY_READ` is a considered, narrow line around submission-form plumbing; history is a fact about published catalogue content, the same category as the entry's already-public designations/bindings/properties. |
 | Build the full internal history shape (raw `before`/`after`) and filter sensitive fields at the API layer | Exactly the "build internal, filter at the boundary" pattern this codebase's own hygiene tests exist to catch failing at, once, for a field nobody thought to filter. Redaction-by-construction (project field names only) has no such value to ever leak. |
-| Key `open_finding_entry_ids` on `entry_id`, matching every other batch loader in `queries.py` | `nptc.catalogue.search.SearchHit` deliberately carries no entry id at all, so an id-keyed lookup could not serve search results without adding an id to a type whose own docstring says it never will. |
+| Key the batch lookup on `entry_id` (an `open_finding_entry_ids` shape), matching every other batch loader in `queries.py` | `nptc.catalogue.search.SearchHit` deliberately carries no entry id at all, so an id-keyed lookup could not serve search results without adding an id to a type whose own docstring says it never will. |
 | Invent `finding_type` slugs for FR-47's dual-edition diff findings (AU-only, forecast-inactive, absent-from-both) now | The PRD names these findings in prose, not with a type code the way FR-45's table does. Guessing a name risks P3's actual sweep engine needing a different one, forcing a second migration to fix it. |
+
+## Amendments
+
+- 2026-09-07: The "Alternatives rejected" row about keying the batch lookup on `entry_id`
+  named the hypothetical function `open_finding_entry_ids`, worded ambiguously enough to
+  read as though that had ever been the shipped name (PR #278 review). Reworded to make
+  clear it names the rejected shape, not a renamed function - the shipped name has always
+  been `open_finding_business_keys` (`nptc.catalogue.queries`).

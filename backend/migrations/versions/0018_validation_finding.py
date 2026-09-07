@@ -10,6 +10,11 @@ minimal and read-only ahead of the P3 sweep that will populate it - see
 `nptc.db.models.validation_finding`'s own module docstring for the full
 reasoning, and `nptc.db.roles.GRANT_VALIDATION_FINDING_SQL`'s comment for
 why the grant is SELECT-only rather than this file's usual SELECT+INSERT.
+
+Also adds `ix_audit_event_entity_type_entity_id_sequence` (PR #278 review):
+`nptc.catalogue.history.load_history`'s public, unbounded read of
+`audit_event` had no supporting index until this - see
+`nptc.db.models.audit.AuditEvent.__table_args__`'s own comment.
 """
 
 from __future__ import annotations
@@ -87,6 +92,14 @@ def upgrade() -> None:
     op.execute(roles.GRANT_VALIDATION_FINDING_SQL)
     op.execute(roles.REVOKE_VALIDATION_FINDING_WRITE_SQL)
 
+    op.create_index(
+        "ix_audit_event_entity_type_entity_id_sequence",
+        "audit_event",
+        ["entity_type", "entity_id", "sequence"],
+        unique=False,
+    )
+
 
 def downgrade() -> None:
+    op.drop_index("ix_audit_event_entity_type_entity_id_sequence", table_name="audit_event")
     op.drop_table("validation_finding")

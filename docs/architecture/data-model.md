@@ -878,10 +878,17 @@ matching the "two separate connections in their own uncommitted transaction cann
 each other's writes" reasoning `test_audit_tamper_detection.py` already documents for
 the identical reason.
 
-FR-45's dual-edition diff findings (an AU-only code, a forecast inactivation, a code
+FR-47's dual-edition diff findings (an AU-only code, a forecast inactivation, a code
 absent from both editions) are prose in the PRD without a named `finding_type` slug of
 their own, and are deliberately not assigned one here - inventing a name now risks the
 P3 sweep needing a different one and forcing a second migration to fix it.
+
+This migration also adds `ix_audit_event_entity_type_entity_id_sequence` on `audit_event`
+(PR #278 review): `nptc.catalogue.history.load_history` (FR-19, see
+[`public-api.md`](public-api.md#change-history-fr-19)) is the first read against
+`audit_event` from an anonymous, unauthenticated endpoint, and until this index existed
+the only one on that table was `sequence`'s own `UNIQUE` - useless against a query that
+equates on `entity_type`/`entity_id` first.
 
 ### Term hygiene at entry (FR-63)
 

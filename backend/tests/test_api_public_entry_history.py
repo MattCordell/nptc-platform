@@ -32,6 +32,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
+from nptc.catalogue.bindings import create_binding
 from nptc.catalogue.designations import add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
@@ -153,6 +154,64 @@ def test_history_includes_designation_changes(api: ApiTestApp, app_db: Connectio
     assert "designation.created" in actions
     synonym_event = next(item for item in body["items"] if item["action"] == "designation.created")
     assert synonym_event["note"] == "added a synonym for review"
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.integration
+def test_history_includes_code_binding_changes(api: ApiTestApp, app_db: Connection) -> None:
+    """A `code_binding` audit event's `entity_id` is the binding's own
+    primary key, not the entry's - the second of the two non-entry-typed
+    branches `load_history` unions in (PR #278 review noted only the
+    designation branch had coverage)."""
+    session = Session(bind=app_db)
+    ctx = AuditContext.system()
+    entry = create_entry(
+        session,
+        ctx,
+        preferred_term="Binding history fixture",
+        reason="seeded for FR-19 history test",
+        status=CatalogueEntryStatus.ACTIVE,
+        business_key="NPTC-430006",
+    )
+
+    create_binding(
+        session,
+        ctx,
+        entry=entry,
+        code="71388002",
+        fsn="Procedure (procedure)",
+        reason="bound a code for review",
+    )
+    session.flush()
+
+    body = api.get(f"/catalogue/entries/{entry.business_key}/history").json()
+
+    actions = [item["action"] for item in body["items"]]
+    assert "code_binding.created" in actions
+    binding_event = next(item for item in body["items"] if item["action"] == "code_binding.created")
+    assert binding_event["note"] == "bound a code for review"
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.integration
+def test_history_rejects_a_cursor_beyond_the_sequence_range(
+    api: ApiTestApp, app_db: Connection
+) -> None:
+    """`before` is a query parameter bound to 19 digits (`HistoryCursorQuery`),
+    but not every 19-digit string fits `AuditEvent.sequence`'s `BigInteger`
+    range - `9223372036854775807` is the max, so one digit past it must be
+    refused as malformed rather than reach the query (PR #278 review)."""
+    session = Session(bind=app_db)
+    session.execute(
+        text(
+            "INSERT INTO catalogue_entry (business_key, preferred_term, status) "
+            "VALUES ('NPTC-430007', 'Cursor overflow fixture', 'active')"
+        )
+    )
+
+    response = api.get("/catalogue/entries/NPTC-430007/history?before=9223372036854775808")
+
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.req("FR-19")

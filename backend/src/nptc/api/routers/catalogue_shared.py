@@ -301,9 +301,7 @@ def build_entry_detail(
     the same four loaders three times over with the risk that a future edit
     updates one copy and not the others."""
     entry_ids = (entry.id,)
-    has_open_finding = entry.business_key in queries.open_finding_business_keys(
-        session, (entry.business_key,)
-    )
+    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,

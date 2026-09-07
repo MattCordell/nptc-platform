@@ -2,17 +2,26 @@
 #141).
 
 Every entry and finding here is created directly via `owner_engine`,
-committed, and cleaned up in a `finally` block - never through
-`seed_public_catalogue`'s shared, uncommitted `app_db` transaction. A
-`validation_finding` row must be visible to the public API's own
-connection (`app_db`, whose role has SELECT only on this table in any
-case - see `nptc.db.roles.GRANT_VALIDATION_FINDING_SQL`), and two
+committed, and cleaned up by the `finding_entry` fixture's own teardown -
+never through `seed_public_catalogue`'s shared, uncommitted `app_db`
+transaction. A `validation_finding` row must be visible to the public
+API's own connection (`app_db`, whose role has SELECT only on this table
+in any case - see `nptc.db.roles.GRANT_VALIDATION_FINDING_SQL`), and two
 connections each holding their own open, uncommitted transaction cannot
 see each other's writes (`test_audit_tamper_detection.py`'s own docstring
 explains why) - only a genuinely committed row, visible under READ
 COMMITTED to any later statement on any connection, proves the indicator
 end to end over real HTTP. Matches `test_catalogue_optimistic_locking.py`'s
 own "plain SQL via owner_engine" precedent for the identical reason.
+
+**One fixture's teardown, not a `finally` per test (PR #278 review).** A
+hand-written `finally` in every test cleans up correctly on a normal
+failure, but leaves `NPTC-42xxxx` rows for a hard crash or an interrupted
+run to skip past - and five copies of the same cleanup is its own
+maintenance cost. `finding_entry` tracks every business key it creates and
+deletes all of them in one teardown, matching pytest's own fixture-finaliser
+guarantee (the same one a `finally` relies on) without repeating the SQL
+five times.
 
 Business keys here occupy the `NPTC-42xxxx` block, disjoint from every
 other test module's own reserved block and from the real minting
@@ -24,7 +33,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -96,19 +105,35 @@ def _cleanup(engine: Engine, *, business_key: str) -> None:
         connection.commit()
 
 
+@pytest.fixture
+def finding_entry(owner_engine: Engine) -> Iterator[Callable[..., uuid.UUID]]:
+    """Creates a committed `catalogue_entry`, tracking its business key for
+    one teardown that cleans up every entry (and any finding on it) this
+    test created - see the module docstring."""
+    created: list[str] = []
+
+    def _create(business_key: str, *, preferred_term: str = "Ferritin") -> uuid.UUID:
+        created.append(business_key)
+        return _insert_entry(owner_engine, business_key=business_key, preferred_term=preferred_term)
+
+    yield _create
+
+    for business_key in created:
+        _cleanup(owner_engine, business_key=business_key)
+
+
 @pytest.mark.req("FR-18")
 @pytest.mark.integration
-def test_entry_with_open_finding_shows_the_indicator(api: ApiTestApp, owner_engine: Engine) -> None:
+def test_entry_with_open_finding_shows_the_indicator(
+    api: ApiTestApp, owner_engine: Engine, finding_entry: Callable[..., uuid.UUID]
+) -> None:
     business_key = "NPTC-420001"
-    entry_id = _insert_entry(owner_engine, business_key=business_key, preferred_term="Ferritin")
-    try:
-        _insert_finding(owner_engine, entry_id=entry_id, status="open")
+    entry_id = finding_entry(business_key)
+    _insert_finding(owner_engine, entry_id=entry_id, status="open")
 
-        body = api.get(f"/catalogue/entries/{business_key}").json()
+    body = api.get(f"/catalogue/entries/{business_key}").json()
 
-        assert body["has_open_finding"] is True
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    assert body["has_open_finding"] is True
 
 
 #: One dedicated business key per non-open status, distinct from every
@@ -124,92 +149,80 @@ _NOT_OPEN_BUSINESS_KEYS = {
 @pytest.mark.integration
 @pytest.mark.parametrize("status", sorted(_NOT_OPEN_BUSINESS_KEYS))
 def test_entry_with_no_open_finding_does_not_show_the_indicator(
-    api: ApiTestApp, owner_engine: Engine, status: str
+    api: ApiTestApp, owner_engine: Engine, status: str, finding_entry: Callable[..., uuid.UUID]
 ) -> None:
     business_key = _NOT_OPEN_BUSINESS_KEYS[status]
-    entry_id = _insert_entry(owner_engine, business_key=business_key, preferred_term="Ferritin")
-    try:
-        _insert_finding(owner_engine, entry_id=entry_id, status=status)
+    entry_id = finding_entry(business_key)
+    _insert_finding(owner_engine, entry_id=entry_id, status=status)
 
-        body = api.get(f"/catalogue/entries/{business_key}").json()
+    body = api.get(f"/catalogue/entries/{business_key}").json()
 
-        assert body["has_open_finding"] is False
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    assert body["has_open_finding"] is False
 
 
 @pytest.mark.req("FR-18")
 @pytest.mark.integration
 def test_entry_with_no_finding_at_all_does_not_show_the_indicator(
-    api: ApiTestApp, owner_engine: Engine
+    api: ApiTestApp, finding_entry: Callable[..., uuid.UUID]
 ) -> None:
     business_key = "NPTC-420002"
-    _insert_entry(owner_engine, business_key=business_key, preferred_term="Ferritin")
-    try:
-        body = api.get(f"/catalogue/entries/{business_key}").json()
+    finding_entry(business_key)
 
-        assert body["has_open_finding"] is False
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    body = api.get(f"/catalogue/entries/{business_key}").json()
+
+    assert body["has_open_finding"] is False
 
 
 @pytest.mark.req("FR-18")
 @pytest.mark.integration
 def test_anonymous_request_reports_the_indicator_but_nothing_else_about_the_finding(
-    api: ApiTestApp, owner_engine: Engine
+    api: ApiTestApp, owner_engine: Engine, finding_entry: Callable[..., uuid.UUID]
 ) -> None:
     """The raw response *text*, not a parsed model - matching
     `test_api_public_response_hygiene.py`'s own whole-body convention, the
     only way to catch a field nobody thought to write an assertion for."""
     business_key = "NPTC-420003"
-    entry_id = _insert_entry(owner_engine, business_key=business_key, preferred_term="Ferritin")
-    try:
-        _insert_finding(owner_engine, entry_id=entry_id, status="open")
+    entry_id = finding_entry(business_key)
+    _insert_finding(owner_engine, entry_id=entry_id, status="open")
 
-        response = api.get(f"/catalogue/entries/{business_key}")
-        body_text = response.text
+    response = api.get(f"/catalogue/entries/{business_key}")
+    body_text = response.text
 
-        assert '"has_open_finding":true' in body_text.replace(" ", "")
-        assert "code_inactive" not in body_text
-        assert '"error"' not in body_text
-        assert "finding_type" not in body_text
-        assert "severity" not in body_text
-        assert str(entry_id) not in body_text
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    assert '"has_open_finding":true' in body_text.replace(" ", "")
+    assert "code_inactive" not in body_text
+    assert '"error"' not in body_text
+    assert "finding_type" not in body_text
+    assert "severity" not in body_text
+    assert str(entry_id) not in body_text
 
 
 @pytest.mark.req("FR-18")
 @pytest.mark.integration
-def test_the_indicator_appears_on_list_results(api: ApiTestApp, owner_engine: Engine) -> None:
+def test_the_indicator_appears_on_list_results(
+    api: ApiTestApp, owner_engine: Engine, finding_entry: Callable[..., uuid.UUID]
+) -> None:
     business_key = "NPTC-420004"
-    entry_id = _insert_entry(owner_engine, business_key=business_key, preferred_term="Ferritin")
-    try:
-        _insert_finding(owner_engine, entry_id=entry_id, status="open")
+    entry_id = finding_entry(business_key)
+    _insert_finding(owner_engine, entry_id=entry_id, status="open")
 
-        body = api.get("/catalogue/entries?after=NPTC-420003").json()
+    body = api.get("/catalogue/entries?after=NPTC-420003").json()
 
-        matching = [item for item in body["items"] if item["business_key"] == business_key]
-        assert len(matching) == 1
-        assert matching[0]["has_open_finding"] is True
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    matching = [item for item in body["items"] if item["business_key"] == business_key]
+    assert len(matching) == 1
+    assert matching[0]["has_open_finding"] is True
 
 
 @pytest.mark.req("FR-18")
 @pytest.mark.integration
-def test_the_indicator_appears_on_search_results(api: ApiTestApp, owner_engine: Engine) -> None:
+def test_the_indicator_appears_on_search_results(
+    api: ApiTestApp, owner_engine: Engine, finding_entry: Callable[..., uuid.UUID]
+) -> None:
     business_key = "NPTC-420005"
-    entry_id = _insert_entry(
-        owner_engine, business_key=business_key, preferred_term="Zzyzx finding fixture"
-    )
-    try:
-        _insert_finding(owner_engine, entry_id=entry_id, status="open")
+    entry_id = finding_entry(business_key, preferred_term="Zzyzx finding fixture")
+    _insert_finding(owner_engine, entry_id=entry_id, status="open")
 
-        body = api.get("/catalogue/search?q=Zzyzx+finding+fixture").json()
+    body = api.get("/catalogue/search?q=Zzyzx+finding+fixture").json()
 
-        matching = [item for item in body["items"] if item["business_key"] == business_key]
-        assert len(matching) == 1
-        assert matching[0]["has_open_finding"] is True
-    finally:
-        _cleanup(owner_engine, business_key=business_key)
+    matching = [item for item in body["items"] if item["business_key"] == business_key]
+    assert len(matching) == 1
+    assert matching[0]["has_open_finding"] is True

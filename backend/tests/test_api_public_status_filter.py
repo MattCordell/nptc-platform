@@ -61,6 +61,7 @@ _DETAIL_PATHS = (
     "/catalogue/entries/{key}/designations",
     "/catalogue/entries/{key}/bindings",
     "/catalogue/entries/{key}/properties",
+    "/catalogue/entries/{key}/history",
 )
 
 
