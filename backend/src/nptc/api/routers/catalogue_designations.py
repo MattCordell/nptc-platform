@@ -93,7 +93,7 @@ from nptc.api.errors import (
     PreferredTermVersionRequiredError,
     VersionConflictResponse,
 )
-from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE
+from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, SYNONYM_PROVENANCE, LabelProvenance
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import BusinessKeyPath, Designation, designation_from_row
@@ -278,13 +278,34 @@ class CollisionWarning(BaseModel):
     """One warning-severity collision (FR-05): the same term active on
     another live entry. Names that entry's public identifier and preferred
     term, never its internal id (NFR-04/NFR-26) - the same shape the 409
-    handler for the *error*-severity case already returns."""
+    handler for the *error*-severity case already returns.
+
+    `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98, issue
+    #144), never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
+    own comments (`add_designations_route`/`amend_designation_route`) prove
+    the preferred branch never produces a `CollisionWarning` at all -
+    `warning_collisions` only ever looks for another live entry's active
+    *synonym*, so a non-empty `warnings` list is only ever reachable from
+    the synonym branch. `label_provenance["preferred_term"]` is the
+    *colliding* entry's own catalogue preferred term, matching
+    `EntrySummary.preferred_term`'s own designation type.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     term: str
     business_key: str
     preferred_term: str
+    label_provenance: dict[str, LabelProvenance]
+
+
+#: `CollisionWarning.label_provenance` is the same fixed dict on every
+#: instance - see the model's own docstring for why `term` is always a
+#: synonym here.
+_COLLISION_WARNING_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
+    "term": SYNONYM_PROVENANCE,
+    "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+}
 
 
 def _collision_warning(collision: Collision) -> CollisionWarning:
@@ -292,6 +313,7 @@ def _collision_warning(collision: Collision) -> CollisionWarning:
         term=collision.term,
         business_key=collision.business_key,
         preferred_term=collision.preferred_term,
+        label_provenance=_COLLISION_WARNING_LABEL_PROVENANCE,
     )
 
 
