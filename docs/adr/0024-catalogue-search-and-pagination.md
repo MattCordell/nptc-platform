@@ -248,3 +248,11 @@ surface's job (#141), where it is the subject rather than a footnote.
   reversal of anything decided here, so it is recorded in place. The supersession of this
   ADR's `tsvector` rejection is a genuine reversal and is handled the other way, by
   [ADR-0029](0029-hybrid-full-text-and-trigram-search.md) and the `Status` line above.
+- 2026-09-07: faceted filtering is no longer untouched. Issue #139 delivered it, and
+  [ADR-0032](0032-faceted-filter-query-surface.md) records its query surface - including
+  the two places it extends this ADR's own decisions. The relevance cursor's digest now
+  covers the filter set as well as `q`, on the same reasoning this ADR gives for binding
+  it to `q` at all: a score is meaningful only against the request that produced it. And
+  the `COUNT(*)` this ADR's keyset discipline does without is still absent from every
+  page query; facet counts are the one bounded, asked-for exception, argued in ADR-0032
+  and recorded in `nptc.catalogue.queries`' own docstring.

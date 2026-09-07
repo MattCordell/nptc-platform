@@ -180,8 +180,70 @@ by it rather than threshold on it.
 
 **Not here:** exact-code lookup as its own addressable endpoint is FR-17's, owned by
 issue #140 - typing a code into `q` works, but a stable per-code URL is separate.
-Faceted filtering over `filterable` properties (FR-16) is a separate child of epic #57.
 See [ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md).
+
+### Faceted filters (FR-16)
+
+Both collection endpoints accept `?filter.<key>=<value>`, repeated once per value.
+Values within one facet are OR-ed; filters on different facets are AND-ed, so adding one
+always narrows. An operator other than the default `equals` is named after the key,
+separated by a colon - `?filter.assay_name:prefix=glu`, `?filter.volume_ml:range=1..5`.
+At most 50 distinct values are accepted in one facet's selection (repeated parameter or
+`:in` list alike, matching `limit`'s own 1-200 discipline above); more is a 422, not a
+silent truncation.
+
+```http
+GET /api/v1/catalogue/search?q=glucose&filter.discipline=Chemistry&filter.specimen=119297000
+```
+
+`GET /catalogue/search` also returns the facets themselves, with counts:
+
+```jsonc
+{
+  "items": [ /* ... */ ],
+  "next_cursor": null,
+  "facets": [
+    {
+      "key": "discipline",
+      "label": "Discipline",
+      "facetable": true,
+      "truncated": false,
+      "buckets": [
+        { "value": "Chemistry", "label": "Chemistry", "count": 42 },
+        { "value": "Haematology", "label": "Haematology", "count": 17 }
+      ]
+    }
+  ]
+}
+```
+
+Four things a client must build for, none of them optional:
+
+- **The facet list is not fixed.** It is derived from the property registry on every
+  request - an administrator marking a property filterable makes it appear with no
+  deployment and no restart (FR-09/FR-16). Render whatever you are given; do not hard-code
+  the facets you know about today.
+- **A count is over the whole result set, not this page**, and a facet's own selection is
+  excluded from its own counts, so a bucket you have not chosen still tells you how many
+  entries it would give you. An entry holding several values of one property counts once
+  under each of them.
+- **`facetable: false` means "filterable, but there is nothing to group"** - a continuous
+  numeric property, where every value would be its own bucket. Such a facet is reported
+  with no buckets rather than omitted, so you can tell it apart from one whose values
+  match nothing.
+- **`truncated: true` means the cap bit.** At most 20 buckets are returned, most common
+  first. There is no way to page through the rest; narrow the search.
+
+A `filter.` parameter this API cannot use is a **422**, never a silently ignored
+parameter: an unknown key, a property that is not filterable, an operator the property
+does not support, a value of the wrong kind, or more values in one selection than that
+facet's limit allows. On `/catalogue/search` the `next_cursor`
+is bound to the filter set as well as to `q`, so replaying it with the filters changed is
+also a 422 - a relevance score means nothing against a different request. On
+`/catalogue/entries` the cursor is a business key and is unaffected by the filters.
+
+`/catalogue/entries` accepts the same filters and returns **no** `facets` array.
+See [ADR-0032](../adr/0032-faceted-filter-query-surface.md).
 
 ## Errors
 

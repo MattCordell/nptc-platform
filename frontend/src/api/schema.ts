@@ -48,6 +48,12 @@ export interface paths {
          *     offset re-reads and re-skips every earlier row on every page, and drops
          *     or repeats rows outright when a concurrent insert shifts the window
          *     mid-scan.
+         *
+         *     `filter.*` parameters are accepted here and behave exactly as they do on
+         *     `/catalogue/search`. Facets are **not** returned: computing counts on
+         *     every page of a browse costs something no caller has asked for, and
+         *     `GET /catalogue/search` is where the facet list with counts lives
+         *     (ADR-0032).
          */
         get: operations["list_entries_api_v1_catalogue_entries_get"];
         put?: never;
@@ -75,6 +81,11 @@ export interface paths {
          *     quietly matches everything is worse than one that matches nothing,
          *     because the caller cannot tell it from a working search over a catalogue
          *     that genuinely has nothing to offer.
+         *
+         *     `facets` is the facet list for this search, with counts over the whole
+         *     result set. It is derived from the property registry on every request
+         *     (FR-16), so it is not a fixed set a client may hard-code: a property an
+         *     administrator marks filterable appears here on the very next request.
          */
         get: operations["search_api_v1_catalogue_search_get"];
         put?: never;
@@ -964,6 +975,61 @@ export interface components {
             detail: string;
         };
         /**
+         * Facet
+         * @description One facet, derived from the property registry at request time.
+         *
+         *     Never a fixed list: a property an administrator marks filterable appears
+         *     here on the next request, with no deployment and no restart (FR-09,
+         *     FR-16). A client must therefore render whatever it is given rather than
+         *     hard-coding the facets it knows about.
+         */
+        Facet: {
+            /**
+             * Key
+             * @description The property key, and the suffix of its `filter.` parameter.
+             */
+            key: string;
+            /**
+             * Label
+             * @description The property's own label, as an administrator set it.
+             */
+            label: string;
+            /**
+             * Facetable
+             * @description `false` for a property that can be filtered on but not grouped - a continuous numeric one, where every value would be its own bucket. Such a facet is reported with no buckets rather than omitted, so a client can tell it apart from a facet whose values happen to match nothing.
+             */
+            facetable: boolean;
+            /**
+             * Truncated
+             * @description `true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead.
+             */
+            truncated: boolean;
+            /** Buckets */
+            buckets: components["schemas"]["FacetBucket"][];
+        };
+        /**
+         * FacetBucket
+         * @description One value of one facet, with how many entries in the current result
+         *     set carry it.
+         */
+        FacetBucket: {
+            /**
+             * Value
+             * @description Send this back as the filter value to select this bucket - `?filter.<key>=<value>`. It is the stored value, not the label.
+             */
+            value: string;
+            /**
+             * Label
+             * @description How to show this bucket. For a coded property it is the display term stored alongside the code when the value was recorded, never a live terminology lookup, so it is stable and offline. Falls back to `value` where the stored value carries no label of its own.
+             */
+            label: string;
+            /**
+             * Count
+             * @description Entries in the current result set carrying this value. An entry with several values of one property counts once under each of them, never several times under one.
+             */
+            count: number;
+        };
+        /**
          * FieldConflictItem
          * @description One field whose stored value moved under a caller between their read
          *     and their write. `submitted`/`current` are whatever that field holds -
@@ -1290,6 +1356,11 @@ export interface components {
             items: components["schemas"]["SearchHit"][];
             /** Next Cursor */
             next_cursor: string | null;
+            /**
+             * Facets
+             * @description Every facet available for this search, with counts over the whole result set rather than this page. A facet's own selection is excluded from its own counts, so a bucket you have not chosen still tells you how many entries it would give you.
+             */
+            facets: components["schemas"]["Facet"][];
         };
         /**
          * SessionResponse
@@ -1444,6 +1515,8 @@ export interface operations {
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
                 after?: string | null;
+                /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
+                "filter.{property_key}"?: string[];
             };
             header?: never;
             path?: never;
@@ -1469,7 +1542,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1487,8 +1560,10 @@ export interface operations {
                 q: string;
                 /** @description Maximum entries in this page. */
                 limit?: number;
-                /** @description The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` it was issued for - sending it with a different `q` is a 422, not a meaningless page. */
+                /** @description The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` **and the filters** it was issued for - sending it with either changed is a 422, not a meaningless page, because a relevance score means nothing against a different request. */
                 after?: string | null;
+                /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
+                "filter.{property_key}"?: string[];
             };
             header?: never;
             path?: never;
@@ -1514,7 +1589,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1564,7 +1639,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1695,7 +1770,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1817,7 +1892,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1959,7 +2034,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range. */
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
             422: {
                 headers: {
                     [name: string]: unknown;

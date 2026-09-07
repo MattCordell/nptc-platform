@@ -43,6 +43,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import ClauseElement, Executable
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.catalogue.facets import (
+    FacetDescriptor,
+    _PropertyFacetSource,
+    build_facet_count_statement,
+)
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.property_definition import (
     BindingTarget,
     PropertyCardinality,
@@ -55,7 +61,7 @@ from nptc.db.property_indexes import index_name
 from nptc.db.property_reconciler import get_indexer_engine, reconcile_property_indexes
 from nptc.registry.datatypes.code import CodeHandler
 from nptc.registry.datatypes.string import StringHandler
-from nptc.registry.handlers import FilterOp
+from nptc.registry.handlers import FilterOp, PropertyDefinitionSpec
 from nptc_shared.terminology.stub import StubTerminologyClient
 
 #: Large enough that the partial index is a real candidate, not a fixture
@@ -451,3 +457,129 @@ def _run_gin_index_plan_proof(owner_engine: Engine, key: str, expected_name: str
         matches = connection.execute(stmt).scalars().all()
 
     assert len(matches) == 2  # both entries, regardless of which ordinal held the match
+
+
+# --- FR-16's own two plans (issue #139) -----------------------------------
+
+
+def _facet_descriptor(key: str) -> FacetDescriptor:
+    """A descriptor for one of `_string_property_pair`'s properties, built
+    the way `nptc.catalogue.facets.load_facet_context` builds one - a
+    handler plus a spec - so this explains the real predicate rather than a
+    hand-written lookalike."""
+    return FacetDescriptor(
+        key=key,
+        label=key,
+        display_order=0,
+        source=_PropertyFacetSource(
+            handler=StringHandler(),
+            spec=PropertyDefinitionSpec(
+                key=key,
+                label=key,
+                datatype="string",
+                cardinality="0..1",
+                scope=frozenset({"submission", "maintenance"}),
+                required_for_submission=False,
+                required_for_publication=False,
+                binding=None,
+                filterable=True,
+                constraints={},
+            ),
+        ),
+    )
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_facet_filter_and_count_plans_are_both_index_supported(
+    owner_engine: Engine, _indexer_configured: None, _string_property_pair: dict[str, int]
+) -> None:
+    """FR-16 issues two shapes of query, and this is the only test that can
+    tell either of them from a full scan: every functional facet test in
+    `test_api_public_search.py` returns identical answers whether the query
+    reads one property's rows or the whole `property_value` table, and the
+    difference shows up only as a slow catalogue.
+
+    Both statements are built through `nptc.catalogue.facets` itself, for the
+    reason `test_db_search_index.py` explains the real search statement: a
+    hand-copied approximation is a test of the copy.
+
+    **The filter predicate reaches issue #54's generated index**, which is
+    the claim #139 inherits from #54 and the reason `_PropertyFacetSource`
+    renders `property_key` with `literal_execute=True` at all. The `EXISTS`
+    subquery it builds is the same `(value #>> '{}') = ...` shape the
+    literal-vs-parameter proof above `EXPLAIN`s directly, now composed as a
+    correlated subquery over `catalogue_entry`.
+
+    **The count aggregation does not, and cannot**, and saying so plainly is
+    better than an assertion that quietly means less than it looks like it
+    does. The generated index holds the *value expression* only; a facet
+    count also needs `entry_id`, for the `COUNT(DISTINCT ...)` that keeps a
+    multi-valued property from counting an entry several times. No index-only
+    scan can serve both, so the planner reads the property's rows through
+    `ix_property_value_property_key` instead. What matters - and what is
+    asserted - is that the aggregation costs the size of *this property*
+    rather than the size of the whole table: an `Index Cond` on
+    `property_key`, and no sequential scan.
+
+    **`enable_seqscan = off`, unlike the two tests above.** They are about
+    *provability* - whether a bound `property_key` lets the planner conclude
+    the partial index qualifies at all - and forcing the knob would destroy
+    exactly that distinction. This test's claim is the other one: that both
+    statements are *expressed* so an index can serve them. Whether the
+    planner picks one on a given day is a cost decision about table size, and
+    a test that turned on winning that race would be a test of the fixture's
+    row count. Disabling sequential scans removes the cost race and weakens
+    nothing: a predicate over an expression the index does not contain still
+    cannot become an `Index Cond`, however expensive the alternative is made.
+    """
+    prefix = "NPTC-95"
+    key_a = "test_plan_string_a"
+    key_b = "test_plan_string_b"
+    index_name_a = index_name(_string_property_pair[key_a], 1)
+
+    with owner_engine.connect() as connection:
+        connection.execute(_BULK_ENTRIES_SQL, {"count": _ROW_COUNT, "prefix": prefix})
+        connection.execute(
+            _BULK_STRING_VALUES_SQL, {"key_a": key_a, "key_b": key_b, "prefix": prefix}
+        )
+        connection.commit()
+
+    try:
+        report = reconcile_property_indexes()
+        assert index_name_a in report.created
+
+        descriptor = _facet_descriptor(key_a)
+        base = select(CatalogueEntry.id).where(
+            CatalogueEntry.status == CatalogueEntryStatus.ACTIVE.value
+        )
+        count_statement = build_facet_count_statement(descriptor, base)
+        assert count_statement is not None
+
+        with owner_engine.connect() as connection:
+            connection.execute(text("ANALYZE property_value"))
+            connection.execute(text("ANALYZE catalogue_entry"))
+            probe_value = connection.execute(
+                text(
+                    "SELECT value #>> '{}' FROM property_value "
+                    "WHERE property_key = :key ORDER BY entry_id LIMIT 1"
+                ),
+                {"key": key_a},
+            ).scalar_one()
+            # LOCAL: reverted with this connection's own transaction, so it
+            # cannot leak into another test sharing the container.
+            connection.execute(text("SET LOCAL enable_seqscan = off"))
+
+            filter_statement = select(CatalogueEntry.id).where(
+                descriptor.source.predicate(FilterOp.EQUALS, probe_value)
+            )
+            filter_plan = "\n".join(connection.execute(_Explain(filter_statement)).scalars().all())
+            count_plan = "\n".join(connection.execute(_Explain(count_statement)).scalars().all())
+
+        assert index_name_a in filter_plan, filter_plan
+        assert "Seq Scan on property_value" not in filter_plan, filter_plan
+
+        assert "Index Cond: (property_key = 'test_plan_string_a'::text)" in count_plan, count_plan
+        assert "Seq Scan on property_value" not in count_plan, count_plan
+    finally:
+        _delete_bulk_entries(owner_engine, prefix)

@@ -81,15 +81,28 @@ alternative was refused - a `nptc_strip_semantic_tag(text)` in the database
 would be a second copy of the semantic-tag regex, which ADR-0006 identifies
 as the defect class FR-83 exists to prevent.
 
-**One raw statement, and it is a module-level literal.** `_SEARCH_SQL` below
-is plain text with bound parameters only - no f-string, no concatenation, no
-identifier interpolation (NFR-22, statically enforced by `backend/tests/
-test_sql_parameterisation.py`). It is spelled as SQL rather than assembled
-with the ORM because the shape that makes the trigram indexes usable - two
-separately-indexed `%` scans unioned, then aggregated per entry - is
-considerably clearer written out than expressed as a Core construct, and
-because the exact text is what `backend/tests/test_db_search_index.py`
-`EXPLAIN`s.
+**The scoring half is a module-level literal; the shell around it is
+Core.** `_SCORED_SQL` below is plain text with bound parameters only - no
+f-string, no concatenation, no identifier interpolation (NFR-22, statically
+enforced by `backend/tests/test_sql_parameterisation.py`). It is spelled as
+SQL rather than assembled with the ORM because the shape that makes the
+trigram indexes usable - two separately-indexed `%` scans unioned, then
+aggregated per entry - is considerably clearer written out than expressed as
+a Core construct.
+
+What is *not* a literal any more (issue #139) is the query built around it.
+`_SCORED_SQL` is exposed as a CTE through `.columns(...)`, and the result
+page and every facet count are Core selects over that one CTE. They have to
+be: FR-16's filters are derived from the property registry at request time,
+so the predicate list is not knowable when this file is written, and a
+statement that has to grow a clause per request cannot be a fixed literal
+without becoming string-built SQL - the exact thing NFR-22 forbids.
+Composing it as Core keeps every value bound by construction. It also keeps
+the result page and the facet counts answering the same question about the
+same population, because they share one predicate list rather than two
+hand-kept-in-step copies. `backend/tests/test_db_search_index.py` `EXPLAIN`s
+the *composed* statement, via `build_search_statement`, for the same reason
+it used to explain the raw one: an approximation is a test of the copy.
 
 **Why `%` and not `similarity(...) > threshold`.** The GIN trigram index
 supports the `%` operator; it cannot accelerate a bare comparison of a
@@ -134,18 +147,22 @@ instead, which is the value the GUC actually governs, and the full-text and
 code branches carry `NULL` there because `%`'s threshold has no meaning for
 an `@@` or an `=` test.
 
-**Relevance keyset.** The cursor is `"<score>:<query digest>:<business_key>"`
-- the score and key are both values the client just received, neither an
-internal id, and the digest binds the cursor to the `q` that minted it.
+**Relevance keyset.** The cursor is
+`"<score>:<request digest>:<business_key>"` - the score and key are both
+values the client just received, neither an internal id, and the digest
+binds the cursor to the request that minted it: the `q`, and (issue #139)
+the filter set alongside it.
 `business_key` is the tie-break, and it is not optional decoration:
 trigram scores are floats over a small catalogue and tie constantly, so
 ordering by score alone is not a total order and a page boundary landing
 inside a tie would drop or repeat rows. The digest exists because a score
-is only meaningful against the query it was computed for: replaying a
-cursor under a different `q` would otherwise be served a window with no
-defined meaning, silently, which is worse than a refusal.
-`backend/tests/test_api_public_search.py` pages across a deliberate tie,
-and replays a cursor under a second query, for exactly these reasons.
+is only meaningful against the request it was computed for:
+replaying a cursor under a different `q` - or a different filter set, which
+changes which entries exist to be scored at all - would otherwise be served
+a window with no defined meaning, silently, which is worse than a refusal.
+`backend/tests/test_api_public_search.py` pages across a deliberate tie, and
+replays a cursor under a second query and under a second filter set, for
+exactly these reasons.
 """
 
 from __future__ import annotations
@@ -153,15 +170,26 @@ from __future__ import annotations
 import hashlib
 import hmac
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar, Final
+from typing import Any, ClassVar, Final
 
-from sqlalchemy import text
+from sqlalchemy import ColumnElement, Select, Uuid, and_, cast, column, or_, select, text
+from sqlalchemy.dialects.postgresql import REAL
 from sqlalchemy.orm import Session
 
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
+from nptc.catalogue.facets import (
+    Facet,
+    FacetContext,
+    FilterSelection,
+    compute_facets,
+    filter_digest_material,
+    filter_predicates,
+)
 from nptc.catalogue.queries import PUBLIC_STATUSES
+from nptc.db.models.catalogue_entry import CatalogueEntry
 
 __all__ = [
     "BINDING_LABEL_WEIGHT",
@@ -177,6 +205,7 @@ __all__ = [
     "SearchHit",
     "SearchPage",
     "search_entries",
+    "search_facets",
 ]
 
 #: `pg_trgm`'s own default is 0.3, and this keeps it rather than inventing a
@@ -241,12 +270,19 @@ _SET_THRESHOLD_SQL = text(
     "SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"
 )
 
-#: One statement. Reading it from the inside out: the `matches` subquery is
-#: nine index-supported scans - a trigram `%` scan and a full-text `@@` scan
-#: over each of the four searchable text columns, plus one equality scan on
-#: the SNOMED code; the `scored` subquery collapses an entry matched several
-#: ways into a single row carrying its best score; the outer query joins back
-#: for the served columns and applies the keyset predicate.
+#: The scoring half, and only the scoring half. Reading it from the inside
+#: out: the `matches` subquery is nine index-supported scans - a trigram `%`
+#: scan and a full-text `@@` scan over each of the four searchable text
+#: columns, plus one equality scan on the SNOMED code; the outer aggregate
+#: collapses an entry matched several ways into a single row carrying its
+#: best score.
+#:
+#: It yields `(entry_id, score)` and stops there. `.columns(...)` gives those
+#: two an explicit type so the statement can be used as a CTE, which is what
+#: `build_search_statement` and `search_facets` each compose over: the served
+#: columns, the status filter, the FR-16 filter predicates and the keyset
+#: predicate are all Core, because the filter list is derived per request and
+#: cannot be a fixed literal (see the module docstring).
 #:
 #: **Why nine branches and not one predicate with `OR`.** Every branch is a
 #: separate index scan because that is the only shape in which each one *is*
@@ -327,24 +363,11 @@ _SET_THRESHOLD_SQL = text(
 #: because `pg_trgm.similarity_threshold` has no meaning for them: `@@` and
 #: `=` are exact tests with no threshold to restate.
 #:
-#: The `CAST(...)` around the two keyset parameters is required rather than
-#: decorative: on the first page both are `NULL`, and `$n IS NULL` gives
-#: PostgreSQL nothing at all to infer a parameter type from, so the server
-#: refuses the statement outright ("could not determine data type of
-#: parameter"). Naming the type is what makes the same statement serve both
-#: the first page and every page after it, rather than needing two.
-#:
-#: `:after_score` is cast to `real`, not `double precision`, and the choice
-#: is load-bearing. `similarity()` returns `real`, so `MAX(m.score)` is a
-#: `real`; the cursor carries that value through a Python `float` (a
-#: double) and back. Casting the parameter to `double precision` would make
-#: the tie branch's `=` a comparison in double precision, exact only for as
-#: long as float4 -> text -> float8 happens to round-trip invariantly for
-#: this driver and result format. Casting to `real` puts the comparison
-#: back in the type the column actually is, so the tie branch is exact by
-#: construction - and it is the tie branch that keeps a page boundary
-#: inside a score tie from dropping or repeating a row.
-_SEARCH_SQL = text("""
+#: The keyset predicate no longer lives here at all: it is added by
+#: `build_search_statement`, which also records why the old
+#: `CAST(:after_score AS real) IS NULL OR ...` spelling is gone and why the
+#: `real` cast on the comparison is still load-bearing.
+_SCORED_SQL = text("""
 WITH matches AS (
     SELECT
         entry.id AS entry_id,
@@ -450,36 +473,15 @@ WITH matches AS (
     FROM code_binding AS cb
     WHERE cb.status = 'active'
       AND cb.code = :q_exact
-), scored AS (
-    SELECT
-        m.entry_id AS entry_id,
-        MAX(m.score) AS score
-    FROM matches AS m
-    WHERE m.trigram_score IS NULL
-       OR m.trigram_score >= :threshold
-    GROUP BY m.entry_id
 )
 SELECT
-    e.business_key,
-    e.preferred_term,
-    e.status,
-    e.specimen_unconstrained,
-    e.updated_at,
-    s.score AS score
-FROM scored AS s
-JOIN catalogue_entry AS e ON e.id = s.entry_id
-WHERE e.status = ANY(:statuses)
-  AND (
-       CAST(:after_score AS real) IS NULL
-       OR s.score < CAST(:after_score AS real)
-       OR (
-           s.score = CAST(:after_score AS real)
-           AND e.business_key > CAST(:after_key AS text)
-       )
-  )
-ORDER BY s.score DESC, e.business_key ASC
-LIMIT :limit
-""")
+    m.entry_id AS entry_id,
+    MAX(m.score) AS score
+FROM matches AS m
+WHERE m.trigram_score IS NULL
+   OR m.trigram_score >= :threshold
+GROUP BY m.entry_id
+""").columns(column("entry_id", Uuid), column("score", REAL))
 
 
 class EmptySearchQueryError(ValueError):
@@ -561,11 +563,39 @@ def _query_digest(q: str) -> str:
     return hashlib.blake2s(q.encode("utf-8"), digest_size=_CURSOR_QUERY_DIGEST_BYTES).hexdigest()
 
 
-def _format_cursor(hit: SearchHit, *, q: str) -> str:
-    return _CURSOR_SEPARATOR.join((repr(hit.score), _query_digest(q), hit.business_key))
+def _request_digest(q: str, filters: Sequence[FilterSelection]) -> str:
+    """The cursor's fingerprint of the *whole* request, not just `q`
+    (issue #139).
+
+    A score is meaningful only against the request that produced it, and
+    the filter set is as much a part of that request as `q` is: narrowing
+    the filters changes which entries exist to be scored, so `score <
+    :after_score` under a different filter set selects a window that is
+    neither the next page of the new request nor of the old one. That is
+    the silently-wrong answer `SearchCursorQueryMismatchError` already
+    exists to refuse for a changed `q`; a changed filter set is the same
+    fault and earns the same refusal.
+
+    `q` is length-prefixed (`<byte length>:<q>`, matching
+    `filter_digest_material`'s own netstring encoding) rather than
+    concatenated directly in front of the filter material. Nothing stops
+    `q` from ending in text that happens to parse as a well-formed prefix
+    of whatever filter material follows it, in which case a different
+    (`q`, `filters`) pair could concatenate to an identical digest input -
+    a separator character alone does not rule this out, since `q` is
+    arbitrary caller-supplied text and can contain it. Length-prefixing `q`
+    closes that the same way `filter_digest_material` closes the
+    equivalent collision for a filter value: an unambiguous length in place
+    of a separator or a framing invariant that has to be trusted to hold.
+    """
+    return _query_digest(f"{len(q.encode())}:{q}{filter_digest_material(filters)}")
 
 
-def _parse_cursor(cursor: str, *, q: str) -> tuple[float, str]:
+def _format_cursor(hit: SearchHit, *, q: str, filters: Sequence[FilterSelection]) -> str:
+    return _CURSOR_SEPARATOR.join((repr(hit.score), _request_digest(q, filters), hit.business_key))
+
+
+def _parse_cursor(cursor: str, *, q: str, filters: Sequence[FilterSelection]) -> tuple[float, str]:
     score_text, separator, remainder = cursor.partition(_CURSOR_SEPARATOR)
     digest, key_separator, business_key = remainder.partition(_CURSOR_SEPARATOR)
     if not separator or not key_separator:
@@ -602,20 +632,161 @@ def _parse_cursor(cursor: str, *, q: str) -> tuple[float, str]:
     # `compare_digest` rather than `==`: not because this is a secret, but
     # because it is the spelling that does not invite someone to later
     # "optimise" a digest comparison into a prefix check.
-    if not hmac.compare_digest(digest, _query_digest(q)):
+    if not hmac.compare_digest(digest, _request_digest(q, filters)):
         raise SearchCursorQueryMismatchError(
-            f"search cursor {cursor!r} was issued for a different query"
+            f"search cursor {cursor!r} was issued for a different query or filter set"
         )
     return score, business_key
 
 
-def search_entries(session: Session, *, q: str, limit: int, after: str | None = None) -> SearchPage:
-    """One keyset page of active entries matching `q`, best first.
+def _text_parameters(q: str) -> dict[str, Any]:
+    """Every value `_SCORED_SQL` binds.
+
+    Kept in one function because the CTE is now used by several statements
+    - the result page, and one aggregation per facet - and several copies
+    of this dict would be several places for a weight to go stale.
+    """
+    return {
+        "q": q,
+        # The exact-match half of `q`, trimmed. Python's `str.strip()`
+        # rather than SQL's `btrim(text)`, which trims spaces *only*: a
+        # cell copied out of a spreadsheet ends in a carriage return and
+        # a newline, and either would defeat every exact band while
+        # `similarity()` went on scoring the same value 1.0 (PR #237
+        # review). Bound separately rather than replacing `q` - the
+        # trigram and full-text branches, and the cursor digest, all use
+        # the string the caller actually sent.
+        "q_exact": q.strip(),
+        "statuses": list(PUBLIC_STATUSES),
+        "threshold": SIMILARITY_THRESHOLD,
+        # Bound, not interpolated, for the same reason every other value
+        # here is (NFR-22) - and bound rather than written into the
+        # statement text so the tests can import the constants and assert
+        # the band inequality against the same numbers the query uses.
+        "exact_code_score": EXACT_CODE_SCORE,
+        "exact_preferred_term_score": EXACT_PREFERRED_TERM_SCORE,
+        "exact_label_score": EXACT_LABEL_SCORE,
+        "preferred_term_weight": PREFERRED_TERM_WEIGHT,
+        "designation_weight": DESIGNATION_WEIGHT,
+        "binding_label_weight": BINDING_LABEL_WEIGHT,
+    }
+
+
+def _select_from_scored(
+    scored: Any,
+    columns: Sequence[Any],
+    predicates: Sequence[ColumnElement[bool]],
+) -> Select[Any]:
+    """The one join between `catalogue_entry` and the scored CTE, filtered to
+    public statuses and this request's filter predicates.
+
+    Both `_matching_entry_ids` and `build_search_statement` call this rather
+    than each writing their own `.join(...).where(...)` - the earlier
+    version had the result page re-derive the same join and status filter
+    independently, which meant a future change to either applied to one
+    call site and not the other would let the result page and a facet count
+    silently answer different questions about different populations, with
+    nothing to catch it but the count/result parity test noticing after the
+    fact. `columns` is the only thing that varies between the two callers.
+    """
+    return (
+        select(*columns)
+        .select_from(CatalogueEntry)
+        .join(scored, scored.c.entry_id == CatalogueEntry.id)
+        .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
+        .where(*predicates)
+    )
+
+
+def _matching_entry_ids(scored: Any, predicates: Sequence[ColumnElement[bool]]) -> Select[Any]:
+    """The entry ids `q` and `predicates` between them select.
+
+    So the result page and every facet count are answering the same
+    question about the same population - a facet count computed against a
+    differently-composed base is exactly the drift
+    `test_api_public_search.py`'s count/result parity test exists to catch.
+    """
+    return _select_from_scored(scored, [CatalogueEntry.id], predicates)
+
+
+def build_search_statement(
+    *,
+    filters: Sequence[FilterSelection] = (),
+    after_score: float | None = None,
+    after_key: str | None = None,
+    limit: int,
+) -> Select[Any]:
+    """The composed result statement `search_entries` runs.
+
+    Public because `backend/tests/test_db_search_index.py` `EXPLAIN`s the
+    statement the module actually runs, and the whole point of that test is
+    that it cannot be a hand-copied approximation - it used to import
+    `_SEARCH_SQL` for the same reason. `q` is not an argument: the plan is a
+    fact about the statement's *shape*, and `q` reaches it as a bound
+    parameter (`_text_parameters`) at execution.
+
+    The keyset predicate is *omitted* on the first page rather than written
+    as `CAST(:after_score AS real) IS NULL OR ...`. The old raw statement
+    needed that spelling because one text literal had to serve both cases,
+    and an untyped `$n IS NULL` gives PostgreSQL nothing to infer a
+    parameter type from; a composed statement simply does not add the
+    clause, which is clearer and one less thing for the planner to prove
+    away.
+
+    `REAL`, not `double precision`, on the cursor comparison, and the choice
+    is load-bearing: `similarity()` returns `real`, so `MAX(m.score)` is a
+    `real`, and the cursor carries that value through a Python float and
+    back. Comparing in double precision would make the tie branch exact only
+    for as long as float4 -> text -> float8 round-trips invariantly for this
+    driver - and it is the tie branch that keeps a page boundary inside a
+    score tie from dropping or repeating a row.
+    """
+    scored = _SCORED_SQL.cte("scored")
+    statement = (
+        _select_from_scored(
+            scored,
+            [
+                CatalogueEntry.business_key,
+                CatalogueEntry.preferred_term,
+                CatalogueEntry.status,
+                CatalogueEntry.specimen_unconstrained,
+                CatalogueEntry.updated_at,
+                scored.c.score.label("score"),
+            ],
+            filter_predicates(filters),
+        )
+        .order_by(scored.c.score.desc(), CatalogueEntry.business_key.asc())
+        # One more row than asked for, exactly as `list_entries` does: its
+        # existence is what decides `next_cursor`.
+        .limit(limit + 1)
+    )
+    if after_score is not None and after_key is not None:
+        after = cast(after_score, REAL)
+        statement = statement.where(
+            or_(
+                scored.c.score < after,
+                and_(scored.c.score == after, CatalogueEntry.business_key > after_key),
+            )
+        )
+    return statement
+
+
+def search_entries(
+    session: Session,
+    *,
+    q: str,
+    limit: int,
+    after: str | None = None,
+    filters: Sequence[FilterSelection] = (),
+) -> SearchPage:
+    """One keyset page of active entries matching `q` and `filters`, best
+    first.
 
     Raises `EmptySearchQueryError` before any SQL runs for a blank query,
     `MalformedSearchCursorError` for an `after` value this module did not
     produce, and its `SearchCursorQueryMismatchError` subclass for one it
-    produced for a different `q`.
+    produced for a different `q` *or a different filter set* (issue #139 -
+    see `_request_digest`).
     """
     if not q.strip():
         raise EmptySearchQueryError(
@@ -625,45 +796,17 @@ def search_entries(session: Session, *, q: str, limit: int, after: str | None = 
     after_score: float | None = None
     after_key: str | None = None
     if after is not None:
-        after_score, after_key = _parse_cursor(after, q=q)
+        after_score, after_key = _parse_cursor(after, q=q, filters=filters)
 
     # Transaction-scoped, and re-asserted in `scored`'s own WHERE - see the
     # module docstring on why both, and on what that restatement does and
     # does not protect against.
     session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
 
-    rows = session.execute(
-        _SEARCH_SQL,
-        {
-            "q": q,
-            # The exact-match half of `q`, trimmed. Python's `str.strip()`
-            # rather than SQL's `btrim(text)`, which trims spaces *only*: a
-            # cell copied out of a spreadsheet ends in a carriage return and
-            # a newline, and either would defeat every exact band while
-            # `similarity()` went on scoring the same value 1.0 (PR #237
-            # review). Bound separately rather than replacing `q` - the
-            # trigram and full-text branches, and the cursor digest, all use
-            # the string the caller actually sent.
-            "q_exact": q.strip(),
-            "statuses": list(PUBLIC_STATUSES),
-            "threshold": SIMILARITY_THRESHOLD,
-            # Bound, not interpolated, for the same reason every other value
-            # here is (NFR-22) - and bound rather than written into the
-            # statement text so the tests can import the constants and assert
-            # the band inequality against the same numbers the query uses.
-            "exact_code_score": EXACT_CODE_SCORE,
-            "exact_preferred_term_score": EXACT_PREFERRED_TERM_SCORE,
-            "exact_label_score": EXACT_LABEL_SCORE,
-            "preferred_term_weight": PREFERRED_TERM_WEIGHT,
-            "designation_weight": DESIGNATION_WEIGHT,
-            "binding_label_weight": BINDING_LABEL_WEIGHT,
-            "after_score": after_score,
-            "after_key": after_key,
-            # One more row than asked for, exactly as `list_entries` does:
-            # its existence is what decides `next_cursor`.
-            "limit": limit + 1,
-        },
-    ).all()
+    statement = build_search_statement(
+        filters=filters, after_score=after_score, after_key=after_key, limit=limit
+    )
+    rows = session.execute(statement, _text_parameters(q)).all()
 
     hits = tuple(
         SearchHit(
@@ -678,5 +821,40 @@ def search_entries(session: Session, *, q: str, limit: int, after: str | None = 
     )
     if len(hits) > limit:
         page = hits[:limit]
-        return SearchPage(hits=page, next_cursor=_format_cursor(page[-1], q=q))
+        return SearchPage(hits=page, next_cursor=_format_cursor(page[-1], q=q, filters=filters))
     return SearchPage(hits=hits, next_cursor=None)
+
+
+def search_facets(
+    session: Session,
+    *,
+    q: str,
+    context: FacetContext,
+    filters: Sequence[FilterSelection] = (),
+) -> tuple[Facet, ...]:
+    """Every facet's buckets, counted over the entries `q` matches.
+
+    Separate from `search_entries` rather than folded into it, because the
+    two answer different questions over the same population: a page is one
+    slice of the keyset, a facet count is over all of it. Sharing the scored
+    CTE is what keeps them consistent - see `_matching_entry_ids`.
+
+    The threshold GUC is set here too, and not merely because
+    `search_entries` happens to have run first: these are separate
+    statements over the same `%` scans, and a facet count computed at a
+    different threshold from the page it describes would be quietly,
+    unfalsifiably wrong.
+    """
+    if not q.strip():
+        raise EmptySearchQueryError(
+            "a search query must contain at least one non-whitespace character"
+        )
+    session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
+    scored = _SCORED_SQL.cte("scored")
+    return compute_facets(
+        session,
+        context=context,
+        selections=filters,
+        base_entry_ids=lambda predicates: _matching_entry_ids(scored, predicates),
+        params=_text_parameters(q),
+    )

@@ -26,7 +26,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
+
+from nptc.audit.writer import AuditContext
+from nptc.auth.grants import grant_role_unchecked
+from nptc.auth.permissions import Role
+from nptc.catalogue import facets as facets_module
+from nptc.db.models.user import User
+from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -317,3 +325,471 @@ def test_a_search_hit_carries_the_same_summary_fields_as_the_list(
 
     assert {key: hit[key] for key in listed} == listed
     assert 0 < hit["score"] <= 1
+
+
+# --- FR-16: faceted filters (issue #139) ----------------------------------
+#
+# The unit-level half of this - parsing, validation, predicate composition -
+# is `test_catalogue_facets.py`, which needs no database. What lives here is
+# everything that is only true of a real query against real rows: that a
+# bucket's count is the number of rows that bucket actually returns, that a
+# multi-valued property counts an entry once per value, and that flipping
+# `filterable` changes the answer on a *running* app.
+
+
+def _search(api: ApiTestApp, **params: Any) -> dict[str, Any]:
+    response = api.get("/catalogue/search", params=params)
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+def _facets(api: ApiTestApp, **params: Any) -> dict[str, dict[str, Any]]:
+    return {facet["key"]: facet for facet in _search(api, **params)["facets"]}
+
+
+def _bucket(facet: dict[str, Any], value: str) -> dict[str, Any]:
+    return next(bucket for bucket in facet["buckets"] if bucket["value"] == value)
+
+
+def _admin_token(api: ApiTestApp, *, subject: str) -> str:
+    """An Administrator token, resolved through the real auth chain.
+
+    Copied in shape from `test_api_registry_properties.py`'s own helper
+    rather than imported: these two modules load their support modules by
+    path (no `__init__.py` in this tree), and importing a private helper
+    across test modules would couple this file's fixture to that one's.
+    """
+    bootstrap = api.token(subject=subject)
+    api.get("/auth/me", token=bootstrap)
+    user = api.session.execute(
+        select(User)
+        .join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(UserIdentity.subject == subject)
+    ).scalar_one()
+    grant_role_unchecked(
+        api.session,
+        target_user_id=user.id,
+        role=Role.ADMINISTRATOR,
+        granted_by_user_id=None,
+        audit=AuditContext.system(),
+    )
+    api.session.flush()
+    return api.token(subject=subject, extra_claims={"acr": "2"})
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_facet_list_comes_from_the_registry_and_not_from_a_static_list(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The requirement's own sentence. Every `filterable` property this
+    fixture seeded is a facet; the two it seeded as non-filterable are not,
+    and neither is any hard-coded name.
+
+    Scoped to this fixture's own keys throughout (CLAUDE.md's shared-container
+    rule): the response also carries whatever else the running database holds,
+    which is not this test's business."""
+    facets = _facets(api, q=_seed.CANONICAL_TERM)
+
+    assert seeded.discipline_property_key in facets
+    assert seeded.specimen_code_property_key in facets
+    assert seeded.specimen_property_key in facets
+    # `volume_ml` and `flippable` are seeded `filterable=False`.
+    assert seeded.volume_property_key not in facets
+    assert seeded.flippable_property_key not in facets
+    # The declared core-column facet, present without being a property.
+    assert "status" in facets
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_facet_bucket_s_count_is_the_number_of_rows_that_bucket_returns(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The parity check the plan calls for, and the one drift no manual use
+    would reveal: a count computed over a differently-composed base than the
+    result set looks entirely plausible and is simply wrong.
+
+    Asserted for *every* bucket of the facet, not one - a per-bucket
+    off-by-one (an entry counted under a value it does not hold) survives a
+    single-bucket check."""
+    key = seeded.discipline_property_key
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[key]
+    assert facet["buckets"], "the fixture's discipline values should produce buckets"
+
+    for bucket in facet["buckets"]:
+        keys = _keys(api, **{"q": _seed.CANONICAL_TERM, f"filter.{key}": bucket["value"]})
+        assert len(keys) == bucket["count"], (
+            f"facet {key!r} bucket {bucket['value']!r} claims {bucket['count']} "
+            f"entries and returns {len(keys)}"
+        )
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_multi_valued_property_counts_an_entry_once_under_each_of_its_values(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The canonical entry holds seven specimen codes. It must contribute
+    one to each of seven buckets - never seven to one, which is what a join
+    instead of an `EXISTS`/`COUNT(DISTINCT ...)` produces, and which every
+    other test in this suite passes happily."""
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.specimen_code_property_key]
+
+    counts = {bucket["value"]: bucket["count"] for bucket in facet["buckets"]}
+    for code, _display in _seed.SPECIMEN_CODES:
+        assert counts[code] == 1, f"{code} counted {counts[code]} times, expected once"
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.req("FR-54")
+@pytest.mark.integration
+def test_a_coded_bucket_is_labelled_from_the_stored_display(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """ADR-0013's open question 2, as resolved by ADR-0032: a coded facet
+    groups on the code alone and is labelled from the `display` stored beside
+    it when the value was recorded. No terminology call happens on the search
+    path (FR-54), which is also why the label is stable when the server is
+    unreachable."""
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.specimen_code_property_key]
+    code, display = _seed.SPECIMEN_CODES[0]
+
+    assert _bucket(facet, code)["label"] == display
+    # The stub terminology client this app is built over records every call
+    # it receives; a facet response must not have made one.
+    assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_truncated_facet_says_so(
+    api: ApiTestApp, seeded: SeededCatalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`FACET_BUCKET_CAP`'s whole contract - "a client is never quietly
+    shown a partial list it cannot tell from a whole one" - rests on
+    `truncated`, and nothing in this suite asserted the flag before this
+    test: the `limit(FACET_BUCKET_CAP + 1)` / `len(rows) > FACET_BUCKET_CAP`
+    / `rows[:FACET_BUCKET_CAP]` triple is exactly where an off-by-one hides.
+    Lowering the cap below the fixture's own discipline value count is
+    cheaper and more direct than seeding two dozen new entries just to reach
+    the real one."""
+    monkeypatch.setattr(facets_module, "FACET_BUCKET_CAP", 1)
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.discipline_property_key]
+    assert facet["truncated"] is True
+    assert len(facet["buckets"]) == 1
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_facet_at_exactly_the_cap_is_not_truncated(
+    api: ApiTestApp, seeded: SeededCatalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative case alongside the above: a facet whose value count
+    lands exactly on the cap must not report truncation it did not do."""
+    monkeypatch.setattr(facets_module, "FACET_BUCKET_CAP", 2)
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.discipline_property_key]
+    assert facet["truncated"] is False
+    assert len(facet["buckets"]) == 2
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_filterable_property_that_cannot_be_grouped_says_so_rather_than_vanishing(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """ADR-0013 SS8's "stated cost". A `decimal` property has no meaningful
+    grouping - every value is its own bucket - so its handler returns `None`
+    from `facet_expression()`. It is still a usable filter, and it is
+    reported with `facetable: false` rather than omitted: a facet that
+    vanished silently is indistinguishable, to a client, from one whose
+    values happen to match nothing."""
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.turnaround_property_key]
+
+    assert facet["facetable"] is False
+    assert facet["buckets"] == []
+    # ... and still a filter. The canonical entry's value is inside this
+    # range and it is the entry the query matches best.
+    key = seeded.turnaround_property_key
+    assert seeded.canonical in _keys(
+        api, **{"q": _seed.CANONICAL_TERM, f"filter.{key}:range": "1..2"}
+    )
+    assert seeded.canonical not in _keys(
+        api, **{"q": _seed.CANONICAL_TERM, f"filter.{key}:range": "10..20"}
+    )
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_values_or_within_a_facet_and_facets_and_with_each_other(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The only composition under which a facet panel behaves the way every
+    user expects: ticking a second value in one facet broadens, ticking a
+    value in a second facet narrows."""
+    discipline = seeded.discipline_property_key
+    specimen = seeded.specimen_code_property_key
+
+    chemistry = _keys(api, **{"q": _seed.CANONICAL_TERM, f"filter.{discipline}": "Chemistry"})
+    both = _keys(
+        api,
+        **{
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{discipline}": ["Chemistry", "Haematology"],
+        },
+    )
+    # A second value in the same facet broadens, strictly.
+    assert set(chemistry) < set(both)
+    assert set(both) == {seeded.canonical, seeded.synonym_only}
+
+    narrowed = _keys(
+        api,
+        **{
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{discipline}": ["Chemistry", "Haematology"],
+            # Only the canonical entry carries any specimen code at all.
+            f"filter.{specimen}": _seed.SPECIMEN_CODES[0][0],
+        },
+    )
+    # A value in a second facet narrows, strictly.
+    assert set(narrowed) < set(both)
+    assert narrowed == [seeded.canonical]
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_facet_s_own_selection_does_not_narrow_its_own_counts(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """Drill-down. Choosing "Chemistry" must not collapse the discipline
+    facet to a single bucket - a user has to be able to see what switching to
+    "Haematology" would give them, or the panel is a dead end. Every *other*
+    facet does narrow, which is the half that makes the counts useful."""
+    discipline = seeded.discipline_property_key
+    unfiltered = _facets(api, q=_seed.CANONICAL_TERM)[discipline]
+    filtered = _facets(api, **{"q": _seed.CANONICAL_TERM, f"filter.{discipline}": "Chemistry"})[
+        discipline
+    ]
+
+    # More than one bucket, or the assertion below would hold vacuously and
+    # this test would pass against an implementation with no drill-down at
+    # all.
+    assert len(unfiltered["buckets"]) > 1
+    assert filtered["buckets"] == unfiltered["buckets"]
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_flipping_filterable_makes_a_property_a_facet_with_no_restart(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """FR-09's actual claim, asserted end to end rather than by hand.
+
+    The property is seeded `filterable=False`, flipped through the real
+    registry `PATCH` route on the *same running app*, and re-queried. Nothing
+    is rebuilt, no dependency is re-resolved and no process restarts - so a
+    facet list computed once at start-up, or cached anywhere, fails here and
+    passes everything else in this file."""
+    key = seeded.flippable_property_key
+
+    # --- before: not a facet, and refused as a filter -----------------
+    assert key not in _facets(api, q=_seed.CANONICAL_TERM)
+    refused = api.get(
+        "/catalogue/search", params={"q": _seed.CANONICAL_TERM, f"filter.{key}": "Routine"}
+    )
+    assert refused.status_code == 422, refused.text
+
+    # --- the flip, through the real route -----------------------------
+    token = _admin_token(api, subject="sub-fr16-flip")
+    current = api.get(f"/registry/properties/{key}", token=token)
+    assert current.status_code == 200, current.text
+    patched = api.request(
+        "PATCH",
+        f"/registry/properties/{key}",
+        token=token,
+        json={
+            "expected_row_version": current.json()["row_version"],
+            "reason": "Made filterable to prove FR-09's no-restart claim (issue #139).",
+            "filterable": True,
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["filterable"] is True
+
+    # --- after: a facet, with counts that match the rows ---------------
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[key]
+    assert facet["facetable"] is True
+    assert facet["buckets"]
+    for bucket in facet["buckets"]:
+        keys = _keys(api, **{"q": _seed.CANONICAL_TERM, f"filter.{key}": bucket["value"]})
+        assert len(keys) == bucket["count"]
+
+
+# --- FR-16 refusals -------------------------------------------------------
+#
+# Every one of these is the same failure in a different disguise: a filter
+# the server does not understand. Ignoring it serves a page that looks like
+# an answer to the question the caller asked and is an answer to a different
+# one, with nothing in the response to tell them apart.
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_an_unknown_filter_key_is_a_422_not_an_unfiltered_page(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    response = api.get(
+        "/catalogue/search",
+        params={"q": _seed.CANONICAL_TERM, "filter.no_such_property": "x"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_non_filterable_property_is_a_422_not_an_unfiltered_page(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The key names a real property. Silently ignoring it is the worst
+    outcome available: the caller is served the whole result set and told
+    nothing."""
+    response = api.get(
+        "/catalogue/search",
+        params={"q": _seed.CANONICAL_TERM, f"filter.{seeded.volume_property_key}": "5"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_an_operator_the_property_does_not_support_is_a_422(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`prefix` against a coded property: the stored value is an object, so
+    there is no prefix to take, and `CodeHandler.supported_filter_ops()` is
+    what says so - not a list in the router."""
+    response = api.get(
+        "/catalogue/search",
+        params={
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{seeded.specimen_code_property_key}:prefix": "119",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_value_of_the_wrong_kind_is_a_422(api: ApiTestApp, seeded: SeededCatalogue) -> None:
+    response = api.get(
+        "/catalogue/search",
+        params={
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{seeded.turnaround_property_key}": "not a number",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_an_unrecognised_status_value_is_a_422_not_an_empty_page(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`status` has no `PropertyDefinition` and so no handler to validate a
+    value against - it must check itself. Before this check existed, a
+    typo'd status silently matched zero rows: a 200 with an empty result,
+    indistinguishable from a legitimately empty search."""
+    response = api.get(
+        "/catalogue/search",
+        params={"q": _seed.CANONICAL_TERM, "filter.status": "activee"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_same_facet_sent_with_two_operators_is_a_422(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`?filter.discipline=chemistry&filter.discipline:in=haematology` reads
+    as two selections on the same key, which would AND into a predicate no
+    row can satisfy - a caller error, and it must be reported as one rather
+    than served as a silently empty page."""
+    key = seeded.discipline_property_key
+    response = api.get(
+        "/catalogue/search",
+        params={
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{key}": "Chemistry",
+            f"filter.{key}:in": "Haematology",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_cursor_replayed_under_a_different_filter_set_is_refused(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """A search cursor carries a relevance score, and narrowing the filters
+    changes which entries exist to be scored - so the window the cursor names
+    is the next page of neither request. Refused, exactly as a cursor
+    replayed under a different `q` already is: an arbitrarily truncated
+    result set is the kind of wrong answer a client cannot detect."""
+    key = seeded.discipline_property_key
+    first = _search(api, **{"q": _seed.CANONICAL_TERM, "limit": 1})
+    cursor = first["next_cursor"]
+    assert cursor is not None, "the fixture should match more than one entry"
+
+    # The same cursor, on the same `q`, but now with a filter applied.
+    response = api.get(
+        "/catalogue/search",
+        params={
+            "q": _seed.CANONICAL_TERM,
+            "limit": 1,
+            "after": cursor,
+            f"filter.{key}": "Chemistry",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    # ... and the unchanged request still pages, so the refusal above is
+    # about the filter set and not about the cursor being unusable at all.
+    assert (
+        api.get(
+            "/catalogue/search",
+            params={"q": _seed.CANONICAL_TERM, "limit": 1, "after": cursor},
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_browse_listing_filters_but_returns_no_facets(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """ADR-0032's split: `/catalogue/entries` accepts the same filters and
+    computes no counts, because counting on every page of a browse costs
+    something no caller has asked for."""
+    key = seeded.discipline_property_key
+    response = api.get(
+        "/catalogue/entries",
+        params={"after": seeded.before_all, f"filter.{key}": "Haematology"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "facets" not in body
+    # In `business_key` order, and only the two entries holding that value -
+    # `before_all` excludes everything this fixture did not seed.
+    assert [item["business_key"] for item in body["items"]] == [
+        seeded.synonym_only,
+        seeded.tie_first,
+    ]
+
+    refused = api.get("/catalogue/entries", params={"filter.no_such_property": "x"})
+    assert refused.status_code == 422, refused.text

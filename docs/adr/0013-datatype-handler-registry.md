@@ -664,12 +664,14 @@ Following ADR-0012's precedent of naming the deciding issue rather than guessing
    constructs `CodeHandler` with `local_code_lookup=None` and raises
    `UnsupportedBindingError` for `binding_target = 'local_code_system'` - a loud refusal,
    never a silent pass.
-2. `code`'s facet grouping key (code alone vs `(system, code)`) ->
-   [#139](https://github.com/MattCordell/nptc-platform/issues/139), undecidable until #56
-   settles whether local codes share the property-value shape. Both options are recorded here
-   so #139 does not have to rediscover them: group by `code` alone (simpler, loses the
-   system distinction where two systems reuse a code) or by `(system, code)` (correct, adds a
-   composite facet key).
+2. ~~`code`'s facet grouping key (code alone vs `(system, code)`)~~ -> **settled by
+   [#139](https://github.com/MattCordell/nptc-platform/issues/139) in
+   [ADR-0032](0032-faceted-filter-query-surface.md): group by `code` alone**, labelled from
+   the `display` stored beside it (no terminology call on the search path, FR-54). The
+   catalogue binds one value set per property, so a code within one property is
+   unambiguous; a `(system, code)` bucket value would additionally have to be escaped and
+   parsed to be sent back as a filter. Both options were recorded here so #139 did not have
+   to rediscover them, which is what happened.
 3. `FHIR_VALUE`'s per-datatype `CodeSystem.property.type` mapping -> the FR-64 supplement
    issue (not yet created). The target member (`SerialisationTarget.FHIR_VALUE`) is fixed
    here; the per-datatype FHIR types it maps to are not.

@@ -63,7 +63,7 @@
           "catalogue"
         ],
         "summary": "One page of published catalogue entries",
-        "description": "Keyset paging on `business_key`, ascending. Pass the response's\n`next_cursor` back as `after` for the following page; a `null`\n`next_cursor` means there is no following page.\n\nThere is no `offset` and no total count, on purpose (ADR-0024): an\noffset re-reads and re-skips every earlier row on every page, and drops\nor repeats rows outright when a concurrent insert shifts the window\nmid-scan.",
+        "description": "Keyset paging on `business_key`, ascending. Pass the response's\n`next_cursor` back as `after` for the following page; a `null`\n`next_cursor` means there is no following page.\n\nThere is no `offset` and no total count, on purpose (ADR-0024): an\noffset re-reads and re-skips every earlier row on every page, and drops\nor repeats rows outright when a concurrent insert shifts the window\nmid-scan.\n\n`filter.*` parameters are accepted here and behave exactly as they do on\n`/catalogue/search`. Facets are **not** returned: computing counts on\nevery page of a browse costs something no caller has asked for, and\n`GET /catalogue/search` is where the facet list with counts lives\n(ADR-0032).",
         "operationId": "list_entries_api_v1_catalogue_entries_get",
         "parameters": [
           {
@@ -98,6 +98,20 @@
               "title": "After"
             },
             "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+          },
+          {
+            "name": "filter.{property_key}",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032)."
           }
         ],
         "responses": {
@@ -122,7 +136,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -140,7 +154,7 @@
           "catalogue"
         ],
         "summary": "Search the published catalogue by term",
-        "description": "Best match first, ties broken by `business_key` so the order is\ntotal and paging cannot drop or repeat a row inside a tie.\n\nA query below the similarity threshold returns an empty page rather\nthan a broadened match. That is the intended behaviour: a search that\nquietly matches everything is worse than one that matches nothing,\nbecause the caller cannot tell it from a working search over a catalogue\nthat genuinely has nothing to offer.",
+        "description": "Best match first, ties broken by `business_key` so the order is\ntotal and paging cannot drop or repeat a row inside a tie.\n\nA query below the similarity threshold returns an empty page rather\nthan a broadened match. That is the intended behaviour: a search that\nquietly matches everything is worse than one that matches nothing,\nbecause the caller cannot tell it from a working search over a catalogue\nthat genuinely has nothing to offer.\n\n`facets` is the facet list for this search, with counts over the whole\nresult set. It is derived from the property registry on every request\n(FR-16), so it is not a fixed set a client may hard-code: a property an\nadministrator marks filterable appears here on the very next request.",
         "operationId": "search_api_v1_catalogue_search_get",
         "parameters": [
           {
@@ -182,10 +196,24 @@
                   "type": "null"
                 }
               ],
-              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` it was issued for - sending it with a different `q` is a 422, not a meaningless page.",
+              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` **and the filters** it was issued for - sending it with either changed is a 422, not a meaningless page, because a relevance score means nothing against a different request.",
               "title": "After"
             },
-            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` it was issued for - sending it with a different `q` is a 422, not a meaningless page."
+            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` **and the filters** it was issued for - sending it with either changed is a 422, not a meaningless page, because a relevance score means nothing against a different request."
+          },
+          {
+            "name": "filter.{property_key}",
+            "in": "query",
+            "required": false,
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032)."
           }
         ],
         "responses": {
@@ -210,7 +238,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -278,7 +306,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -471,7 +499,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -651,7 +679,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -843,7 +871,7 @@
             }
           },
           "422": {
-            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q`), or a `limit` outside its range.",
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3389,6 +3417,74 @@
         "title": "ErrorResponse",
         "description": "Every refusal this API makes has this shape - one sentence saying\nwhat to do next, and deliberately nothing else. It never names a role,\na permission or an internal identifier (FR-44, NFR-04)."
       },
+      "Facet": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "The property key, and the suffix of its `filter.` parameter."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "The property's own label, as an administrator set it."
+          },
+          "facetable": {
+            "type": "boolean",
+            "title": "Facetable",
+            "description": "`false` for a property that can be filtered on but not grouped - a continuous numeric one, where every value would be its own bucket. Such a facet is reported with no buckets rather than omitted, so a client can tell it apart from a facet whose values happen to match nothing."
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "`true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead."
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/FacetBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "facetable",
+          "truncated",
+          "buckets"
+        ],
+        "title": "Facet",
+        "description": "One facet, derived from the property registry at request time.\n\nNever a fixed list: a property an administrator marks filterable appears\nhere on the next request, with no deployment and no restart (FR-09,\nFR-16). A client must therefore render whatever it is given rather than\nhard-coding the facets it knows about."
+      },
+      "FacetBucket": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "Send this back as the filter value to select this bucket - `?filter.<key>=<value>`. It is the stored value, not the label."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "How to show this bucket. For a coded property it is the display term stored alongside the code when the value was recorded, never a live terminology lookup, so it is stable and offline. Falls back to `value` where the stored value carries no label of its own."
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Entries in the current result set carrying this value. An entry with several values of one property counts once under each of them, never several times under one."
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "label",
+          "count"
+        ],
+        "title": "FacetBucket",
+        "description": "One value of one facet, with how many entries in the current result\nset carry it."
+      },
       "FieldConflictItem": {
         "properties": {
           "field": {
@@ -4065,12 +4161,21 @@
               }
             ],
             "title": "Next Cursor"
+          },
+          "facets": {
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            },
+            "type": "array",
+            "title": "Facets",
+            "description": "Every facet available for this search, with counts over the whole result set rather than this page. A facet's own selection is excluded from its own counts, so a bucket you have not chosen still tells you how many entries it would give you."
           }
         },
         "type": "object",
         "required": [
           "items",
-          "next_cursor"
+          "next_cursor",
+          "facets"
         ],
         "title": "SearchPage"
       },

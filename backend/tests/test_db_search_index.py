@@ -21,7 +21,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.expression import ClauseElement, Executable
 
 _NORMALISE_SQL = text("SELECT nptc_search_text(:value)")
 
@@ -62,7 +64,7 @@ def test_search_text_is_strict_so_null_does_not_fold_to_empty(db: Connection) ->
 #: what makes a retired row unreachable, not a size optimisation.
 _ACTIVE_ONLY = "WHERE (status = 'active'::text)"
 
-#: Every index `nptc.catalogue.search._SEARCH_SQL` depends on, with what its
+#: Every index `nptc.catalogue.search._SCORED_SQL` depends on, with what its
 #: definition must contain. Nine entries for nine branches - the table is the
 #: point, because the failure this module exists to catch is a branch that
 #: quietly stops being index-supported, and a list that omitted one would
@@ -309,13 +311,34 @@ _ONE_TERM_SQL = text(
 )
 
 
-def _explain(db: Connection, sql: str, params: dict[str, object]) -> str:
-    # String concatenation into `text()` is confined to this test tree:
-    # `test_sql_parameterisation.py` scans `backend/src` and
-    # `backend/migrations` only, and the statement being explained is
-    # `nptc.catalogue.search`'s own module-level literal, with every value
-    # still bound as a parameter.
-    rows = db.execute(text("EXPLAIN " + sql), params).scalars().all()
+class _Explain(Executable, ClauseElement):
+    """`EXPLAIN <statement>`, through SQLAlchemy's normal pipeline.
+
+    Issue #139 moved the outer half of the search from a raw `text()`
+    literal to a composed Core select over the scored CTE, so there is no
+    longer a single SQL string to concatenate `EXPLAIN` onto - and there
+    must not be one, since the FR-16 filter predicates are built per
+    request. This is the same compiler hook `test_db_property_index_plan.py`
+    uses, and for the same reason: it applies each column's bind processor,
+    so a handler-built predicate reaches psycopg correctly typed.
+
+    `inherit_cache = False`: the wrapped statement differs by call, and
+    caching an `EXPLAIN` around the wrong one would be a subtle test bug.
+    """
+
+    inherit_cache = False
+
+    def __init__(self, statement: ClauseElement) -> None:
+        self.statement = statement
+
+
+@compiles(_Explain)
+def _compile_explain(element: _Explain, compiler: object, **kw: object) -> str:
+    return "EXPLAIN " + compiler.process(element.statement, **kw)  # type: ignore[attr-defined]
+
+
+def _explain(db: Connection, statement: ClauseElement, params: dict[str, object]) -> str:
+    rows = db.execute(_Explain(statement), params).scalars().all()
     return chr(10).join(rows)
 
 
@@ -324,9 +347,13 @@ def _explain(db: Connection, sql: str, params: dict[str, object]) -> str:
 def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection) -> None:
     """`EXPLAIN` on the exact statement `nptc.catalogue.search` runs.
 
-    Imports the module's private `_SEARCH_SQL` on purpose: explaining a
-    hand-copied approximation of the query would be a test of the copy, and
-    the copy is precisely what cannot drift when the real predicate does.
+    Builds the statement through `build_search_statement` on purpose:
+    explaining a hand-copied approximation of the query would be a test of
+    the copy, and the copy is precisely what cannot drift when the real
+    predicate does. Since issue #139 that statement is a composed Core
+    select over `_SCORED_SQL`'s CTE rather than one raw literal - the nine
+    scans this test is about are unchanged, and the assertions below are
+    what proves it.
 
     **Why `enable_seqscan = off`, and why that is not cheating.** What this
     test needs to establish is that the predicate is *expressed so the index
@@ -371,22 +398,8 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     term: str = db.execute(_ONE_TERM_SQL).scalar_one()
     plan = _explain(
         db,
-        str(search._SEARCH_SQL),
-        {
-            "q": term,
-            "q_exact": term.strip(),
-            "statuses": ["active"],
-            "threshold": search.SIMILARITY_THRESHOLD,
-            "exact_code_score": search.EXACT_CODE_SCORE,
-            "exact_preferred_term_score": search.EXACT_PREFERRED_TERM_SCORE,
-            "exact_label_score": search.EXACT_LABEL_SCORE,
-            "preferred_term_weight": search.PREFERRED_TERM_WEIGHT,
-            "designation_weight": search.DESIGNATION_WEIGHT,
-            "binding_label_weight": search.BINDING_LABEL_WEIGHT,
-            "after_score": None,
-            "after_key": None,
-            "limit": 51,
-        },
+        search.build_search_statement(limit=50),
+        dict(search._text_parameters(term)),
     )
 
     # Every branch, by name. Asserting the count alone would let one index
@@ -436,22 +449,8 @@ def test_a_negation_only_query_plans_away_the_full_text_branches(db: Connection)
 
     plan = _explain(
         db,
-        str(search._SEARCH_SQL),
-        {
-            "q": "-glucose",
-            "q_exact": "-glucose",
-            "statuses": ["active"],
-            "threshold": search.SIMILARITY_THRESHOLD,
-            "exact_code_score": search.EXACT_CODE_SCORE,
-            "exact_preferred_term_score": search.EXACT_PREFERRED_TERM_SCORE,
-            "exact_label_score": search.EXACT_LABEL_SCORE,
-            "preferred_term_weight": search.PREFERRED_TERM_WEIGHT,
-            "designation_weight": search.DESIGNATION_WEIGHT,
-            "binding_label_weight": search.BINDING_LABEL_WEIGHT,
-            "after_score": None,
-            "after_key": None,
-            "limit": 51,
-        },
+        search.build_search_statement(limit=50),
+        dict(search._text_parameters("-glucose")),
     )
 
     assert plan.count("One-Time Filter: false") == 4, plan
