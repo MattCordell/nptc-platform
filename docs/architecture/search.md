@@ -201,6 +201,78 @@ Results are ordered `score DESC, business_key ASC`. The tie-break is load-bearin
 decoration: scores tie constantly over a catalogue of similar short terms, so score alone
 is not a total order and a page boundary inside a tie would drop or repeat rows.
 
+## How facets are derived (FR-16)
+
+The facet list is not written down anywhere. It is a `SELECT` against
+`property_definition` on every request: every active property an administrator has marked
+`filterable`, plus the one declared core-column facet (entry status, which lives on
+`catalogue_entry` and has no property definition to be discovered from). Flipping
+`filterable` on a property changes the answer on the very next request — no deployment, no
+restart, no cache to invalidate (FR-09). That is the point of the requirement; a
+hard-coded facet list would defeat the reason the property registry exists.
+
+Nothing in `nptc.catalogue.facets` names a datatype. Each facet's grouping expression, the
+operators it accepts and the predicate it renders all come from the property's
+`DatatypeHandler` — `facet_expression()`, `supported_filter_ops()` and `filter_clause()`,
+the three members [ADR-0013](../adr/0013-datatype-handler-registry.md) added for this
+caller (FR-77). Entry status reaches the same code through a descriptor of the same shape,
+so no line of the query builder has a special case for it.
+
+**The query surface.** `?filter.<key>=<value>`, repeated once per value. Within one facet
+values are OR-ed; across facets they are AND-ed. An operator other than the default
+`equals` is named after the key — `?filter.assay_name:prefix=glu`,
+`?filter.volume_ml:range=1..5` — and which operators a facet accepts follows from the
+property's own handler, not from a list in the router.
+[ADR-0032](../adr/0032-faceted-filter-query-surface.md) records why the dotted prefix, why
+the repeated form, and what was rejected.
+
+**Both collection endpoints accept filters; only `/catalogue/search` returns facets.**
+Computing counts on every page of a browse is a cost nobody has asked for, and adding them
+later is additive while removing them would not be (ADR-0032).
+
+**Counts.** A bucket's count is the number of entries in the whole result set carrying
+that value — not the number on this page. Two properties of it are worth stating because
+neither is obvious and both are asserted as tests:
+
+- *A multi-valued property counts an entry once per value.* An entry with seven specimens
+  contributes one to each of seven buckets, never seven to one. Filter predicates are
+  `EXISTS` subqueries over `property_value` and counts are `COUNT(DISTINCT entry_id)`,
+  which is what makes that true; a join gets it wrong and passes every other test here.
+- *A facet's own selection is excluded from its own counts.* Choosing "Chemistry" does not
+  collapse the discipline facet to one bucket — a user has to be able to see what
+  switching to "Haematology" would give them. Every *other* facet does narrow, which is
+  what makes the counts worth reading.
+
+**Bucket cap.** At most 20 buckets per facet, ordered by count descending, and the facet
+says `truncated: true` when the cap bit. There is no way to page through the remainder;
+narrow the search instead. The number is invented, in the same category as the similarity
+threshold above, and is named once in code (`FACET_BUCKET_CAP`) and argued in ADR-0032.
+
+**Labels.** A coded facet groups on the code alone and is labelled from the `display`
+stored beside it when the value was recorded. No terminology call happens on the search
+path (FR-54) — a `$lookup` per bucket would be slow on the happy path and would break
+whenever the terminology server was unreachable.
+
+**A filterable property that cannot be grouped.** A `decimal` property's handler returns
+`None` from `facet_expression()`: every value of a continuous quantity is its own bucket,
+so grouping says nothing. Such a property is still a usable *filter*, and it appears in
+the facet list with `facetable: false` and no buckets rather than vanishing —
+[ADR-0013](../adr/0013-datatype-handler-registry.md) §8's "stated cost". A facet that
+disappeared silently is indistinguishable, to a client, from one whose values happen to
+match nothing.
+
+**Refusals.** An unknown filter key, a key naming a property that is not `filterable`, an
+operator the property's handler does not support, and a value the property cannot hold are
+all 422s. None of them is ignored: a dropped filter serves the caller a page that looks
+like an answer to the question they asked and is an answer to a different one, with
+nothing in the response to tell them apart.
+
+**Cursors.** The search cursor is bound to the filter set as well as to `q`. Narrowing the
+filters changes which entries exist to be scored, so a replayed cursor names a window that
+is the next page of neither request, and it is refused. `/catalogue/entries`' cursor is a
+`business_key` and is *not* filter-bound: the ordering is on that column alone and stays
+total whatever the filters are.
+
 ## What enforces this
 
 | Claim | Test |
@@ -221,13 +293,17 @@ is not a total order and a page boundary inside a tie would drop or repeat rows.
 | The document and query functions agree, and stem as expected | `test_db_search_index.py` |
 | The threshold reverts when the transaction ends | `test_db_search_index.py` |
 | No search SQL is built by string concatenation (NFR-22) | `test_sql_parameterisation.py` |
+| A facet count equals the rows that bucket returns, per bucket | `test_api_public_search.py` |
+| An entry with seven specimens counts once under each of them | `test_api_public_search.py` |
+| Flipping `filterable` adds a facet with no restart | `test_api_public_search.py` |
+| An unknown, non-filterable, badly-operated or badly-valued filter is refused | `test_api_public_search.py`, `test_catalogue_facets.py` |
+| A cursor replayed under a different filter set is refused | `test_api_public_search.py` |
+| The filter predicate reaches #54's generated index; the count reads one property, not the table | `test_db_property_index_plan.py` |
 
 ## Not here
 
 - **Exact code lookup as its own route** (FR-17) is issue #140. Typing a code into `q`
   works, as FR-14 requires; a dedicated addressable URL for a code is separate.
-- **Faceted filtering over `filterable` properties** (FR-16) is a separate child of epic
-  #57, not this work.
 - **Draft and other non-active entries** are never served here. The maintenance UI's own
   search over drafts is issue #149; the entry-side indexes are already non-partial so
   that it can use them.
