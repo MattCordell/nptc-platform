@@ -338,13 +338,6 @@ already in place never violates the new CHECK on `upgrade head`. A fresh retirem
 after this migration writes `retired_at` via `func.now()` (the database clock, not
 the application clock), independent of this one-time backfill.
 
-## `0017_code_binding_system_code_index.py`
-
-Adds `ix_code_binding_system_code` (issue #140, FR-17 - see
-[`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)).
-No table, no column, no grant changes, and nothing to backfill: `upgrade head` is
-all that is required.
-
 ## Testcontainers and Docker
 
 `uv run pytest` from the repository root now needs a **running** Docker daemon, not merely
