@@ -38,6 +38,7 @@ this has no acknowledgement path: a code is either free or it isn't.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from sqlalchemy import inspect as sa_inspect
@@ -356,13 +357,23 @@ def retire_binding(
     Does not accept a successor - see the module docstring for why
     `ix_code_binding_one_active_per_entry` makes "retire with a successor
     already linked" an impossible first step, and use `link_replacement`
-    once the successor exists instead."""
+    once the successor exists instead.
+
+    Sets `retired_at` (FR-17, issue #140; `ck_code_binding_retired_at`
+    requires it exactly when `status = 'retired'`) alongside `status`/
+    `retirement_reason`, matching `LocalCode.deprecated_at`'s own
+    `datetime.now(UTC)` precedent for a manually-set timestamp - the real
+    retirement time `nptc.catalogue.queries.get_entry_by_code` orders a
+    multi-way retired-code collision by, rather than the `updated_at`
+    proxy this column exists precisely so that ordering cannot silently
+    drift onto."""
     if binding.status == str(CodeBindingStatus.RETIRED):
         raise CodeBindingAlreadyRetiredError(f"code binding {binding.id} is already retired")
 
     validated_reason = validate_changelog_note(reason)
     binding.status = str(CodeBindingStatus.RETIRED)
     binding.retirement_reason = validated_reason
+    binding.retired_at = datetime.now(UTC)
     record_change(
         session,
         ctx,

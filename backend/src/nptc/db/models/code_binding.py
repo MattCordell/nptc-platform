@@ -51,6 +51,21 @@ create_binding`'s own pre-insert check, which exists only so the
 rejection is a domain error rather than a raw `IntegrityError`. Partial on
 `status = 'active'`, matching every other index on this table, so a code
 freed by retirement is immediately rebindable elsewhere.
+
+**`retired_at`, issue #140 (FR-17).** `ix_code_binding_one_active_entry_
+per_code` above is scoped to *active* bindings only - two different
+entries can each hold the same code as a *retired* binding (a code is
+retired and replaced, never rebound in place, so each retirement is a new
+row), which is the one place FR-17's "unambiguous" lookup needs a
+tie-break. `retired_at` (mandatory exactly when `status = 'retired'`,
+mirroring `retirement_reason`'s own CHECK) is that tie-break's ordering
+column - `nptc.catalogue.queries.get_entry_by_code` orders a multi-way
+retired collision by `retired_at DESC, business_key ASC`, see
+`docs/adr/0033-exact-code-lookup-routes.md`. Set once, by
+`nptc.catalogue.bindings.retire_binding`, alongside `status`/
+`retirement_reason` - never updated again, but not immutable at the
+database layer the way `code`/`entry_id` are, since nothing else in this
+table treats a retirement as reversible enough to need that guard.
 """
 
 from __future__ import annotations
@@ -111,6 +126,12 @@ _RETIREMENT_REASON_CHECK_SQL = (
 )
 _REPLACED_BY_REQUIRES_RETIRED_SQL = "replaced_by_binding_id IS NULL OR status = 'retired'"
 _NO_SELF_SUPERSESSION_SQL = "replaced_by_binding_id IS NULL OR replaced_by_binding_id <> id"
+#: FR-17, issue #140: mandatory exactly when retired, forbidden while
+#: active - mirrors `_RETIREMENT_REASON_CHECK_SQL` above exactly, and exists
+#: for the same reason: a real timestamp to order a multi-way retired-code
+#: collision by, rather than a proxy (`updated_at` moves on any column
+#: update, not only a retirement).
+_RETIRED_AT_CHECK_SQL = "(status = 'retired') = (retired_at IS NOT NULL)"
 #: The database-layer half of FR-06 - see the module docstring and
 #: `nptc.db.functions.CREATE_SCTID_VALIDATION_FUNCTION_SQL`.
 _CODE_CHECK_SQL = "nptc_sctid_is_valid(code)"
@@ -131,6 +152,7 @@ class CodeBinding(Base):
             "status",
             "replaced_by_binding_id",
             "retirement_reason",
+            "retired_at",
         }
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
@@ -146,6 +168,7 @@ class CodeBinding(Base):
         CheckConstraint(_EDITION_HINT_CHECK_SQL, name="edition_hint"),
         CheckConstraint(_STATUS_CHECK_SQL, name="status"),
         CheckConstraint(_RETIREMENT_REASON_CHECK_SQL, name="retirement_reason"),
+        CheckConstraint(_RETIRED_AT_CHECK_SQL, name="retired_at"),
         CheckConstraint(_REPLACED_BY_REQUIRES_RETIRED_SQL, name="replaced_by_requires_retired"),
         CheckConstraint(_NO_SELF_SUPERSESSION_SQL, name="no_self_supersession"),
         # FR-08: at most one active binding per entry - a partial unique
@@ -276,6 +299,10 @@ class CodeBinding(Base):
         active_history=True,
     )
     retirement_reason: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
+    #: FR-17, issue #140 - see the module docstring's `retired_at` note.
+    retired_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, active_history=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
