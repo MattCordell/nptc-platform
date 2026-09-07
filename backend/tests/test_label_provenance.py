@@ -17,33 +17,37 @@ that must not start Docker.
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import re
+import sys
 import typing
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 
 import pytest
-from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy.engine import Connection
-from starlette.routing import BaseRoute
 
 from nptc.api.app import create_app
 from nptc.api.labels import LabelProvenance
 
-# --- the recursive route walk (mirrors route_inventory_support.py) --------
+
+# `backend/tests` has no `__init__.py` (pytest's `--import-mode=importlib`),
+# so a plain `from route_inventory_support import ...` cannot resolve -
+# matching the load-by-path idiom `test_audit_route_inventory.py`'s own
+# `_load` uses for the same reason.
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def _iter_api_routes(routes: Iterable[BaseRoute]) -> Iterator[APIRoute]:
-    for route in routes:
-        if isinstance(route, APIRoute):
-            yield route
-        nested = getattr(route, "routes", None)
-        if nested is None:
-            original_router = getattr(route, "original_router", None)
-            nested = getattr(original_router, "routes", None)
-        if nested is not None:
-            yield from _iter_api_routes(nested)
+iter_api_routes = _load("route_inventory_support").iter_api_routes
 
 
 def _unwrap(annotation: Any) -> Iterator[Any]:
@@ -187,13 +191,18 @@ def test_guard_flags_a_singular_provenance_covering_two_label_fields() -> None:
 # --- the real app's schema graph -------------------------------------------
 
 
-def _real_app_models() -> set[type[BaseModel]]:
+@functools.cache
+def _real_app_models() -> frozenset[type[BaseModel]]:
+    """Cached: `test_every_label_bearing_model_in_the_real_app_declares_
+    provenance` and `test_label_field_name_set_is_not_stale` both need this
+    same walk, and `create_app()` plus the full schema graph is not free to
+    redo per test."""
     app = create_app()
     models: set[type[BaseModel]] = set()
-    for route in _iter_api_routes(app.routes):
+    for route in iter_api_routes(app.routes):
         if route.response_model is not None and issubclass(route.response_model, BaseModel):
             models |= _collect_models(route.response_model)
-    return models
+    return frozenset(models)
 
 
 @pytest.mark.req("FR-98")
@@ -372,18 +381,6 @@ def test_391483001_fsn_is_served_verbatim_with_intact_provenance(app_db: Connect
     that the tag is intact - both asserted directly against the real
     app rather than against the assembler in isolation.
     """
-    import importlib.util
-    import sys
-    from pathlib import Path
-
-    def _load(name: str) -> Any:
-        spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
-
     api_support = _load("api_app_support")
     seed = _load("public_catalogue_support")
 
