@@ -3011,7 +3011,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No property definition matches `property_key` (FR-11). An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request. */
+            /** @description No property definition matches `property_key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request. */
             404: {
                 headers: {
                     [name: string]: unknown;

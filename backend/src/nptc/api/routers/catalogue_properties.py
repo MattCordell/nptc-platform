@@ -170,7 +170,7 @@ PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 _RESPONSE_404_BULK: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
-        "No property definition matches `property_key` (FR-11). An unknown "
+        "No property definition matches `property_key`. An unknown "
         "`business_key` among `entries` is a per-entry `not-found` outcome in "
         "the 200 response, never a 404 for the whole request."
     ),
