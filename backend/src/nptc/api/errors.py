@@ -241,33 +241,6 @@ class PropertyValidationResponse(BaseModel):
     issues: list[PropertyIssueItem]
 
 
-class StoredFSNNotRenderableError(Exception):
-    """A *read* path found a stored FSN it could not render (FR-83).
-
-    Defined here rather than in `nptc.exports.semantic_tag` because it is
-    an HTTP-status distinction, not a new rule about FSNs.
-    `render_display_term` raises `NotAServedFSNError`/`EmptyDisplayTermError`,
-    both `http_status = 422`, and 422 is the right answer on a write path:
-    there, the caller supplied the FSN and the fault is in the request.
-
-    On a read path it is the wrong answer, and wrong in a way that costs
-    the platform the very outcome the loud failure exists for. `GET
-    /catalogue/entries/{business_key}` is a well-formed request; the fault
-    is entirely in stored data. A vendor's client reading 422 concludes its
-    own request was malformed - it will not retry, and it will log the
-    problem as its own bug - whereas FR-83's whole point is to get an
-    administrator to look at the binding. 5xx is the class that says "this
-    is our fault, escalate it", so a read path wraps both into this and
-    `nptc.api.routers.catalogue` raises it.
-
-    The 422 handlers for the two underlying errors are kept below, unused
-    today: #149/#150's write surface is where they become reachable, and
-    deleting them would leave that surface 500ing on a caller mistake.
-    """
-
-    http_status: ClassVar[int] = 500
-
-
 class PreferredTermVersionRequiredError(Exception):
     """`POST .../designations/amendment` was asked to amend the catalogue's
     own en-AU preferred term, but carried no `expected_row_version`
@@ -630,28 +603,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("filter refused: %s", type(exc).__name__)
         return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_FILTER_REFUSED})
 
-    @app.exception_handler(StoredFSNNotRenderableError)
-    async def _handle_stored_fsn_not_renderable(
-        _request: Request, exc: StoredFSNNotRenderableError
-    ) -> JSONResponse:
-        # The read-path counterpart of the two 422 handlers below, and a
-        # 500 rather than a 422 for the reason this exception's own
-        # docstring gives: the request was well-formed and the fault is in
-        # stored data, so the status has to be the one that tells a vendor's
-        # client "not your bug, escalate this".
-        #
-        # ERROR, not WARNING: FR-82 guarantees every stored `fsn` came from
-        # the terminology server, so reaching here means that guarantee has
-        # been broken for a *published* entry, and the endpoint is now
-        # failing for every caller who asks for it until somebody looks.
-        # Blanking the label and serving a 200 instead would hide a
-        # corrupted binding indefinitely (FR-83).
-        _logger.error("display term could not be rendered: %s", exc)
-        return JSONResponse(
-            status_code=StoredFSNNotRenderableError.http_status,
-            content={"detail": _DETAIL_DISPLAY_TERM},
-        )
-
     @app.exception_handler(TerminologyConfigError)
     async def _handle_terminology_config_error(
         _request: Request, exc: TerminologyConfigError
@@ -668,8 +619,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(NotAServedFSNError)
     async def _handle_not_a_served_fsn(_request: Request, exc: NotAServedFSNError) -> JSONResponse:
         # Reachable only from a *write* path (#149/#150), where the caller
-        # supplied the FSN and 422 is correct. The read path wraps both of
-        # these in `StoredFSNNotRenderableError` above; see its docstring.
+        # supplied the FSN and 422 is correct. The read path (issue #144,
+        # FR-98) no longer renders a display term at all, so this
+        # exception cannot reach a GET route any more - see
+        # `nptc.api.routers.catalogue_shared`'s own module docstring.
         #
         # WARNING, not INFO - unlike every other refusal in this module,
         # this one is not a caller mistake at all: FR-82 guarantees every
@@ -1101,8 +1054,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         # `catalogue_shared.property_value_from_row`'s `serialise` call -
         # where the request was well-formed and the fault is in server-side
         # state (a stored `datatype` the running process's `DatatypeRegistry`
-        # no longer knows), matching `StoredFSNNotRenderableError`'s own
-        # read-vs-write posture (FR-83) for the identical shape of problem.
+        # no longer knows) - the same read-vs-write posture the now-removed
+        # `StoredFSNNotRenderableError` used to give FR-83 for the identical
+        # shape of problem, before issue #144 removed display-term rendering
+        # from the read path entirely.
         # ERROR, not INFO: reaching here means a definition row and this
         # process's registry have drifted, and the endpoint now fails for
         # every caller until somebody looks - not a routine, expected

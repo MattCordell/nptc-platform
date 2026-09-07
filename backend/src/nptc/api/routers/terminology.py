@@ -60,7 +60,8 @@ from typing import Annotated, Any, Final
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from nptc.api.dependencies import get_terminology_client, permission_dep
+from nptc.api.dependencies import get_api_settings, get_terminology_client, permission_dep
+from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance, fsn_provenance
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
 from nptc.terminology.concepts import resolve_concept
@@ -155,6 +156,11 @@ class ConceptLookup(BaseModel):
     `nptc.terminology.concepts`'s own module docstring for why computing
     one here would risk a permanent 500 on a later read of whatever this
     value feeds.
+
+    `label_provenance` (FR-98, issue #144) covers both label fields even
+    though `fsn` is nullable: a `None` value still has a designation and a
+    semantic-tag state it *would* carry if the server returned one, so the
+    descriptor is unconditional, never itself nullable.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -166,6 +172,7 @@ class ConceptLookup(BaseModel):
     active: bool | None
     edition: str
     resolved_version: str | None
+    label_provenance: dict[str, LabelProvenance]
 
 
 @router.get(
@@ -184,4 +191,8 @@ def get_concept(client: TerminologyClientDep, code: str) -> ConceptLookup:
         active=resolved.active,
         edition=resolved.edition,
         resolved_version=resolved.resolved_version,
+        label_provenance={
+            "fsn": fsn_provenance(get_api_settings()),
+            "au_preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+        },
     )

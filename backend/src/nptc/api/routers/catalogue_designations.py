@@ -93,6 +93,7 @@ from nptc.api.errors import (
     PreferredTermVersionRequiredError,
     VersionConflictResponse,
 )
+from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import BusinessKeyPath, Designation, designation_from_row
@@ -630,13 +631,24 @@ def _preferred_term_as_designation(entry: CatalogueEntry) -> Designation:
     other term. Not read back from a `designation` row, because ADR-0022
     guarantees there is never one to read (`ck_designation_no_en_au_
     preferred`); the constant `use`/`language`/`status` here are that
-    invariant restated, not a fact about a row."""
+    invariant restated, not a fact about a row.
+
+    `label_provenance` is `AU_PREFERRED_TERM_PROVENANCE`, not
+    `designation_from_row`'s own `use="preferred"` mapping to
+    `PREFERRED_VARIANT` (FR-98, issue #144): the term this function wraps
+    is `entry.preferred_term` in `DEFAULT_LANGUAGE` (en-AU) - the
+    catalogue's own AU preferred term, matching `EntrySummary.
+    preferred_term`'s own designation type - not a non-en-AU preferred
+    variant from a `designation` row. `use="preferred"` here is the shape
+    this API gives every term, not the fact this provenance is about.
+    """
     return Designation(
         term=entry.preferred_term,
         use=str(DesignationUse.PREFERRED),
         language=DEFAULT_LANGUAGE,
         status=str(DesignationStatus.ACTIVE),
         length=entry.length,
+        label_provenance=AU_PREFERRED_TERM_PROVENANCE,
     )
 
 

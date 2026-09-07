@@ -685,21 +685,30 @@ _ALLOWED_REFERENCES = frozenset(
         REPO_ROOT / "shared" / "src" / "nptc_shared" / "terminology" / "__init__.py",
         REPO_ROOT / "shared" / "src" / "nptc_shared" / "terminology" / "sweep.py",
         REPO_ROOT / "transform" / "src" / "nptc_transform" / "designation_check.py",
-        # Issue #142/#219, FR-20/FR-83: the `Binding` response model's
-        # `display_term` is built by calling `render_display_term` - a
-        # *consumer* of the sanctioned renderer, not a second implementation
-        # of the strip. The rule FR-83 actually needs is that
-        # `strip_semantic_tag`/`semantic_tag` are reached only through
-        # `nptc.exports.semantic_tag`, and this call site honours that: it
-        # never touches either. It is listed here (rather than the guard
-        # being loosened to permit `render_display_term` everywhere) so each
-        # consumer stays a deliberate, reviewed entry rather than an open
-        # category - the double-strip hazard is precisely a second caller
-        # stripping again. Lives in `catalogue_shared.py`, not
-        # `catalogue.py`, since issue #219 moved `Binding`/`binding_from_row`
-        # there so the write router could reuse them without importing the
-        # read router's internals.
-        REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py",
+        # Issue #144 (FR-98): a name collision, not a reference to the
+        # banned functions. `nptc.api.labels.LabelProvenance.semantic_tag`
+        # is a Pydantic field - `SemanticTagState`, an "intact"/"stripped"/
+        # "not_applicable" enum describing what a label declares about
+        # itself - and this module never imports or calls
+        # `nptc_shared.terminology`'s `semantic_tag`/`strip_semantic_tag` at
+        # all. The walker cannot tell the two apart (it matches any `Name`
+        # node spelled `semantic_tag`, regardless of what it actually
+        # refers to), so this file trips it on its own field's annotation
+        # alone. Listed here rather than renaming the field: the FR-98 plan
+        # (issue #144) fixes `semantic_tag` as the wire key both fields
+        # publish under, and a Pydantic field name is what the JSON key
+        # actually is - no alias layer sits between them.
+        REPO_ROOT / "backend" / "src" / "nptc" / "api" / "labels.py",
+        # Issue #144 (FR-98) removed `catalogue_shared.py`'s own entry: the
+        # `Binding` response model's `display_term` field (and the
+        # `_display_term` helper that called `render_display_term` to build
+        # it) is gone - the read path now serves `fsn` exactly as stored and
+        # declares that fact through `label_provenance` instead of deriving a
+        # second, stripped copy of the label. `catalogue_shared.py` is no
+        # longer a reference site for `_STRIP_NAMES` at all, so it is not
+        # listed here any more; `test_allowed_references_list_is_not_stale`
+        # below is what would fail loudly if a future change reintroduced a
+        # call and forgot to re-add the entry.
     }
 )
 
