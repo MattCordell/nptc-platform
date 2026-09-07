@@ -202,9 +202,7 @@ def test_every_label_bearing_model_in_the_real_app_declares_provenance() -> None
     assert models, "the walk found no response models at all - the guard would pass vacuously"
 
     offenders = {
-        model.__qualname__: gaps
-        for model in models
-        if (gaps := label_provenance_gaps(model))
+        model.__qualname__: gaps for model in models if (gaps := label_provenance_gaps(model))
     }
     assert not offenders, (
         f"model(s) with a label field but no matching label_provenance: {offenders}"
