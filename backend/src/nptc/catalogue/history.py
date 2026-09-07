@@ -207,8 +207,15 @@ def load_history(
     # one row per *value*, so a multi-valued property would otherwise repeat
     # its own `f"{entry.id}:{property_key}"` once per value (PR #278
     # review) - harmless semantically (an `IN` list tolerates a repeat) but
-    # bloats the predicate for no reason.
-    property_keys = {row.property_key for row in queries.load_property_values(session, (entry.id,))}
+    # bloats the predicate for no reason. `sorted(...)`, not the set's own
+    # iteration order (PR #278 review round 2): an unsorted set varies its
+    # iteration order between requests, so the emitted SQL text - and with
+    # it, psycopg's prepared-statement cache key - would vary with it for no
+    # reason, one cache entry per permutation for an entry with several
+    # properties.
+    property_keys = sorted(
+        {row.property_key for row in queries.load_property_values(session, (entry.id,))}
+    )
     property_value_set_ids: Sequence[str] = tuple(f"{entry.id}:{key}" for key in property_keys)
 
     predicates = [
