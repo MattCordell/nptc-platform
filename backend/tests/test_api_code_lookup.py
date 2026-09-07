@@ -125,13 +125,17 @@ def test_code_round_trips_through_both_url_forms_unchanged(
 
 @pytest.mark.req("FR-17")
 @pytest.mark.integration
-def test_malformed_system_token_is_422_before_any_query_runs(
-    api: ApiTestApp, seeded: SeededCatalogue
-) -> None:
+def test_malformed_system_token_is_422_before_any_query_runs(api: ApiTestApp) -> None:
     """Uppercase fails `SYSTEM_TOKEN_PATTERN` - a path-pattern 422, matching
     `BusinessKeyPath`'s own precedent, never the "well-formed but
-    unregistered" 404 the next test covers."""
-    response = api.get(f"/catalogue/code/SCT/{_seed.ACTIVE_CODE}")
+    unregistered" 404 the next test covers.
+
+    No `seeded`/`code_lookup` fixture: FastAPI's own path-parameter
+    validation rejects this request before the route handler body ever
+    runs, so `UNUSED_CODE` - a code with no fixture behind it at all -
+    proves the point rather than merely being compatible with it.
+    """
+    response = api.get(f"/catalogue/code/SCT/{_seed.UNUSED_CODE}")
 
     assert response.status_code == 422, response.text
 
@@ -212,6 +216,30 @@ def test_retired_code_collision_resolves_to_the_most_recently_retired_entry(
 
     assert response.status_code == 200, response.text
     assert response.json()["business_key"] == code_lookup.retired_collision_newer_entry
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_active_binding_wins_over_a_retired_binding_on_a_different_entry(
+    api: ApiTestApp, code_lookup: SeededCodeLookup
+) -> None:
+    """The shape `get_entry_by_code`'s *primary* ORDER BY key exists to
+    resolve, distinct from the retired-vs-retired tie-break above: one
+    entry holds the code active, a completely different entry holds it
+    retired - permitted since `ix_code_binding_one_active_entry_per_code`
+    restricts only active rows to be unique. The active entry must win
+    regardless of how fresh the other entry's retirement is (the fixture's
+    retirement is as fresh as the active binding's own creation, so this
+    cannot pass merely because the retired row happens to be the older
+    one)."""
+    response = api.get(f"/catalogue/code/sct/{_seed.ACTIVE_BEATS_RETIRED_CODE}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["business_key"] == code_lookup.active_beats_retired_active_entry
+    matched = next(b for b in body["bindings"] if b["code"] == _seed.ACTIVE_BEATS_RETIRED_CODE)
+    assert matched["status"] == "active"
 
 
 # --- FR-20's non-disclosure rule, applied to code lookup ------------------

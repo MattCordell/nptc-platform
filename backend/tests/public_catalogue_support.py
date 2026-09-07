@@ -786,6 +786,20 @@ RETIRED_COLLISION_NEWER_FSN = "Retired collision newer fixture (procedure)"
 HIDDEN_ONLY_CODE = "500016"
 HIDDEN_ONLY_FSN = "Hidden only code lookup fixture (procedure)"
 
+#: The same code active on one entry and retired on another -
+#: `ix_code_binding_one_active_entry_per_code` permits this (it restricts
+#: only *active* rows to be unique), and it is the shape
+#: `get_entry_by_code`'s *primary* ORDER BY key exists to resolve: an active
+#: binding must win regardless of how recently some other entry's binding
+#: for the same code was retired (issue #140 review - the retired-collision
+#: fixture above only proves the retired-vs-retired tie-break, never this
+#: key). `retired_at` is set to `now` (as fresh as the active entry's own
+#: implicit binding time), so a test relying on this fixture cannot pass by
+#: accident of the retired row simply being the older one.
+ACTIVE_BEATS_RETIRED_CODE = "500037"
+ACTIVE_BEATS_RETIRED_ACTIVE_FSN = "Active beats retired active fixture (procedure)"
+ACTIVE_BEATS_RETIRED_RETIRED_FSN = "Active beats retired retired fixture (procedure)"
+
 #: A well-formed, Verhoeff-valid SCTID no fixture in this module ever binds
 #: to anything - the code-lookup analogue of `unused_business_key()` above,
 #: for "a code nobody has ever bound" (issue #140).
@@ -802,6 +816,8 @@ class SeededCodeLookup:
     retired_collision_older_entry: str
     retired_collision_newer_entry: str
     hidden_entry: str
+    active_beats_retired_active_entry: str
+    active_beats_retired_retired_entry: str
 
 
 def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
@@ -820,6 +836,8 @@ def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
         retired_collision_older_entry=f"NPTC-{base + 2}",
         retired_collision_newer_entry=f"NPTC-{base + 3}",
         hidden_entry=f"NPTC-{base + 4}",
+        active_beats_retired_active_entry=f"NPTC-{base + 5}",
+        active_beats_retired_retired_entry=f"NPTC-{base + 6}",
     )
 
     leading_zero_entry = _entry(
@@ -849,6 +867,16 @@ def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
         "Hidden only code lookup fixture",
         CatalogueEntryStatus.DRAFT.value,
     )
+    active_beats_retired_active_entry = _entry(
+        seeded.active_beats_retired_active_entry,
+        "Active beats retired active fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    active_beats_retired_retired_entry = _entry(
+        seeded.active_beats_retired_retired_entry,
+        "Active beats retired retired fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
     session.add_all(
         [
             leading_zero_entry,
@@ -856,6 +884,8 @@ def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
             retired_collision_older_entry,
             retired_collision_newer_entry,
             hidden_entry,
+            active_beats_retired_active_entry,
+            active_beats_retired_retired_entry,
         ]
     )
     session.flush()
@@ -909,6 +939,28 @@ def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
                 au_preferred_term=None,
                 edition_hint="int",
                 status=CodeBindingStatus.ACTIVE.value,
+            ),
+            CodeBinding(
+                entry_id=active_beats_retired_active_entry.id,
+                code=ACTIVE_BEATS_RETIRED_CODE,
+                fsn=ACTIVE_BEATS_RETIRED_ACTIVE_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            # Same code, a different entry, retired *just now* - as fresh a
+            # retirement as the sibling active binding's own creation. Proves
+            # the primary ORDER BY key (active-first) dominates regardless of
+            # `retired_at` recency, not merely that it dominates a stale one.
+            CodeBinding(
+                entry_id=active_beats_retired_retired_entry.id,
+                code=ACTIVE_BEATS_RETIRED_CODE,
+                fsn=ACTIVE_BEATS_RETIRED_RETIRED_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.RETIRED.value,
+                retirement_reason="Retired for the FR-17 active-beats-retired fixture.",
+                retired_at=now,
             ),
         ]
     )

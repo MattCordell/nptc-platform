@@ -74,6 +74,7 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BindingList,
     BusinessKeyPath,
+    CodePath,
     DesignationList,
     EntryDetail,
     EntrySummary,
@@ -635,7 +636,7 @@ def read_entry_by_code(
     session: SessionDep,
     registry: RegistryDep,
     system_token: SystemTokenPath,
-    code: str,
+    code: CodePath,
 ) -> EntryDetail:
     """Resolves the same entry `GET /catalogue/entries/{business_key}` and
     `GET /catalogue/lookup?system=...&code=...` would for the same code -

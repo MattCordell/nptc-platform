@@ -1791,6 +1791,7 @@ export interface operations {
             path: {
                 /** @description A short alias for a code system's URI, e.g. `sct` for `http://snomed.info/sct` (FR-17). An unregistered but well-formed token is a 404, not a 422 - see `docs/architecture/public-api.md`. */
                 system_token: string;
+                /** @description The exact code to resolve. */
                 code: string;
             };
             cookie?: never;

@@ -50,6 +50,7 @@ __all__ = [
     "Binding",
     "BindingList",
     "BusinessKeyPath",
+    "CodePath",
     "Designation",
     "DesignationList",
     "EntryDetail",
@@ -92,6 +93,16 @@ SystemTokenPath = Annotated[
         ),
         examples=["sct"],
     ),
+]
+
+#: FR-17, issue #140: the exact code to resolve on `GET /catalogue/code/
+#: {system_token}/{code}`. Deliberately no `pattern=` - `docs/adr/
+#: 0033-exact-code-lookup-routes.md` records why `code` is not
+#: shape-validated at the API layer; an unrecognised code and a malformed
+#: one both resolve to nothing and get the identical 404.
+CodePath = Annotated[
+    str,
+    Path(description="The exact code to resolve.", examples=["49466006"]),
 ]
 
 

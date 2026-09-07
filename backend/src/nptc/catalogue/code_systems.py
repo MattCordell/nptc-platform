@@ -63,11 +63,17 @@ SYSTEM_TOKENS: Final[dict[str, str]] = {
 SYSTEM_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 #: The one shared 404 sentence - see the module docstring's "one 404,
-#: shared by two different causes". Built from `SYSTEM_TOKENS` rather than
-#: hand-listed, so a second registered alias updates this message for free.
+#: shared by two different causes". Names each registered system as both
+#: its token and its URI, since a `/catalogue/lookup` caller supplied a URI
+#: and never saw the token at all - naming only the token would leave that
+#: caller told about a parameter they didn't use (issue #140 review). Built
+#: from `SYSTEM_TOKENS` rather than hand-listed, so a second registered
+#: alias updates this message for free.
 REGISTERED_TOKENS_DETAIL: Final[str] = (
-    "No published catalogue entry matches this system and code. Registered "
-    f"system tokens are: {', '.join(sorted(SYSTEM_TOKENS))}."
+    "No published catalogue entry matches this system and code. Registered code "
+    "systems: "
+    + ", ".join(f"{token} ({uri})" for token, uri in sorted(SYSTEM_TOKENS.items()))
+    + "."
 )
 
 

@@ -61,7 +61,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, aliased
 
 from nptc.catalogue.errors import CodeLookupNotFoundError, EntryNotFoundError
@@ -260,6 +260,32 @@ def get_entry(session: Session, business_key: str) -> CatalogueEntry:
     return entry
 
 
+def _get_entry_by_code_statement(system: str, code: str) -> Select[tuple[CatalogueEntry]]:
+    """The statement `get_entry_by_code` runs, factored out so
+    `test_db_code_binding_index_plan.py` can `EXPLAIN` the exact query
+    rather than a hand-copied approximation of it (matching
+    `nptc.catalogue.search.build_search_statement`'s own precedent).
+
+    `system`/`code` are bound parameters even though this helper takes them
+    as plain strings: SQLAlchemy Core binds every `==` comparison built this
+    way, so nothing here concatenates caller-supplied text into SQL
+    (NFR-22).
+    """
+    return (
+        select(CatalogueEntry)
+        .join(CodeBinding, CodeBinding.entry_id == CatalogueEntry.id)
+        .where(CodeBinding.system == system)
+        .where(CodeBinding.code == code)
+        .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
+        .order_by(
+            (CodeBinding.status == CodeBindingStatus.ACTIVE.value).desc(),
+            CodeBinding.retired_at.desc(),
+            CatalogueEntry.business_key.asc(),
+        )
+        .limit(1)
+    )
+
+
 def get_entry_by_code(session: Session, system: str, code: str) -> CatalogueEntry:
     """One entry resolved by an exact code, active binding preferred
     (issue #140, FR-17).
@@ -284,20 +310,16 @@ def get_entry_by_code(session: Session, system: str, code: str) -> CatalogueEntr
     `CodeLookupNotFoundError` as a code nobody has ever bound, on purpose
     (this module's rule one: the caller cannot tell "hidden" from "never
     existed" apart).
+
+    `ix_code_binding_system_code` (non-partial, unlike every other index on
+    this table) is what makes this an index scan rather than a sequential
+    one: the `WHERE` clause above carries no `status` predicate (it must
+    see retired rows too), so none of `code_binding`'s other, partial
+    `(system, code)`/`code` indexes - every one scoped `WHERE status =
+    'active'` - can be proven applicable by the planner.
+    `test_db_code_binding_index_plan.py` `EXPLAIN`s this exact statement.
     """
-    statement = (
-        select(CatalogueEntry)
-        .join(CodeBinding, CodeBinding.entry_id == CatalogueEntry.id)
-        .where(CodeBinding.system == system)
-        .where(CodeBinding.code == code)
-        .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
-        .order_by(
-            (CodeBinding.status == CodeBindingStatus.ACTIVE.value).desc(),
-            CodeBinding.retired_at.desc(),
-            CatalogueEntry.business_key.asc(),
-        )
-        .limit(1)
-    )
+    statement = _get_entry_by_code_statement(system, code)
     entry = session.execute(statement).scalars().first()
     if entry is None:
         raise CodeLookupNotFoundError(

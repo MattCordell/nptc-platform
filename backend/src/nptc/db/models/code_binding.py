@@ -200,6 +200,17 @@ class CodeBinding(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+        # FR-17, issue #140: `nptc.catalogue.queries.get_entry_by_code`'s
+        # lookup, which must see retired rows as well as active ones (FR-08),
+        # so it carries no `status` predicate the index above's partial
+        # `WHERE status = 'active'` could be proven to satisfy - the planner
+        # cannot use a partial index for a query that does not repeat its
+        # predicate. Deliberately non-partial and non-unique (two entries can
+        # legitimately share a *retired* binding on the same code - see
+        # `docs/adr/0033-exact-code-lookup-routes.md`), so it exists purely
+        # to make the exact-code lookup route an index scan rather than a
+        # sequential one; `test_db_code_binding_index_plan.py` proves it.
+        Index("ix_code_binding_system_code", "system", "code"),
         # FR-14, issue #138: the three fields this table contributes to the
         # single search box. All five indexes below are partial on
         # `status = 'active'`, matching `ix_designation_term_trgm`'s reason
