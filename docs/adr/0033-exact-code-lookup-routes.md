@@ -118,6 +118,14 @@ CHECK already guarantees every *stored* code is well-formed.
 
 ## Consequences
 
+- `retired_at` is classified `__audit_ignored_fields__`, not `__audit_fields__`, matching
+  `created_at`/`updated_at`'s own treatment: it is bookkeeping rather than an independent
+  business fact, the audit event recording `code_binding.retired` already carries its own
+  timestamp, and `retirement_reason` (which *is* audited) already carries the
+  human-readable half of the same transition. A first pass classified it as audited and
+  broke two audit-diff tests asserting an exact `before`/`after` dict for that action -
+  the fix was to reclassify the column, not to make the tests tolerate a value that
+  cannot be asserted deterministically.
 - `EntryNotFoundError` and `CodeLookupNotFoundError` are two separate exception types
   carrying two different fixed sentences, even though both mean roughly "nothing to show
   you" - `EntryNotFoundError`'s sentence says nothing about tokens because the

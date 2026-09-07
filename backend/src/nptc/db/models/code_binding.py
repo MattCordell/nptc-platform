@@ -66,6 +66,11 @@ retired collision by `retired_at DESC, business_key ASC`, see
 `retirement_reason` - never updated again, but not immutable at the
 database layer the way `code`/`entry_id` are, since nothing else in this
 table treats a retirement as reversible enough to need that guard.
+`__audit_ignored_fields__`, not `__audit_fields__`: it is bookkeeping
+rather than an independent business fact, the same treatment
+`created_at`/`updated_at` already get - the audit event's own timestamp
+already records when the retirement happened, and `retirement_reason`
+(which *is* audited) carries the human-readable half of that transition.
 """
 
 from __future__ import annotations
@@ -152,12 +157,17 @@ class CodeBinding(Base):
             "status",
             "replaced_by_binding_id",
             "retirement_reason",
-            "retired_at",
         }
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
+    # `retired_at` joins `created_at`/`updated_at` here rather than
+    # `__audit_fields__` above: it is bookkeeping, not an independent
+    # business fact - the audit event's own timestamp already records when
+    # the `code_binding.retired` action happened, and `retirement_reason`
+    # (which *is* audited) already carries the human-readable half of the
+    # same transition.
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"id", "created_at", "updated_at"}
+        {"id", "created_at", "updated_at", "retired_at"}
     )
 
     __table_args__ = (
