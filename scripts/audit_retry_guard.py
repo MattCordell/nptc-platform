@@ -24,6 +24,16 @@ so its classification logic - the part with a real failure mode, and the
 part that has already been wrong once in this PR's own history - has
 committed regression coverage under scripts/tests/.
 
+Accepted residual risk (issue #259 review, PR #271): FINDINGS_MARKER is
+inferred from pnpm's documented/observed "N vulnerabilities found" wording,
+not pinned to a captured real `pnpm audit` failure. A future pnpm reword
+beyond singular/plural (a table-only render, a different summary line)
+would make this fail open - a real advisory retried instead of failing
+fast - the same way it could before PR #271. Re-verify FINDINGS_MARKER
+against a real `pnpm audit --prod --audit-level=high` failure (installed
+pnpm version's actual output, not the test fixtures) if that's ever in
+doubt.
+
 Usage:
   python3 scripts/audit_retry_guard.py -- pnpm audit --prod --audit-level=high
 """

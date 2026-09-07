@@ -135,6 +135,11 @@ def test_collect_test_markers_ignores_its_own_fixture_strings(
     refs = tc.collect_test_markers()
     self_test_name = tc.SELF_TEST_FILE.name
     locations = [loc for locs in refs.values() for loc in locs]
+    # Non-vacuous: real markers elsewhere in scripts/tests (NFR-25 in
+    # test_audit_retry_guard.py, FR-20 in test_openapi_breaking_check.py)
+    # should still be found, so this isn't passing because the scan itself
+    # silently found nothing at all.
+    assert locations
     assert not any(self_test_name in loc for loc in locations)
 
 
