@@ -829,12 +829,13 @@ def test_bulk_seams_per_entry_savepoint_catches_a_genuine_concurrent_race(
                 ),
                 {"entry_id": entry_id, "property_key": property_key},
             ).scalar_one()
-            # Exactly one audit_event: the batch header
-            # (property_value_bulk) - a per-entry conflict does not abort
-            # the batch (only that one entry's write), so the header is
-            # still emitted, but the raced write's own StaleDataError fires
-            # before `record_snapshot_change` ever runs, so there is no
-            # property_value.set/property_value_set event to go with it.
+            # Zero audit_event rows of its own: the raced write's own
+            # StaleDataError fires before `record_snapshot_change` ever
+            # runs, so there is no property_value.set/property_value_set
+            # event - and this batch's only target ended up `conflict`, so
+            # nothing applied, and `save_property_values_for_entries` skips
+            # the `property_value.bulk_set` header entirely for a batch
+            # that changed nothing (issue #265 review, ADR-0018 posture).
             audit_count = race_session.execute(
                 text(
                     "SELECT count(*) FROM audit_event "
@@ -854,9 +855,142 @@ def test_bulk_seams_per_entry_savepoint_catches_a_genuine_concurrent_race(
         assert outcome.status == "conflict"
         assert outcome.conflict is not None
         assert outcome.conflict.current_row_version == 2
+        # `changed_by`/`changed_at` are `None` here for the same reason the
+        # layer-1 pre-check's own conflict would be too: the concurrent
+        # write above was a raw SQL UPDATE with no audit trail, so there is
+        # no prior `audit_event` for `_latest_change_attribution` to find -
+        # not because this (layer-2) path builds a lesser `ConflictReport`
+        # than the pre-check does. Both now go through the same
+        # `assert_entry_row_version` call (issue #265 review), so a
+        # `conflict` outcome's shape no longer depends on which layer
+        # caught it.
+        assert outcome.conflict.changed_by is None
+        assert outcome.conflict.changed_at is None
         assert outcome.row_version == 2
         assert property_value_count == 0
-        assert audit_count == 1
+        assert audit_count == 0
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            cleanup_connection.execute(
+                text("DELETE FROM property_definition WHERE key = :key"),
+                {"key": property_key},
+            )
+            cleanup_connection.commit()
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_seams_layer_2_conflict_on_a_concurrently_deleted_entry_is_not_found(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """Issue #265 review finding: the layer-2 backstop's `except
+    (StaleDataError, ObjectDeletedError)` handler used to re-read the entry
+    via `load_entry_for_update` unconditionally - correct when the row still
+    exists with a newer `row_version` (the sibling test above), but that
+    re-read raises `EntryNotFoundError` when the row was deleted entirely,
+    which used to escape the loop uncaught and turn an otherwise-partially-
+    successful batch into a whole-request 404 (whose documented meaning is
+    "unknown property_key", not "an entry vanished mid-batch"). Mirrors the
+    sibling test's own concurrent-UPDATE injection exactly, except the
+    injected statement is a DELETE - proving the fix without depending on
+    which of `StaleDataError`/`ObjectDeletedError` SQLAlchemy happens to
+    raise for a since-deleted row, since both are caught by the same
+    handler."""
+    business_key = format_business_key(999_265_003)
+    property_key = "bulk_race_delete_test_prop"
+    with app_engine.connect() as setup_connection:
+        entry_id = setup_connection.execute(
+            text(
+                "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                "VALUES (:key, 'Original term') RETURNING id"
+            ),
+            {"key": business_key},
+        ).scalar_one()
+        setup_connection.execute(
+            text(
+                "INSERT INTO property_definition "
+                "(key, label, datatype, cardinality, scope, required_for_submission, "
+                " required_for_publication, filterable, origin, display_order) "
+                "VALUES (:key, :key, 'string', '0..*', 'maintenance', false, false, "
+                " false, 'admin', 0)"
+            ),
+            {"key": property_key},
+        )
+        setup_connection.commit()
+
+    fired = False
+
+    def _inject_concurrent_delete(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if (
+            fired
+            or "catalogue_entry" not in statement
+            or not statement.strip().upper().startswith("SELECT")
+        ):
+            return
+        fired = True
+        # `owner_engine`, not `app_engine`: the application role has no
+        # DELETE grant on `catalogue_entry` (ordinary app writes never
+        # delete this table), unlike the sibling test's concurrent UPDATE.
+        with owner_engine.connect() as other_connection:
+            other_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            other_connection.commit()
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_delete)
+        race_session = Session(bind=app_engine)
+        try:
+            registry = DatatypeRegistry(
+                build_builtin_handlers(
+                    HandlerDeps(
+                        terminology_client=StubTerminologyClient(),
+                        local_code_lookup=DatabaseLocalCodeLookup(race_session),
+                    )
+                )
+            )
+            outcomes = save_property_values_for_entries(
+                race_session,
+                AuditContext.system(),
+                targets=[EntryPropertyTarget(business_key=business_key, expected_row_version=1)],
+                property_key=property_key,
+                values=[PropertyValueInput(value="raced value")],
+                reason="raced bulk save against a deleted entry",
+                registry=registry,
+            )
+            audit_count = race_session.execute(
+                text(
+                    "SELECT count(*) FROM audit_event "
+                    "WHERE entity_type IN ('property_value_set', 'property_value_bulk') "
+                    "AND (entity_id = :entry_scoped OR entity_id = :property_key)"
+                ),
+                {"entry_scoped": f"{entry_id}:{property_key}", "property_key": property_key},
+            ).scalar_one()
+        finally:
+            race_session.close()
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_delete)
+
+        assert fired, "the injected concurrent delete never ran - the test proves nothing"
+
+        assert len(outcomes) == 1
+        outcome = outcomes[0]
+        assert outcome.status == "not-found"
+        assert outcome.row_version is None
+        assert outcome.conflict is None
+        assert audit_count == 0
     finally:
         with owner_engine.connect() as cleanup_connection:
             cleanup_connection.execute(

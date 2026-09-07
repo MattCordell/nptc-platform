@@ -152,7 +152,7 @@ COVERED_WRITE_ROUTES = frozenset(
         # whole-property replace applied across many entries, with a
         # per-entry outcome list rather than a whole-request 409. Negative-
         # auth coverage lives in `test_api_catalogue_properties.py`.
-        RouteKey(method="POST", path="/catalogue/entries/bulk/properties/{property_key}"),
+        RouteKey(method="POST", path="/catalogue/entries/bulk/properties/{key}"),
         # issue #249: the entry's own core-column write route - status and
         # specimen_unconstrained. Negative-auth coverage lives in
         # `test_api_catalogue_entries.py`.

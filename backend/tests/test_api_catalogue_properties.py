@@ -705,7 +705,11 @@ def test_bulk_save_applies_across_entries_and_emits_one_batch_event(api: ApiTest
     )
     assert bulk_event.action == "property_value.bulk_set"
     assert bulk_event.before is None
-    assert bulk_event.after is None
+    # Tallies are carried structurally in `after` (issue #265 review), not
+    # appended to `reason` - the response body's own counts and the audit
+    # header's tallies come from the same `tally_bulk_outcomes` call.
+    assert bulk_event.after == {"applied": 2, "unchanged": 0, "conflict": 0, "not-found": 0}
+    assert bulk_event.reason == _REASON
 
 
 @pytest.mark.req("FR-39")
@@ -909,6 +913,76 @@ def test_bulk_save_a_schema_violation_writes_nothing_for_any_entry(api: ApiTestA
     assert response.status_code == 422, response.text
     assert _property_value_count(api, entry_id=entry_a.id, property_key=key) == 0
     assert _property_value_count(api, entry_id=entry_b.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_against_a_deprecated_property_is_422_before_touching_any_entry(
+    api: ApiTestApp,
+) -> None:
+    """The batch-abort half of FR-11 (issue #265 review): `test_save_
+    property_values_against_a_deprecated_property_is_422_untouched` already
+    proves the singular route's identical check via the shared
+    `_load_active_property_definition` helper, but never proves the
+    whole-*batch* refusal a multi-entry request needs - that neither entry
+    is touched, not just the one entry a singular write names."""
+    token = _admin_token(api, subject="sub-bulk-deprecated")
+    key = _unique_key("bulk_deprecated")
+    created = _create_string_property(api, token, key=key)
+    entry_a = _new_entry(api, "Bulk HTTP deprecated A")
+    entry_b = _new_entry(api, "Bulk HTTP deprecated B")
+
+    deprecate_response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert deprecate_response.status_code == 200, deprecate_response.text
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "should be refused"}],
+        entries=[
+            {"business_key": entry_a.business_key, "expected_row_version": entry_a.row_version},
+            {"business_key": entry_b.business_key, "expected_row_version": entry_b.row_version},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert _property_value_count(api, entry_id=entry_a.id, property_key=key) == 0
+    assert _property_value_count(api, entry_id=entry_b.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_bulk_save_emits_no_batch_header_when_nothing_applied(api: ApiTestApp) -> None:
+    """A batch where the only target is `not-found` changed nothing, so it
+    emits no `property_value.bulk_set` header (issue #265 review) - matching
+    ADR-0018's "a no-op write emits no audit event" posture."""
+    token = _admin_token(api, subject="sub-bulk-no-header")
+    key = _unique_key("bulk_no_header")
+    _create_string_property(api, token, key=key)
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": "NPTC-999996", "expected_row_version": 1}],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["applied"] == 0
+    assert body["not_found"] == 1
     assert _audit_event_count(api) == before
 
 

@@ -34,6 +34,7 @@ from nptc.catalogue.property_values import (
     save_property_values_for_entries,
 )
 from nptc.db.bootstrap import seed_system_properties
+from nptc.db.definitions import deprecate_definition
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_definition import (
@@ -44,6 +45,7 @@ from nptc.db.models.property_definition import (
 )
 from nptc.db.models.property_value import PropertyValue
 from nptc.registry.datatypes import build_builtin_handlers
+from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.registry.schema import MalformedConstraintsError
 from nptc_shared.terminology.models import Edition, ValidationResult
@@ -1287,5 +1289,84 @@ def test_bulk_emits_one_batch_event_plus_one_per_entry_event_sharing_correlation
     assert bulk_event.entity_type == "property_value_bulk"
     assert bulk_event.entity_id == prop.key
     assert bulk_event.before is None
-    assert bulk_event.after is None
-    assert "2 applied" in (bulk_event.reason or "")
+    # Tallies are carried structurally (issue #265 review), not appended to
+    # `reason` - the operator's own changelog note is left untouched.
+    assert bulk_event.after == {"applied": 2, "unchanged": 0, "conflict": 0, "not-found": 0}
+    assert bulk_event.reason == "Bulk write for audit correlation test"
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_bulk_no_batch_header_when_nothing_applied(app_session: Session) -> None:
+    """A batch where every target is `conflict`/`not-found` changed nothing,
+    so it emits no `property_value.bulk_set` header either (issue #265
+    review) - matching ADR-0018's "a no-op write emits no audit event"
+    posture, and keeping a client retrying a stale selection from appending
+    one permanent audit row per attempt."""
+    prop = _new_string_property(app_session, key="a_bulk_no_header_prop", cardinality="0..*")
+    ctx = AuditContext.system()
+    before = _audit_event_count(app_session)
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        ctx,
+        targets=[EntryPropertyTarget(business_key="NPTC-999997", expected_row_version=1)],
+        property_key=prop.key,
+        values=_inputs("bulk-no-header-value"),
+        reason="Bulk write that touches nothing",
+        registry=_registry(app_session),
+    )
+
+    assert outcomes[0].status == "not-found"
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_against_a_deprecated_property_aborts_before_touching_any_entry(
+    app_session: Session,
+) -> None:
+    """FR-11's whole-request abort, proven at the bulk seam's own entry
+    point (issue #265 review): `test_save_property_values_against_a_
+    deprecated_property_is_422_untouched` already covers the singular
+    route's identical check via the shared `_load_active_property_
+    definition` helper, but per CONTRIBUTING's "principal failure mode"
+    rule that transitive coverage never proved the *batch*-abort half - that
+    a multi-target request refuses before any of its several entries is
+    touched, not just before the one entry a singular write names."""
+    prop = _new_string_property(app_session, key="a_bulk_deprecated_prop", cardinality="0..*")
+    deprecate_definition(
+        app_session,
+        AuditContext.system(),
+        definition=prop,
+        expected_row_version=prop.row_version,
+        reason="Deprecated for issue #265 bulk test",
+    )
+    app_session.flush()
+    entry_a = _new_entry(app_session, "Bulk deprecated A")
+    entry_b = _new_entry(app_session, "Bulk deprecated B")
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(DeprecatedPropertyWriteError):
+        save_property_values_for_entries(
+            app_session,
+            AuditContext.system(),
+            targets=[
+                EntryPropertyTarget(
+                    business_key=entry_a.business_key, expected_row_version=entry_a.row_version
+                ),
+                EntryPropertyTarget(
+                    business_key=entry_b.business_key, expected_row_version=entry_b.row_version
+                ),
+            ],
+            property_key=prop.key,
+            values=_inputs("should-be-refused"),
+            reason="Bulk write against a deprecated property",
+            registry=_registry(app_session),
+        )
+
+    assert _property_value_count(app_session, entry_id=entry_a.id, property_key=prop.key) == 0
+    assert _property_value_count(app_session, entry_id=entry_b.id, property_key=prop.key) == 0
+    assert _audit_event_count(app_session) == before
