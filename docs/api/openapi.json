@@ -3020,10 +3020,6 @@
             "type": "string",
             "title": "Fsn"
           },
-          "display_term": {
-            "type": "string",
-            "title": "Display Term"
-          },
           "au_preferred_term": {
             "anyOf": [
               {
@@ -3064,6 +3060,13 @@
               }
             ],
             "title": "Replaced By Code"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
@@ -3071,15 +3074,15 @@
           "system",
           "code",
           "fsn",
-          "display_term",
           "au_preferred_term",
           "edition_hint",
           "status",
           "retirement_reason",
-          "replaced_by_code"
+          "replaced_by_code",
+          "label_provenance"
         ],
         "title": "Binding",
-        "description": "A SNOMED CT code binding, active or retired.\n\n`code` is a string, always (FR-06). `display_term` is `fsn` with its\nsemantic tag removed exactly once, by FR-83's single sanctioned\nrenderer - it is derived here rather than stored, because a stored\nstripped value is indistinguishable from an unstripped one and that\nambiguity is what makes double-stripping possible.\n\nA retired binding carries `retirement_reason` and, where PRD FR-08's\nreplacement case applies, `replaced_by_code` - the successor's *code*,\nwhich is what a client holding the retired one needs in order to move."
+        "description": "A SNOMED CT code binding, active or retired.\n\n`code` is a string, always (FR-06). `fsn` is served exactly as stored -\nFR-82's as-served guarantee - with no strip applied anywhere on this\nread path; `label_provenance[\"fsn\"]` is FR-98's declaration of that\nfact (`semantic_tag` is config-driven, see `nptc.api.labels.\nfsn_provenance`), not a second, silently-stripped copy of the label.\n\nA retired binding carries `retirement_reason` and, where PRD FR-08's\nreplacement case applies, `replaced_by_code` - the successor's *code*,\nwhich is what a client holding the retired one needs in order to move."
       },
       "BindingList": {
         "properties": {
@@ -3194,16 +3197,24 @@
           "preferred_term": {
             "type": "string",
             "title": "Preferred Term"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
         "required": [
           "term",
           "business_key",
-          "preferred_term"
+          "preferred_term",
+          "label_provenance"
         ],
         "title": "CollisionWarning",
-        "description": "One warning-severity collision (FR-05): the same term active on\nanother live entry. Names that entry's public identifier and preferred\nterm, never its internal id (NFR-04/NFR-26) - the same shape the 409\nhandler for the *error*-severity case already returns."
+        "description": "One warning-severity collision (FR-05): the same term active on\nanother live entry. Names that entry's public identifier and preferred\nterm, never its internal id (NFR-04/NFR-26) - the same shape the 409\nhandler for the *error*-severity case already returns.\n\n`label_provenance[\"term\"]` is always `SYNONYM_PROVENANCE` (FR-98, issue\n#144), never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'\nown comments (`add_designations_route`/`amend_designation_route`) prove\nthe preferred branch never produces a `CollisionWarning` at all -\n`warning_collisions` only ever looks for another live entry's active\n*synonym*, so a non-empty `warnings` list is only ever reachable from\nthe synonym branch. `label_provenance[\"preferred_term\"]` is the\n*colliding* entry's own catalogue preferred term, matching\n`EntrySummary.preferred_term`'s own designation type."
       },
       "ConceptLookup": {
         "properties": {
@@ -3262,6 +3273,13 @@
               }
             ],
             "title": "Resolved Version"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
@@ -3272,10 +3290,11 @@
           "au_preferred_term",
           "active",
           "edition",
-          "resolved_version"
+          "resolved_version",
+          "label_provenance"
         ],
         "title": "ConceptLookup",
-        "description": "One `$lookup`'s answer, on the wire.\n\n`code` is a string end-to-end (FR-06), echoed back rather than assumed\n- `$lookup` itself does not echo it, and a caller matching a late\nresponse to the field that asked needs it. `fsn` keeps its semantic\ntag intact and is nullable: the server may return no FSN designation\nat all, and `LookupResult.fully_specified_name` never falls back to\n`display`, which is a different thing. `active` is tri-state\n(`bool | None`) - `None` means the server did not report the\n`inactive` property, which is not the same as active (hazard H-05).\n`edition` is always `\"au\"` today - the honest source for a client's\nown `edition_hint`, so `\"unknown\"` stops being a value a form has to\nproduce. `resolved_version` is FR-48: which release actually answered.\n\nDeliberately carries no `display_term` - see\n`nptc.terminology.concepts`'s own module docstring for why computing\none here would risk a permanent 500 on a later read of whatever this\nvalue feeds."
+        "description": "One `$lookup`'s answer, on the wire.\n\n`code` is a string end-to-end (FR-06), echoed back rather than assumed\n- `$lookup` itself does not echo it, and a caller matching a late\nresponse to the field that asked needs it. `fsn` keeps its semantic\ntag intact and is nullable: the server may return no FSN designation\nat all, and `LookupResult.fully_specified_name` never falls back to\n`display`, which is a different thing. `active` is tri-state\n(`bool | None`) - `None` means the server did not report the\n`inactive` property, which is not the same as active (hazard H-05).\n`edition` is always `\"au\"` today - the honest source for a client's\nown `edition_hint`, so `\"unknown\"` stops being a value a form has to\nproduce. `resolved_version` is FR-48: which release actually answered.\n\nDeliberately carries no `display_term` - see\n`nptc.terminology.concepts`'s own module docstring for why computing\none here would risk a permanent 500 on a later read of whatever this\nvalue feeds.\n\n`label_provenance` (FR-98, issue #144) covers both label fields even\nthough `fsn` is nullable: a `None` value still has a designation and a\nsemantic-tag state it *would* carry if the server returned one, so the\ndescriptor is unconditional, never itself nullable."
       },
       "ControlKind": {
         "type": "string",
@@ -3443,6 +3462,9 @@
           "length": {
             "type": "integer",
             "title": "Length"
+          },
+          "label_provenance": {
+            "$ref": "#/components/schemas/LabelProvenance"
           }
         },
         "type": "object",
@@ -3451,7 +3473,8 @@
           "use",
           "language",
           "status",
-          "length"
+          "length",
+          "label_provenance"
         ],
         "title": "Designation",
         "description": "A catalogue-authored synonym, or a preferred variant in a language\nother than en-AU.\n\nThe catalogue's own en-AU preferred term is **not** here - it is\n`EntrySummary.preferred_term`, and ADR-0022 makes its absence from\n`designation` a database invariant rather than a convention. A client\nbuilding a term list needs both: `preferred_term`, plus these.\n\nNo `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's\nwrite router addresses a designation by term in the request body, not\nan internal identifier - see that router's own module docstring."
@@ -3493,6 +3516,17 @@
           "items"
         ],
         "title": "DesignationList"
+      },
+      "DesignationType": {
+        "type": "string",
+        "enum": [
+          "fsn",
+          "au_preferred_term",
+          "synonym",
+          "preferred_variant"
+        ],
+        "title": "DesignationType",
+        "description": "Which designation a label-bearing field holds - the wire values\nnamed in the FR-98 plan, and nothing else: a client branches on these,\nso a new value is a deliberate addition here, not an incidental rename."
       },
       "DesignationUse": {
         "type": "string",
@@ -3580,6 +3614,13 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -3615,6 +3656,7 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "label_provenance",
           "row_version",
           "designations",
           "bindings",
@@ -3682,6 +3724,13 @@
           "has_open_finding": {
             "type": "boolean",
             "title": "Has Open Finding"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
@@ -3692,7 +3741,8 @@
           "status",
           "specimen_unconstrained",
           "updated_at",
-          "has_open_finding"
+          "has_open_finding",
+          "label_provenance"
         ],
         "title": "EntrySummary",
         "description": "An entry as it appears in a list or a search result.\n\n`length` is FR-85's published figure - the character count of the\ncatalogue's own preferred term, computed by `CatalogueEntry.length` and\nnever stored, so it cannot drift from the term it describes."
@@ -3921,6 +3971,23 @@
           "next_cursor"
         ],
         "title": "HistoryPage"
+      },
+      "LabelProvenance": {
+        "properties": {
+          "designation": {
+            "$ref": "#/components/schemas/DesignationType"
+          },
+          "semantic_tag": {
+            "$ref": "#/components/schemas/SemanticTagState"
+          }
+        },
+        "type": "object",
+        "required": [
+          "designation",
+          "semantic_tag"
+        ],
+        "title": "LabelProvenance",
+        "description": "One field's provenance declaration: which designation it is, and -\nfor an FSN - whether the semantic tag is intact or stripped.\n\nFrozen, matching every other response model in this package\n(`nptc.api.routers.catalogue_shared`): provenance describes a field\nthat has already been assembled, never something a caller mutates."
       },
       "PatchEntryRequest": {
         "properties": {
@@ -4510,6 +4577,13 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
+          },
           "score": {
             "type": "number",
             "title": "Score",
@@ -4525,6 +4599,7 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "label_provenance",
           "score"
         ],
         "title": "SearchHit",
@@ -4566,6 +4641,16 @@
           "facets"
         ],
         "title": "SearchPage"
+      },
+      "SemanticTagState": {
+        "type": "string",
+        "enum": [
+          "intact",
+          "stripped",
+          "not_applicable"
+        ],
+        "title": "SemanticTagState",
+        "description": "Whether an FSN's trailing semantic tag is present on the served\nvalue. `NOT_APPLICABLE` is for every designation type that is not an\nFSN at all - a preferred term or synonym never carries a semantic tag\nto strip, so there is no \"intact\" or \"stripped\" fact to report for one."
       },
       "SessionResponse": {
         "properties": {

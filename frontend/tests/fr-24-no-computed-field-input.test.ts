@@ -17,9 +17,10 @@ import { describe, expect, it } from "vitest";
  * place.
  *
  * **Keyed on form controls, not on banning the identifier outright** (issue
- * #61's plan, unlike `fr-83-no-semantic-tag-stripping.test.ts`'s approach for
- * `display_term`). `display_term` has exactly one legitimate home
- * (`api/schema.ts`, allow-listed there); `length` does not - it is
+ * #61's plan, unlike `fr-83-no-semantic-tag-stripping.test.ts`'s approach,
+ * which bans `fsn`/`display_term`-shaped identifiers outright because
+ * neither has any other legitimate use anywhere in this frontend).
+ * `length` cannot be banned as a bare identifier the same way - it is
  * overloaded across the frontend (`terms.length`, `columns.length`,
  * `page.items.length`, array/string `.length` throughout) and cannot be
  * banned as a bare identifier without flagging code that has nothing to do
@@ -64,19 +65,23 @@ const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 //: The computed fields FR-24 covers for this screen set (issue #61's plan):
 //: `length` (FR-85, the preferred term's published character count),
 //: `fsn`/`au_preferred_term` (bound from the terminology server, FR-06/FR-82
-//: - a code binding's own two read-only fields, not editor input), `display_
-//: term` (FR-83's server-stripped value, already banned outright by the
-//: FR-83 guard - named here too since it is also never a form control's
-//: `id`/`name`), and `row_version`/`version`/`history` (concurrency and
-//: audit bookkeeping, never something an editor types). Each name's own
-//: `_`-separated words are what `containsComputedField` looks for as a
-//: contiguous run of tokens, so `au_preferred_term` also matches an id
-//: tokenising to `["bind", "au", "preferred", "term"]`.
+//: - a code binding's own two read-only fields, not editor input), and
+//: `row_version`/`version`/`history` (concurrency and audit bookkeeping,
+//: never something an editor types). Each name's own `_`-separated words are
+//: what `containsComputedField` looks for as a contiguous run of tokens, so
+//: `au_preferred_term` also matches an id tokenising to `["bind", "au",
+//: "preferred", "term"]`.
+//:
+//: No `display_term` here any more (issue #144 removed the field from the
+//: wire entirely - `fsn` is served exactly as stored, with `label_provenance`
+//: declaring what it is, and there is no derived "display term" left for a
+//: form to ever be tempted to expose as input). `fr-83-no-semantic-tag-
+//: stripping.test.ts` still bans the identifier outright, so a future
+//: regression that reintroduced it would be caught there first.
 const COMPUTED_FIELD_NAMES = [
   "length",
   "fsn",
   "au_preferred_term",
-  "display_term",
   "row_version",
   "version",
   "history",

@@ -685,11 +685,11 @@ export interface components {
          * Binding
          * @description A SNOMED CT code binding, active or retired.
          *
-         *     `code` is a string, always (FR-06). `display_term` is `fsn` with its
-         *     semantic tag removed exactly once, by FR-83's single sanctioned
-         *     renderer - it is derived here rather than stored, because a stored
-         *     stripped value is indistinguishable from an unstripped one and that
-         *     ambiguity is what makes double-stripping possible.
+         *     `code` is a string, always (FR-06). `fsn` is served exactly as stored -
+         *     FR-82's as-served guarantee - with no strip applied anywhere on this
+         *     read path; `label_provenance["fsn"]` is FR-98's declaration of that
+         *     fact (`semantic_tag` is config-driven, see `nptc.api.labels.
+         *     fsn_provenance`), not a second, silently-stripped copy of the label.
          *
          *     A retired binding carries `retirement_reason` and, where PRD FR-08's
          *     replacement case applies, `replaced_by_code` - the successor's *code*,
@@ -702,8 +702,6 @@ export interface components {
             code: string;
             /** Fsn */
             fsn: string;
-            /** Display Term */
-            display_term: string;
             /** Au Preferred Term */
             au_preferred_term: string | null;
             /** Edition Hint */
@@ -714,6 +712,10 @@ export interface components {
             retirement_reason: string | null;
             /** Replaced By Code */
             replaced_by_code: string | null;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /** BindingList */
         BindingList: {
@@ -782,6 +784,16 @@ export interface components {
          *     another live entry. Names that entry's public identifier and preferred
          *     term, never its internal id (NFR-04/NFR-26) - the same shape the 409
          *     handler for the *error*-severity case already returns.
+         *
+         *     `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98, issue
+         *     #144), never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
+         *     own comments (`add_designations_route`/`amend_designation_route`) prove
+         *     the preferred branch never produces a `CollisionWarning` at all -
+         *     `warning_collisions` only ever looks for another live entry's active
+         *     *synonym*, so a non-empty `warnings` list is only ever reachable from
+         *     the synonym branch. `label_provenance["preferred_term"]` is the
+         *     *colliding* entry's own catalogue preferred term, matching
+         *     `EntrySummary.preferred_term`'s own designation type.
          */
         CollisionWarning: {
             /** Term */
@@ -790,6 +802,10 @@ export interface components {
             business_key: string;
             /** Preferred Term */
             preferred_term: string;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * ConceptLookup
@@ -811,6 +827,11 @@ export interface components {
          *     `nptc.terminology.concepts`'s own module docstring for why computing
          *     one here would risk a permanent 500 on a later read of whatever this
          *     value feeds.
+         *
+         *     `label_provenance` (FR-98, issue #144) covers both label fields even
+         *     though `fsn` is nullable: a `None` value still has a designation and a
+         *     semantic-tag state it *would* carry if the server returned one, so the
+         *     descriptor is unconditional, never itself nullable.
          */
         ConceptLookup: {
             /** System */
@@ -827,6 +848,10 @@ export interface components {
             edition: string;
             /** Resolved Version */
             resolved_version: string | null;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * ControlKind
@@ -930,6 +955,7 @@ export interface components {
             status: string;
             /** Length */
             length: number;
+            label_provenance: components["schemas"]["LabelProvenance"];
         };
         /**
          * DesignationCollisionResponse
@@ -948,6 +974,14 @@ export interface components {
             /** Items */
             items: components["schemas"]["Designation"][];
         };
+        /**
+         * DesignationType
+         * @description Which designation a label-bearing field holds - the wire values
+         *     named in the FR-98 plan, and nothing else: a client branches on these,
+         *     so a new value is a deliberate addition here, not an incidental rename.
+         * @enum {string}
+         */
+        DesignationType: "fsn" | "au_preferred_term" | "synonym" | "preferred_variant";
         /**
          * DesignationUse
          * @enum {string}
@@ -1013,6 +1047,10 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
             /** Row Version */
             row_version: number;
             /** Designations */
@@ -1060,6 +1098,10 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * ErrorResponse
@@ -1209,6 +1251,19 @@ export interface components {
             items: components["schemas"]["HistoryEvent"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /**
+         * LabelProvenance
+         * @description One field's provenance declaration: which designation it is, and -
+         *     for an FSN - whether the semantic tag is intact or stripped.
+         *
+         *     Frozen, matching every other response model in this package
+         *     (`nptc.api.routers.catalogue_shared`): provenance describes a field
+         *     that has already been assembled, never something a caller mutates.
+         */
+        LabelProvenance: {
+            designation: components["schemas"]["DesignationType"];
+            semantic_tag: components["schemas"]["SemanticTagState"];
         };
         /**
          * PatchEntryRequest
@@ -1492,6 +1547,10 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
             /**
              * Score
              * @description Trigram similarity against `q`, between 0 and 1.
@@ -1510,6 +1569,15 @@ export interface components {
              */
             facets: components["schemas"]["Facet"][];
         };
+        /**
+         * SemanticTagState
+         * @description Whether an FSN's trailing semantic tag is present on the served
+         *     value. `NOT_APPLICABLE` is for every designation type that is not an
+         *     FSN at all - a preferred term or synonym never carries a semantic tag
+         *     to strip, so there is no "intact" or "stripped" fact to report for one.
+         * @enum {string}
+         */
+        SemanticTagState: "intact" | "stripped" | "not_applicable";
         /**
          * SessionResponse
          * @description What the browser is allowed to know about its own session.
