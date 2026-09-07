@@ -26,10 +26,8 @@ class FakeProcess:
     def __init__(self, lines: list[str], returncode: int) -> None:
         self.stdout = iter(lines)
         self._returncode = returncode
-        self.returncode: int | None = None
 
     def wait(self) -> int:
-        self.returncode = self._returncode
         return self._returncode
 
 
@@ -209,10 +207,23 @@ def test_output_streams_line_by_line_not_only_at_exit() -> None:
     ]
 
 
-def test_retry_and_error_messages_are_also_flushed_immediately() -> None:
+def test_retry_and_error_messages_are_flushed_before_they_can_go_dark() -> None:
+    """The retry message must reach the CI log before the backoff sleep
+    starts, and the final ::error:: annotation must reach it before the run
+    returns - not just eventually, at process exit. Doesn't assert an exact
+    flush count (unlike the streamed-line case in
+    test_output_streams_line_by_line_not_only_at_exit): a
+    print(..., flush=True) call issues two writes (text, then the end
+    separator) followed by a single flush, so an added log line only adds
+    an entry here rather than breaking a count that isn't about log
+    volume."""
     calls: list[str] = []
 
     class RecordingWriter(io.StringIO):
+        def write(self, s: str) -> int:
+            calls.append("write")
+            return super().write(s)
+
         def flush(self) -> None:
             calls.append("flush")
             super().flush()
@@ -225,13 +236,14 @@ def test_retry_and_error_messages_are_also_flushed_immediately() -> None:
         ]
     )
 
+    def sleep_and_check(_seconds: float) -> None:
+        assert calls[-1] == "flush", "retry message must be flushed before sleeping"
+
     guard.run_with_retries(
-        ["pnpm", "audit"], max_attempts=2, popen=popen, sleep=lambda _: None, out=out
+        ["pnpm", "audit"], max_attempts=2, popen=popen, sleep=sleep_and_check, out=out
     )
 
-    # One flush per streamed line (2), plus one for the "retrying" message
-    # and one for the final ::error:: annotation.
-    assert calls.count("flush") == 4
+    assert calls[-1] == "flush", "final ::error:: annotation must be flushed"
 
 
 # --- main --------------------------------------------------------------------------------

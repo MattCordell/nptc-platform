@@ -11,8 +11,8 @@ signature (see NETWORK_SIGNATURE) and fails immediately, on the first
 attempt, for anything else - a real advisory, or a deterministic HTTP-status
 failure like pnpm's own ERR_PNPM_FETCH_401/403/404 (bad auth, not found -
 correctly excluded even though it shares the ERR_PNPM_FETCH prefix with
-nothing here, since it's a real response, not a dead connection, and won't
-be fixed by retrying).
+this guard's network-timeout signatures, since it's a real response, not
+a dead connection, and won't be fixed by retrying).
 
 Streams the wrapped command's combined stdout/stderr live, line by line, so
 a run sitting in retry backoff still shows progress in the CI log rather
@@ -47,7 +47,6 @@ class _Process(Protocol):
     object to satisfy this module's actual use of it."""
 
     stdout: Any
-    returncode: int | None
 
     def wait(self) -> int: ...
 
