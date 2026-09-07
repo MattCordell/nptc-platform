@@ -189,12 +189,19 @@ intermittently timed out under pnpm's defaults, failing the
 `Required (Security)` aggregator - on PRs that touched no dependency manifest
 at all. Two layers now guard against that:
 
-- The repo-root `pnpm-workspace.yaml` raises `fetchTimeout` and `fetchRetries`
-  above pnpm's defaults for every `pnpm` invocation (install and audit alike,
-  in CI and locally). These are pnpm-specific settings, not npm's - testing
-  against an unreachable registry showed pnpm 11.20 reads them from here, not
-  from the same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...)
-  in a `.npmrc` file, which it silently ignores.
+- The repo-root `pnpm-workspace.yaml` raises `fetchRetries` from pnpm's
+  default of 2 to 3 (giving a fourth in-process attempt instead of a third)
+  and `fetchTimeout` from pnpm's default of 60000ms to 90000ms. Of the two,
+  `fetchRetries` is what actually fixed #255: every one of the first three
+  attempts in #258's own failing CI run burned the full 90s with no response
+  at all - the endpoint was not responding slowly, it was not responding -
+  so the extra attempt is the entire fix and the raised `fetchTimeout` bought
+  nothing. These are pnpm-specific settings, not npm's - testing against an
+  unreachable registry showed pnpm 11.20 reads them from here, not from the
+  same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...) in a
+  `.npmrc` file, which it silently ignores. If this ever needs another turn
+  of the dial, turn `fetchRetries` (or `scripts/audit_retry_guard.py`'s
+  `max_attempts`, the second retry layer below) - not `fetchTimeout`.
 - `frontend-audit`'s audit step in
   [`security.yml`](../../.github/workflows/security.yml) runs `pnpm audit`
   through [`scripts/audit_retry_guard.py`](../../scripts/audit_retry_guard.py)
@@ -203,11 +210,13 @@ at all. Two layers now guard against that:
   which inspects the failure output: a registry-timeout signature
   (`TimeoutError`, `operation was aborted`, or a raw network error code such
   as `ETIMEDOUT`/`ECONNRESET`) retries once more after a short sleep;
-  anything else - including a real high/critical advisory, or a
-  deterministic HTTP-status failure like pnpm's `ERR_PNPM_FETCH_401` - fails
-  immediately, on the first attempt, with no retry. The job's
-  `timeout-minutes` is sized to the worst-case retry wall time (see the
-  comment above that job in `security.yml` for the budget).
+  anything else - including a real high/critical advisory (checked first, so
+  advisory text can never be misread as a transport failure even if it
+  happens to contain a network-error token), or a deterministic HTTP-status
+  failure like pnpm's `ERR_PNPM_FETCH_401` - fails immediately, on the first
+  attempt, with no retry. The job's `timeout-minutes` is sized to the
+  worst-case retry wall time (see the comment above that job in
+  `security.yml` for the budget).
 
 `fetchTimeout`/`fetchRetries` are workspace-global (`pnpm-workspace.yaml`
 applies to every package, not just `frontend`), so every other job's own
@@ -217,3 +226,15 @@ test, build)` job and `openapi.yml`'s `client` (generated-client-is-current)
 job both had their `timeout-minutes` padded for this in the same PR that
 introduced the setting (#258); a future job that adds its own `pnpm install`
 step should budget the same way rather than assume pnpm's original defaults.
+
+**Status as of 2026-09-06 (issue #259):** the registry has recovered.
+`frontend-audit` took 12-19 minutes per run on 2026-09-04 (one 20-minute
+failure), but 25 seconds on both real runs of 2026-09-06 (workflow runs
+`34003668013` and `34003111417`); a direct POST to the bulk endpoint now
+returns `200` in 473ms. The retry layers above are dormant insurance, not
+load-bearing - they cost nothing while the registry stays healthy, and
+nothing here has been loosened on the strength of that recovery. Whether the
+per-PR live bulk-audit call can be replaced by a cached or scheduled advisory
+snapshot (NFR-25 only requires the build to fail on high/critical findings
+in production dependencies, not that it query the registry on every push) is
+tracked separately in #272.

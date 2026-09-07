@@ -239,7 +239,12 @@ jobs:
     # ../../pnpm-workspace.yaml's raised fetchTimeout/fetchRetries - see
     # security.yml's frontend-audit job for the worst-case-per-request
     # arithmetic (~8.5 minutes) this pads against, on top of this job's own
-    # normal lint/typecheck/test/build time.
+    # normal lint/typecheck/test/build time. The 5-minute padding (not the
+    # full ~8.5) holds because this job already carries real slack: run
+    # 33828512178 (2026-09-04, the same push whose audit step hit the
+    # worst-case retry chain #255/#258 describe) had this same job's own
+    # "Install dependencies" absorb the identical registry flake and still
+    # finished in 8m16s against this 20-minute budget.
     timeout-minutes: 20
     defaults:
       run:
