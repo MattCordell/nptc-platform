@@ -189,7 +189,7 @@ Values within one facet are OR-ed; filters on different facets are AND-ed, so ad
 always narrows. An operator other than the default `equals` is named after the key,
 separated by a colon - `?filter.assay_name:prefix=glu`, `?filter.volume_ml:range=1..5`.
 
-```
+```http
 GET /api/v1/catalogue/search?q=glucose&filter.discipline=Chemistry&filter.specimen=119297000
 ```
 

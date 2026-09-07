@@ -28,7 +28,7 @@ to them.
 
 ### Filters are dotted, prefixed query parameters, repeated once per value
 
-```
+```http
 GET /api/v1/catalogue/search?q=glucose
     &filter.discipline=Chemistry
     &filter.discipline=Haematology
