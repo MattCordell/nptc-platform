@@ -816,12 +816,33 @@ def test_bulk_seams_per_entry_savepoint_catches_a_genuine_concurrent_race(
                 registry=registry,
             )
             # A per-entry conflict does not abort the batch, so the call
-            # above returned normally with the batch header already
-            # written to `race_session`'s own (still-open) transaction -
-            # committed here, matching what `session_scope` would do for a
-            # real request, so the check below (a separate connection) can
-            # actually see it under READ COMMITTED.
-            race_session.commit()
+            # above returned normally with the batch header already written
+            # to `race_session`'s own transaction - read back through that
+            # same session (never committed, matching the module's own
+            # "zero audit_event rows of its own" discipline above) rather
+            # than a separate connection, which could not see an
+            # uncommitted write under READ COMMITTED regardless.
+            property_value_count = race_session.execute(
+                text(
+                    "SELECT count(*) FROM property_value "
+                    "WHERE entry_id = :entry_id AND property_key = :property_key"
+                ),
+                {"entry_id": entry_id, "property_key": property_key},
+            ).scalar_one()
+            # Exactly one audit_event: the batch header
+            # (property_value_bulk) - a per-entry conflict does not abort
+            # the batch (only that one entry's write), so the header is
+            # still emitted, but the raced write's own StaleDataError fires
+            # before `record_snapshot_change` ever runs, so there is no
+            # property_value.set/property_value_set event to go with it.
+            audit_count = race_session.execute(
+                text(
+                    "SELECT count(*) FROM audit_event "
+                    "WHERE entity_type IN ('property_value_set', 'property_value_bulk') "
+                    "AND (entity_id = :entry_scoped OR entity_id = :property_key)"
+                ),
+                {"entry_scoped": f"{entry_id}:{property_key}", "property_key": property_key},
+            ).scalar_one()
         finally:
             race_session.close()
             event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
@@ -834,31 +855,8 @@ def test_bulk_seams_per_entry_savepoint_catches_a_genuine_concurrent_race(
         assert outcome.conflict is not None
         assert outcome.conflict.current_row_version == 2
         assert outcome.row_version == 2
-
-        with owner_engine.connect() as check_connection:
-            property_value_count = check_connection.execute(
-                text(
-                    "SELECT count(*) FROM property_value "
-                    "WHERE entry_id = :entry_id AND property_key = :property_key"
-                ),
-                {"entry_id": entry_id, "property_key": property_key},
-            ).scalar_one()
-            assert property_value_count == 0
-            # Exactly one audit_event: the batch header
-            # (property_value_bulk) - a per-entry conflict does not abort
-            # the batch (only that one entry's write), so the header is
-            # still emitted, but the raced write's own StaleDataError fires
-            # before `record_snapshot_change` ever runs, so there is no
-            # property_value.set/property_value_set event to go with it.
-            audit_count = check_connection.execute(
-                text(
-                    "SELECT count(*) FROM audit_event "
-                    "WHERE entity_type IN ('property_value_set', 'property_value_bulk') "
-                    "AND (entity_id = :entry_scoped OR entity_id = :property_key)"
-                ),
-                {"entry_scoped": f"{entry_id}:{property_key}", "property_key": property_key},
-            ).scalar_one()
-            assert audit_count == 1
+        assert property_value_count == 0
+        assert audit_count == 1
     finally:
         with owner_engine.connect() as cleanup_connection:
             cleanup_connection.execute(
