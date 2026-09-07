@@ -20,15 +20,18 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import ChangelogNoteError
-from nptc.catalogue.entries import allocate_business_key, create_entry
+from nptc.catalogue.entries import allocate_business_key, create_entry, format_business_key
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
+    BulkPropertyOutcome,
+    EntryPropertyTarget,
     PropertyDefinitionNotFoundError,
     PropertyValidationError,
     PropertyValueInput,
     assert_specimen_flag_allowed,
     save_property_values,
+    save_property_values_for_entries,
 )
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
@@ -912,3 +915,377 @@ def test_a_malformed_constraints_document_is_rejected_before_any_value_is_judged
         )
 
     assert _property_value_count(app_session, entry_id=entry.id, property_key=definition.key) == 0
+
+
+# --- issue #265: save_property_values_for_entries (FR-39's bulk seam) -------
+
+
+def _outcomes_by_key(outcomes: tuple[BulkPropertyOutcome, ...]) -> dict[str, BulkPropertyOutcome]:
+    return {outcome.business_key: outcome for outcome in outcomes}
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_applies_across_multiple_entries_in_targets_order(app_session: Session) -> None:
+    entry_a = _new_entry(app_session, "Bulk entry A")
+    entry_b = _new_entry(app_session, "Bulk entry B")
+    prop = _new_string_property(app_session, key="a_bulk_free_text", cardinality="0..*")
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry_a.business_key, expected_row_version=entry_a.row_version
+            ),
+            EntryPropertyTarget(
+                business_key=entry_b.business_key, expected_row_version=entry_b.row_version
+            ),
+        ],
+        property_key=prop.key,
+        values=_inputs("bulk-value"),
+        reason="Bulk write across two entries",
+        registry=_registry(app_session),
+    )
+
+    assert [outcome.business_key for outcome in outcomes] == [
+        entry_a.business_key,
+        entry_b.business_key,
+    ]
+    assert [outcome.status for outcome in outcomes] == ["applied", "applied"]
+    assert _property_value_count(app_session, entry_id=entry_a.id, property_key=prop.key) == 1
+    assert _property_value_count(app_session, entry_id=entry_b.id, property_key=prop.key) == 1
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_bulk_reports_a_conflict_for_a_stale_entry_and_still_applies_the_rest(
+    app_session: Session,
+) -> None:
+    entry_stale = _new_entry(app_session, "Bulk entry stale")
+    entry_fresh = _new_entry(app_session, "Bulk entry fresh")
+    prop = _new_string_property(app_session, key="a_bulk_conflict_prop", cardinality="0..*")
+    registry = _registry(app_session)
+    stale_version = entry_stale.row_version
+    # Advances entry_stale's row_version through an unrelated write, so the
+    # version the bulk request below carries for it is now behind.
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry_stale,
+        expected_row_version=entry_stale.row_version,
+        property_key=prop.key,
+        values=_inputs("already-set"),
+        reason="Advance the version before the bulk write",
+        registry=registry,
+    )
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry_stale.business_key, expected_row_version=stale_version
+            ),
+            EntryPropertyTarget(
+                business_key=entry_fresh.business_key, expected_row_version=entry_fresh.row_version
+            ),
+        ],
+        property_key=prop.key,
+        values=_inputs("bulk-value"),
+        reason="Bulk write with one stale entry",
+        registry=registry,
+    )
+
+    by_key = _outcomes_by_key(outcomes)
+    stale_outcome = by_key[entry_stale.business_key]
+    assert stale_outcome.status == "conflict"
+    assert stale_outcome.conflict is not None
+    assert stale_outcome.conflict.current_row_version == entry_stale.row_version
+    assert stale_outcome.row_version == entry_stale.row_version
+    assert by_key[entry_fresh.business_key].status == "applied"
+    rows = (
+        app_session.execute(
+            select(PropertyValue).where(
+                PropertyValue.entry_id == entry_stale.id, PropertyValue.property_key == prop.key
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.value for row in rows] == ["already-set"]
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_reports_not_found_for_a_missing_business_key(app_session: Session) -> None:
+    entry = _new_entry(app_session, "Bulk entry present")
+    prop = _new_string_property(app_session, key="a_bulk_not_found_prop", cardinality="0..*")
+    missing_key = format_business_key(999_265_001)
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(business_key=missing_key, expected_row_version=1),
+            EntryPropertyTarget(
+                business_key=entry.business_key, expected_row_version=entry.row_version
+            ),
+        ],
+        property_key=prop.key,
+        values=_inputs("x"),
+        reason="One missing business key, one present",
+        registry=_registry(app_session),
+    )
+
+    assert outcomes[0].status == "not-found"
+    assert outcomes[0].row_version is None
+    assert outcomes[0].conflict is None
+    assert outcomes[1].status == "applied"
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_bulk_row_version_increments_by_exactly_one_for_an_applied_entry(
+    app_session: Session,
+) -> None:
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_bulk_version_bump_prop", cardinality="0..*")
+    before_version = entry.row_version
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry.business_key, expected_row_version=before_version
+            )
+        ],
+        property_key=prop.key,
+        values=_inputs("bumped"),
+        reason="Row version bump check",
+        registry=_registry(app_session),
+    )
+
+    assert outcomes[0].row_version == before_version + 1
+    assert entry.row_version == before_version + 1
+
+
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_bulk_rejects_a_blank_reason_before_touching_any_entry(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_bulk_blank_reason_prop", cardinality="0..*")
+    before_audit_count = _audit_event_count(app_session)
+
+    with pytest.raises(ChangelogNoteError):
+        save_property_values_for_entries(
+            app_session,
+            AuditContext.system(),
+            targets=[
+                EntryPropertyTarget(
+                    business_key=entry.business_key, expected_row_version=entry.row_version
+                )
+            ],
+            property_key=prop.key,
+            values=_inputs("x"),
+            reason="",
+            registry=_registry(app_session),
+        )
+
+    assert _property_value_count(app_session, entry_id=entry.id, property_key=prop.key) == 0
+    assert _audit_event_count(app_session) == before_audit_count
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_validates_the_shared_values_set_even_when_the_only_target_would_conflict(
+    app_session: Session,
+) -> None:
+    """Order-independence (FR-37/FR-39): the shared `values` set is derived
+    from the request document alone, so it is validated before the loop
+    reaches any entry - a batch must not return 200-with-conflicts having
+    never looked at an invalid `values` set just because every target it
+    named happens to be stale."""
+    entry = _new_entry(app_session)
+    prop = _new_string_property(
+        app_session, key="a_bulk_order_independence_prop", cardinality="0..*", max_length=3
+    )
+    guaranteed_mismatch = entry.row_version + 999
+
+    with pytest.raises(PropertyValidationError):
+        save_property_values_for_entries(
+            app_session,
+            AuditContext.system(),
+            targets=[
+                EntryPropertyTarget(
+                    business_key=entry.business_key, expected_row_version=guaranteed_mismatch
+                )
+            ],
+            property_key=prop.key,
+            values=_inputs("way too long"),
+            reason="Values invalid even though the only target would conflict",
+            registry=_registry(app_session),
+        )
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_an_invalid_shared_values_set_writes_nothing_for_any_entry(
+    app_session: Session,
+) -> None:
+    entry_a = _new_entry(app_session, "Bulk invalid values A")
+    entry_b = _new_entry(app_session, "Bulk invalid values B")
+    prop = _new_string_property(
+        app_session, key="a_bulk_short_text_prop", cardinality="0..*", max_length=3
+    )
+
+    with pytest.raises(PropertyValidationError):
+        save_property_values_for_entries(
+            app_session,
+            AuditContext.system(),
+            targets=[
+                EntryPropertyTarget(
+                    business_key=entry_a.business_key, expected_row_version=entry_a.row_version
+                ),
+                EntryPropertyTarget(
+                    business_key=entry_b.business_key, expected_row_version=entry_b.row_version
+                ),
+            ],
+            property_key=prop.key,
+            values=_inputs("way too long"),
+            reason="Should be rejected for the whole batch",
+            registry=_registry(app_session),
+        )
+
+    assert _property_value_count(app_session, entry_id=entry_a.id, property_key=prop.key) == 0
+    assert _property_value_count(app_session, entry_id=entry_b.id, property_key=prop.key) == 0
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_an_entry_already_holding_the_target_value_is_unchanged_not_an_error(
+    app_session: Session,
+) -> None:
+    entry = _new_entry(app_session)
+    prop = _new_string_property(app_session, key="a_bulk_noop_prop", cardinality="0..*")
+    registry = _registry(app_session)
+    save_property_values(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        expected_row_version=entry.row_version,
+        property_key=prop.key,
+        values=_inputs("already-set"),
+        reason="Pre-set the value outside the bulk write",
+        registry=registry,
+    )
+    version_after_presave = entry.row_version
+
+    outcomes = save_property_values_for_entries(
+        app_session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry.business_key, expected_row_version=version_after_presave
+            )
+        ],
+        property_key=prop.key,
+        values=_inputs("already-set"),
+        reason="Resubmitting the same value through the bulk route",
+        registry=registry,
+    )
+
+    assert outcomes[0].status == "unchanged"
+    assert outcomes[0].row_version == version_after_presave
+    assert entry.row_version == version_after_presave
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_bulk_a_specimen_cross_field_conflict_aborts_the_whole_batch(
+    app_session: Session,
+) -> None:
+    """FR-89's specimen cross-field check is deliberately whole-request, not
+    per-entry (ADR-0035): the operator explicitly selected this entry, so a
+    violation refuses the whole batch rather than silently skipping it. The
+    conflicting entry is targeted first, so a valid entry later in the list
+    is never reached."""
+    entry_unconstrained = _new_entry(app_session, "Bulk specimen unconstrained")
+    entry_unconstrained.specimen_unconstrained = True
+    app_session.flush()
+    entry_ok = _new_entry(app_session, "Bulk specimen ok")
+    _specimen_seeded(app_session)
+    terminology = StubTerminologyClient()
+    _seed_specimen_stub(terminology, ["specimen-1"])
+
+    with pytest.raises(PropertyValidationError) as excinfo:
+        save_property_values_for_entries(
+            app_session,
+            AuditContext.system(),
+            targets=[
+                EntryPropertyTarget(
+                    business_key=entry_unconstrained.business_key,
+                    expected_row_version=entry_unconstrained.row_version,
+                ),
+                EntryPropertyTarget(
+                    business_key=entry_ok.business_key, expected_row_version=entry_ok.row_version
+                ),
+            ],
+            property_key="specimen",
+            values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
+            reason="Should abort the whole batch",
+            registry=_registry(app_session, terminology),
+        )
+
+    assert any(issue.code == "specimen-unconstrained-conflict" for issue in excinfo.value.issues)
+    assert _property_value_count(app_session, entry_id=entry_ok.id, property_key="specimen") == 0
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_bulk_emits_one_batch_event_plus_one_per_entry_event_sharing_correlation_id(
+    app_session: Session,
+) -> None:
+    entry_a = _new_entry(app_session, "Bulk audit A")
+    entry_b = _new_entry(app_session, "Bulk audit B")
+    prop = _new_string_property(app_session, key="a_bulk_audit_prop", cardinality="0..*")
+    ctx = AuditContext.system()
+
+    save_property_values_for_entries(
+        app_session,
+        ctx,
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry_a.business_key, expected_row_version=entry_a.row_version
+            ),
+            EntryPropertyTarget(
+                business_key=entry_b.business_key, expected_row_version=entry_b.row_version
+            ),
+        ],
+        property_key=prop.key,
+        values=_inputs("bulk-audit-value"),
+        reason="Bulk write for audit correlation test",
+        registry=_registry(app_session),
+    )
+
+    events = (
+        app_session.execute(
+            select(AuditEvent)
+            .where(AuditEvent.correlation_id == ctx.correlation_id)
+            .order_by(AuditEvent.sequence)
+        )
+        .scalars()
+        .all()
+    )
+    actions = [event.action for event in events]
+    assert actions.count("property_value.set") == 2
+    assert actions.count("property_value.bulk_set") == 1
+    bulk_event = next(event for event in events if event.action == "property_value.bulk_set")
+    assert bulk_event.entity_type == "property_value_bulk"
+    assert bulk_event.entity_id == prop.key
+    assert bulk_event.before is None
+    assert bulk_event.after is None
+    assert "2 applied" in (bulk_event.reason or "")

@@ -51,24 +51,33 @@ FHIR's weakest strength constrains nothing), and drops it for `extensible`
 only when the matching `PropertyValueInput.justification` is non-blank -
 otherwise the issue survives, now naming the missing justification rather
 than the raw binding failure.
+
+**`save_property_values_for_entries` is the bulk seam (issue #265, FR-39),
+not `nptc.catalogue.entries.save_entries`.** Discipline and every other
+coded registry property are `property_value` rows, not `catalogue_entry`
+columns, so a bulk reclassify has to go through this module. It loops
+`save_property_values` once per target, one savepoint per entry, after
+validating `reason` and the shared `values` set exactly once up front -
+see that function's own docstring for the whole-request/per-entry split.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, Literal
 
 from sqlalchemy import delete, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.policy import AuditFieldPolicy
 from nptc.audit.recording import record_snapshot_change
-from nptc.audit.writer import AuditContext
+from nptc.audit.writer import AuditContext, append_audit_event
 from nptc.catalogue.changelog import validate_changelog_note
-from nptc.catalogue.errors import ConflictReport, EntryVersionConflictError
+from nptc.catalogue.errors import ConflictReport, EntryNotFoundError, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
 from nptc.db.models.property_value import PropertyValue
@@ -78,13 +87,25 @@ from nptc.registry.handlers import DatatypeRegistry, PropertyDefinitionSpec, Val
 from nptc.registry.schema import validate_constraints, validate_values
 
 __all__ = [
+    "BulkPropertyOutcome",
+    "EntryPropertyTarget",
     "PropertyDefinitionNotFoundError",
     "PropertyValidationError",
     "PropertyValueInput",
     "PropertyWriteIssue",
     "assert_specimen_flag_allowed",
     "save_property_values",
+    "save_property_values_for_entries",
 ]
+
+#: `property_value.bulk_set`'s own `entity_type` (issue #265) - deliberately
+#: distinct from `property_value_set` (the per-entry `property_value.set`
+#: events `save_property_values` emits): a diff-free batch header has a
+#: different `entity_id` grammar (`property_key` alone, not
+#: `f"{entry.id}:{property_key}"`), and a history query scoped to
+#: `property_value_set` must not pick up a header row it cannot render as a
+#: value diff.
+_BULK_ENTITY_TYPE: Final[str] = "property_value_bulk"
 
 #: A binding value-set failure - the one issue code eligible for a
 #: strength-based override. Every other issue code (a schema/shape
@@ -539,6 +560,212 @@ def save_property_values(
     )
 
     return inserted
+
+
+@dataclass(frozen=True)
+class EntryPropertyTarget:
+    """One `(business_key, expected_row_version)` pair the caller selected
+    for a bulk write (issue #265, FR-39). The version is the one that entry
+    held *when selected*, not resolved server-side - a server-side filter
+    would have nothing to lock a conflict check against."""
+
+    business_key: str
+    expected_row_version: int
+
+
+#: `BulkPropertyOutcome.status` for one target - see that dataclass for what
+#: each value means and when `row_version`/`conflict` are populated.
+_BulkOutcomeStatus = Literal["applied", "unchanged", "conflict", "not-found"]
+
+
+@dataclass(frozen=True)
+class BulkPropertyOutcome:
+    """One target's result from `save_property_values_for_entries`, at
+    index `i` in `targets` order - a caller zips its own request against
+    this to see which entry got which outcome.
+
+    `row_version` is the value *after* the attempt: bumped for `applied`,
+    unchanged for `unchanged`, the entry's actual current version for
+    `conflict` (so the caller has what it needs to retry), and `None` for
+    `not-found` (there is no entry to report a version for). `conflict`
+    carries the domain `ConflictReport` - never a wire model, so this
+    module stays free of any `nptc.api` import - and is populated only
+    when `status == "conflict"`."""
+
+    business_key: str
+    status: _BulkOutcomeStatus
+    row_version: int | None
+    conflict: ConflictReport | None = None
+
+
+def save_property_values_for_entries(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    targets: Sequence[EntryPropertyTarget],
+    property_key: str,
+    values: Sequence[PropertyValueInput],
+    reason: str,
+    registry: DatatypeRegistry,
+) -> tuple[BulkPropertyOutcome, ...]:
+    """Sets `property_key` to `values` across every entry in `targets`, one
+    `save_property_values` call - and one savepoint - per entry, so a stale
+    or missing entry never blocks the rest of the batch (issue #265,
+    FR-39). Returns exactly `len(targets)` outcomes, in `targets` order.
+
+    **Whole-request vs per-entry, one rule:** anything derivable from
+    `property_key`/`values`/`reason` alone, with no dependency on any one
+    entry's state, is checked once here, *before* the loop - `reason`
+    (FR-37), the property definition (404/FR-11), and the shared `values`
+    set's own schema/cardinality/binding-strength validation. Doing this
+    upfront (rather than letting the first `save_property_values` call
+    discover it) is what keeps the batch order-independent: a batch whose
+    first several targets all conflict at the row-version check below must
+    still refuse a bad `values` set or an unvalidated `reason`, rather than
+    returning 200 having never looked at either. Everything else - a stale
+    `expected_row_version`, a missing entry, FR-89's specimen cross-field
+    conflict - depends on one entry's own state and is a per-entry outcome,
+    except FR-89's check specifically: it is deliberately *not* caught
+    per-entry here (see `PropertyValidationError` below) so it aborts the
+    whole batch rather than silently skip an entry the operator explicitly
+    selected (ADR-0035).
+
+    Raises `PropertyDefinitionNotFoundError`, `DeprecatedPropertyWriteError`,
+    `nptc.catalogue.changelog.ChangelogNoteError`, or `PropertyValidationError`
+    for a whole-request problem - none of these produce a per-entry outcome,
+    because none of them depend on any entry `targets` names. A raise here
+    (or an FR-89 conflict raised by one target's own `save_property_values`
+    call) leaves no per-entry write and no audit event at all: nothing has
+    been touched yet, and `nptc.db.session.session_scope` rolls back the
+    whole transaction on any exception that reaches it, discarding any
+    entry already applied earlier in the loop too.
+    """
+    # Deferred to break an import cycle: `nptc.catalogue.entries` imports
+    # `assert_specimen_flag_allowed` from this module at its own top level,
+    # so a top-level import the other way here would fail with a partially
+    # initialised module rather than a clean cycle error.
+    from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
+
+    validated_reason = validate_changelog_note(reason)
+    definition = _load_active_property_definition(session, property_key)
+    preflight = _preflight_property_write(definition, values, registry)
+    if preflight.write_issues:
+        raise PropertyValidationError(preflight.write_issues)
+
+    outcomes: list[BulkPropertyOutcome] = []
+    tallies: dict[_BulkOutcomeStatus, int] = {
+        "applied": 0,
+        "unchanged": 0,
+        "conflict": 0,
+        "not-found": 0,
+    }
+
+    for target in targets:
+        try:
+            entry = load_entry_for_update(session, target.business_key)
+        except EntryNotFoundError:
+            outcomes.append(
+                BulkPropertyOutcome(
+                    business_key=target.business_key, status="not-found", row_version=None
+                )
+            )
+            tallies["not-found"] += 1
+            continue
+
+        try:
+            assert_entry_row_version(session, entry, target.expected_row_version)
+        except EntryVersionConflictError as exc:
+            outcomes.append(
+                BulkPropertyOutcome(
+                    business_key=target.business_key,
+                    status="conflict",
+                    row_version=exc.report.current_row_version,
+                    conflict=exc.report,
+                )
+            )
+            tallies["conflict"] += 1
+            continue
+
+        before_version = entry.row_version
+        # One savepoint per entry, around the write only - `save_property_
+        # values` opens none of its own. Without it, the genuine race this
+        # catches (`entry.row_version`'s own `version_id_col` colliding at
+        # flush, after the precondition check above already passed) would
+        # abort the whole batch rather than just this one target, and could
+        # leave `property_value` rows deleted-but-not-reinserted for this
+        # entry (mirrors `save_entry`'s own layer-2 pattern).
+        savepoint = session.begin_nested()
+        try:
+            save_property_values(
+                session,
+                ctx,
+                entry=entry,
+                property_key=property_key,
+                values=values,
+                reason=validated_reason,
+                registry=registry,
+                expected_row_version=target.expected_row_version,
+            )
+            savepoint.commit()
+        except (StaleDataError, ObjectDeletedError):
+            savepoint.rollback()
+            session.expire(entry)
+            refreshed = load_entry_for_update(session, target.business_key)
+            outcomes.append(
+                BulkPropertyOutcome(
+                    business_key=target.business_key,
+                    status="conflict",
+                    row_version=refreshed.row_version,
+                    conflict=ConflictReport(
+                        business_key=refreshed.business_key,
+                        expected_row_version=target.expected_row_version,
+                        current_row_version=refreshed.row_version,
+                    ),
+                )
+            )
+            tallies["conflict"] += 1
+            continue
+
+        if entry.row_version == before_version:
+            outcomes.append(
+                BulkPropertyOutcome(
+                    business_key=target.business_key,
+                    status="unchanged",
+                    row_version=entry.row_version,
+                )
+            )
+            tallies["unchanged"] += 1
+        else:
+            outcomes.append(
+                BulkPropertyOutcome(
+                    business_key=target.business_key,
+                    status="applied",
+                    row_version=entry.row_version,
+                )
+            )
+            tallies["applied"] += 1
+
+    # Diff-free: a batch header describes N other events, it does not carry
+    # its own before/after (test_audit_write_path_guard.py rule 3 - the
+    # literal absence of both keywords, not `None` passed explicitly, reads
+    # identically to that guard but needs no exemption comment since this
+    # call supplies neither). Shares `ctx.correlation_id` with every
+    # per-entry `property_value.set` event above for free (NFR-08) - it is
+    # minted once per request, not per audit call.
+    append_audit_event(
+        session,
+        ctx,
+        action="property_value.bulk_set",
+        entity_type=_BULK_ENTITY_TYPE,
+        entity_id=property_key,
+        reason=(
+            f"{validated_reason} ({tallies['applied']} applied, "
+            f"{tallies['unchanged']} unchanged, {tallies['conflict']} conflict, "
+            f"{tallies['not-found']} not-found)"
+        ),
+    )
+
+    return tuple(outcomes)
 
 
 def _value_payload(row: PropertyValue) -> Mapping[str, object]:
