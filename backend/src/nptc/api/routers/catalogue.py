@@ -63,6 +63,7 @@ package is the only place that dispatch is allowed to exist
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -87,7 +88,7 @@ from nptc.api.routers.catalogue_shared import (
     property_value_from_row,
 )
 from nptc.auth.permissions import Permission
-from nptc.catalogue import code_systems, queries
+from nptc.catalogue import code_systems, history, queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
@@ -223,6 +224,22 @@ EntryCursorQuery = Annotated[
     str | None,
     Query(
         pattern=BUSINESS_KEY_PATTERN.pattern,
+        description=(
+            "The `next_cursor` from the previous page. Pass it back unmodified, "
+            "and do not construct one."
+        ),
+    ),
+]
+
+#: `/catalogue/entries/{business_key}/history` pages on the audit log's own
+#: `sequence` - a globally monotonic identity column, so a plain digit
+#: string makes a total order with no possible tie. Exclusive: the next
+#: page is every event *older* than this one (the endpoint serves most
+#: recent first).
+HistoryCursorQuery = Annotated[
+    str | None,
+    Query(
+        pattern=r"^[0-9]+$",
         description=(
             "The `next_cursor` from the previous page. Pass it back unmodified, "
             "and do not construct one."
@@ -368,6 +385,40 @@ class PropertyList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[PropertyValue]
+
+
+class HistoryEvent(BaseModel):
+    """One change to the entry or one of its designations, code bindings
+    or property values (FR-19).
+
+    Never the raw diff: `changed_fields` names what changed, not the
+    values themselves - a withheld field's name still appears (that a
+    field changed is not the secret), but no value from any audit event
+    is ever serialised here, changed or not.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    occurred_at: datetime
+    action: str = Field(description="The internal action name, e.g. `catalogue_entry.updated`.")
+    changed_by: str | None = Field(
+        description="The administrator's display name, or `null` for a system-initiated "
+        "change or an account since pseudonymised on closure."
+    )
+    changed_fields: list[str] = Field(description="Which fields changed at this event.")
+    note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
+    release: None = Field(
+        default=None,
+        description="Always `null` in P1 - the defined slot P4's release membership fills "
+        "once releases exist (FR-19).",
+    )
+
+
+class HistoryPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[HistoryEvent]
+    next_cursor: str | None
 
 
 class SearchHit(EntrySummary):
@@ -746,4 +797,49 @@ def read_properties(
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, (entry.id,))
         ]
+    )
+
+
+@router.get(
+    "/entries/{business_key}/history",
+    summary="An entry's change history, most recent first (FR-19)",
+    responses=PUBLIC_ENTRY_ERROR_RESPONSES,
+    dependencies=[_BROWSE],
+)
+def read_history(
+    session: SessionDep,
+    business_key: BusinessKeyPath,
+    limit: LimitQuery = 50,
+    before: HistoryCursorQuery = None,
+) -> HistoryPage:
+    """Every audit event against this entry or one of its designations,
+    code bindings or property values (FR-19) - what changed, when, who by
+    (a display name, never an internal id), and the changelog note. Never
+    empty-errors: an entry never edited since seeding returns `200` with
+    an empty `items` list.
+
+    `release` is always `null` on every item in P1 - FR-19 asks for
+    "every published release in which it appeared" too, and releases do
+    not exist until P4. This is the defined slot P4 fills; it is not
+    dropped from the shape in the meantime.
+    """
+    entry = queries.get_entry(session, business_key)
+    page = history.load_history(
+        session,
+        entry,
+        limit=limit,
+        before=int(before) if before is not None else None,
+    )
+    return HistoryPage(
+        items=[
+            HistoryEvent(
+                occurred_at=event.occurred_at,
+                action=event.action,
+                changed_by=event.changed_by,
+                changed_fields=list(event.changed_fields),
+                note=event.note,
+            )
+            for event in page.events
+        ],
+        next_cursor=page.next_cursor,
     )
