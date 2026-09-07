@@ -1,8 +1,10 @@
 """Route-table inventory: enumerating every non-GET route of the real
 FastAPI app, and cross-checking it against a declared coverage set (issue
-#44's FR-80/FR-81 acceptance criterion, and issue #165's route-table
-inventory test for NFR-08 - the two share this walker so they cannot
-silently drift into two different notions of "every mutating endpoint").
+#44's FR-80/FR-81 acceptance criterion). `mutating_routes_with_endpoints`
+is the same walk plus each route's `endpoint` callable, for issue #165's
+NFR-08 call-graph inventory - the two consumers share `_iter_mutating_api_
+routes` so they cannot silently drift into two different notions of "every
+mutating endpoint".
 
 Not a `test_*.py` module - imported by path via `importlib`.
 """
@@ -30,10 +32,13 @@ class RouteKey:
         return f"{self.method} {self.path}"
 
 
-def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
-    """Every route on `app` whose declared methods include at least one
-    non-GET/HEAD/OPTIONS verb, one `RouteKey` per (method, path) pair -
-    a route declaring both GET and POST contributes only its POST key.
+def _iter_mutating_api_routes(app: FastAPI) -> Iterable[tuple[RouteKey, APIRoute]]:
+    """Every `(RouteKey, APIRoute)` pair for a route whose declared methods
+    include at least one non-GET/HEAD/OPTIONS verb - a route declaring both
+    GET and POST contributes only its POST pair. The one recursive walk
+    both `mutating_routes` and issue #165's call-graph inventory build on,
+    so the two cannot silently drift into two different notions of "every
+    mutating endpoint" by each maintaining their own copy of it.
 
     **The walk is recursive, and has to be** (found while wiring issue
     #142's router): `app.include_router(...)` does not flatten the included
@@ -58,14 +63,14 @@ def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
     happens to pin rather than silently going back to seeing nothing the
     next time that internal shape changes.
     """
-    keys: set[RouteKey] = set()
+    seen: dict[RouteKey, APIRoute] = {}
 
     def visit(routes: Iterable[BaseRoute]) -> None:
         for route in routes:
             if isinstance(route, APIRoute):
                 for method in route.methods or set():
                     if method not in _NON_MUTATING_METHODS:
-                        keys.add(RouteKey(method=method, path=route.path))
+                        seen[RouteKey(method=method, path=route.path)] = route
             nested = getattr(route, "routes", None)
             if nested is None:
                 original_router = getattr(route, "original_router", None)
@@ -74,7 +79,25 @@ def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
                 visit(nested)
 
     visit(app.routes)
-    return frozenset(keys)
+    return seen.items()
+
+
+def mutating_routes(app: FastAPI) -> frozenset[RouteKey]:
+    """Every route on `app` whose declared methods include at least one
+    non-GET/HEAD/OPTIONS verb, one `RouteKey` per (method, path) pair -
+    a route declaring both GET and POST contributes only its POST key.
+    See `_iter_mutating_api_routes` for the walk itself."""
+    return frozenset(key for key, _ in _iter_mutating_api_routes(app))
+
+
+def mutating_routes_with_endpoints(app: FastAPI) -> dict[RouteKey, APIRoute]:
+    """Like `mutating_routes`, but keeping each route's whole `APIRoute` -
+    issue #165's call-graph inventory needs `route.endpoint.__module__` +
+    `.__qualname__` to find the route's source, and a future consumer
+    reporting `route.name` or another attribute gets it for free without a
+    third walker; `mutating_routes` itself needs none of this, so it stays
+    a plain `frozenset` for #44's simpler coverage-set comparison."""
+    return dict(_iter_mutating_api_routes(app))
 
 
 def assert_inventory_covers_every_mutating_route(
