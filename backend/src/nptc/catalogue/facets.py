@@ -434,13 +434,6 @@ class FacetDescriptor:
         return self.source.value_source() is not None
 
 
-#: Named so the "a core facet is not special-cased" test can assert against
-#: the same value a descriptor carries, rather than retyping it. Independent
-#: of `_core_facets`'s `status_values` argument: the set of *keys* a surface
-#: declares does not depend on which values it permits.
-CORE_FACET_KEYS: Final[frozenset[str]] = frozenset({"status"})
-
-
 def _core_facets(status_values: Iterable[str]) -> tuple[FacetDescriptor, ...]:
     """The declared core-column facets. One entry today (ADR-0032); the
     tuple shape exists so a second is a data change rather than a new code
@@ -467,6 +460,14 @@ def _core_facets(status_values: Iterable[str]) -> tuple[FacetDescriptor, ...]:
             ),
         ),
     )
+
+
+#: Named so the "a core facet is not special-cased" test can assert against
+#: the same value a descriptor carries, rather than retyping it. Derived
+#: from `_core_facets`, not restated, so a second core facet is one edit
+#: rather than two that can drift apart - `status_values=()` is safe here
+#: because a descriptor's `key` never depends on which values it permits.
+CORE_FACET_KEYS: Final[frozenset[str]] = frozenset(d.key for d in _core_facets(()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,7 +624,7 @@ def parse_filters(
         grouped.setdefault((key, op), []).append(value)
 
     selections: list[FilterSelection] = []
-    for (key, op), raw_values in grouped.items():
+    for (key, op), grouped_values in grouped.items():
         descriptor = context.descriptor(key)
         if descriptor is None:
             if key in context.known_property_keys:
@@ -635,9 +636,16 @@ def parse_filters(
             raise UnsupportedFilterOperatorError(
                 f"facet {key!r} does not support the {op.value!r} operator"
             )
+        # `dict.fromkeys` dedupes while keeping first-seen order. Within one
+        # facet, values OR together (`_selection_predicate`), and OR is
+        # idempotent as well as commutative - `?filter.x=a&filter.x=a` means
+        # exactly what `?filter.x=a` does. Without this, a repeated value
+        # both built a redundant `EXISTS` clause and minted a different
+        # cursor digest for a request that meant the same thing.
+        raw_values = tuple(dict.fromkeys(grouped_values))
         if len(raw_values) > FILTER_VALUE_CAP:
             raise TooManyFilterValuesError(
-                f"facet {key!r} was sent {len(raw_values)} values; "
+                f"facet {key!r} was sent {len(raw_values)} distinct values; "
                 f"at most {FILTER_VALUE_CAP} are accepted in one selection"
             )
         selections.append(
@@ -645,7 +653,7 @@ def parse_filters(
                 descriptor=descriptor,
                 op=op,
                 values=tuple(_coerce_one(descriptor, op, raw) for raw in raw_values),
-                raw_values=tuple(raw_values),
+                raw_values=raw_values,
             )
         )
     order = {descriptor.key: index for index, descriptor in enumerate(context.descriptors)}

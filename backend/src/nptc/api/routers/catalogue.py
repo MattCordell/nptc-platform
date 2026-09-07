@@ -90,6 +90,7 @@ from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
     FILTER_OP_SEPARATOR,
     FILTER_PARAM_PREFIX,
+    FILTER_VALUE_CAP,
     FacetContext,
     FilterSelection,
     load_facet_context,
@@ -260,7 +261,10 @@ FILTER_PARAMETER: Final[dict[str, Any]] = {
         f"`?{FILTER_PARAM_PREFIX}volume_ml{FILTER_OP_SEPARATOR}range=1..5`. "
         "Which operators a facet accepts follows from the property's "
         "datatype; one it does not accept is a 422, never a silently ignored "
-        "parameter. NOTE for generated clients: `{property_key}` above is a "
+        f"parameter. At most {FILTER_VALUE_CAP} distinct values are accepted "
+        "in one facet's selection (repeated parameter or `:in` list alike); "
+        "more than that is also a 422. NOTE for generated clients: "
+        "`{property_key}` above is a "
         "placeholder, not a literal parameter name - OpenAPI has no syntax "
         "for a templated parameter name, so a generated client typically "
         "renders one field named literally `filter.{property_key}`. Sending "

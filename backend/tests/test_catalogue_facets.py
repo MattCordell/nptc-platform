@@ -284,6 +284,24 @@ def test_exactly_the_value_cap_is_accepted(context: FacetContext) -> None:
     assert len(selections[0].values) == FILTER_VALUE_CAP
 
 
+@pytest.mark.req("FR-16")
+def test_a_repeated_value_does_not_count_twice_towards_the_cap(context: FacetContext) -> None:
+    """OR is idempotent as well as commutative -
+    `?filter.discipline=a&filter.discipline=a` means exactly what
+    `?filter.discipline=a` does, so the duplicate must not spend two of the
+    cap's fifty slots, and more than the cap of *distinct* values is still
+    refused even if every value is repeated."""
+    one_value_many_times = [("filter.discipline", "a")] * (FILTER_VALUE_CAP + 1)
+    selections = parse_filters(one_value_many_times, context)
+    assert selections[0].raw_values == ("a",)
+
+    too_many_distinct_even_with_duplicates = [
+        ("filter.discipline", str(i)) for i in range(FILTER_VALUE_CAP + 1)
+    ] * 2
+    with pytest.raises(TooManyFilterValuesError):
+        parse_filters(too_many_distinct_even_with_duplicates, context)
+
+
 # --- composition ----------------------------------------------------------
 
 
@@ -402,6 +420,22 @@ def test_the_digest_material_is_stable_across_repeated_value_order(
         parse_filters([("filter.discipline:in", "b"), ("filter.discipline:in", "a")], context)
     )
     assert forward == reverse
+
+
+@pytest.mark.req("FR-16")
+def test_the_digest_material_is_stable_across_a_repeated_duplicate_value(
+    context: FacetContext,
+) -> None:
+    """OR is idempotent, not just commutative: `?filter.discipline=a&
+    filter.discipline=a` is the same request as `?filter.discipline=a`
+    alone. `parse_filters` dedupes `raw_values` for exactly this reason -
+    without it, a client whose own logic happened to repeat a value would
+    mint a different cursor for a request that meant the same thing."""
+    once = filter_digest_material(parse_filters([("filter.discipline", "a")], context))
+    twice = filter_digest_material(
+        parse_filters([("filter.discipline", "a"), ("filter.discipline", "a")], context)
+    )
+    assert once == twice
 
 
 @pytest.mark.req("FR-16")

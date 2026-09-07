@@ -349,7 +349,8 @@ _DETAIL_SEARCH_CURSOR = (
 _DETAIL_FILTER_REFUSED = (
     "One of the `filter.` parameters is not one this endpoint accepts. Use a facet "
     "key from the `facets` list on a search response, an operator that facet "
-    "supports, and a value of the right kind."
+    "supports, a value of the right kind, and no more values in one facet's "
+    "selection than that facet's own limit allows."
 )
 #: Deliberately not "an internal error occurred": FR-83's refusal is a
 #: *data* defect on one binding, and a caller who is told which kind of

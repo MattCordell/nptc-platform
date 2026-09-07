@@ -188,6 +188,9 @@ Both collection endpoints accept `?filter.<key>=<value>`, repeated once per valu
 Values within one facet are OR-ed; filters on different facets are AND-ed, so adding one
 always narrows. An operator other than the default `equals` is named after the key,
 separated by a colon - `?filter.assay_name:prefix=glu`, `?filter.volume_ml:range=1..5`.
+At most 50 distinct values are accepted in one facet's selection (repeated parameter or
+`:in` list alike, matching `limit`'s own 1-200 discipline above); more is a 422, not a
+silent truncation.
 
 ```http
 GET /api/v1/catalogue/search?q=glucose&filter.discipline=Chemistry&filter.specimen=119297000
@@ -233,7 +236,8 @@ Four things a client must build for, none of them optional:
 
 A `filter.` parameter this API cannot use is a **422**, never a silently ignored
 parameter: an unknown key, a property that is not filterable, an operator the property
-does not support, or a value of the wrong kind. On `/catalogue/search` the `next_cursor`
+does not support, a value of the wrong kind, or more values in one selection than that
+facet's limit allows. On `/catalogue/search` the `next_cursor`
 is bound to the filter set as well as to `q`, so replaying it with the filters changed is
 also a 422 - a relevance score means nothing against a different request. On
 `/catalogue/entries` the cursor is a business key and is unaffected by the filters.

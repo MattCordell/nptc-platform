@@ -268,13 +268,28 @@ by hand.
   endpoint offers), because the literal placeholder text is not a real facet key. This is
   not a defect in the generated client; it is OpenAPI's own limit on what a *dynamically
   named* parameter can look like in a schema. `FILTER_PARAMETER`'s description says so
-  explicitly for a human reading the spec by hand. The follow-up issue for the facet UI
-  (blocked on this PR, not yet opened — see "Out of scope" below) inherits the decision:
-  either build the parameter name by hand outside the generated client's type, as this ADR's
-  own router does, or reopen the wire-syntax question with `style: deepObject`
+  explicitly for a human reading the spec by hand. Filed as its own follow-up (#276) rather
+  than decided here, since there is no consumer yet to decide it against: whoever builds
+  the facet UI (blocked on this PR, not yet opened — see "Out of scope" below) either
+  builds the parameter name by hand outside the generated client's type, as this ADR's own
+  router does, or reopens the wire-syntax question with `style: deepObject`
   (`filter[discipline]=chem`), which *is* representable in a generated client's types at
-  the cost of relitigating the decision this ADR already settled. Recorded here rather than
-  decided, since there is no consumer yet to decide it against.
+  the cost of relitigating the decision this ADR already settled.
+- A second, smaller maintainer review round found three more things worth closing before
+  merge. `FILTER_VALUE_CAP` was invisible to the caller who tripped it — argued in this ADR
+  but absent from every client-facing surface — so `FILTER_PARAMETER`'s description,
+  `docs/architecture/public-api.md`, and `_DETAIL_FILTER_REFUSED` now all say a facet's
+  selection has a limit, without naming the number in the 422 body itself (consistent with
+  how every other member of that refusal family stays generic). A duplicate value within
+  one facet's selection — `?filter.x=a&filter.x=a` — sorted correctly but was never
+  deduplicated, so it still minted a different cursor than `?filter.x=a` alone despite OR
+  being idempotent as well as commutative, and still built a redundant `EXISTS` clause;
+  `parse_filters` now dedupes `raw_values` with `dict.fromkeys` (order-preserving), which
+  fixes both at the source rather than patching the digest and the predicate builder
+  separately. And `CORE_FACET_KEYS` had drifted from a value *derived from* `_core_facets`
+  into an independently-restated literal when `_core_facets` became a function — it is now
+  `frozenset(d.key for d in _core_facets(()))` again, so a second core facet is one edit,
+  not two that can silently fall out of step.
 
 ## Alternatives rejected
 
