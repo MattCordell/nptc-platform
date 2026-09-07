@@ -100,6 +100,7 @@ __all__ = [
     "FilterValueError",
     "UnknownFilterKeyError",
     "UnsupportedFilterOperatorError",
+    "build_facet_count_statement",
     "compute_facets",
     "filter_digest_material",
     "filter_predicates",
@@ -646,6 +647,53 @@ class Facet:
 BaseEntryIds = Callable[[Sequence[ColumnElement[bool]]], Select[Any]]
 
 
+def build_facet_count_statement(
+    descriptor: FacetDescriptor, base: Select[Any]
+) -> Select[Any] | None:
+    """One facet's bucket query, or `None` where the facet cannot be
+    grouped at all.
+
+    Public, and separate from `compute_facets`, for the same reason
+    `nptc.catalogue.search.build_search_statement` is:
+    `backend/tests/test_db_property_index_plan.py` `EXPLAIN`s this statement
+    to prove the aggregation reaches issue #54's generated partial index,
+    and explaining a hand-copied approximation would be a test of the copy.
+
+    `base` is a `SELECT` of the entry ids in the current result set, with
+    this facet's *own* selection already excluded by the caller.
+    """
+    source = descriptor.source.value_source()
+    if source is None:
+        return None
+    subquery = source.subquery(f"facet_values_{descriptor.key}")
+    # `bucket_count`, not `count`: a SQLAlchemy `Row` inherits `tuple.count`,
+    # so a column labelled `count` is reachable only positionally and
+    # `row.count` silently yields the bound method.
+    count = func.count(distinct(subquery.c.entry_id)).label("bucket_count")
+    return (
+        sa_select(
+            subquery.c.value.label("value"),
+            func.max(subquery.c.label).label("label"),
+            count,
+        )
+        .where(subquery.c.entry_id.in_(base))
+        # A value that groups to `NULL` is not a bucket: it is a row whose
+        # stored value has no text form under this handler's own facet
+        # expression, and a `null` bucket is not something a caller could
+        # ever send back as a filter value.
+        .where(subquery.c.value.is_not(None))
+        .group_by(subquery.c.value)
+        # Count first, then the value itself: ties would otherwise come back
+        # in whatever order the plan happened to produce, and a facet panel
+        # that reshuffles between two identical requests looks broken.
+        .order_by(count.desc(), subquery.c.value.asc())
+        # One more than the cap, exactly as every keyset page here asks for
+        # one more row than it serves: its existence *is* the answer to
+        # "was this truncated".
+        .limit(FACET_BUCKET_CAP + 1)
+    )
+
+
 def compute_facets(
     session: Session,
     *,
@@ -672,8 +720,9 @@ def compute_facets(
     """
     facets: list[Facet] = []
     for descriptor in context.descriptors:
-        source = descriptor.source.value_source()
-        if source is None:
+        base = base_entry_ids(filter_predicates(selections, excluding=descriptor.key))
+        statement = build_facet_count_statement(descriptor, base)
+        if statement is None:
             facets.append(
                 Facet(
                     key=descriptor.key,
@@ -684,31 +733,6 @@ def compute_facets(
                 )
             )
             continue
-        subquery = source.subquery(f"facet_values_{descriptor.key}")
-        base = base_entry_ids(filter_predicates(selections, excluding=descriptor.key))
-        # `bucket_count`, not `count`: a SQLAlchemy `Row` inherits
-        # `tuple.count`, so a column labelled `count` is reachable only
-        # positionally and `row.count` silently yields the bound method.
-        count = func.count(distinct(subquery.c.entry_id)).label("bucket_count")
-        statement = (
-            sa_select(
-                subquery.c.value.label("value"),
-                func.max(subquery.c.label).label("label"),
-                count,
-            )
-            .where(subquery.c.entry_id.in_(base))
-            .where(subquery.c.value.is_not(None))
-            .group_by(subquery.c.value)
-            # Count first, then the value itself: ties would otherwise come
-            # back in whatever order the plan happened to produce, and a
-            # facet panel that reshuffles between two identical requests
-            # looks broken.
-            .order_by(count.desc(), subquery.c.value.asc())
-            # One more than the cap, exactly as every keyset page here asks
-            # for one more row than it serves: its existence *is* the
-            # answer to "was this truncated".
-            .limit(FACET_BUCKET_CAP + 1)
-        )
         rows = session.execute(statement, dict(params or {})).all()
         truncated = len(rows) > FACET_BUCKET_CAP
         buckets = tuple(

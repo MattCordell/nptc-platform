@@ -105,6 +105,69 @@ VOLUME_VALUE = 5
 
 SPECIMEN_VALUES = ("Whole blood", "EDTA blood")
 
+# --- FR-16's facet fixtures (issue #139) ----------------------------------
+#
+# Four more property definitions, each present because it is the *only* one
+# of the four that can prove its own criterion.
+
+#: A single-valued, filterable `string` property. The straightforward facet:
+#: one value per entry, so a bucket count and a row count are the same
+#: number by inspection and the parity test has an unambiguous subject.
+#: Deliberately nothing on `accented`: that entry is
+#: `test_api_public_catalogue.py`'s "an entry with no children serves empty
+#: lists, not nulls" fixture, and giving it a property value would quietly
+#: retire that case.
+#: The two entries a search for `CANONICAL_TERM` reaches - `canonical` by
+#: its own preferred term and `synonym_only` by its synonym - carry
+#: *different* disciplines on purpose. A facet with one bucket cannot
+#: distinguish an implementation that drills down correctly from one that
+#: collapses a facet to whatever the user already picked, so the
+#: drill-down and OR-composition tests would both pass vacuously.
+DISCIPLINE_VALUES: dict[str, str] = {
+    "canonical": "Chemistry",
+    "synonym_only": "Haematology",
+    "tie_first": "Haematology",
+    "tie_second": "Immunology",
+}
+
+#: Seven specimens on **one** entry, and the reason this fixture exists at
+#: all: FR-16's multi-valued criterion is that such an entry counts *once*
+#: under each of its seven values, never seven times under one. A join-based
+#: implementation passes every other test in this suite and fails here.
+#:
+#: Real SNOMED CT specimen concepts, and their real preferred terms - a
+#: facet bucket is labelled from the `display` stored beside the code
+#: (FR-54: no terminology call on the search path), so a fixture with
+#: invented displays would prove nothing about that labelling. Codes are
+#: strings here and everywhere (FR-06).
+SPECIMEN_CODES: tuple[tuple[str, str], ...] = (
+    ("119297000", "Blood specimen"),
+    ("119361006", "Plasma specimen"),
+    ("119364003", "Serum specimen"),
+    ("122575003", "Urine specimen"),
+    ("258450006", "Cerebrospinal fluid sample"),
+    ("119334006", "Sputum specimen"),
+    ("119342007", "Saliva specimen"),
+)
+
+#: A `filterable` `decimal`. `DecimalHandler.facet_expression()` returns
+#: `None` - every value of a continuous quantity is its own bucket, so
+#: grouping says nothing - which makes this the fixture for ADR-0013 SS8's
+#: "stated cost": the property must still be usable as a *filter*, and must
+#: appear in the facet list saying it has no buckets rather than vanishing.
+TURNAROUND_VALUE = 1.5
+
+#: Starts `filterable=False`, and is flipped to `True` through the real
+#: registry `PATCH` route mid-test. That flip is FR-09's "no deployment, no
+#: restart" claim, and this is the only way to assert it rather than assert
+#: something that would also hold if the facet list were built once at
+#: start-up.
+FLIPPABLE_VALUES: dict[str, str] = {
+    "canonical": "Routine",
+    "synonym_only": "Routine",
+    "tie_first": "Urgent",
+}
+
 
 @dataclass(frozen=True)
 class SeededCatalogue:
@@ -130,6 +193,12 @@ class SeededCatalogue:
     withdrawn: str
     specimen_property_key: str
     volume_property_key: str
+    #: issue #139 (FR-16). Four facet fixtures - see the constants above for
+    #: what each one is the only way to prove.
+    discipline_property_key: str
+    specimen_code_property_key: str
+    turnaround_property_key: str
+    flippable_property_key: str
 
     @property
     def hidden(self) -> tuple[str, ...]:
@@ -186,6 +255,10 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
         withdrawn=key(7),
         specimen_property_key=f"specimen_type_{token}",
         volume_property_key=f"volume_ml_{token}",
+        discipline_property_key=f"discipline_{token}",
+        specimen_code_property_key=f"specimen_code_{token}",
+        turnaround_property_key=f"turnaround_days_{token}",
+        flippable_property_key=f"flippable_{token}",
     )
 
     canonical = _entry(seeded.canonical, CANONICAL_TERM, CatalogueEntryStatus.ACTIVE.value)
@@ -346,6 +419,64 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
                 origin="admin",
                 display_order=20,
             ),
+            # issue #139 (FR-16). `display_order` ascends from 30 so these
+            # sort after the two above and the facet order is deterministic
+            # rather than incidental.
+            PropertyDefinition(
+                key=seeded.discipline_property_key,
+                label="Discipline",
+                datatype="string",
+                cardinality="0..1",
+                scope="both",
+                required_for_submission=False,
+                required_for_publication=False,
+                filterable=True,
+                origin="admin",
+                display_order=30,
+            ),
+            PropertyDefinition(
+                key=seeded.specimen_code_property_key,
+                label="Specimen",
+                datatype="code",
+                # `0..*` on purpose: the multi-valued counting criterion is
+                # unassertable against a single-valued property.
+                cardinality="0..*",
+                scope="both",
+                required_for_submission=False,
+                required_for_publication=False,
+                binding_target="value_set",
+                value_set_uri="http://example.org/ValueSet/specimen",
+                strength="required",
+                edition="au",
+                filterable=True,
+                origin="admin",
+                display_order=40,
+            ),
+            PropertyDefinition(
+                key=seeded.turnaround_property_key,
+                label="Turnaround (days)",
+                datatype="decimal",
+                cardinality="0..1",
+                scope="both",
+                required_for_submission=False,
+                required_for_publication=False,
+                filterable=True,
+                origin="admin",
+                display_order=50,
+            ),
+            PropertyDefinition(
+                key=seeded.flippable_property_key,
+                label="Priority",
+                datatype="string",
+                cardinality="0..1",
+                scope="both",
+                required_for_submission=False,
+                required_for_publication=False,
+                # Flipped to True mid-test through the registry PATCH route.
+                filterable=False,
+                origin="admin",
+                display_order=60,
+            ),
         ]
     )
     session.flush()
@@ -379,6 +510,63 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             property_key=seeded.volume_property_key,
             ordinal=0,
             value=VOLUME_VALUE,
+        )
+    )
+
+    # issue #139 (FR-16). `by_handle` maps this fixture's own names onto the
+    # entries it just built, so the value tables above read as data rather
+    # than as index arithmetic into `entries`.
+    by_handle = {
+        "canonical": canonical,
+        "accented": entries[1],
+        "synonym_only": synonym_only,
+        "tie_first": entries[3],
+        "tie_second": entries[4],
+    }
+    session.add_all(
+        [
+            PropertyValue(
+                entry_id=by_handle[handle].id,
+                property_key=seeded.discipline_property_key,
+                ordinal=0,
+                value=value,
+            )
+            for handle, value in DISCIPLINE_VALUES.items()
+        ]
+    )
+    session.add_all(
+        [
+            PropertyValue(
+                entry_id=by_handle[handle].id,
+                property_key=seeded.flippable_property_key,
+                ordinal=0,
+                value=value,
+            )
+            for handle, value in FLIPPABLE_VALUES.items()
+        ]
+    )
+    # All seven on the one entry - the whole point (see `SPECIMEN_CODES`).
+    session.add_all(
+        [
+            PropertyValue(
+                entry_id=canonical.id,
+                property_key=seeded.specimen_code_property_key,
+                ordinal=ordinal,
+                value={
+                    "system": "http://snomed.info/sct",
+                    "code": code,
+                    "display": display,
+                },
+            )
+            for ordinal, (code, display) in enumerate(SPECIMEN_CODES)
+        ]
+    )
+    session.add(
+        PropertyValue(
+            entry_id=canonical.id,
+            property_key=seeded.turnaround_property_key,
+            ordinal=0,
+            value=TURNAROUND_VALUE,
         )
     )
     session.flush()
