@@ -3123,16 +3123,24 @@
           "preferred_term": {
             "type": "string",
             "title": "Preferred Term"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
         "required": [
           "severity",
           "business_key",
-          "preferred_term"
+          "preferred_term",
+          "label_provenance"
         ],
         "title": "CollisionItem",
-        "description": "One FR-05 collision: the live entry a submitted term collides with,\nnamed by its public identifier and preferred term - never its internal\nid (NFR-04/NFR-26)."
+        "description": "One FR-05 collision: the live entry a submitted term collides with,\nnamed by its public identifier and preferred term - never its internal\nid (NFR-04/NFR-26).\n\n`label_provenance[\"preferred_term\"]` is always `AU_PREFERRED_TERM_\nPROVENANCE` (FR-98, issue #144): `preferred_term` here is the\n*colliding* entry's own catalogue preferred term, the identical field\nand designation type as `EntrySummary.preferred_term` - matching\n`CollisionWarning`'s own reasoning for its own `preferred_term` field\n(`nptc.api.routers.catalogue_designations`), the 200-path twin of this\n409 body."
       },
       "CollisionWarning": {
         "properties": {

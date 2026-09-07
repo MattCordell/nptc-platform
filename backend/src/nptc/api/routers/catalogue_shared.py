@@ -161,7 +161,18 @@ def binding_from_row(row: queries.BindingRow) -> Binding:
     does (`nptc.api.dependencies`, `lru_cache`d) - a plain call, not a
     FastAPI `Depends`, because this is an assembler function, not a route
     handler, and `get_api_settings` takes no request-scoped argument to
-    inject in the first place."""
+    inject in the first place.
+
+    **A deliberate, temporary trade** (review, issue #144): calling it
+    directly means `app.dependency_overrides` cannot reach this call the
+    way it reaches `get_auth_settings`/`get_session`/`get_terminology_
+    client` in the test harness (`api_app_support.py`). Harmless today -
+    `ApiSettings` refuses any `fsn_semantic_tag` but `"intact"` at
+    construction time, so there is only one value this could ever read -
+    but it will need revisiting once FR-66 makes the setting legitimately
+    vary and a test wants to serve `"stripped"` without a real environment
+    variable.
+    """
     settings = get_api_settings()
     return Binding(
         system=row.system,

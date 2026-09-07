@@ -171,9 +171,18 @@ def test_api_settings_defaults_fsn_semantic_tag_to_intact() -> None:
 
 @pytest.mark.req("FR-98")
 def test_api_settings_reads_fsn_semantic_tag_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "intact")
+    """`"intact"` alone would pass identically with a broken env prefix,
+    variable name, or the whole `BaseSettings` wiring, since it is also the
+    field's default (round-1 review) - proving the env var is genuinely
+    read needs a value that only the validator, not the default, would
+    reject: an env-set `"stripped"` fails *only* if `NPTC_FSN_SEMANTIC_TAG`
+    actually reached the field before construction ran its check, matching
+    `test_api_settings_rejects_stripped_fsn_semantic_tag`'s own rejection
+    contract for the constructor-argument case."""
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
 
-    assert ApiSettings().fsn_semantic_tag == "intact"
+    with pytest.raises(ValidationError, match="fsn_semantic_tag"):
+        ApiSettings()
 
 
 @pytest.mark.req("FR-98")

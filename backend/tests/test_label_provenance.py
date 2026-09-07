@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 
 import pytest
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy.engine import Connection
 
@@ -191,6 +192,43 @@ def test_guard_flags_a_singular_provenance_covering_two_label_fields() -> None:
 # --- the real app's schema graph -------------------------------------------
 
 
+def _response_model_refs(route: APIRoute) -> Iterator[type[BaseModel]]:
+    """Every `BaseModel` this route's declared responses could actually
+    return - the success body (`route.response_model`) *and* every model
+    named in its own `responses={...}` dict (round-2 review, issue #144):
+    `CollisionItem`/`DesignationCollisionResponse` are reachable only
+    through the latter (`errors.py`'s handler builds them, but no route's
+    return-type annotation names them), so a walk that only ever looked at
+    `response_model` silently never saw them at all - the acceptance claim
+    "every response field carrying a label declares its designation type"
+    held for success bodies only until this was widened.
+
+    `isinstance(entry, type)` before `issubclass`: a `responses=` entry's
+    `"model"` is sometimes a `UnionType` (`ErrorResponse | Collision...
+    Response`, `_RESPONSE_409_COLLISION` in `catalogue_designations.py`),
+    which `issubclass` rejects with a `TypeError` rather than `False` - the
+    same hazard `route.response_model` itself risks if a future route
+    returns a bare `list[X]`/`X | None` (round-1 review). Both are run
+    through `_unwrap` so a union or generic alias still yields its member
+    classes rather than being silently skipped.
+    """
+    candidates: list[Any] = [route.response_model]
+    for entry in (route.responses or {}).values():
+        if isinstance(entry, dict):
+            candidates.append(entry.get("model"))
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            yield candidate
+            continue
+        yield from (
+            member
+            for member in _unwrap(candidate)
+            if isinstance(member, type) and issubclass(member, BaseModel)
+        )
+
+
 @functools.cache
 def _real_app_models() -> frozenset[type[BaseModel]]:
     """Cached: `test_every_label_bearing_model_in_the_real_app_declares_
@@ -200,8 +238,8 @@ def _real_app_models() -> frozenset[type[BaseModel]]:
     app = create_app()
     models: set[type[BaseModel]] = set()
     for route in iter_api_routes(app.routes):
-        if route.response_model is not None and issubclass(route.response_model, BaseModel):
-            models |= _collect_models(route.response_model)
+        for model in _response_model_refs(route):
+            models |= _collect_models(model)
     return frozenset(models)
 
 
@@ -287,16 +325,21 @@ def test_label_field_name_set_is_not_stale() -> None:
 def test_known_models_declare_provenance_for_exactly_their_own_label_fields() -> None:
     """`label_provenance_gaps` can only check *shape* for a `dict`-typed
     field (a class definition carries no runtime dict content) - this
-    closes that gap for the four real models FR-98 names, by building one
-    of each through its own real assembler and checking the actual keys."""
+    closes that gap for `Binding`/`EntrySummary`/`Designation`, by building
+    one of each through its own real assembler and checking the actual
+    keys and values.
+
+    `ConceptLookup` is deliberately not built here: round-2 review found
+    the version that used to live in this test hand-typed its
+    `label_provenance` dict as a literal rather than calling
+    `terminology.get_concept`'s own assembly code, so the only thing it
+    proved was that the test's own dict had the keys the test then
+    asserted - a typo in the route's real dict would not have been caught.
+    `test_api_terminology.py::test_lookup_resolves_fsn_with_tag_and_au_
+    preferred_term` asserts it instead, over the real HTTP route."""
     import uuid
     from datetime import UTC, datetime
 
-    from nptc.api.labels import (
-        AU_PREFERRED_TERM_PROVENANCE,
-        DesignationType,
-        SemanticTagState,
-    )
     from nptc.api.routers.catalogue_shared import (
         Designation,
         EntrySummary,
@@ -304,7 +347,6 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         designation_from_row,
         entry_summary_fields,
     )
-    from nptc.api.routers.terminology import ConceptLookup
     from nptc.catalogue import queries
 
     binding_row = queries.BindingRow(
@@ -320,7 +362,10 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         replaced_by_code=None,
     )
     binding = binding_from_row(binding_row)
-    assert set(binding.label_provenance) == {"fsn", "au_preferred_term"}
+    assert {k: v.model_dump() for k, v in binding.label_provenance.items()} == {
+        "fsn": {"designation": "fsn", "semantic_tag": "intact"},
+        "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
 
     summary = EntrySummary(
         **entry_summary_fields(
@@ -333,47 +378,79 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
             has_open_finding=False,
         )
     )
-    assert set(summary.label_provenance) == {"preferred_term"}
+    assert {k: v.model_dump() for k, v in summary.label_provenance.items()} == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"}
+    }
 
-    designation_row = queries.DesignationRow(
-        id=uuid.uuid4(),
-        entry_id=uuid.uuid4(),
-        term="Full blood count synonym",
-        use="synonym",
-        language="en-AU",
-        status="active",
-        length=25,
-    )
-    designation = designation_from_row(designation_row)
-    assert isinstance(designation, Designation)
-    assert designation.label_provenance.model_dump() == {
+    def _designation_row(*, use: str) -> queries.DesignationRow:
+        return queries.DesignationRow(
+            id=uuid.uuid4(),
+            entry_id=uuid.uuid4(),
+            term="Full blood count synonym",
+            use=use,
+            language="en-AU",
+            status="active",
+            length=25,
+        )
+
+    synonym = designation_from_row(_designation_row(use="synonym"))
+    assert isinstance(synonym, Designation)
+    assert synonym.label_provenance.model_dump() == {
         "designation": "synonym",
         "semantic_tag": "not_applicable",
     }
 
-    concept_lookup = ConceptLookup(
-        system="http://snomed.info/sct",
-        code="391483001",
-        fsn="Microscopy (acid fast bacilli) (procedure)",
-        au_preferred_term="Microscopy (acid fast bacilli)",
-        active=True,
-        edition="au",
-        resolved_version=None,
-        label_provenance={
-            "fsn": {"designation": DesignationType.FSN, "semantic_tag": SemanticTagState.INTACT},
-            "au_preferred_term": AU_PREFERRED_TERM_PROVENANCE,
-        },
-    )
-    assert set(concept_lookup.label_provenance) == {"fsn", "au_preferred_term"}
+    # ADR-0022's contentious mapping (round-1 review): a `designation` row
+    # with `use="preferred"` is a non-en-AU preferred *variant*, never the
+    # catalogue's own AU preferred term - see `_DESIGNATION_LABEL_
+    # PROVENANCE`'s own comment in `catalogue_shared.py`.
+    preferred_variant = designation_from_row(_designation_row(use="preferred"))
+    assert preferred_variant.label_provenance.model_dump() == {
+        "designation": "preferred_variant",
+        "semantic_tag": "not_applicable",
+    }
+
+
+@pytest.mark.req("FR-98")
+def test_designation_label_provenance_covers_every_designation_use() -> None:
+    """`designation_from_row` looks up `_DESIGNATION_LABEL_PROVENANCE[row.
+    use]` unconditionally (round-1 review) - a `use` outside the two
+    mapped keys is an unhandled `KeyError`, an unmapped 500 on a read path,
+    rather than a documented refusal. Nothing ties the dict to
+    `DesignationUse` itself, so a third member added to that enum without
+    a matching dict entry would silently reintroduce the gap - this is the
+    staleness guard, mirroring `test_catalogue_bindings.py`'s own
+    `test_allowed_references_list_is_not_stale` idiom."""
+    from nptc.api.routers.catalogue_shared import _DESIGNATION_LABEL_PROVENANCE
+    from nptc.db.models.designation import DesignationUse
+
+    assert set(_DESIGNATION_LABEL_PROVENANCE) == {member.value for member in DesignationUse}
 
 
 # --- the 391483001 worked regression, over real HTTP -----------------------
+
+_api_support = _load("api_app_support")
+ApiTestApp = _api_support.ApiTestApp
+
+
+@pytest.fixture
+def api(app_db: Connection) -> Iterator[ApiTestApp]:
+    """`yield from`, not `next(iter(...))` (round-1 review): the latter
+    takes the generator's first value and then drops it, so nothing after
+    `build_api_test_app`'s own `yield` ever runs - its docstring names
+    exactly this as what the generator form exists to prevent, shutting
+    down the `StubIdp` HTTP server deterministically rather than at GC
+    time. A fixture is what lets pytest drive the teardown half after the
+    test finishes, matching every other consumer of `build_api_test_app`
+    in this suite (e.g. `test_api_terminology.py`'s identically-named
+    fixture)."""
+    yield from _api_support.build_api_test_app(app_db)
 
 
 @pytest.mark.req("FR-82")
 @pytest.mark.req("FR-98")
 @pytest.mark.integration
-def test_391483001_fsn_is_served_verbatim_with_intact_provenance(app_db: Connection) -> None:
+def test_391483001_fsn_is_served_verbatim_with_intact_provenance(api: ApiTestApp) -> None:
     """PRD SS6.4's named regression case: `391483001`'s FSN carries two
     parenthesised groups, and only the trailing `(procedure)` is the
     semantic tag. FR-82 requires `fsn` served byte-for-byte (no
@@ -381,10 +458,7 @@ def test_391483001_fsn_is_served_verbatim_with_intact_provenance(app_db: Connect
     that the tag is intact - both asserted directly against the real
     app rather than against the assembler in isolation.
     """
-    api_support = _load("api_app_support")
     seed = _load("public_catalogue_support")
-
-    api = next(iter(api_support.build_api_test_app(app_db)))
     seeded = seed.seed_public_catalogue(api.session)
 
     response = api.get(f"/catalogue/entries/{seeded.canonical}/bindings")

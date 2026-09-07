@@ -65,6 +65,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from nptc.api.dependencies import CredentialRequiredError, MalformedAuthorizationError
+from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance
 from nptc.auth.errors import TokenError
 from nptc.auth.errors_authorisation import (
     AuthorisationError,
@@ -191,13 +192,23 @@ class VersionConflictResponse(BaseModel):
 class CollisionItem(BaseModel):
     """One FR-05 collision: the live entry a submitted term collides with,
     named by its public identifier and preferred term - never its internal
-    id (NFR-04/NFR-26)."""
+    id (NFR-04/NFR-26).
+
+    `label_provenance["preferred_term"]` is always `AU_PREFERRED_TERM_
+    PROVENANCE` (FR-98, issue #144): `preferred_term` here is the
+    *colliding* entry's own catalogue preferred term, the identical field
+    and designation type as `EntrySummary.preferred_term` - matching
+    `CollisionWarning`'s own reasoning for its own `preferred_term` field
+    (`nptc.api.routers.catalogue_designations`), the 200-path twin of this
+    409 body.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     severity: str
     business_key: str
     preferred_term: str
+    label_provenance: dict[str, LabelProvenance]
 
 
 class DesignationCollisionResponse(BaseModel):
@@ -830,6 +841,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                     severity=c.severity.value,
                     business_key=c.business_key,
                     preferred_term=c.preferred_term,
+                    label_provenance={"preferred_term": AU_PREFERRED_TERM_PROVENANCE},
                 )
                 for c in exc.collisions
             ],

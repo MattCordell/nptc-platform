@@ -112,6 +112,7 @@ def _get(api: ApiTestApp, token: str | None, code: str = _CODE) -> Any:
 
 
 @pytest.mark.req("FR-26")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_lookup_resolves_fsn_with_tag_and_au_preferred_term(api: ApiTestApp) -> None:
     _seed_concept(api)
@@ -127,6 +128,13 @@ def test_lookup_resolves_fsn_with_tag_and_au_preferred_term(api: ApiTestApp) -> 
     assert body["au_preferred_term"] != body["fsn"]
     assert body["active"] is True
     assert body["edition"] == "au"
+    # FR-98 (issue #144), asserted against the real route rather than a
+    # hand-built model: `get_concept`'s own `label_provenance` dict, not a
+    # test-authored stand-in for it.
+    assert body["label_provenance"] == {
+        "fsn": {"designation": "fsn", "semantic_tag": "intact"},
+        "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
 
 
 @pytest.mark.req("FR-06")

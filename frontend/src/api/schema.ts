@@ -769,6 +769,14 @@ export interface components {
          * @description One FR-05 collision: the live entry a submitted term collides with,
          *     named by its public identifier and preferred term - never its internal
          *     id (NFR-04/NFR-26).
+         *
+         *     `label_provenance["preferred_term"]` is always `AU_PREFERRED_TERM_
+         *     PROVENANCE` (FR-98, issue #144): `preferred_term` here is the
+         *     *colliding* entry's own catalogue preferred term, the identical field
+         *     and designation type as `EntrySummary.preferred_term` - matching
+         *     `CollisionWarning`'s own reasoning for its own `preferred_term` field
+         *     (`nptc.api.routers.catalogue_designations`), the 200-path twin of this
+         *     409 body.
          */
         CollisionItem: {
             /** Severity */
@@ -777,6 +785,10 @@ export interface components {
             business_key: string;
             /** Preferred Term */
             preferred_term: string;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * CollisionWarning

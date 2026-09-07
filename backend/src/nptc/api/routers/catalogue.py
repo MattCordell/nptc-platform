@@ -159,15 +159,6 @@ PUBLIC_ENTRY_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: The by-business-key routes that also serve bindings. No 500: FR-98
-#: (issue #144) removed the read path's only `display_term` rendering call
-#: site, so there is nothing left here that can fail this way - the
-#: renderer that could is `nptc.exports.semantic_tag`'s, reachable only
-#: from the export path, not this one.
-PUBLIC_BINDING_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
-    **PUBLIC_ENTRY_ERROR_RESPONSES,
-}
-
 #: FR-17, issue #140: the exact-code lookup routes' own 404 - distinct
 #: from `_RESPONSE_404` above because the cause it describes is different
 #: (an unregistered system_token/URI, or a registered one matching no
@@ -186,8 +177,12 @@ _RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
 }
 
 #: The two exact-code lookup routes. Same FR-98/issue #144 reasoning as
-#: `PUBLIC_BINDING_ERROR_RESPONSES` above: no 500, nothing on this read
-#: path renders a `display_term` any more.
+#: `PUBLIC_ENTRY_ERROR_RESPONSES` above (the by-business-key routes that
+#: also serve bindings, which have no dedicated constant of their own -
+#: FR-98/issue #144 removed the read path's only `display_term` rendering
+#: call site, leaving nothing on either route that can 500 this way, so
+#: there is no longer a real difference for a second constant to name):
+#: no 500, nothing on this read path renders a `display_term` any more.
 PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     404: _RESPONSE_404_CODE_LOOKUP,
@@ -672,7 +667,7 @@ def search(
 @router.get(
     "/entries/{business_key}",
     summary="One published catalogue entry, with everything attached to it",
-    responses=PUBLIC_BINDING_ERROR_RESPONSES,
+    responses=PUBLIC_ENTRY_ERROR_RESPONSES,
     dependencies=[_BROWSE],
 )
 def read_entry(
@@ -763,7 +758,7 @@ def read_designations(
 @router.get(
     "/entries/{business_key}/bindings",
     summary="An entry's SNOMED CT code bindings, including retired ones",
-    responses=PUBLIC_BINDING_ERROR_RESPONSES,
+    responses=PUBLIC_ENTRY_ERROR_RESPONSES,
     dependencies=[_BROWSE],
 )
 def read_bindings(
