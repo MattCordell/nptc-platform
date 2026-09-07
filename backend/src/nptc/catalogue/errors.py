@@ -90,3 +90,21 @@ class EntryNotFoundError(LookupError):
     rather than falling through to an unhandled 500."""
 
     http_status: ClassVar[int] = 404
+
+
+class CodeLookupNotFoundError(LookupError):
+    """Raised by `nptc.catalogue.code_systems`/`nptc.catalogue.queries.
+    get_entry_by_code` when an FR-17 exact-code lookup route (issue #140,
+    `GET /catalogue/code/{system_token}/{code}` or `GET /catalogue/lookup`)
+    has nothing to resolve.
+
+    Deliberately the **one** exception for two different causes - an
+    unregistered `system_token`/URI, and a registered one with no matching
+    published entry - so the response body cannot be used to tell them
+    apart (see `nptc.catalogue.code_systems`'s own module docstring for why
+    that is the considered answer, not an oversight). Mapped to 404 by
+    `nptc.api.errors.register_exception_handlers` via the same "read the
+    ClassVar" convention `EntryNotFoundError` uses, with a fixed detail
+    sentence naming the registered tokens."""
+
+    http_status: ClassVar[int] = 404

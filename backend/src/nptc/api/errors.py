@@ -83,6 +83,7 @@ from nptc.catalogue.bindings import (
     InvalidCodeBindingSystemError,
 )
 from nptc.catalogue.changelog import ChangelogNoteError
+from nptc.catalogue.code_systems import REGISTERED_TOKENS_DETAIL
 from nptc.catalogue.collisions import (
     DesignationCollisionAcknowledgementConflictError,
     DesignationCollisionError,
@@ -93,7 +94,11 @@ from nptc.catalogue.designations import (
     DuplicateActiveTermError,
     PreferredDesignationAlreadyActiveError,
 )
-from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.errors import (
+    CodeLookupNotFoundError,
+    EntryNotFoundError,
+    EntryVersionConflictError,
+)
 from nptc.catalogue.facets import FilterRefusedError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
@@ -308,6 +313,12 @@ _DETAIL_VERSION_CONFLICT = (
     "conflicting changes and try again."
 )
 _DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
+#: FR-17, issue #140: one shared 404 sentence for both an unregistered
+#: `system_token`/URI and a registered one with no matching published
+#: entry - see `nptc.catalogue.code_systems`'s own module docstring for why
+#: that is the considered answer, not an oversight. Sourced from the
+#: registry itself so a second registered alias updates this text for free.
+_DETAIL_CODE_LOOKUP_NOT_FOUND = REGISTERED_TOKENS_DETAIL
 _DETAIL_PREFERRED_TERM_VERSION_REQUIRED = (
     "This term is the entry's own preferred term, so changing it needs the entry "
     "version you loaded. Reload the entry and send its `expected_row_version` with "
@@ -542,6 +553,21 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.info("entry not found: %s", exc)
         return JSONResponse(
             status_code=EntryNotFoundError.http_status, content={"detail": _DETAIL_NOT_FOUND}
+        )
+
+    @app.exception_handler(CodeLookupNotFoundError)
+    async def _handle_code_lookup_not_found(
+        _request: Request, exc: CodeLookupNotFoundError
+    ) -> JSONResponse:
+        # Logged at INFO, matching _handle_entry_not_found: a mistyped code
+        # or an unregistered system_token is an ordinary client mistake, not
+        # an anomaly. The exception message may name the system/token/code;
+        # the response body never does, matching this module's own
+        # detail-string convention.
+        _logger.info("code lookup not found: %s", exc)
+        return JSONResponse(
+            status_code=CodeLookupNotFoundError.http_status,
+            content={"detail": _DETAIL_CODE_LOOKUP_NOT_FOUND},
         )
 
     @app.exception_handler(EmptySearchQueryError)
