@@ -16,6 +16,12 @@ always a bug (see `AuditNoOpError`). A caller with a genuinely idempotent
 no-op path short-circuits *before* reaching this module, exactly as
 `close_account`'s early return already does. Adding a lenient variant later
 is a small, reviewable act; a lenient default from day one is not.
+
+`record_batch_summary` (issue #265) is a third, narrower wrapper: a batch
+header event has a structured summary, not a diff, so it does not go
+through `diff_instance`/`diff_snapshots` or their `AuditNoOpError` posture -
+it exists so a caller outside this package can pass `after=` at all without
+tripping `test_audit_write_path_guard.py`'s bypass rule.
 """
 
 from __future__ import annotations
@@ -125,6 +131,44 @@ def record_change(
         # even though every JsonValue is an object.
         before=cast("dict[str, object] | None", diff.before_payload()),
         after=cast("dict[str, object] | None", diff.after_payload()),
+        reason=reason,
+    )
+
+
+def record_batch_summary(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    reason: str,
+    tallies: Mapping[str, int],
+) -> AuditEvent:
+    """Appends a diff-free batch header event carrying `tallies` as a
+    structured `after` payload (issue #265 review). Not a diff: a batch
+    header summarises N *other* events rather than changing one row of its
+    own, so `record_change`/`record_snapshot_change`'s `AuditNoOpError`
+    posture does not apply here - a batch where nothing applied is a
+    legitimate reason to skip calling this at all (see the one caller's own
+    "only call this when `tallies['applied'] > 0`" rule), not an error this
+    function itself should raise on an all-zero `tallies`.
+
+    Lives in `nptc.audit`, not the domain module that calls it, purely so
+    `after=` satisfies `test_audit_write_path_guard.py`'s rule against a
+    hand-built `before=`/`after=` keyword outside this package: the guard
+    has no way to distinguish "a hand-rolled diff bypassing `record_change`"
+    from "a structured summary that was never a diff to begin with" other
+    than by which file the call lives in. `nptc.catalogue.property_values.
+    save_property_values_for_entries` is the one caller today.
+    """
+    return append_audit_event(
+        session,
+        ctx,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        after=dict(tallies),
         reason=reason,
     )
 
