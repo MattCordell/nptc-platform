@@ -3,6 +3,11 @@
 Exercises the checker's logic against synthetic fixtures rather than the real
 requirements.yaml, so these tests do not need updating every time a
 requirement is added, retitled or its status changes.
+
+Note: this file is excluded from traceability_check.py's own marker scan
+(see SELF_TEST_FILE there) because the fixture strings below deliberately
+look like real markers. A genuine @pytest.mark.req(...) added anywhere in
+this file is silently not counted as coverage for that requirement.
 """
 
 from __future__ import annotations
@@ -112,6 +117,30 @@ def test_collect_test_markers_finds_module_level_pytestmark() -> None:
     )
     refs = tc.collect_test_markers()
     assert "NFR-08" in refs
+
+
+def test_collect_test_markers_ignores_its_own_fixture_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This file's own source contains marker-shaped strings as fixture
+    content for the two tests above - scanning the real scripts/tests
+    directory (now a TEST_DIRS member) must not misread those as genuine
+    requirement coverage. Asserted on provenance (no location traces back to
+    this file) rather than on specific IDs like FR-01/NFR-08: an ID-based
+    assertion would silently depend on nothing else in scripts/tests ever
+    using those particular IDs, and a future marker added elsewhere in this
+    file would fail the wrong way - a location-based check stays correct
+    regardless of what IDs this file's fixtures happen to use."""
+    monkeypatch.setattr(tc, "TEST_DIRS", [tc.SELF_TEST_FILE.parent])
+    refs = tc.collect_test_markers()
+    self_test_name = tc.SELF_TEST_FILE.name
+    locations = [loc for locs in refs.values() for loc in locs]
+    # Non-vacuous: real markers elsewhere in scripts/tests (NFR-25 in
+    # test_audit_retry_guard.py, FR-20 in test_openapi_breaking_check.py)
+    # should still be found, so this isn't passing because the scan itself
+    # silently found nothing at all.
+    assert locations
+    assert not any(self_test_name in loc for loc in locations)
 
 
 def test_run_checks_flags_unknown_id_in_test_marker() -> None:

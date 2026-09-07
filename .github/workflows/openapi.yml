@@ -126,7 +126,11 @@ jobs:
     # inherits ../../pnpm-workspace.yaml's raised fetchTimeout/fetchRetries
     # like any other `pnpm` invocation - see security.yml's frontend-audit
     # job for the worst-case-per-request arithmetic (~8.5 minutes) this pads
-    # against, on top of this job's own normally-fast codegen+diff.
+    # against, on top of this job's own normally-fast codegen+diff. The
+    # 5-minute padding (not the full ~8.5) holds because this job's own work
+    # takes seconds to a few minutes even when it isn't skipped by the
+    # `changes` filter above (recent runs: 20s, 2m26s) - there was no
+    # headroom to spend before the raise, and there is now.
     timeout-minutes: 15
     steps:
       - name: Checkout

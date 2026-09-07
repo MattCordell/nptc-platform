@@ -41,7 +41,21 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS_FILE = ROOT / "docs" / "requirements" / "requirements.yaml"
 TRACEABILITY_REPORT = ROOT / "docs" / "requirements" / "traceability.md"
-TEST_DIRS = [ROOT / "backend" / "tests", ROOT / "transform" / "tests", ROOT / "shared" / "tests"]
+TEST_DIRS = [
+    ROOT / "backend" / "tests",
+    ROOT / "transform" / "tests",
+    ROOT / "shared" / "tests",
+    ROOT / "scripts" / "tests",
+]
+
+# scripts/tests/test_traceability_check.py exercises collect_test_markers()
+# against synthetic fixture files it writes under a tmp_path (see its
+# _isolate_paths fixture) - but those fixtures are inline strings in its own
+# source too, e.g. '@pytest.mark.req("FR-01")' written as fixture content.
+# Scanning scripts/tests now that it's a TEST_DIRS member would otherwise
+# read that string as real requirement coverage rather than as the test
+# double it is.
+SELF_TEST_FILE = ROOT / "scripts" / "tests" / "test_traceability_check.py"
 
 ID_PATTERN = re.compile(r"^(FR|NFR)-\d{2,}$")
 MARKER_PATTERN = re.compile(r'pytest\.mark\.req\(\s*["\'](?P<id>(?:FR|NFR)-\d+)["\']\s*\)')
@@ -117,6 +131,8 @@ def collect_test_markers() -> dict[str, list[str]]:
         if not test_dir.is_dir():
             continue
         for path in sorted(test_dir.rglob("test_*.py")):
+            if path.resolve() == SELF_TEST_FILE.resolve():
+                continue
             text = path.read_text(encoding="utf-8")
             for lineno, line in enumerate(text.splitlines(), start=1):
                 match = MARKER_PATTERN.search(line)

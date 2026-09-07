@@ -26,10 +26,8 @@ class FakeProcess:
     def __init__(self, lines: list[str], returncode: int) -> None:
         self.stdout = iter(lines)
         self._returncode = returncode
-        self.returncode: int | None = None
 
     def wait(self) -> int:
-        self.returncode = self._returncode
         return self._returncode
 
 
@@ -62,14 +60,28 @@ def test_recognises_network_signatures(output: str) -> None:
     assert guard.is_registry_timeout(output) is True
 
 
+def test_zero_count_findings_marker_does_not_suppress_a_real_timeout() -> None:
+    """FINDINGS_MARKER deliberately excludes a leading zero ([1-9]\\d*, not
+    \\d+): nothing should ever print "0 vulnerabilities found" (a clean run
+    says "No known vulnerabilities found"), but if some future pnpm build
+    did, matching it here would let a genuine timeout elsewhere in the same
+    combined output skip the retry it needs - reintroducing #255."""
+    output = "0 vulnerabilities found\nTimeoutError: The operation was aborted due to timeout\n"
+    assert guard.is_registry_timeout(output) is True
+
+
 @pytest.mark.parametrize(
     "output",
     [
         "1 vulnerabilities found\nSeverity: high\nPrototype Pollution in some-package\n",
+        "1 vulnerability found\nSeverity: high\nPrototype Pollution in some-package\n",
         " ERR_PNPM_FETCH_401  GET https://registry.npmjs.org/...: Unauthorized - 401\n",
         " ERR_PNPM_FETCH_403  GET https://registry.npmjs.org/...: Forbidden - 403\n",
         " ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/...: Not Found - 404\n",
         "No known vulnerabilities found\n",
+        "1 vulnerabilities found\nSeverity: high\n"
+        "Denial of Service: request handling can hang until ETIMEDOUT, causing a "
+        "TimeoutError further up the stack when the operation was aborted\n",
     ],
 )
 def test_does_not_mistake_real_failures_for_network_flakes(output: str) -> None:
@@ -89,6 +101,7 @@ def test_success_exits_zero_after_one_attempt() -> None:
     assert "No known vulnerabilities found" in out.getvalue()
 
 
+@pytest.mark.req("NFR-25")
 def test_real_advisory_fails_immediately_with_no_retry() -> None:
     out = io.StringIO()
     call_count = 0
@@ -206,10 +219,23 @@ def test_output_streams_line_by_line_not_only_at_exit() -> None:
     ]
 
 
-def test_retry_and_error_messages_are_also_flushed_immediately() -> None:
+def test_retry_and_error_messages_are_flushed_before_they_can_go_dark() -> None:
+    """The retry message must reach the CI log before the backoff sleep
+    starts, and the final ::error:: annotation must reach it before the run
+    returns - not just eventually, at process exit. Doesn't assert an exact
+    flush count (unlike the streamed-line case in
+    test_output_streams_line_by_line_not_only_at_exit): a
+    print(..., flush=True) call issues two writes (text, then the end
+    separator) followed by a single flush, so an added log line only adds
+    an entry here rather than breaking a count that isn't about log
+    volume."""
     calls: list[str] = []
 
     class RecordingWriter(io.StringIO):
+        def write(self, s: str) -> int:
+            calls.append("write")
+            return super().write(s)
+
         def flush(self) -> None:
             calls.append("flush")
             super().flush()
@@ -222,13 +248,15 @@ def test_retry_and_error_messages_are_also_flushed_immediately() -> None:
         ]
     )
 
+    def sleep_and_check(_seconds: float) -> None:
+        assert calls[-1] == "flush", "retry message must be flushed before sleeping"
+
     guard.run_with_retries(
-        ["pnpm", "audit"], max_attempts=2, popen=popen, sleep=lambda _: None, out=out
+        ["pnpm", "audit"], max_attempts=2, popen=popen, sleep=sleep_and_check, out=out
     )
 
-    # One flush per streamed line (2), plus one for the "retrying" message
-    # and one for the final ::error:: annotation.
-    assert calls.count("flush") == 4
+    assert calls[-1] == "flush", "final ::error:: annotation must be flushed"
+    assert "::error::" in out.getvalue(), "the flush must be for the ::error:: line itself"
 
 
 # --- main --------------------------------------------------------------------------------

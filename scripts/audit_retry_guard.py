@@ -11,8 +11,8 @@ signature (see NETWORK_SIGNATURE) and fails immediately, on the first
 attempt, for anything else - a real advisory, or a deterministic HTTP-status
 failure like pnpm's own ERR_PNPM_FETCH_401/403/404 (bad auth, not found -
 correctly excluded even though it shares the ERR_PNPM_FETCH prefix with
-nothing here, since it's a real response, not a dead connection, and won't
-be fixed by retrying).
+this guard's network-timeout signatures, since it's a real response, not
+a dead connection, and won't be fixed by retrying).
 
 Streams the wrapped command's combined stdout/stderr live, line by line, so
 a run sitting in retry backoff still shows progress in the CI log rather
@@ -23,6 +23,16 @@ codeql_gate.py and doc_impact_gate.py were before it, for the same reason)
 so its classification logic - the part with a real failure mode, and the
 part that has already been wrong once in this PR's own history - has
 committed regression coverage under scripts/tests/.
+
+Accepted residual risk (issue #259 review, PR #271): FINDINGS_MARKER is
+inferred from pnpm's documented/observed "N vulnerabilities found" wording,
+not pinned to a captured real `pnpm audit` failure. A future pnpm reword
+beyond singular/plural (a table-only render, a different summary line)
+would make this fail open - a real advisory retried instead of failing
+fast - the same way it could before PR #271. Re-verify FINDINGS_MARKER
+against a real `pnpm audit --prod --audit-level=high` failure (installed
+pnpm version's actual output, not the test fixtures) if that's ever in
+doubt.
 
 Usage:
   python3 scripts/audit_retry_guard.py -- pnpm audit --prod --audit-level=high
@@ -47,7 +57,6 @@ class _Process(Protocol):
     object to satisfy this module's actual use of it."""
 
     stdout: Any
-    returncode: int | None
 
     def wait(self) -> int: ...
 
@@ -56,11 +65,25 @@ NETWORK_SIGNATURE = re.compile(
     r"TimeoutError|operation was aborted|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN"
 )
 
+# Matches pnpm's "N vulnerabilities found" findings summary (singular or
+# plural wording) but not its "No known vulnerabilities found" clean-run
+# message, so a real advisory whose title or description happens to contain
+# a network token is never misread as a transport failure. [1-9]\d* (not
+# \d+) deliberately excludes a leading zero: "0 vulnerabilities found" is
+# not pnpm's clean-run message (that's "No known..."), so nothing should
+# print it, but if it ever did, matching it here would let a genuine
+# timeout elsewhere in the same combined output skip the retry it needs -
+# reintroducing #255 - for the sake of a count this marker has no reason to
+# match in the first place.
+FINDINGS_MARKER = re.compile(r"[1-9]\d* vulnerabilit(?:y|ies) found")
+
 DEFAULT_MAX_ATTEMPTS = 2
 DEFAULT_SLEEP_SECONDS = 30.0
 
 
 def is_registry_timeout(output: str) -> bool:
+    if FINDINGS_MARKER.search(output) is not None:
+        return False
     return NETWORK_SIGNATURE.search(output) is not None
 
 
