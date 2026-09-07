@@ -220,8 +220,26 @@ by hand.
   `page`, `sort`) use a page *number*, which ADR-0024 says keyset paging cannot serve;
   reconciling that belongs to the UI issue.
 - Dispatching `reconcile_property_indexes()` from the registry write path stays out of
-  scope, in its own follow-up issue. Facets are correct without the generated index, only
-  slower, and the operator runbook remains the trigger.
+  scope, in its own follow-up issue (#274). Facets are correct without the generated index,
+  only slower, and the operator runbook remains the trigger.
+- Self-review after the first pass found three cases the "every unusable filter is a 422"
+  decision above committed to but the implementation had not yet closed: an unrecognised
+  `status` value (the core-column facet has no `PropertyDefinition` handler to validate
+  against, so it must check itself against `CatalogueEntryStatus`), the same facet key sent
+  with two different operators (grouping selections by `(key, op)` let this through as two
+  selections ANDed into a predicate no row can satisfy, rather than one refusal), and a
+  cursor-digest collision (`filter_digest_material` joined multiple raw values on a plain
+  `,`, so a value containing a literal comma could digest identically to two separate
+  repeated values — length-prefixing every value closes it regardless of content). All
+  three are now refused with a 422 and covered by a test at both the unit and HTTP layer.
+- Computing every facet's bucket counts costs one query per facet, and each one re-scans
+  and re-scores the whole matched set independently — Postgres does not share a CTE's
+  result across separately-submitted statements. That cost is bounded by the number of
+  `filterable` properties, not by `FACET_BUCKET_CAP`, and grows as an administrator marks
+  more properties filterable (FR-09). Tracked as a performance follow-up (#275) rather than
+  fixed here: it is a latency question, not a correctness one, and the fix (combining the
+  per-facet aggregations into one statement) is independent of the query surface this ADR
+  settles.
 
 ## Alternatives rejected
 

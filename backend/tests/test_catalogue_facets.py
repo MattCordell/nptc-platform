@@ -23,6 +23,7 @@ from sqlalchemy.dialects import postgresql
 
 from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
+    ConflictingFilterOperatorError,
     FacetContext,
     FacetDescriptor,
     FilterNotAvailableError,
@@ -221,6 +222,30 @@ def test_a_malformed_range_is_refused(context: FacetContext) -> None:
         parse_filters([("filter.turnaround_days:range", "5")], context)
 
 
+@pytest.mark.req("FR-16")
+def test_an_unrecognised_status_value_is_refused(context: FacetContext) -> None:
+    """`status` has no `PropertyDefinition` and so no handler to validate
+    against - it must check itself against `CatalogueEntryStatus`. Before
+    this check existed, a typo silently matched zero rows (an empty page
+    indistinguishable from a legitimately empty one) instead of the 422
+    every other unusable filter value earns."""
+    with pytest.raises(FilterValueError):
+        parse_filters([("filter.status", "activee")], context)
+
+
+@pytest.mark.req("FR-16")
+def test_the_same_facet_with_two_operators_is_refused(context: FacetContext) -> None:
+    """Grouping selections by `(key, op)` would otherwise silently accept
+    `?filter.discipline=chemistry&filter.discipline:in=haematology` as two
+    separate selections on the same key, ANDed together into a predicate no
+    row can satisfy - a caller error should be a 422, not a silent
+    always-empty result."""
+    with pytest.raises(ConflictingFilterOperatorError):
+        parse_filters(
+            [("filter.discipline", "chemistry"), ("filter.discipline:in", "haematology")], context
+        )
+
+
 # --- composition ----------------------------------------------------------
 
 
@@ -319,6 +344,27 @@ def test_the_digest_material_is_stable_across_parameter_order(context: FacetCont
         )
     )
     assert forward == reverse
+
+
+@pytest.mark.req("FR-16")
+def test_the_digest_material_does_not_collide_across_a_literal_separator(
+    context: FacetContext,
+) -> None:
+    """A caller can send either two repeated values or one value that
+    happens to contain the character a naive join would use as the list
+    separator - `?filter.discipline=in=A&filter.discipline:in=B` (two OR'd
+    values) versus one value spelled `"A,B"` (a single literal). A `,`-joined
+    digest cannot tell them apart, and two selections with different
+    meaning would then mint the same cursor - length-prefixing (this
+    function's actual encoding) is what rules that out regardless of what a
+    value contains."""
+    two_values = filter_digest_material(
+        parse_filters([("filter.discipline:in", "A"), ("filter.discipline:in", "B")], context)
+    )
+    one_value_with_a_comma = filter_digest_material(
+        parse_filters([("filter.discipline:in", "A,B")], context)
+    )
+    assert two_values != one_value_with_a_comma
 
 
 @pytest.mark.req("FR-16")

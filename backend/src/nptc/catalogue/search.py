@@ -664,22 +664,41 @@ def _text_parameters(q: str) -> dict[str, Any]:
     }
 
 
-def _matching_entry_ids(scored: Any, predicates: Sequence[ColumnElement[bool]]) -> Select[Any]:
-    """The entry ids `q` and `predicates` between them select.
+def _select_from_scored(
+    scored: Any,
+    columns: Sequence[Any],
+    predicates: Sequence[ColumnElement[bool]],
+) -> Select[Any]:
+    """The one join between `catalogue_entry` and the scored CTE, filtered to
+    public statuses and this request's filter predicates.
 
-    The one place the status filter and the filter predicates are joined
-    onto the scored CTE, so the result page and every facet count are
-    answering the same question about the same population - a facet count
-    computed against a differently-composed base is exactly the drift
-    `test_api_public_search.py`'s count/result parity test exists to catch.
+    Both `_matching_entry_ids` and `build_search_statement` call this rather
+    than each writing their own `.join(...).where(...)` - the earlier
+    version had the result page re-derive the same join and status filter
+    independently, which meant a future change to either applied to one
+    call site and not the other would let the result page and a facet count
+    silently answer different questions about different populations, with
+    nothing to catch it but the count/result parity test noticing after the
+    fact. `columns` is the only thing that varies between the two callers.
     """
     return (
-        select(CatalogueEntry.id)
+        select(*columns)
         .select_from(CatalogueEntry)
         .join(scored, scored.c.entry_id == CatalogueEntry.id)
         .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
         .where(*predicates)
     )
+
+
+def _matching_entry_ids(scored: Any, predicates: Sequence[ColumnElement[bool]]) -> Select[Any]:
+    """The entry ids `q` and `predicates` between them select.
+
+    So the result page and every facet count are answering the same
+    question about the same population - a facet count computed against a
+    differently-composed base is exactly the drift
+    `test_api_public_search.py`'s count/result parity test exists to catch.
+    """
+    return _select_from_scored(scored, [CatalogueEntry.id], predicates)
 
 
 def build_search_statement(
@@ -716,18 +735,18 @@ def build_search_statement(
     """
     scored = _SCORED_SQL.cte("scored")
     statement = (
-        select(
-            CatalogueEntry.business_key,
-            CatalogueEntry.preferred_term,
-            CatalogueEntry.status,
-            CatalogueEntry.specimen_unconstrained,
-            CatalogueEntry.updated_at,
-            scored.c.score.label("score"),
+        _select_from_scored(
+            scored,
+            [
+                CatalogueEntry.business_key,
+                CatalogueEntry.preferred_term,
+                CatalogueEntry.status,
+                CatalogueEntry.specimen_unconstrained,
+                CatalogueEntry.updated_at,
+                scored.c.score.label("score"),
+            ],
+            filter_predicates(filters),
         )
-        .select_from(CatalogueEntry)
-        .join(scored, scored.c.entry_id == CatalogueEntry.id)
-        .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
-        .where(*filter_predicates(filters))
         .order_by(scored.c.score.desc(), CatalogueEntry.business_key.asc())
         # One more row than asked for, exactly as `list_entries` does: its
         # existence is what decides `next_cursor`.

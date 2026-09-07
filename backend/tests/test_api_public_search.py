@@ -662,6 +662,43 @@ def test_a_value_of_the_wrong_kind_is_a_422(api: ApiTestApp, seeded: SeededCatal
 
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
+def test_an_unrecognised_status_value_is_a_422_not_an_empty_page(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`status` has no `PropertyDefinition` and so no handler to validate a
+    value against - it must check itself. Before this check existed, a
+    typo'd status silently matched zero rows: a 200 with an empty result,
+    indistinguishable from a legitimately empty search."""
+    response = api.get(
+        "/catalogue/search",
+        params={"q": _seed.CANONICAL_TERM, "filter.status": "activee"},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_same_facet_sent_with_two_operators_is_a_422(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`?filter.discipline=chemistry&filter.discipline:in=haematology` reads
+    as two selections on the same key, which would AND into a predicate no
+    row can satisfy - a caller error, and it must be reported as one rather
+    than served as a silently empty page."""
+    key = seeded.discipline_property_key
+    response = api.get(
+        "/catalogue/search",
+        params={
+            "q": _seed.CANONICAL_TERM,
+            f"filter.{key}": "Chemistry",
+            f"filter.{key}:in": "Haematology",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
 def test_a_cursor_replayed_under_a_different_filter_set_is_refused(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:

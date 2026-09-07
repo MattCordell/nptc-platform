@@ -75,7 +75,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import literal
 
 from nptc.db.definitions import list_definitions
-from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.property_specs import spec_for
@@ -91,6 +91,7 @@ __all__ = [
     "FACET_BUCKET_CAP",
     "FILTER_OP_SEPARATOR",
     "FILTER_PARAM_PREFIX",
+    "ConflictingFilterOperatorError",
     "Facet",
     "FacetBucket",
     "FacetContext",
@@ -186,6 +187,19 @@ class UnsupportedFilterOperatorError(FilterRefusedError):
     """An operator this endpoint does not know, or one absent from the
     property handler's own `supported_filter_ops()` - `prefix` on a coded
     property, say, which stores an object and has no prefix to take."""
+
+
+class ConflictingFilterOperatorError(FilterRefusedError):
+    """The same facet key was sent with more than one distinct operator -
+    `?filter.discipline=Chemistry&filter.discipline:in=Haematology`, say.
+
+    Selections are grouped by `(key, op)` (see `parse_filters`), so two
+    different operators on the same key would otherwise become two separate
+    `FilterSelection`s that `filter_predicates` ANDs together as if they
+    were two different facets. For most operator pairs that AND is
+    satisfiable by nothing (`discipline == 'Chemistry' AND discipline IN
+    ('Haematology')`), so the caller would get a silent, always-empty
+    result instead of the 422 every other unusable filter earns."""
 
 
 class FilterValueError(FilterRefusedError):
@@ -335,7 +349,20 @@ class _CoreColumnFacetSource:
         return frozenset({FilterOp.EQUALS, FilterOp.IN})
 
     def coerce(self, raw: str) -> Any:
-        return raw
+        # `status` has no PropertyDefinition and so no handler to validate
+        # against - CatalogueEntryStatus is the closed set this column's own
+        # CHECK constraint enforces. An unrecognised value must be refused
+        # here, not merely fail to match: silently accepting `?filter.
+        # status=activee` would return an empty page indistinguishable from
+        # a legitimately empty one, the exact silent-drop this module's
+        # docstring exists to prevent.
+        try:
+            return CatalogueEntryStatus(raw).value
+        except ValueError:
+            known = ", ".join(sorted(member.value for member in CatalogueEntryStatus))
+            raise FilterValueError(
+                f"{raw!r} is not a catalogue entry status; expected one of {known}"
+            ) from None
 
     def predicate(self, op: FilterOp, value: Any) -> ColumnElement[bool]:
         if op is FilterOp.EQUALS:
@@ -520,11 +547,18 @@ def parse_filters(
     rendered SQL are stable across two requests that mean the same thing.
     """
     grouped: dict[tuple[str, FilterOp], list[str]] = {}
+    ops_by_key: dict[str, FilterOp] = {}
     for name, value in parameters:
         split = _split_parameter(name)
         if split is None:
             continue
         key, op = split
+        existing_op = ops_by_key.setdefault(key, op)
+        if existing_op is not op:
+            raise ConflictingFilterOperatorError(
+                f"facet {key!r} was sent with both {existing_op.value!r} and "
+                f"{op.value!r}; a filter uses one operator per facet"
+            )
         grouped.setdefault((key, op), []).append(value)
 
     selections: list[FilterSelection] = []
@@ -606,12 +640,23 @@ def filter_digest_material(selections: Sequence[FilterSelection]) -> str:
     the same request", and two spellings that coerce to the same number are
     still two different requests as far as a client's paging loop is
     concerned.
+
+    Every value is length-prefixed (`<byte length>:<value>`, a netstring)
+    rather than joined on a fixed separator. A query parameter's value can
+    contain any character the caller cares to percent-encode, including
+    whatever separator this function might otherwise pick - a `,`-joined
+    scheme, for instance, cannot tell `filter.discipline=in=A,B` (two OR'd
+    values) apart from `filter.discipline=in=A%2CB` (one value that happens
+    to contain a comma), so two selections with different meaning would
+    digest identically and a cursor minted under one would silently page
+    under the other. Length-prefixing makes that collision impossible
+    regardless of what a value contains, with no escaping needed.
     """
-    return "\x1f".join(
-        f"{selection.key}{FILTER_OP_SEPARATOR}{selection.op.value}="
-        + ",".join(selection.raw_values)
-        for selection in selections
-    )
+    segments = []
+    for selection in selections:
+        values = "".join(f"{len(v.encode())}:{v}" for v in selection.raw_values)
+        segments.append(f"{selection.key}{FILTER_OP_SEPARATOR}{selection.op.value}={values}")
+    return "".join(f"{len(segment.encode())}:{segment}" for segment in segments)
 
 
 # --- counting -------------------------------------------------------------
