@@ -560,9 +560,7 @@ def load_property_values(
     )
 
 
-def open_finding_business_keys(
-    session: Session, business_keys: Iterable[str]
-) -> frozenset[str]:
+def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -> frozenset[str]:
     """Which of these business keys name an entry carrying at least one
     `open` `ValidationFinding` (FR-18) - one batch lookup per collection or
     detail response, not a per-row subquery.

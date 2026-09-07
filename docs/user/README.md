@@ -6,6 +6,8 @@
 - [Editing an entry's terms](editing-designations.md) — issue #149.
 - [Binding a SNOMED CT code](binding-a-code.md) — issue #150.
 - [Editing registry properties](editing-registry-properties.md) — issue #151.
+- [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, API-only
+  until the public entry pages land.
 
 Otherwise not yet populated. Will hold a short role guide per authenticated role — Member,
 Reviewer, Administrator (PRD §4) — covering what that role can do and the parts of the

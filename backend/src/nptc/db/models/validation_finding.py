@@ -69,6 +69,7 @@ class ValidationFindingStatus(StrEnum):
     RESOLVED = "resolved"
     SUPERSEDED = "superseded"
 
+
 #: Plain string literals, never built from an f-string -
 #: `test_sql_parameterisation.py`'s AST guard forbids SQL built from
 #: runtime data, matching every other model's own precedent.

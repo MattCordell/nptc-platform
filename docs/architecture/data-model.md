@@ -839,10 +839,49 @@ are revoked, since an acknowledgement is a record of a decision at a point in ti
 never edited or withdrawn (withdrawal is out of scope for #49).
 
 **Deliberately not PRD §6.1's `ValidationFinding` lifecycle** (`open` / `acknowledged`
-/ `resolved` / `superseded`). That entity is P3 (`nptc.validation` is still a
-placeholder module); FR-05's own acknowledgement requirement cannot wait on it. This
-table is narrow and purpose-built for exactly one finding shape, and is expected to be
-subsumed by `ValidationFinding` once it lands, not to sit alongside it indefinitely.
+/ `resolved` / `superseded`) - see the next section for that table, which now exists.
+FR-05's own acknowledgement requirement could not wait on it (`ValidationFinding` was
+still P3 when #49 landed); this table is narrow and purpose-built for exactly one
+finding shape, and remains expected to be subsumed by `validation_finding` eventually
+(not attempted by issue #141), not to sit alongside it indefinitely.
+
+### `validation_finding` (FR-18, FR-45, FR-55, issue #141)
+
+PRD §6.1's `CatalogueEntry --< ValidationFinding (open / acknowledged / resolved /
+superseded)`, landed minimal and read-only ahead of the P3 sweep and acknowledge/resolve
+lifecycle that will populate and transition it - FR-18's public open-finding indicator
+needed a real `open` row to test against now, and building the narrow shape below is
+cheaper than retrofitting it once P3 lands.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id` |
+| `binding_id` | `UUID` | Nullable FK to `code_binding.id` - FR-45 frames every check as running against a binding, but FR-18's indicator itself is entry-scoped, so this narrows to the specific binding a check ran against only when there is one |
+| `finding_type` | `TEXT` | `NOT NULL`, `CHECK` against FR-45's nine named checks (`code_not_found`, `code_inactive`, `fsn_drift`, `preferred_term_drift`, `replacement_available`, `out_of_scope_hierarchy`, `unexpected_semantic_tag`, `binding_violation`, `local_code_retired`) |
+| `severity` | `TEXT` | `NOT NULL`, `CHECK IN ('error', 'warning', 'info')` |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'open'`, `CHECK` against FR-55's four-state lifecycle (`open`/`acknowledged`/`resolved`/`superseded`) |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+`ix_validation_finding_open_entry_id` - a partial index on `entry_id WHERE status =
+'open'` - is the only access pattern P1 has: `nptc.catalogue.queries.
+open_finding_business_keys` batches `entry_id IN (...) AND status = 'open'` for a page
+of search/list results.
+
+**Grants: `SELECT` only** - the first table in this codebase with no app-role write
+path at all. Every other table above grants at least `SELECT, INSERT`, because the app
+role genuinely does insert those rows in production; nothing in P1 ever inserts a
+finding through the interactive `nptc_app` role, since FR-45's sweep and FR-55's
+lifecycle transitions are both P3, and whichever process eventually runs the sweep is
+P3's own decision. Test fixtures seed rows via the owner connection instead, committed,
+matching the "two separate connections in their own uncommitted transaction cannot see
+each other's writes" reasoning `test_audit_tamper_detection.py` already documents for
+the identical reason.
+
+FR-45's dual-edition diff findings (an AU-only code, a forecast inactivation, a code
+absent from both editions) are prose in the PRD without a named `finding_type` slug of
+their own, and are deliberately not assigned one here - inventing a name now risks the
+P3 sweep needing a different one and forcing a second migration to fix it.
 
 ### Term hygiene at entry (FR-63)
 
