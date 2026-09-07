@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import ClassVar
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, text
@@ -51,7 +52,22 @@ from sqlalchemy.sql import func
 
 from nptc.db.base import Base
 
-__all__ = ["ValidationFinding"]
+__all__ = ["ValidationFinding", "ValidationFindingStatus"]
+
+
+class ValidationFindingStatus(StrEnum):
+    """FR-55's four-state lifecycle. `finding_type`/`severity` get no
+    equivalent enum yet: unlike `status` (which `nptc.catalogue.queries.
+    open_finding_business_keys` filters on), nothing in P1 branches on
+    either of those two columns in Python - only the CHECK constraint
+    below fixes their allowed values - so an enum for them would have no
+    real caller yet. P3's sweep is expected to want one for `finding_type`
+    at least, once it has code that actually switches on it."""
+
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+    SUPERSEDED = "superseded"
 
 #: Plain string literals, never built from an f-string -
 #: `test_sql_parameterisation.py`'s AST guard forbids SQL built from

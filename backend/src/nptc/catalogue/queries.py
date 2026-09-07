@@ -71,6 +71,7 @@ from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
+from nptc.db.models.validation_finding import ValidationFinding, ValidationFindingStatus
 
 __all__ = [
     "PUBLIC_STATUSES",
@@ -86,6 +87,7 @@ __all__ = [
     "load_designations",
     "load_designations_for_write",
     "load_property_values",
+    "open_finding_business_keys",
 ]
 
 #: The one status filter every public read applies - see the module
@@ -556,3 +558,36 @@ def load_property_values(
         )
         for row in rows
     )
+
+
+def open_finding_business_keys(
+    session: Session, business_keys: Iterable[str]
+) -> frozenset[str]:
+    """Which of these business keys name an entry carrying at least one
+    `open` `ValidationFinding` (FR-18) - one batch lookup per collection or
+    detail response, not a per-row subquery.
+
+    Keyed on `business_key`, not `entry_id`, unlike every `load_*` loader
+    above: `nptc.catalogue.search.SearchHit` deliberately carries no entry
+    id at all (see that module's own docstring - rule two of this
+    module's applies there too), so a lookup keyed on the internal id
+    could not be reused for search results. `list_entries`/`get_entry`
+    callers already have `business_key` sitting on the same
+    `CatalogueEntry` row they would otherwise read `id` from, so nothing
+    is lost by joining on it everywhere instead.
+    """
+    keys = tuple(business_keys)
+    if not keys:
+        return frozenset()
+    rows = (
+        session.execute(
+            select(CatalogueEntry.business_key)
+            .join(ValidationFinding, ValidationFinding.entry_id == CatalogueEntry.id)
+            .where(CatalogueEntry.business_key.in_(keys))
+            .where(ValidationFinding.status == ValidationFindingStatus.OPEN.value)
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return frozenset(rows)

@@ -253,6 +253,8 @@ REQUIRED_PUBLIC_FIELDS = frozenset(
         # FR-89: "accepts any specimen" as a positive statement.
         "specimen_unconstrained",
         "updated_at",
+        # FR-18, issue #141: the open-finding indicator.
+        "has_open_finding",
         # The three panels a detail page shows.
         "designations",
         "bindings",

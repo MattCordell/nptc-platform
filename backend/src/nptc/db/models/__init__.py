@@ -29,7 +29,7 @@ from nptc.db.models.property_value import PropertyValue
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.models.user_role import UserRole
-from nptc.db.models.validation_finding import ValidationFinding
+from nptc.db.models.validation_finding import ValidationFinding, ValidationFindingStatus
 
 __all__ = [
     "AuditEvent",
@@ -61,4 +61,5 @@ __all__ = [
     "UserRole",
     "UserStatus",
     "ValidationFinding",
+    "ValidationFindingStatus",
 ]
