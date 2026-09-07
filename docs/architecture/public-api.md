@@ -18,6 +18,10 @@ designations (issue #224) - see [catalogue-write-api.md](catalogue-write-api.md)
 which lives under this same `/catalogue` path but is documented on its own, since it
 is not part of the public, unauthenticated contract this document describes.
 
+`/history`'s own `changed_by` field is the one exception to "requires no credential" -
+see [Change history](#change-history-fr-19) below. The route itself still returns `200`
+to an anonymous caller; only that one field's population depends on a credential.
+
 | Path | Query parameters | Response |
 |---|---|---|
 | `/catalogue/entries` | `limit` (1-200, default 50), `after` | `{items: [EntrySummary], next_cursor}` |
@@ -305,6 +309,7 @@ See [ADR-0032](../adr/0032-faceted-filter-query-surface.md).
 
 ```http
 GET /api/v1/catalogue/entries/NPTC-000247/history
+Authorization: Bearer <token>
 ```
 
 ```jsonc
@@ -335,10 +340,16 @@ being seeded returns `200` with an empty `items` list, never an error.
 **Only field *names* are ever served, never the values that changed.** `changed_fields`
 tells you *that* `preferred_term` changed, not what it changed from or to - the raw diff
 `audit_event` records internally is never serialised here, whether or not the field is
-one this API otherwise publishes elsewhere. `changed_by` is the administrator's display
-name, never their internal id, and is `null` for a system-initiated change or an account
-since closed and pseudonymised. `note` is the changelog note (FR-37) the administrator
-supplied for that write, verbatim.
+one this API otherwise publishes elsewhere. `note` is the changelog note (FR-37) the
+administrator supplied for that write, verbatim.
+
+**`changed_by` needs a credential (PR #278 review, NFR-26).** This endpoint itself has no
+`Authorization` requirement - the example above sends one only because `changed_by` does.
+An anonymous request gets `200` with every other field populated and `changed_by: null`
+on every event, the same value it would show for a system-initiated change or a
+pseudonymised account - the three are indistinguishable to an anonymous caller by design.
+Sign in (any role) to see who made a change; `changed_by` is always the administrator's
+display name, never their internal id.
 
 **`release` is always `null` today.** FR-19 asks for "every published release in which
 [the entry] appeared" as well as what changed - releases do not exist until P4, so this

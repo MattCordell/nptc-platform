@@ -88,6 +88,7 @@ from nptc.api.routers.catalogue_shared import (
     property_value_from_row,
 )
 from nptc.auth.permissions import Permission
+from nptc.auth.principal import Principal
 from nptc.catalogue import code_systems, history, queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
@@ -413,7 +414,8 @@ class HistoryEvent(BaseModel):
     action: str = Field(description="The internal action name, e.g. `catalogue_entry.updated`.")
     changed_by: str | None = Field(
         description="The administrator's display name, or `null` for a system-initiated "
-        "change or an account since pseudonymised on closure."
+        "change, an account since pseudonymised on closure, or an anonymous caller "
+        "(PR #278 review, NFR-26) - sign in to see who made a change."
     )
     changed_fields: list[str] = Field(description="Which fields changed at this event.")
     note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
@@ -814,10 +816,10 @@ def read_properties(
     "/entries/{business_key}/history",
     summary="An entry's change history, most recent first (FR-19)",
     responses=PUBLIC_ENTRY_ERROR_RESPONSES,
-    dependencies=[_BROWSE],
 )
 def read_history(
     session: SessionDep,
+    principal: Annotated[Principal, _BROWSE],
     business_key: BusinessKeyPath,
     limit: LimitQuery = 50,
     before: HistoryCursorQuery = None,
@@ -827,6 +829,17 @@ def read_history(
     (a display name, never an internal id), and the changelog note. Never
     empty-errors: an entry never edited since seeding returns `200` with
     an empty `items` list.
+
+    `changed_by` is populated only for an authenticated caller (PR #278
+    review, NFR-26): the endpoint itself stays fully public
+    (`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous
+    request gets `null` on every event regardless of who actually made the
+    change - naming an identifiable RCPA-QAP staff member to anyone on the
+    internet was never a considered part of ADR-0034's "history is public"
+    argument. `principal` is captured here (rather than left in
+    `dependencies=`, this route's own previous shape) specifically to read
+    `principal.user_id`; every other route in this module has no use for
+    the resolved principal itself.
 
     `release` is always `null` on every item in P1 - FR-19 asks for
     "every published release in which it appeared" too, and releases do
@@ -839,6 +852,7 @@ def read_history(
         entry,
         limit=limit,
         before=int(before) if before is not None else None,
+        include_changed_by=principal.user_id is not None,
     )
     return HistoryPage(
         items=[

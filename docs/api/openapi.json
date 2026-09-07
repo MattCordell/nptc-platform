@@ -1070,7 +1070,7 @@
           "catalogue"
         ],
         "summary": "An entry's change history, most recent first (FR-19)",
-        "description": "Every audit event against this entry or one of its designations,\ncode bindings or property values (FR-19) - what changed, when, who by\n(a display name, never an internal id), and the changelog note. Never\nempty-errors: an entry never edited since seeding returns `200` with\nan empty `items` list.\n\n`release` is always `null` on every item in P1 - FR-19 asks for\n\"every published release in which it appeared\" too, and releases do\nnot exist until P4. This is the defined slot P4 fills; it is not\ndropped from the shape in the meantime.",
+        "description": "Every audit event against this entry or one of its designations,\ncode bindings or property values (FR-19) - what changed, when, who by\n(a display name, never an internal id), and the changelog note. Never\nempty-errors: an entry never edited since seeding returns `200` with\nan empty `items` list.\n\n`changed_by` is populated only for an authenticated caller (PR #278\nreview, NFR-26): the endpoint itself stays fully public\n(`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous\nrequest gets `null` on every event regardless of who actually made the\nchange - naming an identifiable RCPA-QAP staff member to anyone on the\ninternet was never a considered part of ADR-0034's \"history is public\"\nargument. `principal` is captured here (rather than left in\n`dependencies=`, this route's own previous shape) specifically to read\n`principal.user_id`; every other route in this module has no use for\nthe resolved principal itself.\n\n`release` is always `null` on every item in P1 - FR-19 asks for\n\"every published release in which it appeared\" too, and releases do\nnot exist until P4. This is the defined slot P4 fills; it is not\ndropped from the shape in the meantime.",
         "operationId": "read_history_api_v1_catalogue_entries__business_key__history_get",
         "parameters": [
           {
@@ -3855,7 +3855,7 @@
               }
             ],
             "title": "Changed By",
-            "description": "The administrator's display name, or `null` for a system-initiated change or an account since pseudonymised on closure."
+            "description": "The administrator's display name, or `null` for a system-initiated change, an account since pseudonymised on closure, or an anonymous caller (PR #278 review, NFR-26) - sign in to see who made a change."
           },
           "changed_fields": {
             "items": {

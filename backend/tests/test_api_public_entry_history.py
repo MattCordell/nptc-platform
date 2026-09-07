@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from nptc.catalogue.bindings import create_binding
 from nptc.catalogue.designations import add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
+from nptc.db.models.user import User
 
 
 def _load(name: str) -> Any:
@@ -212,6 +214,47 @@ def test_history_rejects_a_cursor_beyond_the_sequence_range(
     response = api.get("/catalogue/entries/NPTC-430007/history?before=9223372036854775808")
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.integration
+def test_changed_by_is_withheld_from_an_anonymous_caller_but_shown_when_signed_in(
+    api: ApiTestApp, app_db: Connection
+) -> None:
+    """PR #278 review, NFR-26: `changed_by` names an identifiable RCPA-QAP
+    staff member, so it is withheld from an anonymous caller regardless of
+    who actually made the change. A *real* human actor, unlike every other
+    test in this module (`AuditContext.system()`, which has none) - that
+    distinguishes "anonymous caller" from "no actor to report", which a
+    `None` actor cannot."""
+    session = Session(bind=app_db)
+    actor = User(username="fr19-history-actor", display_name="FR-19 History Actor")
+    session.add(actor)
+    session.flush()
+    ctx = AuditContext(
+        actor_user_id=actor.id,
+        actor_ip=None,
+        user_agent=None,
+        correlation_id=uuid.uuid4(),
+    )
+    entry = create_entry(
+        session,
+        ctx,
+        preferred_term="Authenticated history fixture",
+        reason="seeded for FR-19 history test",
+        status=CatalogueEntryStatus.ACTIVE,
+        business_key="NPTC-430009",
+    )
+    session.flush()
+
+    anonymous = api.get(f"/catalogue/entries/{entry.business_key}/history").json()
+    authenticated = api.get(
+        f"/catalogue/entries/{entry.business_key}/history",
+        token=api.token(subject="sub-fr19-history-reader"),
+    ).json()
+
+    assert anonymous["items"][0]["changed_by"] is None
+    assert authenticated["items"][0]["changed_by"] == "FR-19 History Actor"
 
 
 @pytest.mark.req("FR-19")

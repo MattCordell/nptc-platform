@@ -37,6 +37,12 @@ emits field *names* only - it never reads a value out of `before`/`after`
 result exactly like any other changed field: that a field changed is not
 the secret FR-18/FR-19 protect, only its value is.
 
+**`changed_by` is gated the same way, on caller authentication rather than
+field policy.** `load_history`'s `include_changed_by` (PR #278 review,
+NFR-26) decides whether the query joins `User` at all - an anonymous
+caller's page never has a display name to withhold in the first place,
+rather than fetching one and discarding it before serialising.
+
 Ordered by `sequence`, never `occurred_at` - matching
 `nptc.catalogue.entries._latest_change_attribution`'s own precedent:
 two events in the same transaction share a `clock_timestamp()`-derived
@@ -54,7 +60,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Final
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, literal, or_, select
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import REDACTED_KEY
@@ -100,6 +106,12 @@ class HistoryEventRow:
     """One audit event against an entry or one of its children, projected
     for FR-19 - never the raw `before`/`after` diff (see the module
     docstring).
+
+    `changed_by` is `None` for a system-initiated event, a pseudonymised
+    account, *and* (PR #278 review, NFR-26) whenever `load_history` was
+    called with `include_changed_by=False` - the three cases are
+    indistinguishable here on purpose, matching `HistoryEvent`'s own public
+    field description.
 
     `release` is always `None` in P1 - the defined slot P4's release
     membership fills once releases exist.
@@ -164,6 +176,7 @@ def load_history(
     *,
     limit: int,
     before: int | None = None,
+    include_changed_by: bool,
 ) -> HistoryPage:
     """One keyset page of `entry`'s change history, most recent first.
 
@@ -173,6 +186,13 @@ def load_history(
 
     Raises `MalformedHistoryCursorError` if `before` exceeds `_BIGINT_MAX` -
     see that error's own docstring.
+
+    `include_changed_by=False` (an anonymous caller - PR #278 review,
+    NFR-26) never joins `User` at all, rather than joining it and
+    discarding `display_name` afterwards: redacted by construction, the
+    same rule `_changed_field_names` follows for `before`/`after`. No
+    default - every caller states its own case rather than inheriting one
+    that happens to be public-safe.
     """
     if before is not None and before > _BIGINT_MAX:
         raise MalformedHistoryCursorError(f"history cursor {before} exceeds bigint range")
@@ -219,24 +239,28 @@ def load_history(
             )
         )
 
+    changed_by_column = (
+        User.display_name if include_changed_by else literal(None).label("display_name")
+    )
     statement = (
         select(
             AuditEvent.sequence,
             AuditEvent.occurred_at,
             AuditEvent.action,
-            User.display_name,
+            changed_by_column,
             AuditEvent.before,
             AuditEvent.after,
             AuditEvent.reason,
         )
         .select_from(AuditEvent)
-        .outerjoin(User, User.id == AuditEvent.actor_user_id)
         .where(or_(*predicates))
         .order_by(AuditEvent.sequence.desc())
         # One more row than asked for: its existence *is* the answer to
         # "is there a next page" - matching `list_entries`' own precedent.
         .limit(limit + 1)
     )
+    if include_changed_by:
+        statement = statement.outerjoin(User, User.id == AuditEvent.actor_user_id)
     if before is not None:
         statement = statement.where(AuditEvent.sequence < before)
 

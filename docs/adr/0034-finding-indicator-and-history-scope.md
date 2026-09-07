@@ -86,6 +86,19 @@ matching `_latest_change_attribution`'s own precedent), and is `null` for a syst
 event or an account since closed and pseudonymised - the join always succeeds, only the name
 is ever missing.
 
+**`changed_by` is populated for an authenticated caller only (PR #278 review, resolved by
+maintainer decision).** The paragraph above argued that history belongs in the public
+category and that a display name beats an internal UUID, but never separately weighed
+naming an identifiable RCPA-QAP staff member to an anonymous caller - NFR-26 is about
+withholding personal information, and a curator's own name is exactly that, even though it
+is not a *secret* in the sense the rest of this ADR uses the word. The endpoint itself stays
+fully public (`Permission.CATALOGUE_BROWSE`, still held by `Role.ANON` - this is not a
+reversal of "history is public"); only the one field is gated, on `principal.user_id is not
+None`. `nptc.catalogue.history.load_history` takes an explicit `include_changed_by: bool`
+with no default, and never joins `app_user` at all when it is `False` - redacted by
+construction, the same rule `_changed_field_names` already follows, rather than fetching the
+name and discarding it before serialising.
+
 ### History spans an entry's children, keyed by their own audit `entity_id`
 
 A `designation`/`code_binding` audit event's `entity_id` is that child row's *own* primary
@@ -127,11 +140,15 @@ filled.
   history) is accepted as a known limitation, not filed as a follow-up issue: no write path
   in this codebase currently clears a property to nothing at all without leaving at least one
   other trace, and inventing a fix for a case nothing yet produces would be speculative.
+- `read_history` is now the only route in `nptc.api.routers.catalogue` that captures its own
+  `Principal` rather than leaving `_BROWSE` in `dependencies=` - a reviewer of a future route
+  in this module reaching for `principal.user_id` has one precedent to follow, not zero.
 
 ## Alternatives rejected
 
 | Alternative | Why not |
 |---|---|
+| Leave `changed_by` public for every caller, as originally shipped | What PR #278 review flagged: publishes an identifiable RCPA-QAP staff member's name to anyone on the internet, a question this ADR's original text never separately weighed against NFR-26. |
 | A stubbed `has_open_finding` resolver, always `false`, until P3 lands `ValidationFinding` | Leaves FR-18's own acceptance criteria untestable as written - "an entry with an open finding shows the indicator" has no real row to prove it against. |
 | `nptc_app` granted `SELECT, INSERT` on `validation_finding`, matching every other table | Nothing in P1 has a write path that would ever use the INSERT grant; granting it now is privilege the interactive role does not need and P3 may want to route through a different role entirely. |
 | Gate `GET .../history` on `Permission.REGISTRY_READ` (ADR-0028) | `REGISTRY_READ` is a considered, narrow line around submission-form plumbing; history is a fact about published catalogue content, the same category as the entry's already-public designations/bindings/properties. |
