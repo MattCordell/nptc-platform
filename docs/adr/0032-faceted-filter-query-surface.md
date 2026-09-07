@@ -240,6 +240,41 @@ by hand.
   fixed here: it is a latency question, not a correctness one, and the fix (combining the
   per-facet aggregations into one statement) is independent of the query surface this ADR
   settles.
+- A maintainer review round found four more gaps, all now closed. `_request_digest` bound
+  the cursor to `q` and the filter set by concatenating them, and only the filter side was
+  length-prefixed — `q` is arbitrary caller-supplied text too, so it could in principle end
+  in something that reads as a well-formed continuation of the filter material that
+  follows it, and two different `(q, filters)` pairs could then concatenate to an identical
+  digest input. `q` is now length-prefixed the same way. Repeated values within one facet
+  were not order-canonicalised in the digest, so `?filter.discipline=a&filter.discipline=b`
+  and the same request with the two values swapped — the same query, since OR is
+  commutative — minted different cursors; `filter_digest_material` now sorts a selection's
+  `raw_values` before joining them. Nothing capped how many values one facet's selection
+  could carry, so an operator other than `IN` could be handed an unbounded `OR` chain of
+  correlated `EXISTS` subqueries on an unauthenticated endpoint; `FILTER_VALUE_CAP` (50,
+  named for the same reason `FACET_BUCKET_CAP` is) now refuses a selection larger than that
+  with a 422. And `?filter.status=<a real but non-public status>` was accepted and matched
+  nothing, forever, on a public route restricted to `active` — the core `status` facet
+  validated against the whole `CatalogueEntryStatus` enum rather than the calling surface's
+  own permitted set; `load_facet_context` now takes `status_values` from the caller
+  (`queries.PUBLIC_STATUSES` on the public routes) and threads it into the descriptor,
+  leaving room for a future admin listing (#266) to pass the whole enum instead.
+- The same review also found, and this ADR now records rather than leaving to be
+  rediscovered: **a client generated from `docs/api/openapi.json` cannot express a filter
+  parameter as a typed field.** OpenAPI has no syntax for a templated parameter name, and
+  `FILTER_PARAMETER`'s name is `filter.{property_key}` — a placeholder, not a literal one —
+  so `openapi-typescript` emits a field named literally `"filter.{property_key}"`. Filling
+  that field in and sending it produces a 422 (`{property_key}` is not a filter this
+  endpoint offers), because the literal placeholder text is not a real facet key. This is
+  not a defect in the generated client; it is OpenAPI's own limit on what a *dynamically
+  named* parameter can look like in a schema. `FILTER_PARAMETER`'s description says so
+  explicitly for a human reading the spec by hand. The follow-up issue for the facet UI
+  (blocked on this PR, not yet opened — see "Out of scope" below) inherits the decision:
+  either build the parameter name by hand outside the generated client's type, as this ADR's
+  own router does, or reopen the wire-syntax question with `style: deepObject`
+  (`filter[discipline]=chem`), which *is* representable in a generated client's types at
+  the cost of relitigating the decision this ADR already settled. Recorded here rather than
+  decided, since there is no consumer yet to decide it against.
 
 ## Alternatives rejected
 

@@ -32,6 +32,7 @@ from sqlalchemy.engine import Connection
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
+from nptc.catalogue import facets as facets_module
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 
@@ -459,6 +460,38 @@ def test_a_coded_bucket_is_labelled_from_the_stored_display(
     # The stub terminology client this app is built over records every call
     # it receives; a facet response must not have made one.
     assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_truncated_facet_says_so(
+    api: ApiTestApp, seeded: SeededCatalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`FACET_BUCKET_CAP`'s whole contract - "a client is never quietly
+    shown a partial list it cannot tell from a whole one" - rests on
+    `truncated`, and nothing in this suite asserted the flag before this
+    test: the `limit(FACET_BUCKET_CAP + 1)` / `len(rows) > FACET_BUCKET_CAP`
+    / `rows[:FACET_BUCKET_CAP]` triple is exactly where an off-by-one hides.
+    Lowering the cap below the fixture's own discipline value count is
+    cheaper and more direct than seeding two dozen new entries just to reach
+    the real one."""
+    monkeypatch.setattr(facets_module, "FACET_BUCKET_CAP", 1)
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.discipline_property_key]
+    assert facet["truncated"] is True
+    assert len(facet["buckets"]) == 1
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_facet_at_exactly_the_cap_is_not_truncated(
+    api: ApiTestApp, seeded: SeededCatalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative case alongside the above: a facet whose value count
+    lands exactly on the cap must not report truncation it did not do."""
+    monkeypatch.setattr(facets_module, "FACET_BUCKET_CAP", 2)
+    facet = _facets(api, q=_seed.CANONICAL_TERM)[seeded.discipline_property_key]
+    assert facet["truncated"] is False
+    assert len(facet["buckets"]) == 2
 
 
 @pytest.mark.req("FR-16")

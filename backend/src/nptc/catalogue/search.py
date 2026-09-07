@@ -576,11 +576,19 @@ def _request_digest(q: str, filters: Sequence[FilterSelection]) -> str:
     exists to refuse for a changed `q`; a changed filter set is the same
     fault and earns the same refusal.
 
-    `` separates the two halves - a control character neither a query
-    nor a filter value can contain - so no `q` can impersonate a filter set
-    and vice versa.
+    `q` is length-prefixed (`<byte length>:<q>`, matching
+    `filter_digest_material`'s own netstring encoding) rather than
+    concatenated directly in front of the filter material. Nothing stops
+    `q` from ending in text that happens to parse as a well-formed prefix
+    of whatever filter material follows it, in which case a different
+    (`q`, `filters`) pair could concatenate to an identical digest input -
+    a separator character alone does not rule this out, since `q` is
+    arbitrary caller-supplied text and can contain it. Length-prefixing `q`
+    closes that the same way `filter_digest_material` closes the
+    equivalent collision for a filter value: an unambiguous length in place
+    of a separator or a framing invariant that has to be trusted to hold.
     """
-    return _query_digest(f"{q}{filter_digest_material(filters)}")
+    return _query_digest(f"{len(q.encode())}:{q}{filter_digest_material(filters)}")
 
 
 def _format_cursor(hit: SearchHit, *, q: str, filters: Sequence[FilterSelection]) -> str:

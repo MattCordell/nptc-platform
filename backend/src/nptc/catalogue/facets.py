@@ -20,7 +20,7 @@ mechanically; the rest is this module's own discipline.
 `status` is a *declared core-column* facet: it lives on `catalogue_entry`,
 not in `property_value`, so there is no `PropertyDefinition` to enumerate it
 from - but it is declared as a descriptor of the same shape and consumed by
-the identical predicate/aggregation code (`_CORE_FACETS` below). The only
+the identical predicate/aggregation code (`_core_facets` below). The only
 branch between them is which `FacetSource` a descriptor holds, which is a
 fact about *where the value is stored*, never about its datatype.
 
@@ -75,8 +75,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import literal
 
 from nptc.db.definitions import list_definitions
-from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
-from nptc.db.models.property_definition import PropertyDefinition
+from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import DefinitionAudience
@@ -88,9 +88,11 @@ from nptc.registry.handlers import (
 )
 
 __all__ = [
+    "CORE_FACET_KEYS",
     "FACET_BUCKET_CAP",
     "FILTER_OP_SEPARATOR",
     "FILTER_PARAM_PREFIX",
+    "FILTER_VALUE_CAP",
     "ConflictingFilterOperatorError",
     "Facet",
     "FacetBucket",
@@ -99,6 +101,7 @@ __all__ = [
     "FilterRefusedError",
     "FilterSelection",
     "FilterValueError",
+    "TooManyFilterValuesError",
     "UnknownFilterKeyError",
     "UnsupportedFilterOperatorError",
     "build_facet_count_statement",
@@ -119,6 +122,19 @@ __all__ = [
 #: buried at a call site. `Facet.truncated` says when it bit, so a client
 #: is never quietly shown a partial list it cannot tell from a whole one.
 FACET_BUCKET_CAP: Final[int] = 20
+
+#: At most this many values in one facet's selection - `?filter.discipline=`
+#: repeated this many times, or an `:in` list this long. `FACET_BUCKET_CAP`
+#: bounds the *response*; nothing bounded the *request* before this existed.
+#: For any operator but `IN`, `_selection_predicate` builds one correlated
+#: `EXISTS` subquery per value and `or_`s them, so an uncapped repeat count
+#: is an uncapped `OR` chain on an unauthenticated endpoint - and
+#: `compute_facets` re-runs that chain, embedded in the whole scored CTE,
+#: once per facet (the query-cost amplification issue #275 tracks). In the
+#: same spirit as `limit`'s 200: an invented number, not a tuned one, and
+#: named here rather than left implicit in whatever the query planner
+#: happens to tolerate.
+FILTER_VALUE_CAP: Final[int] = 50
 
 #: `?filter.discipline=chem&filter.discipline=haem`. The dotted prefix keeps
 #: the filter namespace from colliding with `q`/`limit`/`after` or with any
@@ -200,6 +216,17 @@ class ConflictingFilterOperatorError(FilterRefusedError):
     satisfiable by nothing (`discipline == 'Chemistry' AND discipline IN
     ('Haematology')`), so the caller would get a silent, always-empty
     result instead of the 422 every other unusable filter earns."""
+
+
+class TooManyFilterValuesError(FilterRefusedError):
+    """One facet's selection repeated the parameter, or gave an `:in` list,
+    more than `FILTER_VALUE_CAP` times.
+
+    `FACET_BUCKET_CAP` bounds a facet's *response*; this is the request-side
+    counterpart. Without it, any operator but `IN` turns into one correlated
+    `EXISTS` subquery per value, `or_`-ed together, with no upper bound but
+    the query string's own length limit - and `compute_facets` re-runs that
+    chain, embedded in the whole scored CTE, once per facet on the page."""
 
 
 class FilterValueError(FilterRefusedError):
@@ -338,31 +365,40 @@ class _CoreColumnFacetSource:
     """A facet over a column of `catalogue_entry` itself.
 
     Declared, not discovered: there is no `PropertyDefinition` for entry
-    status, so `_CORE_FACETS` states it. It produces descriptors of exactly
+    status, so `_core_facets` states it. It produces descriptors of exactly
     the shape the registry-derived ones produce, so no caller - and no line
     of the predicate or aggregation code - has a special case for it.
     """
 
     column: ColumnElement[Any]
+    #: The values this *surface* may filter on - not every value
+    #: `CatalogueEntryStatus` admits. `/catalogue/search` and
+    #: `/catalogue/entries` restrict every other query to
+    #: `queries.PUBLIC_STATUSES`; accepting `?filter.status=draft` there
+    #: would be well-formed and would silently match nothing, the same
+    #: empty-page-indistinguishable-from-a-legitimate-one outcome refusing
+    #: an unrecognised value altogether exists to prevent. A future admin
+    #: listing (#266) passes the whole enum here instead - the restriction
+    #: is the caller's fact about which rows this surface can ever show, not
+    #: something this module hard-codes.
+    allowed_values: frozenset[str]
 
     def supported_ops(self) -> frozenset[FilterOp]:
         return frozenset({FilterOp.EQUALS, FilterOp.IN})
 
     def coerce(self, raw: str) -> Any:
         # `status` has no PropertyDefinition and so no handler to validate
-        # against - CatalogueEntryStatus is the closed set this column's own
-        # CHECK constraint enforces. An unrecognised value must be refused
-        # here, not merely fail to match: silently accepting `?filter.
-        # status=activee` would return an empty page indistinguishable from
-        # a legitimately empty one, the exact silent-drop this module's
-        # docstring exists to prevent.
-        try:
-            return CatalogueEntryStatus(raw).value
-        except ValueError:
-            known = ", ".join(sorted(member.value for member in CatalogueEntryStatus))
+        # against - refusing anything outside this surface's own permitted
+        # set is the closest equivalent, and the reason it must be refused
+        # rather than merely fail to match is the same as everywhere else in
+        # this module: a silently empty page is indistinguishable from a
+        # correct one.
+        if raw not in self.allowed_values:
+            known = ", ".join(sorted(self.allowed_values))
             raise FilterValueError(
-                f"{raw!r} is not a catalogue entry status; expected one of {known}"
-            ) from None
+                f"{raw!r} is not a status this endpoint can filter on; expected one of {known}"
+            )
+        return raw
 
     def predicate(self, op: FilterOp, value: Any) -> ColumnElement[bool]:
         if op is FilterOp.EQUALS:
@@ -398,27 +434,39 @@ class FacetDescriptor:
         return self.source.value_source() is not None
 
 
-#: The declared core-column facets. One entry today (ADR-0032); the tuple
-#: exists so a second is a data change rather than a new code path.
-#:
-#: Degenerate on the public API by design: `queries.PUBLIC_STATUSES`
-#: restricts that surface to `active`, so this facet has exactly one bucket
-#: there. It earns its keep on the admin listing (#266), and #139 ships the
-#: mechanism rather than waiting for the surface.
-_CORE_FACETS: Final[tuple[FacetDescriptor, ...]] = (
-    FacetDescriptor(
-        key="status",
-        label="Status",
-        display_order=-1,
-        source=_CoreColumnFacetSource(
-            column=type_cast("ColumnElement[Any]", CatalogueEntry.status)
-        ),
-    ),
-)
-
 #: Named so the "a core facet is not special-cased" test can assert against
-#: the same value the descriptor carries, rather than retyping it.
-CORE_FACET_KEYS: Final[frozenset[str]] = frozenset(d.key for d in _CORE_FACETS)
+#: the same value a descriptor carries, rather than retyping it. Independent
+#: of `_core_facets`'s `status_values` argument: the set of *keys* a surface
+#: declares does not depend on which values it permits.
+CORE_FACET_KEYS: Final[frozenset[str]] = frozenset({"status"})
+
+
+def _core_facets(status_values: Iterable[str]) -> tuple[FacetDescriptor, ...]:
+    """The declared core-column facets. One entry today (ADR-0032); the
+    tuple shape exists so a second is a data change rather than a new code
+    path.
+
+    `status_values` is the caller's own fact about which rows this surface
+    can ever show - not a constant this module could bake in. On the public
+    API it is `queries.PUBLIC_STATUSES`, which is `active` alone, so the
+    facet has exactly one bucket there; a future admin listing (#266) passes
+    the whole `CatalogueEntryStatus` set instead. Accepting a value outside
+    that set would be well-formed and would silently match nothing - the
+    same empty-page-indistinguishable-from-a-legitimate-one outcome this
+    module refuses everywhere else, so `_CoreColumnFacetSource.coerce`
+    refuses it too rather than merely failing to match.
+    """
+    return (
+        FacetDescriptor(
+            key="status",
+            label="Status",
+            display_order=-1,
+            source=_CoreColumnFacetSource(
+                column=type_cast("ColumnElement[Any]", CatalogueEntry.status),
+                allowed_values=frozenset(status_values),
+            ),
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,23 +491,36 @@ class FacetContext:
         return None
 
 
-def load_facet_context(session: Session, registry: DatatypeRegistry) -> FacetContext:
+def load_facet_context(
+    session: Session, registry: DatatypeRegistry, *, status_values: Iterable[str]
+) -> FacetContext:
     """Enumerate the facets, from `property_definition`, now.
 
-    `DefinitionAudience.DATA_ENTRY` - active definitions only. A deprecated
-    property's stored values are still *served* (FR-11), but it is no longer
-    offered for new entries and offering it as a filter would invite a
-    client to build a UI around a property the catalogue has retired.
+    `status_values` is this *surface's* permitted `catalogue_entry.status`
+    values - `queries.PUBLIC_STATUSES` for the public routes - and is
+    threaded through to the declared core-column `status` facet so it
+    refuses a value this surface could never show rather than silently
+    matching nothing (see `_core_facets`).
 
-    `EXPORT` is loaded as well, and only to populate `known_property_keys`:
-    that set exists so a deprecated or non-filterable key is refused as
-    itself rather than as "unknown", in the log.
+    One `list_definitions(audience=EXPORT)` call, not two: `EXPORT` returns
+    every property regardless of status, and `DATA_ENTRY` is exactly that
+    set filtered to `PropertyStatus.ACTIVE` (`nptc.db.definitions`'s own
+    docstring) - a second round trip to re-derive a strict subset of rows
+    already in hand would cost every request on both public collection
+    endpoints for no answer a client ever sees, only a distinction
+    (`UnknownFilterKeyError` vs `FilterNotAvailableError`) that reaches the
+    log and nothing else.
+
+    A deprecated property's stored values are still *served* (FR-11), but it
+    is no longer offered for new entries and offering it as a filter would
+    invite a client to build a UI around a property the catalogue has
+    retired - so only the active, filterable ones become descriptors, while
+    `known_property_keys` keeps every key regardless of status.
     """
-    active = list_definitions(session, audience=DefinitionAudience.DATA_ENTRY)
     every = list_definitions(session, audience=DefinitionAudience.EXPORT)
-    descriptors = list(_CORE_FACETS)
-    for definition in active:
-        if not definition.filterable:
+    descriptors = list(_core_facets(status_values))
+    for definition in every:
+        if definition.status != PropertyStatus.ACTIVE or not definition.filterable:
             continue
         descriptors.append(_descriptor_for(definition, registry))
     descriptors.sort(key=lambda d: (d.display_order, d.key))
@@ -574,6 +635,11 @@ def parse_filters(
             raise UnsupportedFilterOperatorError(
                 f"facet {key!r} does not support the {op.value!r} operator"
             )
+        if len(raw_values) > FILTER_VALUE_CAP:
+            raise TooManyFilterValuesError(
+                f"facet {key!r} was sent {len(raw_values)} values; "
+                f"at most {FILTER_VALUE_CAP} are accepted in one selection"
+            )
         selections.append(
             FilterSelection(
                 descriptor=descriptor,
@@ -651,10 +717,20 @@ def filter_digest_material(selections: Sequence[FilterSelection]) -> str:
     digest identically and a cursor minted under one would silently page
     under the other. Length-prefixing makes that collision impossible
     regardless of what a value contains, with no escaping needed.
+
+    `raw_values` is sorted before it is joined, not taken in the order the
+    caller repeated the parameter. Facet *order* is already canonicalised
+    (the loop below walks `context.descriptors`, and `parse_filters` sorts
+    selections the same way), but within one facet `?filter.discipline=a&
+    filter.discipline=b` and the same request with the two swapped mean the
+    same query - OR is commutative - and would otherwise mint two different
+    digests, handing a client that happens to reorder its own repeated
+    parameter a `SearchCursorQueryMismatchError` for a request that did not
+    change.
     """
     segments = []
     for selection in selections:
-        values = "".join(f"{len(v.encode())}:{v}" for v in selection.raw_values)
+        values = "".join(f"{len(v.encode())}:{v}" for v in sorted(selection.raw_values))
         segments.append(f"{selection.key}{FILTER_OP_SEPARATOR}{selection.op.value}={values}")
     return "".join(f"{len(segment.encode())}:{segment}" for segment in segments)
 

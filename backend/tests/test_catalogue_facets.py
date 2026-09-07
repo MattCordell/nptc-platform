@@ -23,17 +23,21 @@ from sqlalchemy.dialects import postgresql
 
 from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
+    FILTER_VALUE_CAP,
     ConflictingFilterOperatorError,
     FacetContext,
     FacetDescriptor,
     FilterNotAvailableError,
     FilterValueError,
+    TooManyFilterValuesError,
     UnknownFilterKeyError,
     UnsupportedFilterOperatorError,
     filter_digest_material,
     filter_predicates,
     parse_filters,
 )
+
+from nptc.catalogue.search import _request_digest  # isort: skip
 from nptc.registry.datatypes.code import CodeHandler
 from nptc.registry.datatypes.decimal import DecimalHandler
 from nptc.registry.datatypes.positive_int import PositiveIntHandler
@@ -96,7 +100,7 @@ def context() -> FacetContext:
     )
     return FacetContext(
         descriptors=(
-            *facets_module._CORE_FACETS,
+            *facets_module._core_facets(status_values=("active",)),
             _property_descriptor(
                 "specimen", CodeHandler(terminology_client=StubTerminologyClient()), coded
             ),
@@ -225,12 +229,27 @@ def test_a_malformed_range_is_refused(context: FacetContext) -> None:
 @pytest.mark.req("FR-16")
 def test_an_unrecognised_status_value_is_refused(context: FacetContext) -> None:
     """`status` has no `PropertyDefinition` and so no handler to validate
-    against - it must check itself against `CatalogueEntryStatus`. Before
-    this check existed, a typo silently matched zero rows (an empty page
-    indistinguishable from a legitimately empty one) instead of the 422
-    every other unusable filter value earns."""
+    against - it must check itself. Before this check existed, a typo
+    silently matched zero rows (an empty page indistinguishable from a
+    legitimately empty one) instead of the 422 every other unusable filter
+    value earns."""
     with pytest.raises(FilterValueError):
         parse_filters([("filter.status", "activee")], context)
+
+
+@pytest.mark.req("FR-16")
+def test_a_status_value_outside_this_surface_is_refused_not_silently_empty(
+    context: FacetContext,
+) -> None:
+    """`draft` is a real `CatalogueEntryStatus` member - it is not a typo,
+    the way `test_an_unrecognised_status_value_is_refused`'s value is. But
+    this `context` was built with `status_values=("active",)`, matching a
+    public route, and `?filter.status=draft` there is well-formed and would
+    match zero rows forever: refusing it is what tells a caller their filter
+    can never do anything, rather than letting them believe an empty
+    catalogue is an empty search."""
+    with pytest.raises(FilterValueError):
+        parse_filters([("filter.status", "draft")], context)
 
 
 @pytest.mark.req("FR-16")
@@ -244,6 +263,25 @@ def test_the_same_facet_with_two_operators_is_refused(context: FacetContext) -> 
         parse_filters(
             [("filter.discipline", "chemistry"), ("filter.discipline:in", "haematology")], context
         )
+
+
+@pytest.mark.req("FR-16")
+def test_more_than_the_value_cap_in_one_selection_is_refused(context: FacetContext) -> None:
+    """`FACET_BUCKET_CAP` bounds a facet's response; nothing bounded the
+    request before this existed. For any operator but `IN`,
+    `_selection_predicate` turns each repeated value into its own
+    correlated `EXISTS` subquery, `or_`-ed together - an unbounded repeat
+    count is an unbounded `OR` chain on an unauthenticated endpoint."""
+    too_many = [("filter.discipline", str(i)) for i in range(FILTER_VALUE_CAP + 1)]
+    with pytest.raises(TooManyFilterValuesError):
+        parse_filters(too_many, context)
+
+
+@pytest.mark.req("FR-16")
+def test_exactly_the_value_cap_is_accepted(context: FacetContext) -> None:
+    at_cap = [("filter.discipline", str(i)) for i in range(FILTER_VALUE_CAP)]
+    selections = parse_filters(at_cap, context)
+    assert len(selections[0].values) == FILTER_VALUE_CAP
 
 
 # --- composition ----------------------------------------------------------
@@ -347,6 +385,26 @@ def test_the_digest_material_is_stable_across_parameter_order(context: FacetCont
 
 
 @pytest.mark.req("FR-16")
+def test_the_digest_material_is_stable_across_repeated_value_order(
+    context: FacetContext,
+) -> None:
+    """Facet *order* is canonicalised by the test above; within one facet,
+    OR is commutative and `?filter.discipline=a&filter.discipline=b` means
+    the same thing as the same request with the two swapped. Before
+    `raw_values` was sorted inside `filter_digest_material`, a client that
+    reordered its own repeated parameter got a different digest for an
+    unchanged request - `SearchCursorQueryMismatchError` for a cursor that
+    should have paged."""
+    forward = filter_digest_material(
+        parse_filters([("filter.discipline:in", "a"), ("filter.discipline:in", "b")], context)
+    )
+    reverse = filter_digest_material(
+        parse_filters([("filter.discipline:in", "b"), ("filter.discipline:in", "a")], context)
+    )
+    assert forward == reverse
+
+
+@pytest.mark.req("FR-16")
 def test_the_digest_material_does_not_collide_across_a_literal_separator(
     context: FacetContext,
 ) -> None:
@@ -365,6 +423,24 @@ def test_the_digest_material_does_not_collide_across_a_literal_separator(
         parse_filters([("filter.discipline:in", "A,B")], context)
     )
     assert two_values != one_value_with_a_comma
+
+
+@pytest.mark.req("FR-16")
+def test_q_cannot_impersonate_filter_material_in_the_request_digest(
+    context: FacetContext,
+) -> None:
+    """`search._request_digest` binds a cursor to `q` and the filter set
+    together. Before `q` was length-prefixed, nothing stopped it from
+    ending in text that happened to read as a well-formed continuation of
+    `filter_digest_material`'s own encoding - so a request with a real
+    filter selection could digest identically to a filterless request whose
+    `q` was crafted to contain that filter material as literal text, and a
+    cursor minted under one would be accepted under the other."""
+    selections = parse_filters([("filter.discipline", "chemistry")], context)
+    real_filter_request = _request_digest("glucose", selections)
+    impersonated_q = "glucose" + filter_digest_material(selections)
+    impersonating_request = _request_digest(impersonated_q, ())
+    assert real_filter_request != impersonating_request
 
 
 @pytest.mark.req("FR-16")

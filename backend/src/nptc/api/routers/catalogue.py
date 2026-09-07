@@ -260,7 +260,13 @@ FILTER_PARAMETER: Final[dict[str, Any]] = {
         f"`?{FILTER_PARAM_PREFIX}volume_ml{FILTER_OP_SEPARATOR}range=1..5`. "
         "Which operators a facet accepts follows from the property's "
         "datatype; one it does not accept is a 422, never a silently ignored "
-        "parameter."
+        "parameter. NOTE for generated clients: `{property_key}` above is a "
+        "placeholder, not a literal parameter name - OpenAPI has no syntax "
+        "for a templated parameter name, so a generated client typically "
+        "renders one field named literally `filter.{property_key}`. Sending "
+        "that literal string is a 422 (`{property_key}` is not a filter this "
+        "endpoint offers); a real filter parameter's name is built by hand, "
+        "substituting an actual facet key (see ADR-0032)."
     ),
 }
 
@@ -303,7 +309,7 @@ def _filter_request(
     to forbid, and `test_api_public_search.py` flips the flag through the
     real registry route on a running app to prove it.
     """
-    context = load_facet_context(session, registry)
+    context = load_facet_context(session, registry, status_values=queries.PUBLIC_STATUSES)
     return FilterRequest(
         context=context,
         selections=parse_filters(request.query_params.multi_items(), context),
