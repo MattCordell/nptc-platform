@@ -143,6 +143,8 @@ def test_unregistered_system_token_is_404_naming_registered_tokens(api: ApiTestA
 
     assert response.status_code == 404, response.text
     assert "sct" in response.json()["detail"]
+    # NFR-26: the fixed sentence never echoes the caller-supplied token back.
+    assert "loinc" not in response.text
 
 
 @pytest.mark.req("FR-17")
