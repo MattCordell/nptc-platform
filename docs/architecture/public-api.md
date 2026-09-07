@@ -211,7 +211,9 @@ that happens, the most recently retired binding's entry wins, deterministically.
 
 **One 404, for two different causes.** A `system_token` (or, on `/lookup`, a system URI)
 that is not registered, and a registered one that matches no published entry's code, both
-return the identical fixed sentence naming the registered tokens - a caller cannot use
+return the identical fixed sentence naming each registered system as both its token and
+its URI (a `/lookup` caller supplied a URI and never saw the token form, so naming only
+the token would leave that caller told about a parameter they didn't use) - a caller cannot use
 response text to tell "your token is wrong" from "that code does not exist", matching the
 non-disclosure rule above for a hidden `business_key`. A malformed `system_token` (one
 that does not even look like a token) is a 422 instead, before any query runs - the same

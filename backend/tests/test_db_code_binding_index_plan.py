@@ -29,11 +29,18 @@ join" as the only cheap plan.
 
 **Why `enable_seqscan = off` as well.** Removes the residual cost race a
 still-modest fixture would otherwise leave: an unindexable predicate cannot
-become an `Index Cond` regardless of cost pressure, so disabling
-sequential scans cannot manufacture a false pass.
+become an `Index Cond` regardless of cost pressure, so this proves the
+predicate is index-supported. It does not by itself prove a production
+planner *picks* that plan at real row counts - with `enable_seqscan` on, a
+cost-based choice could still favour a sequential scan at a few thousand
+rows. That is what the bulk fixture above is actually for: enough rows on
+both sides that the index-based plan is cheaper on cost alone, not merely
+the only legal one.
 
 Marked `integration`: a query plan is a database fact, with no unit-level
-substitute (NFR-39).
+substitute (NFR-39). One of the more expensive tests in the integration
+suite - roughly 10k inserts, ~60k `nptc_sctid_is_valid` evaluations, and two
+`ANALYZE`s - because that volume is exactly what the proof above requires.
 """
 
 from __future__ import annotations

@@ -321,9 +321,11 @@ class CodeBinding(Base):
     )
     retirement_reason: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     #: FR-17, issue #140 - see the module docstring's `retired_at` note.
-    retired_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, active_history=True
-    )
+    #: No `active_history=True`: that flag matters only for `auditable |
+    #: withheld` fields (`policy_for`), and this column is
+    #: `__audit_ignored_fields__` - it would buy nothing but an extra
+    #: old-value load on every set.
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

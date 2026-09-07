@@ -190,8 +190,8 @@ _RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
         "system_token (or, on `/lookup`, the system URI) is not registered, "
         "or because no active or retired binding for this code names a "
         "published entry. Both causes return the identical fixed sentence, "
-        "which names the registered system tokens, so a caller cannot use "
-        "response text to tell them apart."
+        "which names each registered system as both its token and its URI, "
+        "so a caller cannot use response text to tell them apart."
     ),
 }
 

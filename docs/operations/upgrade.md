@@ -54,6 +54,8 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0013_property_definition_local_code_system_key.py`](../../backend/migrations/versions/0013_property_definition_local_code_system_key.py) | `property_definition.local_code_system_key` (see [`data-model.md`](../architecture/data-model.md#property-registry-issue-51-fr-09-fr-10-fr-11-fr-12)) | See [below](#0013_property_definition_local_code_system_keypy) - backfills the new column on any database that already ran `seed_system_properties` before adding the `NOT NULL`-when-bound `CHECK` |
 | [`0014_numeric_or_null_function.py`](../../backend/migrations/versions/0014_numeric_or_null_function.py) | `nptc_numeric_or_null` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0014_numeric_or_null_functionpy) - downgrading past it requires no reconciler-built numeric-shaped index to still exist |
 | [`0015_hybrid_search_indexes.py`](../../backend/migrations/versions/0015_hybrid_search_indexes.py) | `nptc_search_document`, `nptc_search_query`, four GIN full-text indexes, two GIN trigram indexes, one btree | See [below](#0015_hybrid_search_indexespy) - a second standing `REINDEX` obligation, this one on the `english` text search configuration |
+| [`0016_code_binding_retired_at.py`](../../backend/migrations/versions/0016_code_binding_retired_at.py) | `code_binding.retired_at`, `ck_code_binding_retired_at` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | See [below](#0016_code_binding_retired_atpy) - backfills existing retired rows from `updated_at` before adding the `NOT NULL`-when-retired `CHECK` |
+| [`0017_code_binding_system_code_index.py`](../../backend/migrations/versions/0017_code_binding_system_code_index.py) | `ix_code_binding_system_code` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None |
 
 ## Provisioning the app role's login
 
@@ -321,6 +323,27 @@ triggers are separate: a stemmer change does not touch the trigram indexes, and 
 `downgrade()` drops all seven indexes and then the two functions, in that order (the
 reverse of `upgrade()`), since four of the index expressions depend on
 `nptc_search_document`.
+
+## `0016_code_binding_retired_at.py`
+
+Adds `code_binding.retired_at` (issue #140, FR-17 - see
+[`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)),
+the timestamp the FR-17 exact-code lookup routes use to tie-break a code that two
+different entries each hold as a *retired* binding. Backfills before
+`ck_code_binding_retired_at` is created: any pre-existing row with `status =
+'retired'` gets `retired_at` set from its own `updated_at` (the closest available
+approximation of when it was actually retired, since the column did not exist
+before this migration), so an upgrading deployment with real retired bindings
+already in place never violates the new CHECK on `upgrade head`. A fresh retirement
+after this migration writes `retired_at` via `func.now()` (the database clock, not
+the application clock), independent of this one-time backfill.
+
+## `0017_code_binding_system_code_index.py`
+
+Adds `ix_code_binding_system_code` (issue #140, FR-17 - see
+[`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)).
+No table, no column, no grant changes, and nothing to backfill: `upgrade head` is
+all that is required.
 
 ## Testcontainers and Docker
 

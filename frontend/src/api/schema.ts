@@ -1816,7 +1816,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names the registered system tokens, so a caller cannot use response text to tell them apart. */
+            /** @description No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names each registered system as both its token and its URI, so a caller cannot use response text to tell them apart. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1877,7 +1877,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names the registered system tokens, so a caller cannot use response text to tell them apart. */
+            /** @description No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names each registered system as both its token and its URI, so a caller cannot use response text to tell them apart. */
             404: {
                 headers: {
                     [name: string]: unknown;
