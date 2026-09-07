@@ -912,6 +912,76 @@ def test_bulk_save_a_schema_violation_writes_nothing_for_any_entry(api: ApiTestA
     assert _audit_event_count(api) == before
 
 
+@pytest.mark.req("FR-89")
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_specimen_conflict_rolls_back_an_earlier_entry_already_applied_in_the_same_request(
+    api: ApiTestApp,
+) -> None:
+    """The request-granularity half of "a batch that fails partway leaves
+    no entry half-applied" (ADR-0035): unlike a per-entry conflict (caught
+    by that entry's own savepoint, the rest of the batch still commits),
+    FR-89's specimen check aborts the whole request - `get_session`'s own
+    `session_scope` rolls back everything, including `entry_ok`'s write,
+    which reached (and committed) its own per-entry savepoint *before* the
+    loop ever reached the entry that triggers the abort. The service-layer
+    equivalent of this test cannot prove this half on its own - it never
+    goes through `session_scope`, only through this route."""
+    from nptc.db.bootstrap import seed_system_properties
+
+    token = _admin_token(api, subject="sub-bulk-specimen-abort")
+    key = _unique_key("bulk_specimen_abort")
+    _create_string_property(api, token, key=key)
+    entry_ok = _new_entry(api, "Bulk HTTP specimen ok")
+    entry_unconstrained = _new_entry(api, "Bulk HTTP specimen unconstrained")
+    seed_system_properties(api.session)
+    api.session.flush()
+    api.terminology.seed_validate_code(
+        "specimen-1",
+        ValidationResult(code="specimen-1", result=True),
+        value_set_url=_SPECIMEN_VALUE_SET_URI,
+        edition=_SPECIMEN_EDITION,
+    )
+    patch_unconstrained = api.request(
+        "PATCH",
+        f"/catalogue/entries/{entry_unconstrained.business_key}",
+        token=token,
+        json={
+            "specimen_unconstrained": True,
+            "reason": _REASON,
+            "expected_row_version": entry_unconstrained.row_version,
+        },
+    )
+    assert patch_unconstrained.status_code == 200, patch_unconstrained.text
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key="specimen",
+        values=[{"value": {"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}}],
+        entries=[
+            {"business_key": entry_ok.business_key, "expected_row_version": entry_ok.row_version},
+            {
+                "business_key": entry_unconstrained.business_key,
+                "expected_row_version": patch_unconstrained.json()["row_version"],
+            },
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert any(
+        issue["code"] == "specimen-unconstrained-conflict" for issue in response.json()["issues"]
+    )
+    # entry_ok's own write reached and committed its per-entry savepoint
+    # before the loop reached entry_unconstrained - proving this requires
+    # a fresh read, since api.session's own identity map would otherwise
+    # show the pre-rollback in-memory state.
+    api.session.expire_all()
+    assert _property_value_count(api, entry_id=entry_ok.id, property_key="specimen") == 0
+    assert _audit_event_count(api) == before
+
+
 # --- authorisation (FR-44, NFR-06) ------------------------------------------
 
 
