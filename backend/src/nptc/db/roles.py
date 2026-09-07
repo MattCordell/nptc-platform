@@ -282,3 +282,18 @@ GRANT_LOCAL_CODE_SNOMED_MAP_SQL = "GRANT SELECT, INSERT ON TABLE local_code_snom
 REVOKE_LOCAL_CODE_SNOMED_MAP_WRITE_SQL = (
     "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE local_code_snomed_map FROM nptc_app;"
 )
+
+#: issue #141 (FR-18/FR-45/FR-55): **SELECT only** - the first table in
+#: this file `nptc_app` cannot write at all. Unlike every table above,
+#: nothing in P1 ever inserts a finding through the interactive app role:
+#: FR-45's sweep and FR-55's acknowledge/resolve lifecycle are both P3, and
+#: whichever service account eventually runs the sweep is P3's decision,
+#: not necessarily `nptc_app` itself. Test fixtures seed rows with a
+#: `Session(bind=db)` (the owner connection), matching
+#: `test_audit_tamper_detection.py`'s own precedent for privileged direct
+#: writes the app role could not itself perform - never `app_db`, which
+#: would require this grant to include INSERT.
+GRANT_VALIDATION_FINDING_SQL = "GRANT SELECT ON TABLE validation_finding TO nptc_app;"
+REVOKE_VALIDATION_FINDING_WRITE_SQL = (
+    "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE validation_finding FROM nptc_app;"
+)
