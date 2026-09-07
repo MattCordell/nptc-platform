@@ -40,8 +40,8 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
+from sqlalchemy import func, select
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -356,13 +356,28 @@ def retire_binding(
     Does not accept a successor - see the module docstring for why
     `ix_code_binding_one_active_per_entry` makes "retire with a successor
     already linked" an impossible first step, and use `link_replacement`
-    once the successor exists instead."""
+    once the successor exists instead.
+
+    Sets `retired_at` (FR-17, issue #140; `ck_code_binding_retired_at`
+    requires it exactly when `status = 'retired'`) alongside `status`/
+    `retirement_reason` - the real retirement time
+    `nptc.catalogue.queries.get_entry_by_code` orders a multi-way
+    retired-code collision by, rather than the `updated_at` proxy this
+    column exists precisely so that ordering cannot silently drift onto.
+
+    `func.now()` - the **database's** clock - not `datetime.now(UTC)` (the
+    app's), unlike `LocalCode.deprecated_at`'s precedent: that column is
+    never compared across rows written by different processes, but
+    `retired_at` is exactly that - the ordering key across every app
+    instance's writes - and a real column value beats trusting every
+    instance's clock to agree (issue #140 review)."""
     if binding.status == str(CodeBindingStatus.RETIRED):
         raise CodeBindingAlreadyRetiredError(f"code binding {binding.id} is already retired")
 
     validated_reason = validate_changelog_note(reason)
     binding.status = str(CodeBindingStatus.RETIRED)
     binding.retirement_reason = validated_reason
+    binding.retired_at = func.now()
     record_change(
         session,
         ctx,

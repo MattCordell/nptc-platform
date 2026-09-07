@@ -40,6 +40,7 @@ from __future__ import annotations
 import random
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -371,6 +372,9 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             status=CodeBindingStatus.RETIRED.value,
             retirement_reason="Concept inactivated in the July release; rebound to a successor.",
             replaced_by_binding_id=active_binding.id,
+            # FR-17/issue #140: `ck_code_binding_retired_at` requires this
+            # whenever `status = 'retired'`.
+            retired_at=datetime.now(UTC),
         )
     )
     # issue #228: a binding on the `draft` entry too, so its admin detail
@@ -723,6 +727,9 @@ def seed_worked_example(session: Session) -> SeededWorkedExample:
                 edition_hint="int",
                 status=CodeBindingStatus.RETIRED.value,
                 retirement_reason="Superseded in a later release; retained for the search test.",
+                # FR-17/issue #140: `ck_code_binding_retired_at` requires
+                # this whenever `status = 'retired'`.
+                retired_at=datetime.now(UTC),
             ),
         ]
     )
@@ -743,3 +750,219 @@ def a_uuid() -> str:
     """A UUID string, for the "a UUID in the path is a 422, not a lookup"
     case."""
     return str(uuid.uuid4())
+
+
+# --- FR-17's exact-code lookup fixtures (issue #140) -----------------------
+
+#: A 6-digit code with a leading zero, and an 18-digit code - both real
+#: enough to satisfy `nptc_sctid_is_valid` (the `code` CHECK: format plus
+#: Verhoeff), and reused rather than re-invented: `000008` is the lowest
+#: 6-digit string that happens to pass the Verhoeff check, and
+#: `111111111111111118` is `test_db_code_binding.py`'s own 18-digit boundary
+#: fixture. Neither needs to be a genuine published SNOMED CT concept (unlike
+#: `ACTIVE_CODE`/`RETIRED_CODE` above): these two exist only to prove a code
+#: string round-trips through a URL unchanged (FR-06), not to exercise search.
+LEADING_ZERO_CODE = "000008"
+LEADING_ZERO_FSN = "Leading zero code lookup fixture (procedure)"
+EIGHTEEN_DIGIT_CODE = "111111111111111118"
+EIGHTEEN_DIGIT_FSN = "Eighteen digit code lookup fixture (procedure)"
+
+#: A code retired on two *different* entries, with no active binding
+#: anywhere - the one case `ix_code_binding_one_active_entry_per_code`
+#: cannot prevent (it is scoped to `status = 'active'`), and the reason
+#: `nptc.catalogue.queries.get_entry_by_code` needs a tie-break at all
+#: (issue #140, `docs/adr/0033-exact-code-lookup-routes.md`). Distinct
+#: `retired_at` values, an hour apart, so the "most recently retired wins"
+#: rule has something to actually distinguish.
+RETIRED_COLLISION_CODE = "500000"
+RETIRED_COLLISION_OLDER_FSN = "Retired collision older fixture (procedure)"
+RETIRED_COLLISION_NEWER_FSN = "Retired collision newer fixture (procedure)"
+
+#: A code bound only to a `draft` entry - for the "a code held only by a
+#: hidden-status entry 404s byte-identically to a code nobody has ever
+#: bound" acceptance criterion (issue #140). A different code from
+#: `DRAFT_CODE` above so this fixture can be seeded independently of
+#: `seed_public_catalogue`.
+HIDDEN_ONLY_CODE = "500016"
+HIDDEN_ONLY_FSN = "Hidden only code lookup fixture (procedure)"
+
+#: The same code active on one entry and retired on another -
+#: `ix_code_binding_one_active_entry_per_code` permits this (it restricts
+#: only *active* rows to be unique), and it is the shape
+#: `get_entry_by_code`'s *primary* ORDER BY key exists to resolve: an active
+#: binding must win regardless of how recently some other entry's binding
+#: for the same code was retired (issue #140 review - the retired-collision
+#: fixture above only proves the retired-vs-retired tie-break, never this
+#: key). `retired_at` is set to `now` (as fresh as the active entry's own
+#: implicit binding time), so a test relying on this fixture cannot pass by
+#: accident of the retired row simply being the older one.
+ACTIVE_BEATS_RETIRED_CODE = "500037"
+ACTIVE_BEATS_RETIRED_ACTIVE_FSN = "Active beats retired active fixture (procedure)"
+ACTIVE_BEATS_RETIRED_RETIRED_FSN = "Active beats retired retired fixture (procedure)"
+
+#: A well-formed, Verhoeff-valid SCTID no fixture in this module ever binds
+#: to anything - the code-lookup analogue of `unused_business_key()` above,
+#: for "a code nobody has ever bound" (issue #140).
+UNUSED_CODE = "500028"
+
+
+@dataclass(frozen=True)
+class SeededCodeLookup:
+    """Handles for `seed_code_lookup_fixtures`' entries (issue #140,
+    FR-17)."""
+
+    leading_zero_entry: str
+    eighteen_digit_entry: str
+    retired_collision_older_entry: str
+    retired_collision_newer_entry: str
+    hidden_entry: str
+    active_beats_retired_active_entry: str
+    active_beats_retired_retired_entry: str
+
+
+def seed_code_lookup_fixtures(session: Session) -> SeededCodeLookup:
+    """Seeds FR-17's exact-code lookup fixtures (issue #140).
+
+    Separate from `seed_public_catalogue`, for the same reason
+    `seed_worked_example` above is (see that function's own docstring): the
+    entries here would otherwise perturb `SeededCatalogue.active_in_key_order`,
+    which the paging tests assert verbatim. Allocated from its own random
+    nine-digit block for the same reason.
+    """
+    base = random.randrange(100_000_000, 999_000_000)
+    seeded = SeededCodeLookup(
+        leading_zero_entry=f"NPTC-{base}",
+        eighteen_digit_entry=f"NPTC-{base + 1}",
+        retired_collision_older_entry=f"NPTC-{base + 2}",
+        retired_collision_newer_entry=f"NPTC-{base + 3}",
+        hidden_entry=f"NPTC-{base + 4}",
+        active_beats_retired_active_entry=f"NPTC-{base + 5}",
+        active_beats_retired_retired_entry=f"NPTC-{base + 6}",
+    )
+
+    leading_zero_entry = _entry(
+        seeded.leading_zero_entry,
+        "Leading zero code lookup fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    eighteen_digit_entry = _entry(
+        seeded.eighteen_digit_entry,
+        "Eighteen digit code lookup fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    retired_collision_older_entry = _entry(
+        seeded.retired_collision_older_entry,
+        "Retired collision older fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    retired_collision_newer_entry = _entry(
+        seeded.retired_collision_newer_entry,
+        "Retired collision newer fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    # `draft`, not `active`: the whole point is a code that is never
+    # publicly resolvable because its only binding sits on a hidden entry.
+    hidden_entry = _entry(
+        seeded.hidden_entry,
+        "Hidden only code lookup fixture",
+        CatalogueEntryStatus.DRAFT.value,
+    )
+    active_beats_retired_active_entry = _entry(
+        seeded.active_beats_retired_active_entry,
+        "Active beats retired active fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    active_beats_retired_retired_entry = _entry(
+        seeded.active_beats_retired_retired_entry,
+        "Active beats retired retired fixture",
+        CatalogueEntryStatus.ACTIVE.value,
+    )
+    session.add_all(
+        [
+            leading_zero_entry,
+            eighteen_digit_entry,
+            retired_collision_older_entry,
+            retired_collision_newer_entry,
+            hidden_entry,
+            active_beats_retired_active_entry,
+            active_beats_retired_retired_entry,
+        ]
+    )
+    session.flush()
+
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            CodeBinding(
+                entry_id=leading_zero_entry.id,
+                code=LEADING_ZERO_CODE,
+                fsn=LEADING_ZERO_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            CodeBinding(
+                entry_id=eighteen_digit_entry.id,
+                code=EIGHTEEN_DIGIT_CODE,
+                fsn=EIGHTEEN_DIGIT_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            # Older retirement: this entry loses the tie-break.
+            CodeBinding(
+                entry_id=retired_collision_older_entry.id,
+                code=RETIRED_COLLISION_CODE,
+                fsn=RETIRED_COLLISION_OLDER_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.RETIRED.value,
+                retirement_reason="Retired for the FR-17 tie-break fixture (older).",
+                retired_at=now - timedelta(hours=1),
+            ),
+            # Newer retirement, same code, a different entry: this one wins
+            # the `retired_at DESC` tie-break.
+            CodeBinding(
+                entry_id=retired_collision_newer_entry.id,
+                code=RETIRED_COLLISION_CODE,
+                fsn=RETIRED_COLLISION_NEWER_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.RETIRED.value,
+                retirement_reason="Retired for the FR-17 tie-break fixture (newer).",
+                retired_at=now,
+            ),
+            CodeBinding(
+                entry_id=hidden_entry.id,
+                code=HIDDEN_ONLY_CODE,
+                fsn=HIDDEN_ONLY_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            CodeBinding(
+                entry_id=active_beats_retired_active_entry.id,
+                code=ACTIVE_BEATS_RETIRED_CODE,
+                fsn=ACTIVE_BEATS_RETIRED_ACTIVE_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.ACTIVE.value,
+            ),
+            # Same code, a different entry, retired *just now* - as fresh a
+            # retirement as the sibling active binding's own creation. Proves
+            # the primary ORDER BY key (active-first) dominates regardless of
+            # `retired_at` recency, not merely that it dominates a stale one.
+            CodeBinding(
+                entry_id=active_beats_retired_retired_entry.id,
+                code=ACTIVE_BEATS_RETIRED_CODE,
+                fsn=ACTIVE_BEATS_RETIRED_RETIRED_FSN,
+                au_preferred_term=None,
+                edition_hint="int",
+                status=CodeBindingStatus.RETIRED.value,
+                retirement_reason="Retired for the FR-17 active-beats-retired fixture.",
+                retired_at=now,
+            ),
+        ]
+    )
+    session.flush()
+    return seeded

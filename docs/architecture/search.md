@@ -302,8 +302,10 @@ total whatever the filters are.
 
 ## Not here
 
-- **Exact code lookup as its own route** (FR-17) is issue #140. Typing a code into `q`
-  works, as FR-14 requires; a dedicated addressable URL for a code is separate.
+- **Exact code lookup as its own route** (FR-17, issue #140) lives outside this document -
+  see [public-api.md](public-api.md#exact-code-lookup-fr-17). Typing a code into `q` still
+  works, as FR-14 requires; the dedicated addressable URL is a different, non-scored
+  lookup.
 - **Draft and other non-active entries** are never served here. The maintenance UI's own
   search over drafts is issue #149; the entry-side indexes are already non-partial so
   that it can use them.

@@ -640,6 +640,7 @@ the rows this table creates and is not implemented here. FR-08's blocking severi
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
 | `replaced_by_binding_id` | `UUID` | Nullable, self-FK to `code_binding.id`. Only settable while retiring (see below). |
 | `retirement_reason` | `TEXT` | Nullable. Mandatory exactly when `status = 'retired'` (see below). |
+| `retired_at` | `TIMESTAMPTZ` | Nullable (migration 0016). Mandatory exactly when `status = 'retired'` (see below) - the FR-17 exact-code lookup routes' retired-vs-retired tie-break key. Written via `func.now()` (the database clock), not the application clock, so ordering stays consistent across app instances. |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 
 ### FR-82: stored exactly as served, no cleaning hook
@@ -679,14 +680,31 @@ test that keeps it from silently diverging from the Python implementation.
 - `ix_code_binding_one_active_entry_per_code` (issue #49) - `UNIQUE (system, code)
   WHERE status = 'active'` - the code side of the same invariant: one active code
   cannot be bound to two *different* entries. See "Collision detection" below.
+- `ck_code_binding_retired_at` (migration 0016, issue #140, FR-17) - `(status =
+  'retired') = (retired_at IS NOT NULL)` - mandatory on retirement, forbidden while
+  active, the same shape as `ck_code_binding_retirement_reason` above.
+- `ix_code_binding_system_code` (migration 0017, issue #140, FR-17) - non-partial,
+  non-unique `(system, code)`. `nptc.catalogue.queries.get_entry_by_code` looks up a
+  binding by `(system, code)` with no `status` predicate - it must see retired rows
+  too, unlike every other query against this table - so none of the partial indexes
+  above (each `WHERE status = 'active'`) can be proven applicable by the planner.
+  Non-unique because two different entries can legitimately share a code as
+  *retired* bindings, which `ix_code_binding_one_active_entry_per_code` already
+  permits. See `docs/adr/0033-exact-code-lookup-routes.md` and
+  `backend/tests/test_db_code_binding_index_plan.py` (the `EXPLAIN` proof that the
+  query actually reaches it).
 
 Grants: `SELECT, INSERT` at table level, column-level `UPDATE (fsn,
 au_preferred_term, edition_hint, status, replaced_by_binding_id, retirement_reason,
-updated_at)` - excluding `entry_id`, `system` and `code`, so rebinding to a different
-concept is a retire-and-replace, never an in-place edit - and no `DELETE`/`TRUNCATE`
-grant at all. `fsn`/`au_preferred_term` remain updatable so the FR-45 validation
-sweep can refresh a drifted served label from the terminology server; that is a
-refresh from the wire, never a re-derivation.
+retired_at, updated_at)` - excluding `entry_id`, `system` and `code`, so rebinding to
+a different concept is a retire-and-replace, never an in-place edit - and no
+`DELETE`/`TRUNCATE` grant at all. `fsn`/`au_preferred_term` remain updatable so the
+FR-45 validation sweep can refresh a drifted served label from the terminology
+server; that is a refresh from the wire, never a re-derivation. `retired_at`'s grant
+is a separate `GRANT` statement added by migration 0016
+(`GRANT_CODE_BINDING_RETIRED_AT_UPDATE_SQL`), not a widened re-execution of the
+original grant above - matching migration 0013's precedent for a column added by a
+later migration.
 
 ### FR-83: the semantic tag strip has exactly one call site
 

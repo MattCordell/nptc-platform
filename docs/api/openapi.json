@@ -443,6 +443,187 @@
         }
       }
     },
+    "/api/v1/catalogue/code/{system_token}/{code}": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "One published catalogue entry, resolved by an exact code (FR-17)",
+        "description": "Resolves the same entry `GET /catalogue/entries/{business_key}` and\n`GET /catalogue/lookup?system=...&code=...` would for the same code -\nall three serve byte-identical bodies for one entry (FR-17's\nunambiguous-lookup acceptance criterion).\n\n`system_token` is a short alias registered in\n`nptc.catalogue.code_systems` - `sct` for `http://snomed.info/sct`\ntoday. `code` is never validated against a code shape here: an\nunrecognised code and a malformed one both resolve to nothing and get\nthe identical 404 (see `PUBLIC_CODE_LOOKUP_ERROR_RESPONSES`).",
+        "operationId": "read_entry_by_code_api_v1_catalogue_code__system_token___code__get",
+        "parameters": [
+          {
+            "name": "system_token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,31}$",
+              "description": "A short alias for a code system's URI, e.g. `sct` for `http://snomed.info/sct` (FR-17). An unregistered but well-formed token is a 404, not a 422 - see `docs/architecture/public-api.md`.",
+              "examples": [
+                "sct"
+              ],
+              "title": "System Token"
+            },
+            "description": "A short alias for a code system's URI, e.g. `sct` for `http://snomed.info/sct` (FR-17). An unregistered but well-formed token is a 404, not a 422 - see `docs/architecture/public-api.md`."
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The exact code to resolve.",
+              "examples": [
+                "49466006"
+              ],
+              "title": "Code"
+            },
+            "description": "The exact code to resolve."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names each registered system as both its token and its URI, so a caller cannot use response text to tell them apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/lookup": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "One published catalogue entry, resolved by system URI and exact code (FR-17)",
+        "description": "The full-URI sibling of `GET /catalogue/code/{system_token}/{code}` -\nsee that route's docstring for the shared-body and shared-404\nguarantees. `system` must be one of `nptc.catalogue.code_systems.\nSYSTEM_TOKENS`' registered URIs; an unregistered one is a 404 on the\nidentical sentence an unregistered `system_token` gets.",
+        "operationId": "read_entry_by_system_and_code_api_v1_catalogue_lookup_get",
+        "parameters": [
+          {
+            "name": "system",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The code system's full URI, e.g. `http://snomed.info/sct` (FR-17) - for a caller holding the URI rather than the short `system_token` alias `GET /catalogue/code/{system_token}/{code}` takes.",
+              "title": "System"
+            },
+            "description": "The code system's full URI, e.g. `http://snomed.info/sct` (FR-17) - for a caller holding the URI rather than the short `system_token` alias `GET /catalogue/code/{system_token}/{code}` takes."
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The exact code to resolve.",
+              "title": "Code"
+            },
+            "description": "The exact code to resolve."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntryDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No published entry matches this system and code - because the system_token (or, on `/lookup`, the system URI) is not registered, or because no active or retired binding for this code names a published entry. Both causes return the identical fixed sentence, which names each registered system as both its token and its URI, so a caller cannot use response text to tell them apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/entries/{business_key}/designations": {
       "get": {
         "tags": [

@@ -37,6 +37,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from sqlalchemy.engine import Connection
@@ -45,6 +46,7 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
+from nptc.db.models.code_binding import SNOMED_CT_SYSTEM
 from nptc.db.models.user import User
 from nptc_shared.terminology import AU_LANGUAGE_TAG, StubConcept
 
@@ -132,14 +134,20 @@ def _catalogue_paths(api: ApiTestApp, seeded: SeededCatalogue) -> list[str]:
             # no_unquoted_code` below, which authenticates first.
             continue
         path = template[len(API_PREFIX) :].replace("{business_key}", seeded.canonical)
+        # FR-17/issue #140: the exact-code lookup routes' own path
+        # parameters - `sct`/`ACTIVE_CODE` resolve to the canonical entry's
+        # own active binding, same as `{business_key}` above.
+        path = path.replace("{system_token}", "sct").replace("{code}", _seed.ACTIVE_CODE)
         unfilled = re.findall(r"\{([^}]+)\}", path)
         assert not unfilled, f"{template}: no fixture value for path parameter(s) {unfilled}"
         if path.endswith("/search"):
             path = f"{path}?q={_seed.CANONICAL_TERM.replace(' ', '+')}&limit=200"
         elif path.endswith("/entries"):
             path = f"{path}?after={seeded.before_all}&limit=200"
+        elif path.endswith("/lookup"):
+            path = f"{path}?system={quote(SNOMED_CT_SYSTEM, safe='')}&code={_seed.ACTIVE_CODE}"
         paths.append(path)
-    assert len(paths) >= 6, f"expected every catalogue route to be discovered, found {paths}"
+    assert len(paths) >= 8, f"expected every catalogue route to be discovered, found {paths}"
     return paths
 
 

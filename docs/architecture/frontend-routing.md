@@ -62,6 +62,13 @@ Three forms resolve the same entry:
 Search result state (`q`, `page`, `sort`) is encoded entirely in `/catalogue`'s URL, so a
 pasted search link reproduces the identical result set and filter state.
 
+The API half of this contract - `GET /catalogue/entries/{business_key}`,
+`GET /catalogue/code/{system_token}/{code}` and `GET /catalogue/lookup`, all serving the
+identical `EntryDetail` body - is documented in
+[public-api.md](public-api.md#exact-code-lookup-fr-17). All three routes above still
+mount `createPlaceholderPage` today; the public search/entry UI issue is what will call
+this API and swap the placeholders for real screens.
+
 ## Codes are strings, always
 
 A code is a string end to end (FR-06): never `Number()`'d, and an 18-digit SCTID exceeds

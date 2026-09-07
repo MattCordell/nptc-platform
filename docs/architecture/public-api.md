@@ -26,6 +26,8 @@ is not part of the public, unauthenticated contract this document describes.
 | `/catalogue/entries/{business_key}/bindings` | — | `{items: [Binding]}` |
 | `/catalogue/entries/{business_key}/properties` | — | `{items: [PropertyValue]}` |
 | `/catalogue/search` | `q` (required), `limit`, `after` | `{items: [SearchHit], next_cursor}` |
+| `/catalogue/code/{system_token}/{code}` | — | `EntryDetail` |
+| `/catalogue/lookup` | `system` (required), `code` (required) | `EntryDetail` |
 
 `EntryDetail` is an `EntrySummary` plus `designations`, `bindings`, `properties` and
 `row_version`, so one request renders an entry page. The sub-resources are also served
@@ -178,9 +180,44 @@ ordering is), and is not a quality rating of the entry. The bands are documented
 [search.md](search.md); the weights behind them may be retuned, so a client should order
 by it rather than threshold on it.
 
-**Not here:** exact-code lookup as its own addressable endpoint is FR-17's, owned by
-issue #140 - typing a code into `q` works, but a stable per-code URL is separate.
-See [ADR-0029](../adr/0029-hybrid-full-text-and-trigram-search.md).
+Typing a code into `q` above matches it exactly, by similarity/full-text on everything
+else - but that is a *search*, not a stable, citable URL for one code. The next section
+is the addressable form FR-17 requires.
+
+### Exact-code lookup (FR-17)
+
+```http
+GET /api/v1/catalogue/code/sct/49466006
+GET /api/v1/catalogue/lookup?system=http://snomed.info/sct&code=49466006
+```
+
+Both forms resolve the same entry `GET /catalogue/entries/{business_key}` does for that
+entry, and serve the identical `EntryDetail` body - never a redirect, never a thinner
+shape. `sct` is a short alias for `http://snomed.info/sct`, registered in
+`nptc.catalogue.code_systems.SYSTEM_TOKENS` - a frozen mapping in code, not a database
+table (the same "permissions as code" reasoning [ADR-0019](../adr/0019-permission-framework.md)
+applies to the auth matrix). `/catalogue/lookup` is for a caller holding the full system
+URI rather than the short alias; it accepts the identical set of URIs the alias registry
+recognises. See [ADR-0033](../adr/0033-exact-code-lookup-routes.md) for the full design
+and the alternatives rejected.
+
+**A retired code still resolves** (FR-08), the same as it does through
+`/catalogue/entries/{business_key}/bindings`: the matched binding in the response carries
+`status: "retired"`, its `retirement_reason`, and - where PRD FR-08's replacement case
+applies - `replaced_by_code`. Because a binding is retired and replaced rather than
+rebound in place, more than one entry can hold the same code as a *retired* binding (an
+active binding is still unambiguous - the database itself enforces at most one). When
+that happens, the most recently retired binding's entry wins, deterministically.
+
+**One 404, for two different causes.** A `system_token` (or, on `/lookup`, a system URI)
+that is not registered, and a registered one that matches no published entry's code, both
+return the identical fixed sentence naming each registered system as both its token and
+its URI (a `/lookup` caller supplied a URI and never saw the token form, so naming only
+the token would leave that caller told about a parameter they didn't use) - a caller cannot use
+response text to tell "your token is wrong" from "that code does not exist", matching the
+non-disclosure rule above for a hidden `business_key`. A malformed `system_token` (one
+that does not even look like a token) is a 422 instead, before any query runs - the same
+treatment `business_key` gets.
 
 ### Faceted filters (FR-16)
 
@@ -254,9 +291,9 @@ user-supplied text (FR-44, NFR-04, NFR-26).
 | Status | When |
 |---|---|
 | 401 | A credential was presented and could not be verified. Sending none is not an error. |
-| 404 | No published entry has this business key - including one that exists but is not published. Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
-| 422 | A malformed `business_key`, a blank `q`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
-| 500 | A published code binding's stored FSN is not renderable (below). Only `/catalogue/entries/{business_key}` and its `/bindings` sub-resource can produce it. |
+| 404 | No published entry has this business key - including one that exists but is not published. On `/catalogue/code/{system_token}/{code}` and `/catalogue/lookup`, the identical fixed sentence also covers an unregistered `system_token`/`system` (see "Exact-code lookup" above). Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
+| 422 | A malformed `business_key` or `system_token`, a blank `q`/`system`/`code`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
+| 500 | A published code binding's stored FSN is not renderable (below). `/catalogue/entries/{business_key}`, its `/bindings` sub-resource, and the two exact-code lookup routes can all produce it. |
 
 Every status each endpoint can produce is declared in `docs/api/openapi.json`, and only
 the ones it can actually produce - so a generated client (#147) has no branch for a

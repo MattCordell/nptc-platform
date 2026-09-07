@@ -74,17 +74,20 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BindingList,
     BusinessKeyPath,
+    CodePath,
     DesignationList,
     EntryDetail,
     EntrySummary,
     PropertyValue,
+    SystemTokenPath,
     binding_from_row,
+    build_entry_detail,
     designation_from_row,
     entry_summary_fields,
     property_value_from_row,
 )
 from nptc.auth.permissions import Permission
-from nptc.catalogue import queries
+from nptc.catalogue import code_systems, queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
@@ -172,6 +175,33 @@ PUBLIC_ENTRY_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 #: The by-business-key routes that also serve bindings.
 PUBLIC_BINDING_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     **PUBLIC_ENTRY_ERROR_RESPONSES,
+    500: _RESPONSE_500_DISPLAY_TERM,
+}
+
+#: FR-17, issue #140: the exact-code lookup routes' own 404 - distinct
+#: from `_RESPONSE_404` above because the cause it describes is different
+#: (an unregistered system_token/URI, or a registered one matching no
+#: published entry, both on the identical fixed sentence - see
+#: `nptc.catalogue.code_systems`'s own module docstring).
+_RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "No published entry matches this system and code - because the "
+        "system_token (or, on `/lookup`, the system URI) is not registered, "
+        "or because no active or retired binding for this code names a "
+        "published entry. Both causes return the identical fixed sentence, "
+        "which names each registered system as both its token and its URI, "
+        "so a caller cannot use response text to tell them apart."
+    ),
+}
+
+#: The two exact-code lookup routes. Also renders `display_term` (they
+#: serve the same `EntryDetail` the by-business-key route does), so 500 is
+#: reachable here too.
+PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    404: _RESPONSE_404_CODE_LOOKUP,
+    422: _RESPONSE_422,
     500: _RESPONSE_500_DISPLAY_TERM,
 }
 
@@ -593,26 +623,67 @@ def read_entry(
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     entry = queries.get_entry(session, business_key)
-    entry_ids = (entry.id,)
-    return EntryDetail(
-        **entry_summary_fields(
-            entry.business_key,
-            entry.preferred_term,
-            entry.length,
-            entry.status,
-            entry.specimen_unconstrained,
-            entry.updated_at,
+    return build_entry_detail(session, registry, entry)
+
+
+@router.get(
+    "/code/{system_token}/{code}",
+    summary="One published catalogue entry, resolved by an exact code (FR-17)",
+    responses=PUBLIC_CODE_LOOKUP_ERROR_RESPONSES,
+    dependencies=[_BROWSE],
+)
+def read_entry_by_code(
+    session: SessionDep,
+    registry: RegistryDep,
+    system_token: SystemTokenPath,
+    code: CodePath,
+) -> EntryDetail:
+    """Resolves the same entry `GET /catalogue/entries/{business_key}` and
+    `GET /catalogue/lookup?system=...&code=...` would for the same code -
+    all three serve byte-identical bodies for one entry (FR-17's
+    unambiguous-lookup acceptance criterion).
+
+    `system_token` is a short alias registered in
+    `nptc.catalogue.code_systems` - `sct` for `http://snomed.info/sct`
+    today. `code` is never validated against a code shape here: an
+    unrecognised code and a malformed one both resolve to nothing and get
+    the identical 404 (see `PUBLIC_CODE_LOOKUP_ERROR_RESPONSES`)."""
+    system = code_systems.system_for_token(system_token)
+    entry = queries.get_entry_by_code(session, system, code)
+    return build_entry_detail(session, registry, entry)
+
+
+@router.get(
+    "/lookup",
+    summary="One published catalogue entry, resolved by system URI and exact code (FR-17)",
+    responses=PUBLIC_CODE_LOOKUP_ERROR_RESPONSES,
+    dependencies=[_BROWSE],
+)
+def read_entry_by_system_and_code(
+    session: SessionDep,
+    registry: RegistryDep,
+    system: Annotated[
+        str,
+        Query(
+            min_length=1,
+            description=(
+                "The code system's full URI, e.g. `http://snomed.info/sct` "
+                "(FR-17) - for a caller holding the URI rather than the "
+                "short `system_token` alias `GET /catalogue/code/{system_token}"
+                "/{code}` takes."
+            ),
         ),
-        row_version=entry.row_version,
-        designations=[
-            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
-        ],
-        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
-        properties=[
-            property_value_from_row(row, registry)
-            for row in queries.load_property_values(session, entry_ids)
-        ],
-    )
+    ],
+    code: Annotated[str, Query(min_length=1, description="The exact code to resolve.")],
+) -> EntryDetail:
+    """The full-URI sibling of `GET /catalogue/code/{system_token}/{code}` -
+    see that route's docstring for the shared-body and shared-404
+    guarantees. `system` must be one of `nptc.catalogue.code_systems.
+    SYSTEM_TOKENS`' registered URIs; an unregistered one is a 404 on the
+    identical sentence an unregistered `system_token` gets."""
+    registered_system = code_systems.require_registered_system(system)
+    entry = queries.get_entry_by_code(session, registered_system, code)
+    return build_entry_detail(session, registry, entry)
 
 
 @router.get(

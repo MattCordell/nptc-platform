@@ -36,10 +36,13 @@ from typing import Annotated, Any
 
 from fastapi import Path
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.orm import Session
 
 from nptc.api.errors import StoredFSNNotRenderableError
 from nptc.catalogue import queries
+from nptc.catalogue.code_systems import SYSTEM_TOKEN_PATTERN
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
+from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError, render_display_term
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 
@@ -47,12 +50,15 @@ __all__ = [
     "Binding",
     "BindingList",
     "BusinessKeyPath",
+    "CodePath",
     "Designation",
     "DesignationList",
     "EntryDetail",
     "EntrySummary",
     "PropertyValue",
+    "SystemTokenPath",
     "binding_from_row",
+    "build_entry_detail",
     "designation_from_row",
     "entry_summary_fields",
     "property_value_from_row",
@@ -68,6 +74,35 @@ BusinessKeyPath = Annotated[
         description="The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
         examples=["NPTC-000247"],
     ),
+]
+
+#: FR-17, issue #140: the short alias half of `GET /catalogue/code/
+#: {system_token}/{code}`. A malformed token is a 422 here, before any
+#: query runs; a well-formed but unregistered one reaches
+#: `nptc.catalogue.code_systems.system_for_token` and is a 404 instead - see
+#: that module's own docstring for why the two are different status codes.
+SystemTokenPath = Annotated[
+    str,
+    Path(
+        pattern=SYSTEM_TOKEN_PATTERN.pattern,
+        description=(
+            "A short alias for a code system's URI, e.g. `sct` for "
+            "`http://snomed.info/sct` (FR-17). An unregistered but "
+            "well-formed token is a 404, not a 422 - see "
+            "`docs/architecture/public-api.md`."
+        ),
+        examples=["sct"],
+    ),
+]
+
+#: FR-17, issue #140: the exact code to resolve on `GET /catalogue/code/
+#: {system_token}/{code}`. Deliberately no `pattern=` - `docs/adr/
+#: 0033-exact-code-lookup-routes.md` records why `code` is not
+#: shape-validated at the API layer; an unrecognised code and a malformed
+#: one both resolve to nothing and get the identical 404.
+CodePath = Annotated[
+    str,
+    Path(description="The exact code to resolve.", examples=["49466006"]),
 ]
 
 
@@ -246,6 +281,36 @@ def entry_summary_fields(
         "specimen_unconstrained": specimen_unconstrained,
         "updated_at": updated_at,
     }
+
+
+def build_entry_detail(
+    session: Session, registry: DatatypeRegistry, entry: CatalogueEntry
+) -> EntryDetail:
+    """Assembles the one `EntryDetail` shape every FR-17 URL form serves for
+    the same entry (issue #140) - `catalogue.py`'s business-key route and
+    its two code-lookup siblings all call this, rather than reassembling
+    the same four loaders three times over with the risk that a future edit
+    updates one copy and not the others."""
+    entry_ids = (entry.id,)
+    return EntryDetail(
+        **entry_summary_fields(
+            entry.business_key,
+            entry.preferred_term,
+            entry.length,
+            entry.status,
+            entry.specimen_unconstrained,
+            entry.updated_at,
+        ),
+        row_version=entry.row_version,
+        designations=[
+            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
+        ],
+        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
+        properties=[
+            property_value_from_row(row, registry)
+            for row in queries.load_property_values(session, entry_ids)
+        ],
+    )
 
 
 def property_value_from_row(

@@ -8,6 +8,8 @@ statement aborts the surrounding transaction, 25P02).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -32,9 +34,9 @@ _INSERT_ENTRY = text(
 _INSERT_BINDING = text(
     "INSERT INTO code_binding "
     "(entry_id, system, code, fsn, au_preferred_term, edition_hint, status, "
-    "replaced_by_binding_id, retirement_reason) "
+    "replaced_by_binding_id, retirement_reason, retired_at) "
     "VALUES (:entry_id, :system, :code, :fsn, :au_preferred_term, :edition_hint, :status, "
-    ":replaced_by_binding_id, :retirement_reason) "
+    ":replaced_by_binding_id, :retirement_reason, :retired_at) "
     "RETURNING id"
 )
 
@@ -62,6 +64,7 @@ def _insert_binding(
     status: str = "active",
     replaced_by_binding_id: object | None = None,
     retirement_reason: str | None = None,
+    retired_at: datetime | None = None,
 ) -> object:
     return connection.execute(
         _INSERT_BINDING,
@@ -75,6 +78,7 @@ def _insert_binding(
             "status": status,
             "replaced_by_binding_id": replaced_by_binding_id,
             "retirement_reason": retirement_reason,
+            "retired_at": retired_at,
         },
     ).scalar_one()
 
@@ -237,6 +241,7 @@ def test_same_code_is_rebindable_once_the_first_binding_is_retired(db: Connectio
         entry_id=first_entry_id,
         status="retired",
         retirement_reason="Superseded",
+        retired_at=datetime.now(UTC),
     )
 
     _insert_binding(db, entry_id=second_entry_id)
@@ -260,6 +265,35 @@ def test_retiring_with_a_blank_reason_is_refused(db: Connection) -> None:
 
     with pytest.raises(IntegrityError) as exc_info:
         _insert_binding(db, entry_id=entry_id, status="retired", retirement_reason="   ")
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_retiring_without_retired_at_is_refused(db: Connection) -> None:
+    """`ck_code_binding_retired_at` mirrors `ck_code_binding_retirement_reason`
+    exactly - mandatory exactly when retired (issue #140)."""
+    entry_id = _insert_entry(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_binding(
+            db, entry_id=entry_id, status="retired", retirement_reason="Superseded", retired_at=None
+        )
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_active_binding_with_retired_at_is_refused(db: Connection) -> None:
+    """A stale `retired_at` cannot linger on a binding that is active -
+    forbidden exactly when not retired, the other half of
+    `ck_code_binding_retired_at`."""
+    entry_id = _insert_entry(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_binding(db, entry_id=entry_id, status="active", retired_at=datetime.now(UTC))
 
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
 
@@ -317,7 +351,7 @@ def test_self_supersession_is_refused(db: Connection) -> None:
         db.execute(
             text(
                 "UPDATE code_binding SET status = 'retired', retirement_reason = 'x', "
-                "replaced_by_binding_id = id WHERE id = :id"
+                "retired_at = now(), replaced_by_binding_id = id WHERE id = :id"
             ),
             {"id": binding_id},
         )
@@ -336,8 +370,8 @@ def test_retired_binding_may_name_its_successor(db: Connection) -> None:
     # second concurrently-active row on the same entry.
     db.execute(
         text(
-            "UPDATE code_binding SET status = 'retired', retirement_reason = 'superseded' "
-            "WHERE id = :id"
+            "UPDATE code_binding SET status = 'retired', retirement_reason = 'superseded', "
+            "retired_at = now() WHERE id = :id"
         ),
         {"id": superseded_id},
     )
@@ -365,8 +399,8 @@ def test_app_role_can_insert_select_and_update(app_db: Connection) -> None:
 
     app_db.execute(
         text(
-            "UPDATE code_binding SET status = 'retired', retirement_reason = 'superseded' "
-            "WHERE id = :id"
+            "UPDATE code_binding SET status = 'retired', retirement_reason = 'superseded', "
+            "retired_at = now() WHERE id = :id"
         ),
         {"id": binding_id},
     )

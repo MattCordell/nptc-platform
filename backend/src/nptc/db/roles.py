@@ -159,6 +159,18 @@ GRANT_CODE_BINDING_UPDATE_SQL = (
 #: for `designation`.
 REVOKE_CODE_BINDING_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE code_binding FROM nptc_app;"
 
+#: issue #140 (FR-17): `retired_at` is a new column added in migration 0016,
+#: after 0008 already granted `code_binding`'s other columns - a **separate**
+#: statement, executed only by 0016, matching `GRANT_DESIGNATION_TERM_KEY_
+#: UPDATE_SQL`'s own precedent below rather than editing
+#: `GRANT_CODE_BINDING_UPDATE_SQL` in place (which would make 0008 grant a
+#: column that does not exist yet on a from-scratch replay). Set alongside
+#: `status`/`retirement_reason` by `nptc.catalogue.bindings.retire_binding`,
+#: never on its own.
+GRANT_CODE_BINDING_RETIRED_AT_UPDATE_SQL = (
+    "GRANT UPDATE (retired_at) ON TABLE code_binding TO nptc_app;"
+)
+
 #: issue #49 (FR-05): `term_key`/`preferred_term_key` are new columns added
 #: in migration 0009, after 0006/0007 already granted their tables' other
 #: columns - a **separate** statement, executed only by 0009, rather than
