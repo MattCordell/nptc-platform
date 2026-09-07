@@ -90,6 +90,7 @@ def test_success_exits_zero_after_one_attempt() -> None:
     assert "No known vulnerabilities found" in out.getvalue()
 
 
+@pytest.mark.req("NFR-25")
 def test_real_advisory_fails_immediately_with_no_retry() -> None:
     out = io.StringIO()
     call_count = 0

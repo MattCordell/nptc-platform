@@ -114,6 +114,20 @@ def test_collect_test_markers_finds_module_level_pytestmark() -> None:
     assert "NFR-08" in refs
 
 
+def test_collect_test_markers_ignores_its_own_fixture_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This file's own source contains marker-shaped strings as fixture
+    content for the two tests above - scanning the real scripts/tests
+    directory (now a TEST_DIRS member) must not misread those as genuine
+    requirement coverage for FR-01/NFR-08, which appear nowhere else in
+    scripts/tests as a real marker."""
+    monkeypatch.setattr(tc, "TEST_DIRS", [tc.SELF_TEST_FILE.parent])
+    refs = tc.collect_test_markers()
+    assert "FR-01" not in refs
+    assert "NFR-08" not in refs
+
+
 def test_run_checks_flags_unknown_id_in_test_marker() -> None:
     requirements = {
         "FR-01": tc.Requirement("FR-01", "MUST", "p1", "t", "planned", ""),
