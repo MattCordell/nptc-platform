@@ -314,16 +314,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
           }
         }
       },
@@ -522,16 +512,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -603,16 +583,6 @@
           },
           "422": {
             "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -861,16 +831,6 @@
           },
           "422": {
             "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "A published code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1933,16 +1893,6 @@
           },
           "422": {
             "description": "The business key is not `NPTC-nnnnnn`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "A code binding's stored Fully Specified Name is not in the form the terminology server serves, so its display term cannot be rendered. This is a data fault in the catalogue, not a fault in the request; it needs an administrator, and retrying will not clear it.",
             "content": {
               "application/json": {
                 "schema": {

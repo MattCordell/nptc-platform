@@ -108,28 +108,15 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "The business key is not `NPTC-nnnnnn`.",
 }
-#: Documented (not merely a possible framework error) because the route
-#: genuinely can produce it: it renders a `display_term`, matching
-#: `catalogue.py`'s own `_RESPONSE_500_DISPLAY_TERM` on its equivalent
-#: route - a published binding whose stored FSN is not in the form the
-#: terminology server serves is a server-side data fault, not a fault in
-#: the request.
-_RESPONSE_500_DISPLAY_TERM: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
-    "description": (
-        "A code binding's stored Fully Specified Name is not in the form the "
-        "terminology server serves, so its display term cannot be rendered. This "
-        "is a data fault in the catalogue, not a fault in the request; it needs "
-        "an administrator, and retrying will not clear it."
-    ),
-}
-
+#: No 500: this route used to render a `display_term`, matching
+#: `catalogue.py`'s own equivalent route, but FR-98 (issue #144) removed
+#: the read path's only rendering call site - there is nothing left here
+#: that can fail this way.
 _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
     404: _RESPONSE_404,
     422: _RESPONSE_422,
-    500: _RESPONSE_500_DISPLAY_TERM,
 }
 
 SessionDep = Annotated[Session, Depends(get_session)]

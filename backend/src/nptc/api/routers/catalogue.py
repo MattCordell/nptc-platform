@@ -143,21 +143,6 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     ),
 }
 
-#: Only on the two routes that render a `display_term`, because only they
-#: can raise it. A published binding whose stored FSN is not renderable
-#: (FR-83) is a server-side *data* fault on a well-formed request, so it is
-#: a 500 and is documented as one - a 422 would tell a vendor's client its
-#: own request was wrong and stop it escalating.
-_RESPONSE_500_DISPLAY_TERM: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
-    "description": (
-        "A published code binding's stored Fully Specified Name is not in the form "
-        "the terminology server serves, so its display term cannot be rendered. "
-        "This is a data fault in the catalogue, not a fault in the request; it "
-        "needs an administrator, and retrying will not clear it."
-    ),
-}
-
 #: The collection routes. Deliberately no 404: neither `/catalogue/entries`
 #: nor `/catalogue/search` can produce one - an unmatched query is an empty
 #: page, not a missing resource - and a documented status that never occurs
@@ -174,10 +159,13 @@ PUBLIC_ENTRY_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: The by-business-key routes that also serve bindings.
+#: The by-business-key routes that also serve bindings. No 500: FR-98
+#: (issue #144) removed the read path's only `display_term` rendering call
+#: site, so there is nothing left here that can fail this way - the
+#: renderer that could is `nptc.exports.semantic_tag`'s, reachable only
+#: from the export path, not this one.
 PUBLIC_BINDING_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     **PUBLIC_ENTRY_ERROR_RESPONSES,
-    500: _RESPONSE_500_DISPLAY_TERM,
 }
 
 #: FR-17, issue #140: the exact-code lookup routes' own 404 - distinct
@@ -197,14 +185,13 @@ _RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
     ),
 }
 
-#: The two exact-code lookup routes. Also renders `display_term` (they
-#: serve the same `EntryDetail` the by-business-key route does), so 500 is
-#: reachable here too.
+#: The two exact-code lookup routes. Same FR-98/issue #144 reasoning as
+#: `PUBLIC_BINDING_ERROR_RESPONSES` above: no 500, nothing on this read
+#: path renders a `display_term` any more.
 PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     404: _RESPONSE_404_CODE_LOOKUP,
     422: _RESPONSE_422,
-    500: _RESPONSE_500_DISPLAY_TERM,
 }
 
 #: 200 is the documented default and 200 is also the ceiling on what one
