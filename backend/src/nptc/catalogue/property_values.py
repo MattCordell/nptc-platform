@@ -59,6 +59,25 @@ columns, so a bulk reclassify has to go through this module. It loops
 `save_property_values` once per target, one savepoint per entry, after
 validating `reason` and the shared `values` set exactly once up front -
 see that function's own docstring for the whole-request/per-entry split.
+
+**Lock ordering (issue #265 round-2 review).** This is the first HTTP
+surface that can hold row-exclusive locks on more than one `catalogue_entry`
+row within a single transaction, which makes a lock-ordering cycle against
+`nptc.audit.writer`'s own `pg_advisory_xact_lock` reachable for the first
+time: a bulk request already holding that advisory lock (from an earlier
+entry's own audit append) can block waiting for a row a concurrent
+single-entry writer holds, while that writer blocks waiting for the same
+advisory lock. `save_property_values_for_entries` acquires the lock once,
+deterministically, before its loop starts (see `nptc.audit.writer.
+acquire_append_lock`) rather than relying on whichever entry happens to
+apply first - this removes the bulk-vs-bulk case (two concurrent batches
+locking rows in different orders now both queue on the same advisory lock
+before touching a row) but does not, by itself, close the bulk-vs-a-
+concurrent-singular-write case; see ADR-0035's addendum for why a complete
+fix needs the same ordering applied to every catalogue-entry writer, not
+just this one, and why that is out of scope here. Postgres's own deadlock
+detector aborts one of the two transactions in the residual case (a 500,
+full rollback of the whole batch, no corruption) - not silent data loss.
 """
 
 from __future__ import annotations
@@ -74,8 +93,8 @@ from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.policy import AuditFieldPolicy
-from nptc.audit.recording import record_snapshot_change
-from nptc.audit.writer import AuditContext, append_audit_event
+from nptc.audit.recording import record_batch_summary, record_snapshot_change
+from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.errors import ConflictReport, EntryNotFoundError, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
@@ -96,6 +115,7 @@ __all__ = [
     "assert_specimen_flag_allowed",
     "save_property_values",
     "save_property_values_for_entries",
+    "tally_bulk_outcomes",
 ]
 
 #: `property_value.bulk_set`'s own `entity_type` (issue #265) - deliberately
@@ -639,6 +659,18 @@ def save_property_values_for_entries(
     been touched yet, and `nptc.db.session.session_scope` rolls back the
     whole transaction on any exception that reaches it, discarding any
     entry already applied earlier in the loop too.
+
+    An entry deleted by another transaction between the row-version
+    pre-check and this call's own flush (`ObjectDeletedError`, issue #265
+    review) becomes a `not-found` outcome, the same as a `business_key` that
+    never existed - there is no entry left to report a `conflict` against.
+
+    A `property_value.bulk_set` header is appended once, after the loop, but
+    only when at least one target actually applied (see `tally_bulk_
+    outcomes`) - a batch where every target is `conflict`/`not-found`
+    changed nothing, so it emits nothing, matching ADR-0018's "a no-op write
+    emits no audit event" posture and keeping a client that retries a stale
+    selection from appending one permanent audit row per attempt.
     """
     # Deferred to break an import cycle: `nptc.catalogue.entries` imports
     # `assert_specimen_flag_allowed` from this module at its own top level,
@@ -652,13 +684,13 @@ def save_property_values_for_entries(
     if preflight.write_issues:
         raise PropertyValidationError(preflight.write_issues)
 
+    # See the module docstring's "Lock ordering" note: acquired once, here,
+    # rather than left to whichever entry's own audit append happens to
+    # acquire it first - a batch whose earliest entries are all `unchanged`
+    # would otherwise defer acquisition arbitrarily.
+    acquire_append_lock(session)
+
     outcomes: list[BulkPropertyOutcome] = []
-    tallies: dict[_BulkOutcomeStatus, int] = {
-        "applied": 0,
-        "unchanged": 0,
-        "conflict": 0,
-        "not-found": 0,
-    }
 
     for target in targets:
         try:
@@ -669,7 +701,6 @@ def save_property_values_for_entries(
                     business_key=target.business_key, status="not-found", row_version=None
                 )
             )
-            tallies["not-found"] += 1
             continue
 
         try:
@@ -683,7 +714,6 @@ def save_property_values_for_entries(
                     conflict=exc.report,
                 )
             )
-            tallies["conflict"] += 1
             continue
 
         before_version = entry.row_version
@@ -710,20 +740,57 @@ def save_property_values_for_entries(
         except (StaleDataError, ObjectDeletedError):
             savepoint.rollback()
             session.expire(entry)
-            refreshed = load_entry_for_update(session, target.business_key)
+            try:
+                refreshed = load_entry_for_update(session, target.business_key)
+            except EntryNotFoundError:
+                # `ObjectDeletedError` means exactly this: the row was
+                # deleted by another transaction between our precondition
+                # check and this flush (issue #265 review) - there is no
+                # entry left to report a conflict against, so this is a
+                # `not-found` outcome, not an uncaught `EntryNotFoundError`
+                # that would otherwise escape the loop and turn an
+                # otherwise-partially-successful batch into a whole-request
+                # 404 (whose documented meaning is "unknown property_key",
+                # not "an entry vanished mid-batch").
+                outcomes.append(
+                    BulkPropertyOutcome(
+                        business_key=target.business_key, status="not-found", row_version=None
+                    )
+                )
+                continue
+            try:
+                # Reuses the same conflict-building path the pre-check
+                # above already went through (issue #265 review), rather
+                # than hand-building a bare `ConflictReport` with no
+                # `changed_by`/`changed_at` - a `conflict` outcome's
+                # attribution should not depend on which of the two layers
+                # caught it. `row_version` only ever increases, and this
+                # branch is reached only because the flush above already
+                # found the stored value had moved past
+                # `target.expected_row_version`, so this is expected to
+                # always raise.
+                assert_entry_row_version(session, refreshed, target.expected_row_version)
+            except EntryVersionConflictError as exc:
+                outcomes.append(
+                    BulkPropertyOutcome(
+                        business_key=target.business_key,
+                        status="conflict",
+                        row_version=exc.report.current_row_version,
+                        conflict=exc.report,
+                    )
+                )
+                continue
+            # Defensive only (see the comment above `assert_entry_row_
+            # version` just raised its exception): if the refreshed version
+            # somehow already matches what was expected, there is nothing
+            # stale left to report.
             outcomes.append(
                 BulkPropertyOutcome(
                     business_key=target.business_key,
-                    status="conflict",
+                    status="unchanged",
                     row_version=refreshed.row_version,
-                    conflict=ConflictReport(
-                        business_key=refreshed.business_key,
-                        expected_row_version=target.expected_row_version,
-                        current_row_version=refreshed.row_version,
-                    ),
                 )
             )
-            tallies["conflict"] += 1
             continue
 
         if entry.row_version == before_version:
@@ -734,7 +801,6 @@ def save_property_values_for_entries(
                     row_version=entry.row_version,
                 )
             )
-            tallies["unchanged"] += 1
         else:
             outcomes.append(
                 BulkPropertyOutcome(
@@ -743,29 +809,40 @@ def save_property_values_for_entries(
                     row_version=entry.row_version,
                 )
             )
-            tallies["applied"] += 1
 
-    # Diff-free: a batch header describes N other events, it does not carry
-    # its own before/after (test_audit_write_path_guard.py rule 3 - the
-    # literal absence of both keywords, not `None` passed explicitly, reads
-    # identically to that guard but needs no exemption comment since this
-    # call supplies neither). Shares `ctx.correlation_id` with every
-    # per-entry `property_value.set` event above for free (NFR-08) - it is
-    # minted once per request, not per audit call.
-    append_audit_event(
-        session,
-        ctx,
-        action="property_value.bulk_set",
-        entity_type=_BULK_ENTITY_TYPE,
-        entity_id=property_key,
-        reason=(
-            f"{validated_reason} ({tallies['applied']} applied, "
-            f"{tallies['unchanged']} unchanged, {tallies['conflict']} conflict, "
-            f"{tallies['not-found']} not-found)"
-        ),
-    )
+    result = tuple(outcomes)
+    tallies = tally_bulk_outcomes(result)
 
-    return tuple(outcomes)
+    # A no-effect batch (every target `conflict`/`not-found`) emits no
+    # header at all (issue #265 review) - matching ADR-0018's "a no-op
+    # write emits nothing" posture, and stopping a client that keeps
+    # retrying a stale selection from writing one permanent audit row per
+    # attempt. Shares `ctx.correlation_id` with every per-entry
+    # `property_value.set` event above for free (NFR-08) - it is minted
+    # once per request, not per audit call.
+    if tallies["applied"] > 0:
+        record_batch_summary(
+            session,
+            ctx,
+            action="property_value.bulk_set",
+            entity_type=_BULK_ENTITY_TYPE,
+            entity_id=property_key,
+            reason=validated_reason,
+            tallies=tallies,
+        )
+
+    return result
+
+
+def tally_bulk_outcomes(outcomes: Sequence[BulkPropertyOutcome]) -> dict[str, int]:
+    """Counts `outcomes` by `status` - the one place either the audit
+    header or the HTTP response counts a batch, so the two cannot
+    independently drift apart (issue #265 review: they previously each ran
+    their own `sum(1 for ... )` pass over the same outcomes)."""
+    tallies: dict[str, int] = {"applied": 0, "unchanged": 0, "conflict": 0, "not-found": 0}
+    for outcome in outcomes:
+        tallies[outcome.status] += 1
+    return tallies
 
 
 def _value_payload(row: PropertyValue) -> Mapping[str, object]:

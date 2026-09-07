@@ -67,6 +67,7 @@ from nptc.catalogue.property_values import (
     PropertyValueInput,
     save_property_values,
     save_property_values_for_entries,
+    tally_bulk_outcomes,
 )
 from nptc.registry.handlers import DatatypeRegistry
 
@@ -170,9 +171,9 @@ PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 _RESPONSE_404_BULK: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
-        "No property definition matches `property_key`. An unknown "
-        "`business_key` among `entries` is a per-entry `not-found` outcome in "
-        "the 200 response, never a 404 for the whole request."
+        "No property definition matches `key`. An unknown `business_key` "
+        "among `entries` is a per-entry `not-found` outcome in the 200 "
+        "response, never a 404 for the whole request."
     ),
 }
 
@@ -293,7 +294,7 @@ class BulkPropertyEntryTarget(BaseModel):
 
 
 class BulkSavePropertyValuesRequest(BaseModel):
-    """The body of `POST /catalogue/entries/bulk/properties/{property_key}`
+    """The body of `POST /catalogue/entries/bulk/properties/{key}`
     (issue #265, FR-39). `values` is the one set every named entry ends up
     holding - a whole-set replace, identical to the singular route's own
     semantics, applied across `entries` rather than one."""
@@ -348,7 +349,7 @@ class BulkSavePropertyValuesResult(BaseModel):
 
 
 @router.post(
-    "/entries/bulk/properties/{property_key}",
+    "/entries/bulk/properties/{key}",
     summary="Replace a property's recorded values across many catalogue entries",
     responses=BULK_PROPERTY_VALUES_WRITE_RESPONSES,
     dependencies=[_EDIT],
@@ -357,7 +358,7 @@ def save_property_bulk(
     session: SessionDep,
     ctx: AuditContextDep,
     registry: RegistryDep,
-    property_key: str,
+    key: str,
     body: Annotated[BulkSavePropertyValuesRequest, Body()],
 ) -> BulkSavePropertyValuesResult:
     outcomes = save_property_values_for_entries(
@@ -370,7 +371,7 @@ def save_property_bulk(
             )
             for target in body.entries
         ],
-        property_key=property_key,
+        property_key=key,
         values=[
             PropertyValueInput(value=item.value, justification=item.justification)
             for item in body.values
@@ -378,6 +379,11 @@ def save_property_bulk(
         reason=body.reason,
         registry=registry,
     )
+    # One shared count, not four independent `sum(...)` passes (issue #265
+    # review): both this response and the audit header's own tallies come
+    # from the same `tally_bulk_outcomes`, so they cannot disagree about the
+    # same batch.
+    tallies = tally_bulk_outcomes(outcomes)
     return BulkSavePropertyValuesResult(
         outcomes=[
             BulkPropertyOutcomeItem(
@@ -392,10 +398,10 @@ def save_property_bulk(
             )
             for outcome in outcomes
         ],
-        applied=sum(1 for outcome in outcomes if outcome.status == "applied"),
-        unchanged=sum(1 for outcome in outcomes if outcome.status == "unchanged"),
-        conflict=sum(1 for outcome in outcomes if outcome.status == "conflict"),
-        not_found=sum(1 for outcome in outcomes if outcome.status == "not-found"),
+        applied=tallies["applied"],
+        unchanged=tallies["unchanged"],
+        conflict=tallies["conflict"],
+        not_found=tallies["not-found"],
     )
 
 
