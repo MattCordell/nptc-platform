@@ -55,11 +55,17 @@ NETWORK_SIGNATURE = re.compile(
     r"TimeoutError|operation was aborted|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN"
 )
 
-# Matches pnpm's "N vulnerabilities found" findings summary but not its
-# "No known vulnerabilities found" clean-run message (no digit precedes
-# "vulnerabilities" there), so a real advisory whose title or description
-# happens to contain a network token is never misread as a transport failure.
-FINDINGS_MARKER = re.compile(r"\d+ vulnerabilities found")
+# Matches pnpm's "N vulnerabilities found" findings summary (singular or
+# plural wording) but not its "No known vulnerabilities found" clean-run
+# message, so a real advisory whose title or description happens to contain
+# a network token is never misread as a transport failure. [1-9]\d* (not
+# \d+) deliberately excludes a leading zero: "0 vulnerabilities found" is
+# not pnpm's clean-run message (that's "No known..."), so nothing should
+# print it, but if it ever did, matching it here would let a genuine
+# timeout elsewhere in the same combined output skip the retry it needs -
+# reintroducing #255 - for the sake of a count this marker has no reason to
+# match in the first place.
+FINDINGS_MARKER = re.compile(r"[1-9]\d* vulnerabilit(?:y|ies) found")
 
 DEFAULT_MAX_ATTEMPTS = 2
 DEFAULT_SLEEP_SECONDS = 30.0

@@ -195,8 +195,14 @@ at all. Two layers now guard against that:
   `fetchRetries` is what actually fixed #255: every one of the first three
   attempts in #258's own failing CI run burned the full 90s with no response
   at all - the endpoint was not responding slowly, it was not responding -
-  so the extra attempt is the entire fix and the raised `fetchTimeout` bought
-  nothing. These are pnpm-specific settings, not npm's - testing against an
+  so the extra attempt is what fixed that specific outage, and raising
+  `fetchTimeout` bought nothing *against it*. `fetchTimeout` is still
+  retained deliberately, for the failure mode #255 wasn't - a slow rather
+  than absent response - and `security.yml`'s worst-case budget is sized
+  around that: 90s x 4 attempts per process instead of 60s x 4 (pnpm's own
+  default retry count is unaffected by this raise) costs roughly 2 extra
+  minutes per process, ~4 minutes across the guard's two process attempts.
+  These are pnpm-specific settings, not npm's - testing against an
   unreachable registry showed pnpm 11.20 reads them from here, not from the
   same-named kebab-case keys (`fetch-timeout`, `fetch-retries`, ...) in a
   `.npmrc` file, which it silently ignores. If this ever needs another turn

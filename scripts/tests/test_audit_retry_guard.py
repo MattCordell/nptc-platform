@@ -60,10 +60,21 @@ def test_recognises_network_signatures(output: str) -> None:
     assert guard.is_registry_timeout(output) is True
 
 
+def test_zero_count_findings_marker_does_not_suppress_a_real_timeout() -> None:
+    """FINDINGS_MARKER deliberately excludes a leading zero ([1-9]\\d*, not
+    \\d+): nothing should ever print "0 vulnerabilities found" (a clean run
+    says "No known vulnerabilities found"), but if some future pnpm build
+    did, matching it here would let a genuine timeout elsewhere in the same
+    combined output skip the retry it needs - reintroducing #255."""
+    output = "0 vulnerabilities found\nTimeoutError: The operation was aborted due to timeout\n"
+    assert guard.is_registry_timeout(output) is True
+
+
 @pytest.mark.parametrize(
     "output",
     [
         "1 vulnerabilities found\nSeverity: high\nPrototype Pollution in some-package\n",
+        "1 vulnerability found\nSeverity: high\nPrototype Pollution in some-package\n",
         " ERR_PNPM_FETCH_401  GET https://registry.npmjs.org/...: Unauthorized - 401\n",
         " ERR_PNPM_FETCH_403  GET https://registry.npmjs.org/...: Forbidden - 403\n",
         " ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/...: Not Found - 404\n",
@@ -245,6 +256,7 @@ def test_retry_and_error_messages_are_flushed_before_they_can_go_dark() -> None:
     )
 
     assert calls[-1] == "flush", "final ::error:: annotation must be flushed"
+    assert "::error::" in out.getvalue(), "the flush must be for the ::error:: line itself"
 
 
 # --- main --------------------------------------------------------------------------------
