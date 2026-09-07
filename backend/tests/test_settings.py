@@ -160,3 +160,31 @@ def test_api_settings_rejects_anything_that_is_not_a_bare_origin(value: str) -> 
 @pytest.mark.req("NFR-01")
 def test_api_settings_defaults_to_the_vite_dev_server() -> None:
     assert ApiSettings().frontend_base_url == "http://localhost:5173"
+
+
+@pytest.mark.req("FR-98")
+def test_api_settings_defaults_fsn_semantic_tag_to_intact() -> None:
+    """The only value the read path can honestly serve today - see
+    `ApiSettings.fsn_semantic_tag`'s own docstring."""
+    assert ApiSettings().fsn_semantic_tag == "intact"
+
+
+@pytest.mark.req("FR-98")
+def test_api_settings_reads_fsn_semantic_tag_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "intact")
+
+    assert ApiSettings().fsn_semantic_tag == "intact"
+
+
+@pytest.mark.req("FR-98")
+def test_api_settings_rejects_stripped_fsn_semantic_tag() -> None:
+    """FR-83/FR-66: the read path has no stripper, so a config claiming
+    `"stripped"` would make the served payload lie about what it serves."""
+    with pytest.raises(ValidationError, match="fsn_semantic_tag"):
+        ApiSettings(fsn_semantic_tag="stripped")
+
+
+@pytest.mark.req("FR-98")
+def test_api_settings_rejects_an_unrecognised_fsn_semantic_tag_value() -> None:
+    with pytest.raises(ValidationError):
+        ApiSettings(fsn_semantic_tag="wat")
