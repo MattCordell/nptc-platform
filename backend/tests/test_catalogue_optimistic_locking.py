@@ -25,9 +25,11 @@ from nptc.catalogue.entries import (
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
+    EntryPropertyTarget,
     PropertyValidationError,
     PropertyValueInput,
     save_property_values,
+    save_property_values_for_entries,
 )
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
@@ -717,5 +719,154 @@ def test_version_id_col_backstop_catches_a_genuine_concurrent_race(
             cleanup_connection.execute(
                 text("DELETE FROM catalogue_entry WHERE business_key = :key"),
                 {"key": business_key},
+            )
+            cleanup_connection.commit()
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_bulk_seams_per_entry_savepoint_catches_a_genuine_concurrent_race(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """The bulk seam's own layer-2 backstop (issue #265) - the one thing
+    proving `save_property_values_for_entries`' per-entry `session.
+    begin_nested()` earns its keep, rather than just being a savepoint
+    that never actually catches anything in the test suite.
+
+    Unlike `test_version_id_col_backstop_catches_a_genuine_concurrent_race`
+    above (a *single* `save_entry` call, so its `StaleDataError` has
+    nowhere to go but out to the caller as `EntryVersionConflictError`),
+    the bulk seam catches the same race *per entry*: this call returns
+    normally, with a `conflict` outcome for the raced target rather than
+    the whole batch aborting - the one behavioural difference the plural
+    seam's savepoint exists to produce. Setup and the `after_cursor_
+    execute` injection mirror that test exactly; see its own docstring for
+    why the hook is needed to express this ordering at all.
+    """
+    business_key = format_business_key(999_265_002)
+    property_key = "bulk_race_test_prop"
+    with app_engine.connect() as setup_connection:
+        entry_id = setup_connection.execute(
+            text(
+                "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                "VALUES (:key, 'Original term') RETURNING id"
+            ),
+            {"key": business_key},
+        ).scalar_one()
+        setup_connection.execute(
+            text(
+                "INSERT INTO property_definition "
+                "(key, label, datatype, cardinality, scope, required_for_submission, "
+                " required_for_publication, filterable, origin, display_order) "
+                "VALUES (:key, :key, 'string', '0..*', 'maintenance', false, false, "
+                " false, 'admin', 0)"
+            ),
+            {"key": property_key},
+        )
+        setup_connection.commit()
+
+    fired = False
+
+    def _inject_concurrent_write(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if (
+            fired
+            or "catalogue_entry" not in statement
+            or not statement.strip().upper().startswith("SELECT")
+        ):
+            return
+        fired = True
+        with app_engine.connect() as other_connection:
+            other_connection.execute(
+                text(
+                    "UPDATE catalogue_entry SET row_version = row_version + 1, "
+                    "preferred_term = 'Raced ahead' WHERE business_key = :key"
+                ),
+                {"key": business_key},
+            )
+            other_connection.commit()
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_write)
+        race_session = Session(bind=app_engine)
+        try:
+            registry = DatatypeRegistry(
+                build_builtin_handlers(
+                    HandlerDeps(
+                        terminology_client=StubTerminologyClient(),
+                        local_code_lookup=DatabaseLocalCodeLookup(race_session),
+                    )
+                )
+            )
+            outcomes = save_property_values_for_entries(
+                race_session,
+                AuditContext.system(),
+                targets=[EntryPropertyTarget(business_key=business_key, expected_row_version=1)],
+                property_key=property_key,
+                values=[PropertyValueInput(value="raced value")],
+                reason="raced bulk save",
+                registry=registry,
+            )
+            # A per-entry conflict does not abort the batch, so the call
+            # above returned normally with the batch header already
+            # written to `race_session`'s own (still-open) transaction -
+            # committed here, matching what `session_scope` would do for a
+            # real request, so the check below (a separate connection) can
+            # actually see it under READ COMMITTED.
+            race_session.commit()
+        finally:
+            race_session.close()
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
+
+        assert fired, "the injected concurrent write never ran - the test proves nothing"
+
+        assert len(outcomes) == 1
+        outcome = outcomes[0]
+        assert outcome.status == "conflict"
+        assert outcome.conflict is not None
+        assert outcome.conflict.current_row_version == 2
+        assert outcome.row_version == 2
+
+        with owner_engine.connect() as check_connection:
+            property_value_count = check_connection.execute(
+                text(
+                    "SELECT count(*) FROM property_value "
+                    "WHERE entry_id = :entry_id AND property_key = :property_key"
+                ),
+                {"entry_id": entry_id, "property_key": property_key},
+            ).scalar_one()
+            assert property_value_count == 0
+            # Exactly one audit_event: the batch header
+            # (property_value_bulk) - a per-entry conflict does not abort
+            # the batch (only that one entry's write), so the header is
+            # still emitted, but the raced write's own StaleDataError fires
+            # before `record_snapshot_change` ever runs, so there is no
+            # property_value.set/property_value_set event to go with it.
+            audit_count = check_connection.execute(
+                text(
+                    "SELECT count(*) FROM audit_event "
+                    "WHERE entity_type IN ('property_value_set', 'property_value_bulk') "
+                    "AND (entity_id = :entry_scoped OR entity_id = :property_key)"
+                ),
+                {"entry_scoped": f"{entry_id}:{property_key}", "property_key": property_key},
+            ).scalar_one()
+            assert audit_count == 1
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            cleanup_connection.execute(
+                text("DELETE FROM property_definition WHERE key = :key"),
+                {"key": property_key},
             )
             cleanup_connection.commit()
