@@ -154,6 +154,7 @@ def read_entry_any_status(
     the #224 write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
+    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,
@@ -162,6 +163,7 @@ def read_entry_any_status(
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
+            has_open_finding,
         ),
         row_version=entry.row_version,
         designations=[

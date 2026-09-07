@@ -1064,6 +1064,109 @@
         }
       }
     },
+    "/api/v1/catalogue/entries/{business_key}/history": {
+      "get": {
+        "tags": [
+          "catalogue"
+        ],
+        "summary": "An entry's change history, most recent first (FR-19)",
+        "description": "Every audit event against this entry or one of its designations,\ncode bindings or property values (FR-19) - what changed, when, who by\n(a display name, never an internal id), and the changelog note. Never\nempty-errors: an entry never edited since seeding returns `200` with\nan empty `items` list.\n\n`changed_by` is populated only for an authenticated caller (PR #278\nreview, NFR-26): the endpoint itself stays fully public\n(`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous\nrequest gets `null` on every event regardless of who actually made the\nchange - naming an identifiable RCPA-QAP staff member to anyone on the\ninternet was never a considered part of ADR-0034's \"history is public\"\nargument. `principal` is captured here (rather than left in\n`dependencies=`, this route's own previous shape) specifically to read\n`principal.user_id`; every other route in this module has no use for\nthe resolved principal itself.\n\n`release` is always `null` on every item in P1 - FR-19 asks for\n\"every published release in which it appeared\" too, and releases do\nnot exist until P4. This is the defined slot P4 fills; it is not\ndropped from the shape in the meantime.",
+        "operationId": "read_history_api_v1_catalogue_entries__business_key__history_get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Maximum entries in this page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum entries in this page."
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 19,
+                  "pattern": "^[0-9]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one.",
+              "title": "Before"
+            },
+            "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/entries/{business_key}/bindings/{code}/retirement": {
       "post": {
         "tags": [
@@ -3473,6 +3576,10 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "has_open_finding": {
+            "type": "boolean",
+            "title": "Has Open Finding"
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -3507,6 +3614,7 @@
           "status",
           "specimen_unconstrained",
           "updated_at",
+          "has_open_finding",
           "row_version",
           "designations",
           "bindings",
@@ -3570,6 +3678,10 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "has_open_finding": {
+            "type": "boolean",
+            "title": "Has Open Finding"
           }
         },
         "type": "object",
@@ -3579,7 +3691,8 @@
           "length",
           "status",
           "specimen_unconstrained",
-          "updated_at"
+          "updated_at",
+          "has_open_finding"
         ],
         "title": "EntrySummary",
         "description": "An entry as it appears in a list or a search result.\n\n`length` is FR-85's published figure - the character count of the\ncatalogue's own preferred term, computed by `CatalogueEntry.length` and\nnever stored, so it cannot drift from the term it describes."
@@ -3719,6 +3832,95 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HistoryEvent": {
+        "properties": {
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "description": "The internal action name, e.g. `catalogue_entry.updated`."
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By",
+            "description": "The administrator's display name, or `null` for a system-initiated change, an account since pseudonymised on closure, or an anonymous caller (PR #278 review, NFR-26) - sign in to see who made a change."
+          },
+          "changed_fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Fields",
+            "description": "Which fields changed at this event."
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "The changelog note supplied for this write (FR-37)."
+          },
+          "release": {
+            "type": "null",
+            "title": "Release",
+            "description": "Always `null` in P1 - the defined slot P4's release membership fills once releases exist (FR-19)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "occurred_at",
+          "action",
+          "changed_by",
+          "changed_fields",
+          "note"
+        ],
+        "title": "HistoryEvent",
+        "description": "One change to the entry or one of its designations, code bindings\nor property values (FR-19).\n\nNever the raw diff: `changed_fields` names what changed, not the\nvalues themselves - a withheld field's name still appears (that a\nfield changed is not the secret), but no value from any audit event\nis ever serialised here, changed or not."
+      },
+      "HistoryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "HistoryPage"
       },
       "PatchEntryRequest": {
         "properties": {
@@ -4304,6 +4506,10 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "has_open_finding": {
+            "type": "boolean",
+            "title": "Has Open Finding"
+          },
           "score": {
             "type": "number",
             "title": "Score",
@@ -4318,6 +4524,7 @@
           "status",
           "specimen_unconstrained",
           "updated_at",
+          "has_open_finding",
           "score"
         ],
         "title": "SearchHit",

@@ -141,14 +141,14 @@
   priority: SHOULD
   phase: p1
   title: "Search results indicate whether an entry's terminology binding has an open validation finding, without exposing internal validation detail to anonymous users"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "Issue #141 lands a minimal, read-only validation_finding table (migration 0018) ahead of the P3 sweep/acknowledge lifecycle that will populate it - PRD SS6.1's CatalogueEntry --< ValidationFinding (open/acknowledged/resolved/superseded), FR-45's nine named finding types and FR-55's four-state status, both CHECK-constrained. nptc_app is granted SELECT only: no write path exists yet, so the app role has nothing to insert. has_open_finding: bool sits on EntrySummary (nptc.api.routers.catalogue_shared), inherited by SearchHit and EntryDetail alike - one place a type or severity could ever leak through, and there is none. Resolved by nptc.catalogue.queries.open_finding_business_keys, a single batch query per response keyed on business_key rather than entry_id: nptc.catalogue.search.SearchHit deliberately carries no internal id, so an id-keyed lookup could not serve search results. Asserted whole-body (backend/tests/test_api_public_finding_indicator.py): an open finding sets the flag, acknowledged/resolved/superseded do not, and an anonymous request never carries finding type, severity or any internal id alongside it."
 - id: "FR-19"
   priority: SHOULD
   phase: p1
   title: "An entry's detail page shows its full change history: every published release in which it appeared"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "Issue #141 delivers the audit-derived half: GET /catalogue/entries/{business_key}/history (nptc.catalogue.history) projects audit_event into what changed, when, who by (a display name, never an internal id) and the changelog note (FR-37) - never the raw before/after diff, which is redacted by construction (changed field names only, REDACTED_KEY's own withheld-field names included, no path that could ever serialise a value). Spans the entry's designations, code bindings and property values too: a child row's audit entity_id is its own primary key, not the parent entry's, so nptc.catalogue.queries.load_designations_for_write/load_bindings/load_property_values resolve those id sets first. Keyset-paged on audit_event.sequence (a globally monotonic identity column), most recent first. release is a defined, always-null slot on every item - releases do not exist until P4, and this issue's own plan records that building the page against an empty relation now is cheaper than retrofitting it later. Status stays in-progress rather than implemented until P4 populates that slot."
 - id: "FR-20"
   priority: MUST
   phase: p1

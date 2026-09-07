@@ -71,6 +71,7 @@ from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
+from nptc.db.models.validation_finding import ValidationFinding, ValidationFindingStatus
 
 __all__ = [
     "PUBLIC_STATUSES",
@@ -80,12 +81,14 @@ __all__ = [
     "PropertyValueRow",
     "get_entry",
     "get_entry_by_code",
+    "has_open_finding",
     "list_entries",
     "load_bindings",
     "load_designation_by_id",
     "load_designations",
     "load_designations_for_write",
     "load_property_values",
+    "open_finding_business_keys",
 ]
 
 #: The one status filter every public read applies - see the module
@@ -379,9 +382,18 @@ def load_designations_for_write(
     An admin write route needs the retired case too: re-reading the exact
     row a retirement or amendment just wrote (by `id`, matching
     `nptc.catalogue.bindings`'s own `_row_to_binding` precedent) has to
-    find it whether it ended up active or retired. Not exposed to the
-    public API - callers outside `nptc.api.routers.catalogue_designations`
-    should not have a reason to see a retired designation."""
+    find it whether it ended up active or retired.
+
+    Not exposed to the public API in the sense of ever *returning* a
+    retired designation to a caller - `nptc.api.routers.
+    catalogue_designations` is still the only route that puts one of these
+    rows on the wire. `nptc.catalogue.history.load_history` (issue #141,
+    FR-19) is a second, narrower caller: it consumes only `.id`, to resolve
+    which `audit_event` rows belong to this entry's designations, and a
+    retired designation's history is exactly what it wants to surface
+    alongside every other change to the entry - so pulling retired rows in
+    here is the intended behaviour for that caller too, not a leak this
+    docstring's "not exposed" claim was written to rule out."""
     ids = tuple(entry_ids)
     if not ids:
         return ()
@@ -556,3 +568,43 @@ def load_property_values(
         )
         for row in rows
     )
+
+
+def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -> frozenset[str]:
+    """Which of these business keys name an entry carrying at least one
+    `open` `ValidationFinding` (FR-18) - one batch lookup per collection or
+    detail response, not a per-row subquery.
+
+    Keyed on `business_key`, not `entry_id`, unlike every `load_*` loader
+    above: `nptc.catalogue.search.SearchHit` deliberately carries no entry
+    id at all (see that module's own docstring - rule two of this
+    module's applies there too), so a lookup keyed on the internal id
+    could not be reused for search results. `list_entries`/`get_entry`
+    callers already have `business_key` sitting on the same
+    `CatalogueEntry` row they would otherwise read `id` from, so nothing
+    is lost by joining on it everywhere instead.
+    """
+    keys = tuple(business_keys)
+    if not keys:
+        return frozenset()
+    rows = (
+        session.execute(
+            select(CatalogueEntry.business_key)
+            .join(ValidationFinding, ValidationFinding.entry_id == CatalogueEntry.id)
+            .where(CatalogueEntry.business_key.in_(keys))
+            .where(ValidationFinding.status == ValidationFindingStatus.OPEN.value)
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return frozenset(rows)
+
+
+def has_open_finding(session: Session, business_key: str) -> bool:
+    """The single-entry case of `open_finding_business_keys` (PR #278
+    review): `catalogue_shared.build_entry_detail` and `catalogue_admin.
+    read_entry_any_status` both only ever want one entry's own answer, and
+    had each spelled `business_key in open_finding_business_keys(session,
+    (business_key,))` independently rather than share a name for it."""
+    return business_key in open_finding_business_keys(session, (business_key,))

@@ -63,6 +63,7 @@ package is the only place that dispatch is allowed to exist
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -87,7 +88,8 @@ from nptc.api.routers.catalogue_shared import (
     property_value_from_row,
 )
 from nptc.auth.permissions import Permission
-from nptc.catalogue import code_systems, queries
+from nptc.auth.principal import Principal
+from nptc.catalogue import code_systems, history, queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
     FACET_BUCKET_CAP,
@@ -223,6 +225,32 @@ EntryCursorQuery = Annotated[
     str | None,
     Query(
         pattern=BUSINESS_KEY_PATTERN.pattern,
+        description=(
+            "The `next_cursor` from the previous page. Pass it back unmodified, "
+            "and do not construct one."
+        ),
+    ),
+]
+
+#: `/catalogue/entries/{business_key}/history` pages on the audit log's own
+#: `sequence` - a globally monotonic identity column, so a plain digit
+#: string makes a total order with no possible tie. Exclusive: the next
+#: page is every event *older* than this one (the endpoint serves most
+#: recent first).
+#:
+#: `max_length=19`: `AuditEvent.sequence` is `BigInteger` (signed 64-bit,
+#: max `9223372036854775807`, 19 digits) - bounding the digit count here is
+#: what stops a pathologically long cursor from ever reaching `int(before)`
+#: in `read_history` (PR #278 review). Not every 19-digit string is itself
+#: in range (`9999999999999999999` is not); `history.load_history` raises
+#: `MalformedHistoryCursorError` (422, matching `MalformedSearchCursorError`'s
+#: own precedent) for a value that survives this bound but is still too
+#: large - this bound only rules out the unbounded case.
+HistoryCursorQuery = Annotated[
+    str | None,
+    Query(
+        pattern=r"^[0-9]+$",
+        max_length=19,
         description=(
             "The `next_cursor` from the previous page. Pass it back unmodified, "
             "and do not construct one."
@@ -370,6 +398,41 @@ class PropertyList(BaseModel):
     items: list[PropertyValue]
 
 
+class HistoryEvent(BaseModel):
+    """One change to the entry or one of its designations, code bindings
+    or property values (FR-19).
+
+    Never the raw diff: `changed_fields` names what changed, not the
+    values themselves - a withheld field's name still appears (that a
+    field changed is not the secret), but no value from any audit event
+    is ever serialised here, changed or not.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    occurred_at: datetime
+    action: str = Field(description="The internal action name, e.g. `catalogue_entry.updated`.")
+    changed_by: str | None = Field(
+        description="The administrator's display name, or `null` for a system-initiated "
+        "change, an account since pseudonymised on closure, or an anonymous caller "
+        "(PR #278 review, NFR-26) - sign in to see who made a change."
+    )
+    changed_fields: list[str] = Field(description="Which fields changed at this event.")
+    note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
+    release: None = Field(
+        default=None,
+        description="Always `null` in P1 - the defined slot P4's release membership fills "
+        "once releases exist (FR-19).",
+    )
+
+
+class HistoryPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[HistoryEvent]
+    next_cursor: str | None
+
+
 class SearchHit(EntrySummary):
     """A summary plus its relevance score.
 
@@ -469,7 +532,7 @@ class SearchPage(BaseModel):
 # routes' shapes drift apart by accident.
 
 
-def _summary(entry: CatalogueEntry) -> EntrySummary:
+def _summary(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
     return EntrySummary(
         **entry_summary_fields(
             entry.business_key,
@@ -478,6 +541,7 @@ def _summary(entry: CatalogueEntry) -> EntrySummary:
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
+            has_open_finding,
         )
     )
 
@@ -518,8 +582,11 @@ def list_entries(
     (ADR-0032).
     """
     page = queries.list_entries(session, limit=limit, after=after, filters=filters.selections)
+    open_findings = queries.open_finding_business_keys(
+        session, (entry.business_key for entry in page.entries)
+    )
     return EntryPage(
-        items=[_summary(entry) for entry in page.entries],
+        items=[_summary(entry, entry.business_key in open_findings) for entry in page.entries],
         next_cursor=page.next_cursor,
     )
 
@@ -574,6 +641,9 @@ def search(
     """
     page = search_entries(session, q=q, limit=limit, after=after, filters=filters.selections)
     facets = search_facets(session, q=q, context=filters.context, filters=filters.selections)
+    open_findings = queries.open_finding_business_keys(
+        session, (hit.business_key for hit in page.hits)
+    )
     return SearchPage(
         items=[
             SearchHit(
@@ -589,6 +659,7 @@ def search(
                     hit.status,
                     hit.specimen_unconstrained,
                     hit.updated_at,
+                    hit.business_key in open_findings,
                 ),
                 score=hit.score,
             )
@@ -738,4 +809,61 @@ def read_properties(
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, (entry.id,))
         ]
+    )
+
+
+@router.get(
+    "/entries/{business_key}/history",
+    summary="An entry's change history, most recent first (FR-19)",
+    responses=PUBLIC_ENTRY_ERROR_RESPONSES,
+)
+def read_history(
+    session: SessionDep,
+    principal: Annotated[Principal, _BROWSE],
+    business_key: BusinessKeyPath,
+    limit: LimitQuery = 50,
+    before: HistoryCursorQuery = None,
+) -> HistoryPage:
+    """Every audit event against this entry or one of its designations,
+    code bindings or property values (FR-19) - what changed, when, who by
+    (a display name, never an internal id), and the changelog note. Never
+    empty-errors: an entry never edited since seeding returns `200` with
+    an empty `items` list.
+
+    `changed_by` is populated only for an authenticated caller (PR #278
+    review, NFR-26): the endpoint itself stays fully public
+    (`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous
+    request gets `null` on every event regardless of who actually made the
+    change - naming an identifiable RCPA-QAP staff member to anyone on the
+    internet was never a considered part of ADR-0034's "history is public"
+    argument. `principal` is captured here (rather than left in
+    `dependencies=`, this route's own previous shape) specifically to read
+    `principal.user_id`; every other route in this module has no use for
+    the resolved principal itself.
+
+    `release` is always `null` on every item in P1 - FR-19 asks for
+    "every published release in which it appeared" too, and releases do
+    not exist until P4. This is the defined slot P4 fills; it is not
+    dropped from the shape in the meantime.
+    """
+    entry = queries.get_entry(session, business_key)
+    page = history.load_history(
+        session,
+        entry,
+        limit=limit,
+        before=int(before) if before is not None else None,
+        include_changed_by=principal.user_id is not None,
+    )
+    return HistoryPage(
+        items=[
+            HistoryEvent(
+                occurred_at=event.occurred_at,
+                action=event.action,
+                changed_by=event.changed_by,
+                changed_fields=list(event.changed_fields),
+                note=event.note,
+            )
+            for event in page.events
+        ],
+        next_cursor=page.next_cursor,
     )

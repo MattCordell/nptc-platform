@@ -18,6 +18,10 @@ designations (issue #224) - see [catalogue-write-api.md](catalogue-write-api.md)
 which lives under this same `/catalogue` path but is documented on its own, since it
 is not part of the public, unauthenticated contract this document describes.
 
+`/history`'s own `changed_by` field is the one exception to "requires no credential" -
+see [Change history](#change-history-fr-19) below. The route itself still returns `200`
+to an anonymous caller; only that one field's population depends on a credential.
+
 | Path | Query parameters | Response |
 |---|---|---|
 | `/catalogue/entries` | `limit` (1-200, default 50), `after` | `{items: [EntrySummary], next_cursor}` |
@@ -25,13 +29,22 @@ is not part of the public, unauthenticated contract this document describes.
 | `/catalogue/entries/{business_key}/designations` | — | `{items: [Designation]}` |
 | `/catalogue/entries/{business_key}/bindings` | — | `{items: [Binding]}` |
 | `/catalogue/entries/{business_key}/properties` | — | `{items: [PropertyValue]}` |
+| `/catalogue/entries/{business_key}/history` | `limit` (1-200, default 50), `before` | `{items: [HistoryEvent], next_cursor}` |
 | `/catalogue/search` | `q` (required), `limit`, `after` | `{items: [SearchHit], next_cursor}` |
 | `/catalogue/code/{system_token}/{code}` | — | `EntryDetail` |
 | `/catalogue/lookup` | `system` (required), `code` (required) | `EntryDetail` |
 
 `EntryDetail` is an `EntrySummary` plus `designations`, `bindings`, `properties` and
 `row_version`, so one request renders an entry page. The sub-resources are also served
-individually, for a client refreshing one panel.
+individually, for a client refreshing one panel. `/history` is a fourth sub-resource in
+this same sense, but is not folded into `EntryDetail` itself: unlike the other three, it
+is its own paged collection (see [Change history](#change-history-fr-19) below), not a
+bounded list that fits comfortably in one combined response.
+
+`has_open_finding` (FR-18, issue #141) is on `EntrySummary` itself, so it appears on
+every list row, every search hit, and the detail response alike - see
+[What is published, and what is not](#what-is-published-and-what-is-not) below for
+exactly what it does and does not expose.
 
 `row_version` (issue #227) is FR-38's optimistic-locking token. It is not an identifier
 and a read-only consumer can ignore it: `business_key` is still the only thing that
@@ -78,6 +91,16 @@ where PRD FR-08's replacement case applies - `replaced_by_code`, the code that
 superseded it. Retired *designations* are not published: a retired synonym carries no
 forward pointer and no obligation, and is editorial history rather than a term the entry
 is known by.
+
+**`has_open_finding` names nothing about the finding itself** (FR-18, issue #141). It is
+a bare boolean: `true` when the entry carries at least one `open` `ValidationFinding`,
+`false` when its findings (if any) are all `acknowledged`, `resolved` or `superseded`,
+or when it has none. No finding type, no severity, no count, and no internal id ever
+accompanies it, for any caller including an anonymous one - there is exactly one place
+on the response models such a value could ever be added, and none is. An authenticated
+Reviewer or Administrator wanting the finding's actual detail uses a separate,
+permission-gated surface once P3's sweep and acknowledge lifecycle land; this API never
+carries it.
 
 **No internal identifier appears in any response.** `business_key` is the only
 identifier a caller ever sees (PRD §6.2). `code_binding.replaced_by_binding_id` is a
@@ -281,6 +304,58 @@ also a 422 - a relevance score means nothing against a different request. On
 
 `/catalogue/entries` accepts the same filters and returns **no** `facets` array.
 See [ADR-0032](../adr/0032-faceted-filter-query-surface.md).
+
+### Change history (FR-19)
+
+```http
+GET /api/v1/catalogue/entries/NPTC-000247/history
+Authorization: Bearer <token>
+```
+
+```jsonc
+{
+  "items": [
+    {
+      "occurred_at": "2026-08-14T03:12:47.512Z",
+      "action": "catalogue_entry.updated",
+      "changed_by": "J. Reviewer",
+      "changed_fields": ["preferred_term"],
+      "note": "renamed per RCPA-QAP review",
+      "release": null
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+Every entry that has ever been edited has a history - not only the entry's own row, but
+its designations, code bindings and property values too, so retiring a synonym or
+rebinding a code shows up here exactly as changing the preferred term does. Most recent
+first; keyset-paged like every other collection above, but on the audit log's own
+`sequence` rather than `business_key` - a globally monotonic counter, so paging can never
+skip or repeat an event even while the catalogue is being edited concurrently. `before`
+is the previous page's `next_cursor`, passed back unmodified; an entry never edited since
+being seeded returns `200` with an empty `items` list, never an error.
+
+**Only field *names* are ever served, never the values that changed.** `changed_fields`
+tells you *that* `preferred_term` changed, not what it changed from or to - the raw diff
+`audit_event` records internally is never serialised here, whether or not the field is
+one this API otherwise publishes elsewhere. `note` is the changelog note (FR-37) the
+administrator supplied for that write, verbatim.
+
+**`changed_by` needs a credential (PR #278 review, NFR-26).** This endpoint itself has no
+`Authorization` requirement - the example above sends one only because `changed_by` does.
+An anonymous request gets `200` with every other field populated and `changed_by: null`
+on every event, the same value it would show for a system-initiated change or a
+pseudonymised account - the three are indistinguishable to an anonymous caller by design.
+Sign in (any role) to see who made a change; `changed_by` is always the administrator's
+display name, never their internal id.
+
+**`release` is always `null` today.** FR-19 asks for "every published release in which
+[the entry] appeared" as well as what changed - releases do not exist until P4, so this
+is a defined slot rather than a field dropped from the shape and added back later. A
+client should render its absence (a `null`) rather than assume the field will never be
+populated.
 
 ## Errors
 

@@ -187,6 +187,13 @@ class EntrySummary(BaseModel):
     #: client parses it as a date rather than handing the caller a string to
     #: guess at.
     updated_at: datetime
+    #: FR-18: `true` when this entry has at least one `open`
+    #: `ValidationFinding`. Nothing else about a finding appears here or
+    #: anywhere else on the public surface - no type, no severity, no
+    #: count, no internal id - by construction: this is a bare `bool`, and
+    #: there is no other field a type or severity could ever leak through.
+    #: An `acknowledged`/`resolved`/`superseded` finding does not set it.
+    has_open_finding: bool
 
 
 class PropertyValue(BaseModel):
@@ -272,6 +279,7 @@ def entry_summary_fields(
     status: str,
     specimen_unconstrained: bool,
     updated_at: datetime,
+    has_open_finding: bool,
 ) -> dict[str, Any]:
     return {
         "business_key": business_key,
@@ -280,6 +288,7 @@ def entry_summary_fields(
         "status": status,
         "specimen_unconstrained": specimen_unconstrained,
         "updated_at": updated_at,
+        "has_open_finding": has_open_finding,
     }
 
 
@@ -292,6 +301,7 @@ def build_entry_detail(
     the same four loaders three times over with the risk that a future edit
     updates one copy and not the others."""
     entry_ids = (entry.id,)
+    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,
@@ -300,6 +310,7 @@ def build_entry_detail(
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
+            has_open_finding,
         ),
         row_version=entry.row_version,
         designations=[

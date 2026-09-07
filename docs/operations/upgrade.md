@@ -56,6 +56,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0015_hybrid_search_indexes.py`](../../backend/migrations/versions/0015_hybrid_search_indexes.py) | `nptc_search_document`, `nptc_search_query`, four GIN full-text indexes, two GIN trigram indexes, one btree | See [below](#0015_hybrid_search_indexespy) - a second standing `REINDEX` obligation, this one on the `english` text search configuration |
 | [`0016_code_binding_retired_at.py`](../../backend/migrations/versions/0016_code_binding_retired_at.py) | `code_binding.retired_at`, `ck_code_binding_retired_at` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | See [below](#0016_code_binding_retired_atpy) - backfills existing retired rows from `updated_at` before adding the `NOT NULL`-when-retired `CHECK` |
 | [`0017_code_binding_system_code_index.py`](../../backend/migrations/versions/0017_code_binding_system_code_index.py) | `ix_code_binding_system_code` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None |
+| [`0018_validation_finding.py`](../../backend/migrations/versions/0018_validation_finding.py) | `validation_finding`, `ix_audit_event_entity_type_entity_id_sequence` on `audit_event` (see [`data-model.md`](../architecture/data-model.md#validation_finding-fr-18-fr-45-fr-55-issue-141)) | See [below](#0018_validation_findingpy) - the new `audit_event` index is a blocking build |
 
 ## Provisioning the app role's login
 
@@ -337,6 +338,24 @@ before this migration), so an upgrading deployment with real retired bindings
 already in place never violates the new CHECK on `upgrade head`. A fresh retirement
 after this migration writes `retired_at` via `func.now()` (the database clock, not
 the application clock), independent of this one-time backfill.
+
+## `0018_validation_finding.py`
+
+Adds `validation_finding` (issue #141, FR-18/FR-45/FR-55 - see
+[`data-model.md`](../architecture/data-model.md#validation_finding-fr-18-fr-45-fr-55-issue-141))
+and, on the pre-existing `audit_event` table, `ix_audit_event_entity_type_entity_id_sequence`
+(PR #278 review): the index the public FR-19 history endpoint needs, since `audit_event` had
+none of its own before this beyond `sequence`'s `UNIQUE`.
+
+**Expect this index's build to block writes, the same obligation `0015` records for its own
+seven.** `audit_event` is the one table in this schema that grows without bound and is never
+truncated (NFR-10's hash chain), so it is also the migration most likely to take a long time
+to build an index over on an established deployment. The index is created non-concurrently -
+an Alembic migration runs in a transaction, and `CREATE INDEX CONCURRENTLY` cannot - so it
+holds a lock that blocks every write to `audit_event`, and therefore every state-changing
+write path in the application (NFR-08), for as long as the build takes. Size the maintenance
+window against `audit_event`'s current row count before upgrading a deployment with real
+traffic history; on an empty or freshly-seeded database this is seconds.
 
 ## Testcontainers and Docker
 

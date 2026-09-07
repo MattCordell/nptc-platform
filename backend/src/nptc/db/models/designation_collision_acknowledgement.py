@@ -1,17 +1,20 @@
 """The `designation_collision_acknowledgement` table: FR-05's warning-
 severity acknowledgement (issue #49). See PRD SS6.3.
 
-**Not the FR-55 `ValidationFinding` lifecycle.** PRD SS6.1 draws
-`CatalogueEntry --< ValidationFinding (open / acknowledged / resolved /
-superseded)` as the general acknowledgement mechanism for every
+**Not the FR-55 `ValidationFinding` lifecycle** - `nptc.db.models.
+validation_finding.ValidationFinding` (issue #141), which now exists. PRD
+SS6.1 draws `CatalogueEntry --< ValidationFinding (open / acknowledged /
+resolved / superseded)` as the general acknowledgement mechanism for every
 terminology-validation finding (FR-45's sweep, FR-84's subsumption check,
-and so on) - but that entity is P3 (`nptc.validation` is still a
-placeholder module) and this table's own dependency, FR-05 collision
-detection, is P1. This table is a narrow, purpose-built acknowledgement for
-exactly one finding shape - the same synonym on multiple live entries -
-scoped so P1 does not have to wait on P3's general machinery. When
-`ValidationFinding` lands, it is expected to subsume this table rather than
-sit alongside it; that migration is deliberately not attempted here.
+and so on), but `ValidationFinding` itself is still read-only (P3's sweep
+and acknowledge/resolve endpoints have not landed), while this table's own
+dependency, FR-05 collision detection, was P1. This table is a narrow,
+purpose-built acknowledgement for exactly one finding shape - the same
+synonym on multiple live entries - scoped so P1 did not have to wait on
+P3's general machinery. `ValidationFinding` is still expected to subsume
+this table once its own lifecycle lands; that migration remains
+deliberately not attempted here (see `docs/adr/
+0034-finding-indicator-and-history-scope.md`).
 
 **Scope: (entry, term_key, language), not (term_key, language) alone.** An
 acknowledgement silences the warning for the specific entry it was made

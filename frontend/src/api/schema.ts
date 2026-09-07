@@ -225,6 +225,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/entries/{business_key}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An entry's change history, most recent first (FR-19)
+         * @description Every audit event against this entry or one of its designations,
+         *     code bindings or property values (FR-19) - what changed, when, who by
+         *     (a display name, never an internal id), and the changelog note. Never
+         *     empty-errors: an entry never edited since seeding returns `200` with
+         *     an empty `items` list.
+         *
+         *     `changed_by` is populated only for an authenticated caller (PR #278
+         *     review, NFR-26): the endpoint itself stays fully public
+         *     (`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous
+         *     request gets `null` on every event regardless of who actually made the
+         *     change - naming an identifiable RCPA-QAP staff member to anyone on the
+         *     internet was never a considered part of ADR-0034's "history is public"
+         *     argument. `principal` is captured here (rather than left in
+         *     `dependencies=`, this route's own previous shape) specifically to read
+         *     `principal.user_id`; every other route in this module has no use for
+         *     the resolved principal itself.
+         *
+         *     `release` is always `null` on every item in P1 - FR-19 asks for
+         *     "every published release in which it appeared" too, and releases do
+         *     not exist until P4. This is the defined slot P4 fills; it is not
+         *     dropped from the shape in the meantime.
+         */
+        get: operations["read_history_api_v1_catalogue_entries__business_key__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalogue/entries/{business_key}/bindings/{code}/retirement": {
         parameters: {
             query?: never;
@@ -971,6 +1011,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Has Open Finding */
+            has_open_finding: boolean;
             /** Row Version */
             row_version: number;
             /** Designations */
@@ -1016,6 +1058,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Has Open Finding */
+            has_open_finding: boolean;
         };
         /**
          * ErrorResponse
@@ -1116,6 +1160,55 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HistoryEvent
+         * @description One change to the entry or one of its designations, code bindings
+         *     or property values (FR-19).
+         *
+         *     Never the raw diff: `changed_fields` names what changed, not the
+         *     values themselves - a withheld field's name still appears (that a
+         *     field changed is not the secret), but no value from any audit event
+         *     is ever serialised here, changed or not.
+         */
+        HistoryEvent: {
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /**
+             * Action
+             * @description The internal action name, e.g. `catalogue_entry.updated`.
+             */
+            action: string;
+            /**
+             * Changed By
+             * @description The administrator's display name, or `null` for a system-initiated change, an account since pseudonymised on closure, or an anonymous caller (PR #278 review, NFR-26) - sign in to see who made a change.
+             */
+            changed_by: string | null;
+            /**
+             * Changed Fields
+             * @description Which fields changed at this event.
+             */
+            changed_fields: string[];
+            /**
+             * Note
+             * @description The changelog note supplied for this write (FR-37).
+             */
+            note: string | null;
+            /**
+             * Release
+             * @description Always `null` in P1 - the defined slot P4's release membership fills once releases exist (FR-19).
+             */
+            release?: null;
+        };
+        /** HistoryPage */
+        HistoryPage: {
+            /** Items */
+            items: components["schemas"]["HistoryEvent"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /**
          * PatchEntryRequest
@@ -1397,6 +1490,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Has Open Finding */
+            has_open_finding: boolean;
             /**
              * Score
              * @description Trigram similarity against `q`, between 0 and 1.
@@ -2189,6 +2284,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PropertyList"];
+                };
+            };
+            /** @description A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No entry in the published catalogue has this business key. An entry that exists but is not published (draft, deprecated or withdrawn) is reported identically, on purpose - a distinguishable response would confirm the key exists. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A query or path parameter was unprocessable - a business key that is not `NPTC-nnnnnn`, a blank search query, a cursor this API did not issue (including one issued for a different `q` or a different filter set), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_history_api_v1_catalogue_entries__business_key__history_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum entries in this page. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryPage"];
                 };
             };
             /** @description A credential was presented and could not be verified. Sending no credential at all is not an error on these endpoints. */
