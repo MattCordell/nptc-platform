@@ -62,9 +62,10 @@ package is the only place that dispatch is allowed to exist
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -85,7 +86,16 @@ from nptc.api.routers.catalogue_shared import (
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
-from nptc.catalogue.search import search_entries
+from nptc.catalogue.facets import (
+    FACET_BUCKET_CAP,
+    FILTER_OP_SEPARATOR,
+    FILTER_PARAM_PREFIX,
+    FacetContext,
+    FilterSelection,
+    load_facet_context,
+    parse_filters,
+)
+from nptc.catalogue.search import search_entries, search_facets
 from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry
@@ -119,8 +129,11 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
         "A query or path parameter was unprocessable - a business key that is "
         "not `NPTC-nnnnnn`, a blank search query, a cursor this API did not "
-        "issue (including one issued for a different `q`), or a `limit` "
-        "outside its range."
+        "issue (including one issued for a different `q` or a different filter "
+        "set), a `limit` outside its range, or a `filter.*` parameter naming a "
+        "facet this endpoint does not offer, an operator the facet does not "
+        "support, or a value the property cannot hold. A filter is never "
+        "silently ignored."
     ),
 }
 
@@ -196,12 +209,108 @@ CursorQuery = Annotated[
     Query(
         description=(
             "The `next_cursor` from the previous page. Opaque: pass it back "
-            "unmodified, and do not construct one. It is bound to the `q` it was "
-            "issued for - sending it with a different `q` is a 422, not a "
-            "meaningless page."
+            "unmodified, and do not construct one. It is bound to the `q` **and "
+            "the filters** it was issued for - sending it with either changed is "
+            "a 422, not a meaningless page, because a relevance score means "
+            "nothing against a different request."
         )
     ),
 ]
+
+
+#: The FR-16 filter parameter, declared by hand (issue #139, ADR-0032).
+#:
+#: **Why by hand.** The parameter name is not fixed - it is
+#: `filter.<property_key>` for whatever properties an administrator has
+#: marked `filterable`, which is the whole point of FR-16 - and FastAPI
+#: generates parameters from a typed signature, which by construction can
+#: only name parameters known when this file is written. Reading the query
+#: string directly (`_filter_request` below) is the only way to accept the
+#: shape; declaring it here is what stops `docs/api/openapi.json` from
+#: quietly omitting a parameter the API does in fact accept. FR-20 makes
+#: that document the contract vendors build against, and the `breaking` CI
+#: job polices every later change to it - a parameter absent from the
+#: document is a parameter nobody is protecting.
+#:
+#: FastAPI merges `openapi_extra` into the generated operation with
+#: `deep_dict_update`, which *concatenates* lists - so this is appended to
+#: the parameters FastAPI derived from the signature rather than replacing
+#: them.
+#:
+#: `explode: true` over `style: form` is OpenAPI's own spelling of "repeat
+#: the key once per value", which is exactly the wire shape.
+FILTER_PARAMETER: Final[dict[str, Any]] = {
+    "name": f"{FILTER_PARAM_PREFIX}{{property_key}}",
+    "in": "query",
+    "required": False,
+    "style": "form",
+    "explode": True,
+    "schema": {"type": "array", "items": {"type": "string"}},
+    "description": (
+        "Filter by a facet. The parameter name is the facet's `key` prefixed "
+        f"with `{FILTER_PARAM_PREFIX}` - `?{FILTER_PARAM_PREFIX}discipline=chemistry`. "
+        "Repeat the parameter to select several values of one facet; they are "
+        "OR-ed. Filters on different facets are AND-ed, so adding one always "
+        "narrows the result. The facets available are not fixed: they are "
+        "every property an administrator has marked filterable, plus the "
+        "entry status, and `GET /catalogue/search` returns the current list "
+        "with counts. An operator other than the default `equals` is named "
+        f"after the key, separated by `{FILTER_OP_SEPARATOR}` - "
+        f"`?{FILTER_PARAM_PREFIX}assay_name{FILTER_OP_SEPARATOR}prefix=glu`, or "
+        f"`?{FILTER_PARAM_PREFIX}volume_ml{FILTER_OP_SEPARATOR}range=1..5`. "
+        "Which operators a facet accepts follows from the property's "
+        "datatype; one it does not accept is a 422, never a silently ignored "
+        "parameter."
+    ),
+}
+
+#: Both collection routes accept filters; only `/catalogue/search` returns
+#: facets (ADR-0032).
+_FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [FILTER_PARAMETER]}
+
+
+@dataclass(frozen=True)
+class FilterRequest:
+    """The facets this request has, and the selection made against them.
+
+    Both, from one dependency, because they come from one read of
+    `property_definition` - resolving them separately would enumerate the
+    registry twice per request and could, under a concurrent registry
+    write, validate a filter against one facet list and count buckets
+    against another.
+    """
+
+    context: FacetContext
+    selections: tuple[FilterSelection, ...]
+
+
+def _filter_request(
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    registry: Annotated[DatatypeRegistry, Depends(get_datatype_registry)],
+) -> FilterRequest:
+    """Reads `filter.*` straight off the query string.
+
+    `request.query_params.multi_items()` rather than `.items()`: the
+    latter keeps only the last value of a repeated key, which would turn
+    `?filter.discipline=chemistry&filter.discipline=haematology` into a
+    search for haematology alone - a wrong answer with nothing in the
+    response to reveal it.
+
+    The facet list is loaded per request and never cached. That is not an
+    oversight to optimise away later: a cached list is precisely the
+    "needs a restart before the new facet appears" behaviour FR-09 exists
+    to forbid, and `test_api_public_search.py` flips the flag through the
+    real registry route on a running app to prove it.
+    """
+    context = load_facet_context(session, registry)
+    return FilterRequest(
+        context=context,
+        selections=parse_filters(request.query_params.multi_items(), context),
+    )
+
+
+FiltersDep = Annotated[FilterRequest, Depends(_filter_request)]
 
 
 class EntryPage(BaseModel):
@@ -236,11 +345,80 @@ class SearchHit(EntrySummary):
     score: float = Field(description="Trigram similarity against `q`, between 0 and 1.")
 
 
+class FacetBucket(BaseModel):
+    """One value of one facet, with how many entries in the current result
+    set carry it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str = Field(
+        description=(
+            "Send this back as the filter value to select this bucket - "
+            "`?filter.<key>=<value>`. It is the stored value, not the label."
+        )
+    )
+    label: str = Field(
+        description=(
+            "How to show this bucket. For a coded property it is the display "
+            "term stored alongside the code when the value was recorded, never "
+            "a live terminology lookup, so it is stable and offline. Falls back "
+            "to `value` where the stored value carries no label of its own."
+        )
+    )
+    count: int = Field(
+        description=(
+            "Entries in the current result set carrying this value. An entry "
+            "with several values of one property counts once under each of "
+            "them, never several times under one."
+        )
+    )
+
+
+class Facet(BaseModel):
+    """One facet, derived from the property registry at request time.
+
+    Never a fixed list: a property an administrator marks filterable appears
+    here on the next request, with no deployment and no restart (FR-09,
+    FR-16). A client must therefore render whatever it is given rather than
+    hard-coding the facets it knows about.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str = Field(description="The property key, and the suffix of its `filter.` parameter.")
+    label: str = Field(description="The property's own label, as an administrator set it.")
+    facetable: bool = Field(
+        description=(
+            "`false` for a property that can be filtered on but not grouped - a "
+            "continuous numeric one, where every value would be its own bucket. "
+            "Such a facet is reported with no buckets rather than omitted, so a "
+            "client can tell it apart from a facet whose values happen to match "
+            "nothing."
+        )
+    )
+    truncated: bool = Field(
+        description=(
+            f"`true` when this facet has more than {FACET_BUCKET_CAP} distinct "
+            "values and only the most common were returned. There is no way to "
+            "page through the remainder; narrow the search instead."
+        )
+    )
+    buckets: list[FacetBucket]
+
+
 class SearchPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[SearchHit]
     next_cursor: str | None
+    facets: list[Facet] = Field(
+        description=(
+            "Every facet available for this search, with counts over the whole "
+            "result set rather than this page. A facet's own selection is "
+            "excluded from its own counts, so a bucket you have not chosen "
+            "still tells you how many entries it would give you."
+        )
+    )
 
 
 # --- assembling the response models from query rows -----------------------
@@ -276,9 +454,11 @@ _BROWSE = Depends(permission_dep(Permission.CATALOGUE_BROWSE))
     summary="One page of published catalogue entries",
     responses=PUBLIC_COLLECTION_ERROR_RESPONSES,
     dependencies=[_BROWSE],
+    openapi_extra=_FILTER_OPENAPI,
 )
 def list_entries(
     session: SessionDep,
+    filters: FiltersDep,
     limit: LimitQuery = 50,
     after: EntryCursorQuery = None,
 ) -> EntryPage:
@@ -290,8 +470,14 @@ def list_entries(
     offset re-reads and re-skips every earlier row on every page, and drops
     or repeats rows outright when a concurrent insert shifts the window
     mid-scan.
+
+    `filter.*` parameters are accepted here and behave exactly as they do on
+    `/catalogue/search`. Facets are **not** returned: computing counts on
+    every page of a browse costs something no caller has asked for, and
+    `GET /catalogue/search` is where the facet list with counts lives
+    (ADR-0032).
     """
-    page = queries.list_entries(session, limit=limit, after=after)
+    page = queries.list_entries(session, limit=limit, after=after, filters=filters.selections)
     return EntryPage(
         items=[_summary(entry) for entry in page.entries],
         next_cursor=page.next_cursor,
@@ -303,9 +489,11 @@ def list_entries(
     summary="Search the published catalogue by term",
     responses=PUBLIC_COLLECTION_ERROR_RESPONSES,
     dependencies=[_BROWSE],
+    openapi_extra=_FILTER_OPENAPI,
 )
 def search(
     session: SessionDep,
+    filters: FiltersDep,
     q: Annotated[
         str,
         Query(
@@ -338,8 +526,14 @@ def search(
     quietly matches everything is worse than one that matches nothing,
     because the caller cannot tell it from a working search over a catalogue
     that genuinely has nothing to offer.
+
+    `facets` is the facet list for this search, with counts over the whole
+    result set. It is derived from the property registry on every request
+    (FR-16), so it is not a fixed set a client may hard-code: a property an
+    administrator marks filterable appears here on the very next request.
     """
-    page = search_entries(session, q=q, limit=limit, after=after)
+    page = search_entries(session, q=q, limit=limit, after=after, filters=filters.selections)
+    facets = search_facets(session, q=q, context=filters.context, filters=filters.selections)
     return SearchPage(
         items=[
             SearchHit(
@@ -361,6 +555,19 @@ def search(
             for hit in page.hits
         ],
         next_cursor=page.next_cursor,
+        facets=[
+            Facet(
+                key=facet.key,
+                label=facet.label,
+                facetable=facet.facetable,
+                truncated=facet.truncated,
+                buckets=[
+                    FacetBucket(value=bucket.value, label=bucket.label, count=bucket.count)
+                    for bucket in facet.buckets
+                ],
+            )
+            for facet in facets
+        ],
     )
 
 

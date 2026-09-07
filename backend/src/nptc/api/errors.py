@@ -94,6 +94,7 @@ from nptc.catalogue.designations import (
     PreferredDesignationAlreadyActiveError,
 )
 from nptc.catalogue.errors import EntryNotFoundError, EntryVersionConflictError
+from nptc.catalogue.facets import FilterRefusedError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
     PropertyValueSourceMisconfiguredError,
@@ -335,8 +336,20 @@ _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT = (
 )
 _DETAIL_SEARCH_QUERY_EMPTY = "Enter something to search for."
 _DETAIL_SEARCH_CURSOR = (
-    "This page cursor is not one this API issued. Pass a `next_cursor` value back "
-    "unmodified, or start again from the first page."
+    "This page cursor is not one this API issued, or it was issued for a different "
+    "search. Pass a `next_cursor` value back unmodified alongside the same query and "
+    "filters, or start again from the first page."
+)
+#: FR-16. Names no property key and no value: the parameter is caller-supplied
+#: text on a public, unauthenticated endpoint (NFR-26/NFR-35), and which
+#: properties exist but are not offered as filters is editorial state this
+#: surface has no business disclosing. The remedy is the same for every member
+#: of the family, which is why they share one sentence - `GET
+#: /catalogue/search` returns the facets that *are* available, with their keys.
+_DETAIL_FILTER_REFUSED = (
+    "One of the `filter.` parameters is not one this endpoint accepts. Use a facet "
+    "key from the `facets` list on a search response, an operator that facet "
+    "supports, and a value of the right kind."
 )
 #: Deliberately not "an internal error occurred": FR-83's refusal is a
 #: *data* defect on one binding, and a caller who is told which kind of
@@ -555,6 +568,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=MalformedSearchCursorError.http_status,
             content={"detail": _DETAIL_SEARCH_CURSOR},
         )
+
+    @app.exception_handler(FilterRefusedError)
+    async def _handle_filter_refused(_request: Request, exc: FilterRefusedError) -> JSONResponse:
+        # FR-16. Refused, never ignored: a filter the server did not
+        # understand and silently dropped serves the caller a page that
+        # looks like an answer to the question they asked and is an answer
+        # to a different one - undetectable from the response.
+        #
+        # The exception *class* only, never `str(exc)`: the message quotes
+        # the caller's own filter key and value, which is user-supplied text
+        # on a public endpoint (NFR-26/NFR-35), exactly like a search cursor
+        # above. The class is what distinguishes an unknown key from a
+        # non-filterable one from a bad operator, which is the distinction
+        # worth having in a log and not in a response.
+        _logger.info("filter refused: %s", type(exc).__name__)
+        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_FILTER_REFUSED})
 
     @app.exception_handler(StoredFSNNotRenderableError)
     async def _handle_stored_fsn_not_renderable(
