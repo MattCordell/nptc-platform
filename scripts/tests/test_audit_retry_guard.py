@@ -70,6 +70,9 @@ def test_recognises_network_signatures(output: str) -> None:
         " ERR_PNPM_FETCH_403  GET https://registry.npmjs.org/...: Forbidden - 403\n",
         " ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/...: Not Found - 404\n",
         "No known vulnerabilities found\n",
+        "1 vulnerabilities found\nSeverity: high\n"
+        "Denial of Service: request handling can hang until ETIMEDOUT, causing a "
+        "TimeoutError further up the stack when the operation was aborted\n",
     ],
 )
 def test_does_not_mistake_real_failures_for_network_flakes(output: str) -> None:

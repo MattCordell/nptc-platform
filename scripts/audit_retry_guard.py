@@ -56,11 +56,19 @@ NETWORK_SIGNATURE = re.compile(
     r"TimeoutError|operation was aborted|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN"
 )
 
+# Matches pnpm's "N vulnerabilities found" findings summary but not its
+# "No known vulnerabilities found" clean-run message (no digit precedes
+# "vulnerabilities" there), so a real advisory whose title or description
+# happens to contain a network token is never misread as a transport failure.
+FINDINGS_MARKER = re.compile(r"\d+ vulnerabilities found")
+
 DEFAULT_MAX_ATTEMPTS = 2
 DEFAULT_SLEEP_SECONDS = 30.0
 
 
 def is_registry_timeout(output: str) -> bool:
+    if FINDINGS_MARKER.search(output) is not None:
+        return False
     return NETWORK_SIGNATURE.search(output) is not None
 
 
