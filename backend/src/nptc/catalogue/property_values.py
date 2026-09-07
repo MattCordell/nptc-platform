@@ -315,6 +315,79 @@ def _apply_binding_strength(
     return kept
 
 
+@dataclass(frozen=True)
+class _PropertyWritePreflight:
+    """The whole-request part of a property-value write: everything
+    derivable from the property definition and the shared `values` set
+    alone, with no dependency on any one entry's state (issue #265's
+    whole-request/per-entry split). `raw_values` is threaded back out
+    because `_validate_specimen_cross_field` - the one check that *does*
+    depend on an entry - needs the same unwrapped list this preflight
+    already built, and it would be wasteful (and a chance for the two
+    lists to diverge) to rebuild it from `values` a second time."""
+
+    definition: PropertyDefinition
+    raw_values: tuple[Any, ...]
+    write_issues: tuple[PropertyWriteIssue, ...]
+
+
+def _load_active_property_definition(session: Session, property_key: str) -> PropertyDefinition:
+    """Raises `PropertyDefinitionNotFoundError` (404) for an unknown key and
+    `DeprecatedPropertyWriteError` (FR-11) for one no longer accepting new
+    values - both whole-request checks, run once per write regardless of
+    how many entries it targets."""
+    definition = session.execute(
+        select(PropertyDefinition).where(PropertyDefinition.key == property_key)
+    ).scalar_one_or_none()
+    if definition is None:
+        raise PropertyDefinitionNotFoundError(f"no property_definition with key {property_key!r}")
+    if definition.status == PropertyStatus.DEPRECATED:
+        # FR-11: a deprecated property retains its recorded values but
+        # accepts no new ones - checked before any validation runs, so a
+        # write against a deprecated property never gets as far as a
+        # cardinality/binding check whose outcome would be moot anyway.
+        raise DeprecatedPropertyWriteError(property_key)
+    return definition
+
+
+def _preflight_property_write(
+    definition: PropertyDefinition,
+    values: Sequence[PropertyValueInput],
+    registry: DatatypeRegistry,
+) -> _PropertyWritePreflight:
+    """Validates `values` against `definition`'s spec, independent of any
+    entry - schema shape, cardinality, and FR-10's binding-strength
+    override. Never raises: a bad value is a `PropertyWriteIssue`, not an
+    exception, so a caller can combine these with an entry-dependent issue
+    (FR-89's specimen cross-field check) before deciding whether to raise
+    `PropertyValidationError` at all."""
+    spec = spec_for(definition)
+    handler = registry.get(definition.datatype)
+    # A malformed `constraints` document is a defect in the *definition*,
+    # not something this write's caller could have avoided - checked before
+    # any value is judged against it, so a bad definition never fails open
+    # (see `CodeHandler.validate`'s own defensive fallback for the case
+    # where it does anyway).
+    validate_constraints(spec, handler)
+    raw_values = tuple(item.value for item in values)
+
+    schema_issues = validate_values(raw_values, spec, handler, row_version=definition.row_version)
+    schema_issues = _apply_binding_strength(schema_issues, spec, values)
+    write_issues = tuple(
+        PropertyWriteIssue(
+            property_key=definition.key,
+            label=definition.label,
+            code=issue.code,
+            message=issue.message,
+            ordinal=int(issue.path) if issue.path is not None else None,
+        )
+        for issue in schema_issues
+    )
+    return _PropertyWritePreflight(
+        definition=definition, raw_values=raw_values, write_issues=write_issues
+    )
+
+
 def save_property_values(
     session: Session,
     ctx: AuditContext,
@@ -382,41 +455,12 @@ def save_property_values(
             )
         )
 
-    definition = session.execute(
-        select(PropertyDefinition).where(PropertyDefinition.key == property_key)
-    ).scalar_one_or_none()
-    if definition is None:
-        raise PropertyDefinitionNotFoundError(f"no property_definition with key {property_key!r}")
-    if definition.status == PropertyStatus.DEPRECATED:
-        # FR-11: a deprecated property retains its recorded values but
-        # accepts no new ones - checked before any validation runs, so a
-        # write against a deprecated property never gets as far as a
-        # cardinality/binding check whose outcome would be moot anyway.
-        raise DeprecatedPropertyWriteError(property_key)
-
-    spec = spec_for(definition)
-    handler = registry.get(definition.datatype)
-    # A malformed `constraints` document is a defect in the *definition*,
-    # not something this write's caller could have avoided - checked before
-    # any value is judged against it, so a bad definition never fails open
-    # (see `CodeHandler.validate`'s own defensive fallback for the case
-    # where it does anyway).
-    validate_constraints(spec, handler)
-    raw_values = [item.value for item in values]
-
-    schema_issues = validate_values(raw_values, spec, handler, row_version=definition.row_version)
-    schema_issues = _apply_binding_strength(schema_issues, spec, values)
+    definition = _load_active_property_definition(session, property_key)
+    preflight = _preflight_property_write(definition, values, registry)
     write_issues = [
-        PropertyWriteIssue(
-            property_key=property_key,
-            label=definition.label,
-            code=issue.code,
-            message=issue.message,
-            ordinal=int(issue.path) if issue.path is not None else None,
-        )
-        for issue in schema_issues
+        *preflight.write_issues,
+        *_validate_specimen_cross_field(entry, property_key, preflight.raw_values),
     ]
-    write_issues.extend(_validate_specimen_cross_field(entry, property_key, raw_values))
     if write_issues:
         raise PropertyValidationError(tuple(write_issues))
 

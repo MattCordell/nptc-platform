@@ -97,6 +97,7 @@ from nptc.catalogue.designations import (
 )
 from nptc.catalogue.errors import (
     CodeLookupNotFoundError,
+    ConflictReport,
     EntryNotFoundError,
     EntryVersionConflictError,
 )
@@ -187,6 +188,29 @@ class VersionConflictResponse(BaseModel):
     conflicts: list[FieldConflictItem]
     changed_by: str | None
     changed_at: datetime | None
+
+
+def version_conflict_response(report: ConflictReport) -> VersionConflictResponse:
+    """Builds FR-38's 409 body from a domain `ConflictReport` - the one
+    place that shape gets built, shared by `_handle_entry_version_conflict`
+    (a single stale save, the whole request) and issue #265's bulk route
+    (one outcome among many, never the whole response's status)."""
+    return VersionConflictResponse(
+        detail=_DETAIL_VERSION_CONFLICT,
+        business_key=report.business_key,
+        expected_row_version=report.expected_row_version,
+        current_row_version=report.current_row_version,
+        conflicts=[
+            FieldConflictItem(
+                field=conflict.field,
+                submitted=conflict.submitted,
+                current=conflict.current,
+            )
+            for conflict in report.conflicts
+        ],
+        changed_by=report.changed_by,
+        changed_at=report.changed_at,
+    )
 
 
 class CollisionItem(BaseModel):
@@ -496,23 +520,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Logged, not just returned: an FR-38 conflict is a normal editing
         # event, not an anomaly, but still worth a trace for support.
         _logger.info("stale row_version save refused: %s", exc)
-        report = exc.report
-        body = VersionConflictResponse(
-            detail=_DETAIL_VERSION_CONFLICT,
-            business_key=report.business_key,
-            expected_row_version=report.expected_row_version,
-            current_row_version=report.current_row_version,
-            conflicts=[
-                FieldConflictItem(
-                    field=conflict.field,
-                    submitted=conflict.submitted,
-                    current=conflict.current,
-                )
-                for conflict in report.conflicts
-            ],
-            changed_by=report.changed_by,
-            changed_at=report.changed_at,
-        )
+        body = version_conflict_response(exc.report)
         return JSONResponse(
             status_code=EntryVersionConflictError.http_status,
             # `mode="json"` is what keeps `changed_at` an ISO-8601 string
