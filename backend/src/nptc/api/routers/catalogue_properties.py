@@ -36,10 +36,10 @@ step-up comes free, matching `catalogue_bindings.py`/`catalogue_designations.py`
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import (
@@ -48,7 +48,11 @@ from nptc.api.dependencies import (
     get_session,
     permission_dep,
 )
-from nptc.api.errors import PropertyValidationResponse, VersionConflictResponse
+from nptc.api.errors import (
+    PropertyValidationResponse,
+    VersionConflictResponse,
+    version_conflict_response,
+)
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
@@ -58,7 +62,12 @@ from nptc.api.routers.catalogue_shared import (
 from nptc.auth.permissions import Permission
 from nptc.catalogue import queries
 from nptc.catalogue.entries import load_entry_for_update
-from nptc.catalogue.property_values import PropertyValueInput, save_property_values
+from nptc.catalogue.property_values import (
+    EntryPropertyTarget,
+    PropertyValueInput,
+    save_property_values,
+    save_property_values_for_entries,
+)
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -153,6 +162,28 @@ PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     500: _RESPONSE_500,
 }
 
+#: Deliberately no 409 (issue #265): a stale `expected_row_version` is a
+#: per-entry `conflict` outcome in the 200 body, never a whole-request
+#: refusal - see `BulkSavePropertyValuesResult`'s own docstring. A
+#: documented body a route can never actually emit is a branch no
+#: generated client can exercise.
+_RESPONSE_404_BULK: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "No property definition matches `property_key` (FR-11). An unknown "
+        "`business_key` among `entries` is a per-entry `not-found` outcome in "
+        "the 200 response, never a 404 for the whole request."
+    ),
+}
+
+BULK_PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    404: _RESPONSE_404_BULK,
+    422: _RESPONSE_422,
+    500: _RESPONSE_500,
+}
+
 
 class PropertyValueItemRequest(BaseModel):
     """One value to save, paired with its own `justification` - FR-10's
@@ -230,6 +261,134 @@ def save_property(
             session, entry_id=entry.id, property_key=key, registry=registry
         ),
         row_version=entry.row_version,
+    )
+
+
+#: Each entry's write holds a `pg_advisory_xact_lock` until commit
+#: (`nptc.audit.writer.append_audit_event`), so an unbounded batch is an
+#: unbounded amount of lock contention for one request - matching
+#: `catalogue_designations._MAX_TERMS_PER_BATCH`'s own cap and rationale
+#: (ADR-0017).
+_MAX_BULK_ENTRIES: Final[int] = 100
+
+
+class BulkPropertyEntryTarget(BaseModel):
+    """One `(business_key, expected_row_version)` selection for the bulk
+    write - the version this entry held when the caller selected it, not
+    resolved server-side (see `nptc.catalogue.property_values.
+    EntryPropertyTarget`'s own docstring for why a filter expression could
+    never do this instead, ADR-0035)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    business_key: str
+    expected_row_version: int
+
+
+class BulkSavePropertyValuesRequest(BaseModel):
+    """The body of `POST /catalogue/entries/bulk/properties/{property_key}`
+    (issue #265, FR-39). `values` is the one set every named entry ends up
+    holding - a whole-set replace, identical to the singular route's own
+    semantics, applied across `entries` rather than one."""
+
+    model_config = ConfigDict(frozen=True)
+
+    values: list[PropertyValueItemRequest]
+    reason: str
+    entries: list[BulkPropertyEntryTarget] = Field(min_length=1, max_length=_MAX_BULK_ENTRIES)
+
+    @model_validator(mode="after")
+    def _reject_duplicate_business_keys(self) -> BulkSavePropertyValuesRequest:
+        keys = [entry.business_key for entry in self.entries]
+        if len(set(keys)) != len(keys):
+            raise ValueError(
+                "entries must not repeat a business_key - a duplicate would carry "
+                "the same expected_row_version twice, and the second occurrence is "
+                "guaranteed to conflict against a version the first one just wrote"
+            )
+        return self
+
+
+class BulkPropertyOutcomeItem(BaseModel):
+    """One target's result, in request order - see `nptc.catalogue.
+    property_values.BulkPropertyOutcome`'s own docstring for what each
+    `status` means and when `row_version`/`conflict` are populated. No
+    `values` echo: the batch wrote one set every caller already has."""
+
+    model_config = ConfigDict(frozen=True)
+
+    business_key: str
+    status: Literal["applied", "unchanged", "conflict", "not-found"]
+    row_version: int | None
+    conflict: VersionConflictResponse | None = None
+
+
+class BulkSavePropertyValuesResult(BaseModel):
+    """The per-entry outcome list, plus its own tallies. Always a 200: the
+    request was authorised, well-formed, and fully processed, and the
+    outcomes *are* the representation - including a batch where every
+    entry conflicted (issue #265's plan: a whole-request 409 would have to
+    discard the applied entries' new `row_version`s, the one thing a
+    retrying client needs)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    outcomes: list[BulkPropertyOutcomeItem]
+    applied: int
+    unchanged: int
+    conflict: int
+    not_found: int
+
+
+@router.post(
+    "/entries/bulk/properties/{property_key}",
+    summary="Replace a property's recorded values across many catalogue entries",
+    responses=BULK_PROPERTY_VALUES_WRITE_RESPONSES,
+    dependencies=[_EDIT],
+)
+def save_property_bulk(
+    session: SessionDep,
+    ctx: AuditContextDep,
+    registry: RegistryDep,
+    property_key: str,
+    body: Annotated[BulkSavePropertyValuesRequest, Body()],
+) -> BulkSavePropertyValuesResult:
+    outcomes = save_property_values_for_entries(
+        session,
+        ctx,
+        targets=[
+            EntryPropertyTarget(
+                business_key=target.business_key,
+                expected_row_version=target.expected_row_version,
+            )
+            for target in body.entries
+        ],
+        property_key=property_key,
+        values=[
+            PropertyValueInput(value=item.value, justification=item.justification)
+            for item in body.values
+        ],
+        reason=body.reason,
+        registry=registry,
+    )
+    return BulkSavePropertyValuesResult(
+        outcomes=[
+            BulkPropertyOutcomeItem(
+                business_key=outcome.business_key,
+                status=outcome.status,
+                row_version=outcome.row_version,
+                conflict=(
+                    version_conflict_response(outcome.conflict)
+                    if outcome.conflict is not None
+                    else None
+                ),
+            )
+            for outcome in outcomes
+        ],
+        applied=sum(1 for outcome in outcomes if outcome.status == "applied"),
+        unchanged=sum(1 for outcome in outcomes if outcome.status == "unchanged"),
+        conflict=sum(1 for outcome in outcomes if outcome.status == "conflict"),
+        not_found=sum(1 for outcome in outcomes if outcome.status == "not-found"),
     )
 
 
