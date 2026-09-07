@@ -16,17 +16,37 @@ collects across all four via `testpaths`, and `pytest_addoption` errors if
 more than one collected `conftest.py` registers the same flag - the repo
 root is the one place loaded exactly once regardless of which of the four
 trees is actually being run.
+
+`--req`'s logic (`pytest_configure`/`pytest_collection_modifyitems` below)
+is unit-tested directly in `scripts/tests/test_req_marker_selection.py`
+against lightweight fakes, not via pytest's own `pytester` plugin - that
+would need `pytest_plugins = ["pytester"]` here (the one location pytest
+allows it: a non-rootdir conftest.py raises an error for the same
+declaration), which loads `pytester` into every session in the repo for
+one file's benefit. Direct unit tests avoid that global surface entirely.
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
-#: Enables the `pytester` fixture (`scripts/tests/test_req_marker_selection.py`
-#: exercises this file's own hooks by running a real, isolated pytest
-#: subprocess against synthetic tests) - only loadable from a rootdir
-#: conftest.py, which is exactly where this file lives.
-pytest_plugins = ["pytester"]
+_SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
+
+
+def _known_requirement_ids() -> frozenset[str]:
+    """Every requirement ID in `docs/requirements/requirements.yaml`, via
+    `scripts/traceability_check.py`'s own loader - not a second YAML
+    parser that could drift from what that file already enforces."""
+    scripts_dir_str = str(_SCRIPTS_DIR)
+    if scripts_dir_str not in sys.path:
+        sys.path.insert(0, scripts_dir_str)
+    import traceability_check as tc
+
+    requirements, _errors = tc.load_requirements()
+    return frozenset(requirements)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,6 +61,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "than one req() (rare) matches if any of its IDs is this one."
         ),
     )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Fails loudly for a typo'd/unknown ID rather than silently
+    deselecting every test - without this, `--req=NFR-99` reports
+    'collected 0 items' (or 'no tests ran' further down the pipeline),
+    which reads as "did I break something" rather than "that ID doesn't
+    exist"."""
+    req_id = config.getoption("--req")
+    if not req_id:
+        return
+    known = _known_requirement_ids()
+    if req_id not in known:
+        raise pytest.UsageError(
+            f"--req: {req_id!r} is not a requirement ID in docs/requirements/requirements.yaml"
+        )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

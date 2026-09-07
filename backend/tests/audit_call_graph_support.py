@@ -10,14 +10,15 @@ enumeration, no call-graph awareness) do not answer between them.
 The bridge: a runtime route's `endpoint.__module__` + `endpoint.__qualname__`
 names the exact source function. From there this is a pure `ast` walk of
 `ast.Call` nodes, resolving each call's target name via the *calling*
-module's own `import`/`from ... import` table (collected from anywhere in
-the module, including function-scoped imports - a flat, whole-module symbol
-table rather than true per-scope resolution, which is conservative in the
-same direction as everything else here: it can only make a real import
-visible sooner than Python's own scoping would, never invent one),
-recursing only into modules under `nptc.` (found on disk under
-`backend/src`) - FastAPI, SQLAlchemy and stdlib calls are leaves the walk
-does not need to look inside.
+module's own `import`/`from ... import` table - module-level imports plus
+any import scoped to the function currently being walked, so a real
+function-scoped import is visible but cannot leak into a sibling function
+of the same name (an earlier version built one flat, whole-module table and
+let a local import shadow a same-named binding everywhere, which could
+manufacture a "reachable" that a real Python scope resolution would never
+produce - see `_build_import_table`), recursing only into modules under
+`nptc.` (found on disk under `backend/src`) - FastAPI, SQLAlchemy and
+stdlib calls are leaves the walk does not need to look inside.
 
 Deliberately conservative: an attribute call whose base cannot be resolved
 to a known `nptc.` module (e.g. `session.flush()`, `queries.some_read()`)
@@ -53,6 +54,7 @@ of gap this guard exists to prevent - can check it first.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -129,16 +131,15 @@ def _resolve_relative_module(current_module: str, node: ast.ImportFrom, *, is_pa
     return f"{base}.{node.module}" if node.module else base
 
 
-def _build_import_table(module_name: str, tree: ast.Module, *, is_package: bool) -> _Imports:
-    """Collected from anywhere in the module (`ast.walk`, not just
-    top-level statements) - a function-scoped import is a real import this
-    walker must not be blind to, even though the result is a flat,
-    whole-module table rather than a scope-accurate one (see the module
-    docstring)."""
+def _collect_imports(nodes: Iterable[ast.AST], module_name: str, *, is_package: bool) -> _Imports:
+    """The import table contributed by `nodes` - either a module's
+    top-level statements, or the full subtree of one function (`ast.walk`
+    of its `FunctionDef`), never the whole module's `ast.walk` at once (see
+    `_build_import_table` for why)."""
     modules: dict[str, str] = {}
     names: dict[str, tuple[str, str]] = {}
 
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
@@ -171,6 +172,32 @@ def _build_import_table(module_name: str, tree: ast.Module, *, is_package: bool)
                 modules[local] = f"{base_module}.{alias.name}"
 
     return _Imports(modules=modules, names=names)
+
+
+def _build_import_table(
+    module_name: str,
+    tree: ast.Module,
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    is_package: bool,
+) -> _Imports:
+    """Module-level imports, overlaid with imports scoped to `func_node`
+    alone (its own `ast.walk`, not the whole module's) - a function-scoped
+    import is a real import this walker must not be blind to, but
+    collecting it from a whole-module `ast.walk` let one function's local
+    import shadow a same-named module-level (or a sibling function's own
+    local) binding everywhere in the flat table, producing a false
+    "reachable" for a function that never sees that import at all (PR #270
+    round 2 review). Building the overlay only from `func_node`'s own
+    subtree confines a local import's visibility to the one function being
+    walked, matching real Python scoping in the one direction this walker's
+    conservatism actually depends on."""
+    base = _collect_imports(ast.iter_child_nodes(tree), module_name, is_package=is_package)
+    overlay = _collect_imports(ast.walk(func_node), module_name, is_package=is_package)
+    return _Imports(
+        modules={**base.modules, **overlay.modules},
+        names={**base.names, **overlay.names},
+    )
 
 
 def _find_function(
@@ -296,7 +323,7 @@ def reachable(
     if func_node is None:
         return False
 
-    imports = _build_import_table(module_name, parsed.tree, is_package=parsed.is_package)
+    imports = _build_import_table(module_name, parsed.tree, func_node, is_package=parsed.is_package)
 
     for node in ast.walk(func_node):
         if not isinstance(node, ast.Call):

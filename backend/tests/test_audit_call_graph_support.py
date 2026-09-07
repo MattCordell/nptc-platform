@@ -234,6 +234,32 @@ def test_function_scoped_import_is_visible_to_the_walker(tmp_path: Path) -> None
     assert walker.reachable("nptc.endpoint", "handler", targets=TARGET)
 
 
+def test_function_scoped_import_in_a_sibling_function_does_not_shadow(tmp_path: Path) -> None:
+    """PR #270 round 2 review: collecting imports from a whole-module
+    `ast.walk` gave one flat, name-keyed table, so a function-scoped
+    import in one function overwrote a module-level (or another
+    function's local) binding of the same name *everywhere* - including
+    in a sibling function that never sees that import at all. Confirmed
+    to produce a false `reachable() is True` before the fix (an
+    unrelated `helper` shadowed by `other`'s local `record_change as
+    helper`, while `handler` calls the real, unrelated `helper` and never
+    reaches `record_change`)."""
+    _write(tmp_path, "nptc/audit.py", "def record_change(*a, **k):\n    pass\n")
+    _write(tmp_path, "nptc/helpers.py", "def helper():\n    pass\n")
+    _write(
+        tmp_path,
+        "nptc/shadow.py",
+        "from nptc.helpers import helper\n\n\n"
+        "def other():\n"
+        "    from nptc.audit import record_change as helper\n\n"
+        "    helper()\n\n\n"
+        "def handler():\n"
+        "    helper()\n",
+    )
+
+    assert walker.reachable("nptc.shadow", "handler", targets=TARGET) is False
+
+
 def test_async_endpoint_reaches_target(tmp_path: Path) -> None:
     """Every real route handler is `async def` - `_find_function`'s
     `AsyncFunctionDef` branch needs its own direct test, not only indirect
