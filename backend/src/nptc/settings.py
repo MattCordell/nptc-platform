@@ -19,7 +19,7 @@ notices.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import field_validator
@@ -159,6 +159,43 @@ class ApiSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
     frontend_base_url: str = "http://localhost:5173"
+
+    #: FR-98's label-provenance declaration for every served `fsn` field
+    #: (`nptc.api.labels.fsn_provenance`) - a placeholder for FR-66's own
+    #: export configuration (P4, not built yet: no `export_config`
+    #: model/table exists). `"intact"` is the only value the read path can
+    #: honestly serve: `nptc.api.routers.catalogue_shared`/`terminology`
+    #: build `fsn` straight from the stored/served value with no strip
+    #: anywhere between the column and the response (FR-83's one sanctioned
+    #: renderer, `nptc.exports.semantic_tag.render_display_term`, is
+    #: reached only from the export surface, never from here). See
+    #: `_fsn_semantic_tag_is_intact` below for why `"stripped"` is refused
+    #: rather than accepted and silently ignored.
+    fsn_semantic_tag: Literal["intact", "stripped"] = "intact"
+
+    @field_validator("fsn_semantic_tag")
+    @classmethod
+    def _fsn_semantic_tag_is_intact(cls, value: str) -> str:
+        """`"stripped"` would make the served payload lie about what it
+        actually serves (FR-83, FR-66): there is no stripper anywhere on
+        this read path, so configuring `"stripped"` could never make an
+        FSN's tag actually stripped - it would only make
+        `LabelProvenance.semantic_tag` claim a strip that never happened,
+        which is worse than not declaring provenance at all. Refusing this
+        at settings-construction time turns a config typo (or a premature
+        attempt to wire FR-66's not-yet-built export configuration through
+        this field) into a start-up failure naming both requirements,
+        rather than a silently wrong payload discovered downstream.
+        """
+        if value == "stripped":
+            raise ValueError(
+                "fsn_semantic_tag=stripped is refused: the API read path has no "
+                "semantic-tag stripper (FR-83's renderer is reached only from the "
+                "export surface), so this setting cannot yet make that true. FR-66's "
+                "export configuration is the future home for this choice; until it "
+                "exists, fsn_semantic_tag must stay 'intact'."
+            )
+        return value
 
     @field_validator("frontend_base_url")
     @classmethod

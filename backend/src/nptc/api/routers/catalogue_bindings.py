@@ -334,7 +334,7 @@ def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.U
     load_bindings` rather than building a `Binding` from the ORM instance
     directly - that is what resolves `replaced_by_binding_id` to the
     successor's *code* (`catalogue_shared.py`'s own rule: no internal id
-    ever reaches a response model) and computes `display_term` via
+    ever reaches a response model) and attaches `label_provenance` via
     `binding_from_row`, the same function the read routes use, so a bound
     code renders identically whether it was just written or freshly read.
 

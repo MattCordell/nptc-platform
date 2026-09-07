@@ -1312,28 +1312,37 @@ describe("retiring a term", () => {
   });
 });
 
+// FR-98 (issue #144): every fixture shaped as a `Binding` carries
+// `label_provenance` instead of the now-removed `display_term` - the same
+// fixed dict every real `Binding` on the wire declares (`fsn`/
+// `au_preferred_term`, both `LabelProvenance` objects).
+const BINDING_LABEL_PROVENANCE = {
+  fsn: { designation: "fsn", semantic_tag: "intact" },
+  au_preferred_term: { designation: "au_preferred_term", semantic_tag: "not_applicable" },
+};
+
 const ACTIVE_BINDING = {
   system: "http://snomed.info/sct",
   code: FSN_CODE,
   fsn: FSN,
-  display_term: "Microscopy (acid fast bacilli)",
   au_preferred_term: AU_PT,
   edition_hint: "au",
   status: "active",
   retirement_reason: null,
   replaced_by_code: null,
+  label_provenance: BINDING_LABEL_PROVENANCE,
 };
 
 const RETIRED_BINDING = {
   system: "http://snomed.info/sct",
   code: "165288007",
   fsn: "Basophil count (procedure)",
-  display_term: "Basophil count",
   au_preferred_term: "Basophil count",
   edition_hint: "au",
   status: "retired",
   retirement_reason: "Superseded by the new method",
   replaced_by_code: FSN_CODE,
+  label_provenance: BINDING_LABEL_PROVENANCE,
 };
 
 describe("code bindings", () => {
@@ -1853,7 +1862,15 @@ describe("code bindings", () => {
     // A structural guarantee, not just this fixture's behaviour - see
     // `fr-83-no-semantic-tag-stripping.test.ts`, which walks every module
     // under `frontend/src` rather than relying on one screen's rendering.
-    expect(FSN).not.toBe(ACTIVE_BINDING.display_term);
+    // `Binding` no longer carries a `display_term` at all (issue #144) - the
+    // fixture's own shape is the proof: there is no stripped copy of `FSN`
+    // anywhere on it to have rendered by mistake, only `label_provenance`
+    // declaring that `fsn` is served with its tag intact.
+    expect(ACTIVE_BINDING).not.toHaveProperty("display_term");
+    expect(ACTIVE_BINDING.label_provenance.fsn).toEqual({
+      designation: "fsn",
+      semantic_tag: "intact",
+    });
   });
 });
 

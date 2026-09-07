@@ -32,13 +32,13 @@ class RouteKey:
         return f"{self.method} {self.path}"
 
 
-def _iter_mutating_api_routes(app: FastAPI) -> Iterable[tuple[RouteKey, APIRoute]]:
-    """Every `(RouteKey, APIRoute)` pair for a route whose declared methods
-    include at least one non-GET/HEAD/OPTIONS verb - a route declaring both
-    GET and POST contributes only its POST pair. The one recursive walk
-    both `mutating_routes` and issue #165's call-graph inventory build on,
-    so the two cannot silently drift into two different notions of "every
-    mutating endpoint" by each maintaining their own copy of it.
+def iter_api_routes(routes: Iterable[BaseRoute]) -> Iterable[APIRoute]:
+    """Every `APIRoute` reachable from `routes`, recursively - the one walk
+    every consumer of the real app's route table builds on (`mutating_
+    routes`/issue #165's call-graph inventory here, and issue #144's
+    label-provenance structural guard in `test_label_provenance.py`), so a
+    future FastAPI internals change needs fixing in exactly one place
+    rather than in however many copies had independently reinvented it.
 
     **The walk is recursive, and has to be** (found while wiring issue
     #142's router): `app.include_router(...)` does not flatten the included
@@ -63,22 +63,29 @@ def _iter_mutating_api_routes(app: FastAPI) -> Iterable[tuple[RouteKey, APIRoute
     happens to pin rather than silently going back to seeing nothing the
     next time that internal shape changes.
     """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+        nested = getattr(route, "routes", None)
+        if nested is None:
+            original_router = getattr(route, "original_router", None)
+            nested = getattr(original_router, "routes", None)
+        if nested is not None:
+            yield from iter_api_routes(nested)
+
+
+def _iter_mutating_api_routes(app: FastAPI) -> Iterable[tuple[RouteKey, APIRoute]]:
+    """Every `(RouteKey, APIRoute)` pair for a route whose declared methods
+    include at least one non-GET/HEAD/OPTIONS verb - a route declaring both
+    GET and POST contributes only its POST pair. Built on `iter_api_routes`
+    so `mutating_routes` and issue #165's call-graph inventory cannot
+    silently drift into two different notions of "every mutating
+    endpoint" by each maintaining their own copy of the route walk."""
     seen: dict[RouteKey, APIRoute] = {}
-
-    def visit(routes: Iterable[BaseRoute]) -> None:
-        for route in routes:
-            if isinstance(route, APIRoute):
-                for method in route.methods or set():
-                    if method not in _NON_MUTATING_METHODS:
-                        seen[RouteKey(method=method, path=route.path)] = route
-            nested = getattr(route, "routes", None)
-            if nested is None:
-                original_router = getattr(route, "original_router", None)
-                nested = getattr(original_router, "routes", None)
-            if nested is not None:
-                visit(nested)
-
-    visit(app.routes)
+    for route in iter_api_routes(app.routes):
+        for method in route.methods or set():
+            if method not in _NON_MUTATING_METHODS:
+                seen[RouteKey(method=method, path=route.path)] = route
     return seen.items()
 
 

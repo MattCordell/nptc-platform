@@ -33,12 +33,14 @@ import { useDebouncedValue } from "./use-debounced-value.ts";
  * answers the question, and `nptc_shared.sctid`'s Postgres-level
  * counterpart stays the authority server-side (ADR-0030's amendment).
  *
- * **`fsn` is rendered verbatim; `display_term` is not rendered at all.**
- * `Binding` carries both, but this is an editing screen, not an export
- * surface - showing the stripped form here would invite exactly the
- * double-stripping confusion FR-83 exists to prevent. Never reference
- * `display_term`, `strip_semantic_tag`, `semantic_tag` or
- * `render_display_term` in this module.
+ * **`fsn` is rendered verbatim, and nothing here derives a second, stripped
+ * form of it.** `Binding` no longer carries a `display_term` at all (issue
+ * #144): the API serves `fsn` exactly as stored, with `label_provenance`
+ * declaring what it is, and there is no stripped copy to show even by
+ * mistake. This is an editing screen, not an export surface, and showing a
+ * stripped form here would invite exactly the double-stripping confusion
+ * FR-83 exists to prevent - never reference `strip_semantic_tag`,
+ * `semantic_tag` or `render_display_term` in this module.
  *
  * **Retired bindings are listed, unlike the designations panel.**
  * `GET .../bindings`'s own docstring requires it under FR-08: a client

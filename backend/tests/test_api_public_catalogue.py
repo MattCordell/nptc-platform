@@ -250,45 +250,43 @@ def test_every_code_is_serialised_as_a_json_string(
         assert item["replaced_by_code"] is None or isinstance(item["replaced_by_code"], str)
 
 
-@pytest.mark.req("FR-83")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
-def test_display_term_has_its_semantic_tag_stripped_exactly_once(
+def test_fsn_is_served_exactly_as_stored_with_intact_tag_provenance(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    """PRD SS6.4's named regression case. `391483001`'s FSN carries two
-    parenthesised groups and only the last is the semantic tag, so a strip
-    applied twice - or applied to every group - silently yields
-    `Microscopy`."""
+    """PRD SS6.4's named regression case, restated for FR-98/issue #144:
+    `391483001`'s FSN carries two parenthesised groups and only the last is
+    the semantic tag. There is no longer a `display_term` field or any
+    strip on this read path (that is exactly the FR-83 violation issue
+    #144 removed) - `fsn` is served byte-for-byte, and `label_provenance`
+    is what a consumer reads instead to learn that its tag is intact."""
     items = api.get(f"/catalogue/entries/{seeded.canonical}/bindings").json()["items"]
     active = next(item for item in items if item["code"] == _seed.ACTIVE_CODE)
 
     assert active["fsn"] == _seed.ACTIVE_FSN, "the stored FSN must be served exactly as stored"
-    assert active["display_term"] == _seed.ACTIVE_DISPLAY_TERM
-    assert active["display_term"] != "Microscopy"
+    assert "display_term" not in active
+    assert active["label_provenance"]["fsn"] == {
+        "designation": "fsn",
+        "semantic_tag": "intact",
+    }
 
 
 @pytest.mark.req("FR-83")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
-def test_an_unrenderable_stored_fsn_is_a_500_not_a_422(
+def test_a_stored_fsn_the_export_renderer_would_refuse_is_still_served_verbatim(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    """An FSN that is not a served FSN is a *server-side data* fault, and the
-    status has to say so.
-
-    The underlying refusal (`NotAServedFSNError`) is a validation error
-    carrying `http_status = 422`, which is right on a write path where the
-    caller supplied the FSN. Serving that same 422 here would be actively
-    counterproductive: the request is a well-formed `GET` on a valid business
-    key, so a vendor's client reads 422 as "I sent something wrong", does not
-    retry, and files the problem against itself - while FR-83's entire reason
-    for failing loudly is to get an administrator to look at the binding. So
-    the read path reports 5xx.
-
-    Both routes that render a `display_term` are asserted, because the strip
-    happens in one shared helper and covering only the detail route would let
-    the sub-resource regress unnoticed. The body still carries the fixed
-    client-facing sentence and, per this module's no-leak rules, no internal
-    identifier.
+    """Issue #144 removed the read path's own copy of FR-83's strip
+    (`_display_term`/`StoredFSNNotRenderableError`), so a stored FSN that
+    `render_display_term` would refuse - `CORRUPT_FSN` has no trailing
+    parenthesised group - is no longer a fault on this path at all: FR-82's
+    as-served guarantee means `GET` keeps working and keeps serving the
+    value exactly as stored, whatever it is. `render_display_term`'s own
+    refusal is exercised directly in `test_semantic_tag_render.py`, and
+    remains reachable from the export surface (`nptc.exports.semantic_tag`)
+    and the future write path - neither of which this test touches.
     """
     _seed.corrupt_stored_fsn(api.session, seeded.canonical)
 
@@ -297,14 +295,15 @@ def test_an_unrenderable_stored_fsn_is_a_500_not_a_422(
         f"/catalogue/entries/{seeded.canonical}/bindings",
     ):
         response = api.get(path)
-        assert response.status_code == 500, f"{path}: {response.status_code} {response.text}"
-        assert response.json()["detail"]
-        assert _seed.CORRUPT_FSN not in response.text
+        assert response.status_code == 200, f"{path}: {response.status_code} {response.text}"
 
-    # And the sub-resources that do not render a display term are unaffected -
-    # one corrupted binding must not take the whole entry's API down.
-    assert api.get(f"/catalogue/entries/{seeded.canonical}/designations").status_code == 200
-    assert api.get(f"/catalogue/entries/{seeded.canonical}/properties").status_code == 200
+    items = api.get(f"/catalogue/entries/{seeded.canonical}/bindings").json()["items"]
+    active = next(item for item in items if item["code"] == _seed.ACTIVE_CODE)
+    assert active["fsn"] == _seed.CORRUPT_FSN
+    assert active["label_provenance"]["fsn"] == {
+        "designation": "fsn",
+        "semantic_tag": "intact",
+    }
 
 
 @pytest.mark.req("FR-77")

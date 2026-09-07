@@ -25,8 +25,15 @@ cross-router contract - imported by all three of `catalogue.py`,
 `catalogue_admin.py` and (the designation one) `catalogue_designations.py`
 - so a leading underscore on them would misrepresent an intentional,
 `__all__`-listed API as a private implementation detail a future reader
-might "clean up" by inlining. `_display_term` keeps its underscore: it is
-never imported anywhere outside this file.
+might "clean up" by inlining.
+
+**No `display_term`, and no strip anywhere in this module (FR-83, FR-98,
+issue #144).** `Binding.fsn` is served exactly as stored - FR-82's
+as-served guarantee - and `Binding.label_provenance` declares that fact
+instead of a second, silently-derived copy of the label. FR-83's one
+sanctioned renderer, `nptc.exports.semantic_tag.render_display_term`, is
+reached only from the export surface; this module used to be its one
+allowlisted read-path consumer and no longer is.
 """
 
 from __future__ import annotations
@@ -38,12 +45,18 @@ from fastapi import Path
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from nptc.api.errors import StoredFSNNotRenderableError
+from nptc.api.dependencies import get_api_settings
+from nptc.api.labels import (
+    AU_PREFERRED_TERM_PROVENANCE,
+    PREFERRED_VARIANT_PROVENANCE,
+    SYNONYM_PROVENANCE,
+    LabelProvenance,
+    fsn_provenance,
+)
 from nptc.catalogue import queries
 from nptc.catalogue.code_systems import SYSTEM_TOKEN_PATTERN
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError, render_display_term
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 
 __all__ = [
@@ -109,11 +122,11 @@ CodePath = Annotated[
 class Binding(BaseModel):
     """A SNOMED CT code binding, active or retired.
 
-    `code` is a string, always (FR-06). `display_term` is `fsn` with its
-    semantic tag removed exactly once, by FR-83's single sanctioned
-    renderer - it is derived here rather than stored, because a stored
-    stripped value is indistinguishable from an unstripped one and that
-    ambiguity is what makes double-stripping possible.
+    `code` is a string, always (FR-06). `fsn` is served exactly as stored -
+    FR-82's as-served guarantee - with no strip applied anywhere on this
+    read path; `label_provenance["fsn"]` is FR-98's declaration of that
+    fact (`semantic_tag` is config-driven, see `nptc.api.labels.
+    fsn_provenance`), not a second, silently-stripped copy of the label.
 
     A retired binding carries `retirement_reason` and, where PRD FR-08's
     replacement case applies, `replaced_by_code` - the successor's *code*,
@@ -125,12 +138,15 @@ class Binding(BaseModel):
     system: str
     code: str
     fsn: str
-    display_term: str
     au_preferred_term: str | None
     edition_hint: str
     status: str
     retirement_reason: str | None
     replaced_by_code: str | None
+    #: FR-98: one entry per label-bearing field on this model - `fsn` and
+    #: `au_preferred_term` - declared once per row (not restated per field
+    #: access) by `binding_from_row`.
+    label_provenance: dict[str, LabelProvenance]
 
 
 class BindingList(BaseModel):
@@ -139,28 +155,38 @@ class BindingList(BaseModel):
     items: list[Binding]
 
 
-def _display_term(fsn: str) -> str:
-    """FR-83's one sanctioned strip, with its refusal re-labelled: the
-    caller here supplied a business key/code, not the FSN, so a stored FSN
-    that fails to strip is a 500 (`StoredFSNNotRenderableError`), not the
-    422 `render_display_term` raises on its own."""
-    try:
-        return render_display_term(fsn)
-    except (NotAServedFSNError, EmptyDisplayTermError) as exc:
-        raise StoredFSNNotRenderableError(str(exc)) from exc
-
-
 def binding_from_row(row: queries.BindingRow) -> Binding:
+    """`get_api_settings()` reads the same process-wide cached
+    `ApiSettings` singleton every other read-path consumer of settings
+    does (`nptc.api.dependencies`, `lru_cache`d) - a plain call, not a
+    FastAPI `Depends`, because this is an assembler function, not a route
+    handler, and `get_api_settings` takes no request-scoped argument to
+    inject in the first place.
+
+    **A deliberate, temporary trade** (review, issue #144): calling it
+    directly means `app.dependency_overrides` cannot reach this call the
+    way it reaches `get_auth_settings`/`get_session`/`get_terminology_
+    client` in the test harness (`api_app_support.py`). Harmless today -
+    `ApiSettings` refuses any `fsn_semantic_tag` but `"intact"` at
+    construction time, so there is only one value this could ever read -
+    but it will need revisiting once FR-66 makes the setting legitimately
+    vary and a test wants to serve `"stripped"` without a real environment
+    variable.
+    """
+    settings = get_api_settings()
     return Binding(
         system=row.system,
         code=row.code,
         fsn=row.fsn,
-        display_term=_display_term(row.fsn),
         au_preferred_term=row.au_preferred_term,
         edition_hint=row.edition_hint,
         status=row.status,
         retirement_reason=row.retirement_reason,
         replaced_by_code=row.replaced_by_code,
+        label_provenance={
+            "fsn": fsn_provenance(settings),
+            "au_preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+        },
     )
 
 
@@ -194,6 +220,18 @@ class EntrySummary(BaseModel):
     #: there is no other field a type or severity could ever leak through.
     #: An `acknowledged`/`resolved`/`superseded` finding does not set it.
     has_open_finding: bool
+    #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
+    #: (ADR-0022), never an FSN - fixed, not configuration-driven, so this
+    #: is the same constant on every row.
+    label_provenance: dict[str, LabelProvenance]
+
+
+#: `EntrySummary.label_provenance` is one entry, fixed for every row - see
+#: the field's own docstring. A module-level constant, not rebuilt inside
+#: `entry_summary_fields` on every call.
+_ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
+    "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+}
 
 
 class PropertyValue(BaseModel):
@@ -289,6 +327,7 @@ def entry_summary_fields(
         "specimen_unconstrained": specimen_unconstrained,
         "updated_at": updated_at,
         "has_open_finding": has_open_finding,
+        "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }
 
 
@@ -361,12 +400,26 @@ class Designation(BaseModel):
     language: str
     status: str
     length: int
+    #: FR-98. Singular, not a dict: this model carries exactly one label
+    #: field (`term`), unlike `Binding`/`EntrySummary`. Per-row, not a
+    #: shared constant - it depends on this row's own `use`, see
+    #: `designation_from_row`.
+    label_provenance: LabelProvenance
 
 
 class DesignationList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[Designation]
+
+
+#: `Designation.use`'s two values, each mapped to its own FR-98 provenance -
+#: ADR-0022 is why `"preferred"` here means `PREFERRED_VARIANT_PROVENANCE`
+#: (a non-en-AU preferred term) rather than the AU preferred term.
+_DESIGNATION_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
+    "synonym": SYNONYM_PROVENANCE,
+    "preferred": PREFERRED_VARIANT_PROVENANCE,
+}
 
 
 def designation_from_row(row: queries.DesignationRow) -> Designation:
@@ -376,4 +429,5 @@ def designation_from_row(row: queries.DesignationRow) -> Designation:
         language=row.language,
         status=row.status,
         length=row.length,
+        label_provenance=_DESIGNATION_LABEL_PROVENANCE[row.use],
     )

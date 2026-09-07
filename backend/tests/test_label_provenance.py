@@ -1,0 +1,475 @@
+"""FR-98's structural guard (issue #144): every response model reachable
+from the real app that carries a label-shaped field declares
+`label_provenance` covering exactly those fields.
+
+Modelled on `route_inventory_support.py`'s recursive router walk (the same
+gotcha applies: `app.include_router(...)` does not flatten routes into
+`app.routes`) and `test_datatype_dispatch.py`'s "positive control + a guard
+on the guard" idiom - a checking function that can never actually fail is
+worse than no check at all.
+
+No fixtures beyond the 391483001 regression test at the bottom: building
+`create_app()` and walking its schema touches no database (`get_terminology_
+client()`, called eagerly by `create_app`, opens no socket) and this module
+otherwise joins `test_settings.py`/`test_sql_parameterisation.py` as tests
+that must not start Docker.
+"""
+
+from __future__ import annotations
+
+import functools
+import importlib.util
+import re
+import sys
+import typing
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Annotated, Any, get_args, get_origin
+
+import pytest
+from fastapi.routing import APIRoute
+from pydantic import BaseModel
+from sqlalchemy.engine import Connection
+
+from nptc.api.app import create_app
+from nptc.api.labels import LabelProvenance
+
+
+# `backend/tests` has no `__init__.py` (pytest's `--import-mode=importlib`),
+# so a plain `from route_inventory_support import ...` cannot resolve -
+# matching the load-by-path idiom `test_audit_route_inventory.py`'s own
+# `_load` uses for the same reason.
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+iter_api_routes = _load("route_inventory_support").iter_api_routes
+
+
+def _unwrap(annotation: Any) -> Iterator[Any]:
+    """Every type reachable one level down from `annotation` - through
+    `X | None`, `list[X]`, `dict[str, X]`, `Annotated[X, ...]` - so the
+    caller can recurse until it bottoms out at an actual class."""
+    origin = get_origin(annotation)
+    if origin is None:
+        return
+    args = get_args(annotation)
+    if origin is Annotated:
+        yield args[0]
+        return
+    yield from args
+
+
+def _collect_models(root: type[BaseModel]) -> set[type[BaseModel]]:
+    """Every `BaseModel` subclass reachable from `root`, including `root`
+    itself - through nested fields, list/dict containers and `X | None`.
+
+    `typing.get_type_hints`, not raw `model_fields` annotations: a field
+    declared before its own type is fully defined in the file (`from
+    __future__ import annotations` postpones every annotation to a string)
+    can still be an unresolved `ForwardRef` on `model_fields` at this point -
+    `get_type_hints` is what actually resolves it against the model's own
+    module namespace, the same resolution FastAPI relies on to build the
+    OpenAPI schema in the first place.
+    """
+    seen: set[type[BaseModel]] = set()
+
+    def visit(model: type[BaseModel]) -> None:
+        if model in seen:
+            return
+        seen.add(model)
+        hints = typing.get_type_hints(model)
+        for annotation in hints.values():
+            stack = [annotation]
+            while stack:
+                current = stack.pop()
+                if isinstance(current, type) and issubclass(current, BaseModel):
+                    visit(current)
+                    continue
+                stack.extend(_unwrap(current))
+
+    visit(root)
+    return seen
+
+
+#: The label-bearing field names this guard already knows about. Not
+#: exhaustive by promise - `test_label_field_name_set_is_not_stale` below is
+#: what keeps it honest as the schema grows.
+LABEL_FIELD_NAMES: frozenset[str] = frozenset(
+    {"fsn", "au_preferred_term", "preferred_term", "term"}
+)
+
+
+def label_provenance_gaps(model: type[BaseModel]) -> set[str]:
+    """The label-bearing field(s) on `model` (by name, from
+    `LABEL_FIELD_NAMES`) that `label_provenance` does not cover - empty if
+    `model` carries no label field, or if it declares a `label_provenance`
+    field shaped correctly for the ones it does carry.
+
+    "Shaped correctly" is a presence-and-shape check, not a check of an
+    instance's actual dict *contents*: a class definition alone cannot say
+    which keys a `dict[str, LabelProvenance]` field will hold at runtime
+    (`Binding.label_provenance` is populated by `binding_from_row`, not by
+    the class itself). `dict[str, LabelProvenance]` is accepted regardless
+    of how many label fields the model carries - `EntrySummary`/`EntryDetail`
+    choose it even for their one field (`preferred_term`), matching
+    `Binding`'s two - so only `Designation`'s singular `LabelProvenance`
+    (its one field, `term`) is a genuinely single-field-only shape: a
+    singular value cannot unambiguously describe two or more different
+    fields, so it is accepted only when there is exactly one label field.
+    `test_known_models_declare_provenance_for_exactly_their_own_label_fields`
+    below closes the gap a class-level shape check cannot: it checks the
+    real models' actual assembled dict *keys* against their own label
+    fields.
+    """
+    hints = typing.get_type_hints(model)
+    label_fields = set(hints) & LABEL_FIELD_NAMES
+    if not label_fields:
+        return set()
+    provenance_type = hints.get("label_provenance")
+    if provenance_type is None:
+        return label_fields
+    if provenance_type is LabelProvenance and len(label_fields) == 1:
+        return set()
+    if get_origin(provenance_type) is dict:
+        key_type, value_type = get_args(provenance_type)
+        if key_type is str and value_type is LabelProvenance:
+            return set()
+    return label_fields
+
+
+# --- positive control (mirrors test_datatype_dispatch.py's own idiom) ------
+
+
+class _RogueModel(BaseModel):
+    """A synthetic violation: a bare label field with no provenance at
+    all - proves `label_provenance_gaps` can actually fail."""
+
+    fsn: str
+
+
+def test_guard_flags_a_known_violation() -> None:
+    assert label_provenance_gaps(_RogueModel) == {"fsn"}
+
+
+class _CompliantSingleFieldModel(BaseModel):
+    term: str
+    label_provenance: LabelProvenance
+
+
+class _CompliantMultiFieldModel(BaseModel):
+    fsn: str
+    au_preferred_term: str | None
+    label_provenance: dict[str, LabelProvenance]
+
+
+def test_guard_passes_a_correctly_shaped_single_field_model() -> None:
+    assert label_provenance_gaps(_CompliantSingleFieldModel) == set()
+
+
+def test_guard_passes_a_correctly_shaped_multi_field_model() -> None:
+    assert label_provenance_gaps(_CompliantMultiFieldModel) == set()
+
+
+def test_guard_flags_a_singular_provenance_covering_two_label_fields() -> None:
+    """A single `LabelProvenance` cannot unambiguously describe two
+    different fields - declaring *a* `label_provenance` field is not the
+    same as declaring the right one."""
+
+    class _AmbiguousShape(BaseModel):
+        fsn: str
+        au_preferred_term: str | None
+        label_provenance: LabelProvenance
+
+    assert label_provenance_gaps(_AmbiguousShape) == {"fsn", "au_preferred_term"}
+
+
+# --- the real app's schema graph -------------------------------------------
+
+
+def _response_model_refs(route: APIRoute) -> Iterator[type[BaseModel]]:
+    """Every `BaseModel` this route's declared responses could actually
+    return - the success body (`route.response_model`) *and* every model
+    named in its own `responses={...}` dict (round-2 review, issue #144):
+    `CollisionItem`/`DesignationCollisionResponse` are reachable only
+    through the latter (`errors.py`'s handler builds them, but no route's
+    return-type annotation names them), so a walk that only ever looked at
+    `response_model` silently never saw them at all - the acceptance claim
+    "every response field carrying a label declares its designation type"
+    held for success bodies only until this was widened.
+
+    `isinstance(entry, type)` before `issubclass`: a `responses=` entry's
+    `"model"` is sometimes a `UnionType` (`ErrorResponse | Collision...
+    Response`, `_RESPONSE_409_COLLISION` in `catalogue_designations.py`),
+    which `issubclass` rejects with a `TypeError` rather than `False` - the
+    same hazard `route.response_model` itself risks if a future route
+    returns a bare `list[X]`/`X | None` (round-1 review). Both are run
+    through `_unwrap` so a union or generic alias still yields its member
+    classes rather than being silently skipped.
+    """
+    candidates: list[Any] = [route.response_model]
+    for entry in (route.responses or {}).values():
+        if isinstance(entry, dict):
+            candidates.append(entry.get("model"))
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            yield candidate
+            continue
+        yield from (
+            member
+            for member in _unwrap(candidate)
+            if isinstance(member, type) and issubclass(member, BaseModel)
+        )
+
+
+@functools.cache
+def _real_app_models() -> frozenset[type[BaseModel]]:
+    """Cached: `test_every_label_bearing_model_in_the_real_app_declares_
+    provenance` and `test_label_field_name_set_is_not_stale` both need this
+    same walk, and `create_app()` plus the full schema graph is not free to
+    redo per test."""
+    app = create_app()
+    models: set[type[BaseModel]] = set()
+    for route in iter_api_routes(app.routes):
+        for model in _response_model_refs(route):
+            models |= _collect_models(model)
+    return frozenset(models)
+
+
+@pytest.mark.req("FR-98")
+def test_every_label_bearing_model_in_the_real_app_declares_provenance() -> None:
+    models = _real_app_models()
+    assert models, "the walk found no response models at all - the guard would pass vacuously"
+
+    offenders = {
+        model.__qualname__: gaps for model in models if (gaps := label_provenance_gaps(model))
+    }
+    assert not offenders, (
+        f"model(s) with a label field but no matching label_provenance: {offenders}"
+    )
+
+
+@pytest.mark.req("FR-98")
+def test_label_field_name_set_is_not_stale() -> None:
+    """A guard on the guard, mirroring `test_allowed_references_list_is_
+    not_stale`'s own reasoning: `LABEL_FIELD_NAMES` is a fixed frozenset,
+    and a new field that merely *looks* label-shaped (matches `term`,
+    `fsn` or `display` in its own name) but is neither in that set nor
+    covered by its own model's `label_provenance` would otherwise slip
+    through `label_provenance_gaps` undetected - that function only ever
+    looks at the names already on the list."""
+    plausible_label_name = re.compile(r"term|fsn|display", re.IGNORECASE)
+    models = _real_app_models()
+
+    #: Reviewed, explicit exemptions - each one checked by hand and found
+    #: not to be a SNOMED/catalogue label, the same way
+    #: `test_catalogue_bindings.py`'s own `_ALLOWED_REFERENCES` documents
+    #: each entry rather than exempting a whole file or a bare substring.
+    #: A field not listed here still fails this test, which is the point.
+    exempt: dict[str, frozenset[str]] = {
+        # A UI sort-order integer (issue #55/#247), never a label of any
+        # kind - matches `plausible_label_name` only because `display_order`
+        # itself contains the substring "display".
+        "PropertyDefinitionResponse": frozenset({"display_order"}),
+        # A person's display name (NFR-04/NFR-26: an audit actor's name,
+        # never an internal id) - identity data, not a SNOMED/catalogue
+        # label.
+        "UserRef": frozenset({"display_name"}),
+        # A coded property's offerable value (issue #247) - `display` here
+        # is a value-set *option's* label, sourced from whichever code
+        # system defined it (SNOMED CT or a local code system, the model's
+        # own docstring says "identical in shape" either way) - a
+        # different vocabulary from this issue's four DesignationType
+        # values, which are all about *this catalogue entry's own* label
+        # fields. Genuinely label-shaped data FR-98 does not yet have a
+        # vocabulary for; flagged for a human decision rather than forced
+        # into a DesignationType that would misdescribe it.
+        "PropertyValueItem": frozenset({"display"}),
+    }
+
+    suspects: dict[str, set[str]] = {}
+    for model in models:
+        hints = typing.get_type_hints(model)
+        provenance_type = hints.get("label_provenance")
+        covered_dict = get_origin(provenance_type) is dict
+        exempt_fields = exempt.get(model.__qualname__, frozenset())
+        for name in hints:
+            if name in LABEL_FIELD_NAMES or name == "label_provenance":
+                continue
+            if name in exempt_fields:
+                continue
+            if not plausible_label_name.search(name):
+                continue
+            # A field a dict-shaped label_provenance could plausibly be
+            # declaring provenance *for* is not a gap by itself - the
+            # per-model key-content tests below are what check that
+            # declaration is actually correct. Only a model with **no**
+            # label_provenance field at all is an unambiguous miss.
+            if provenance_type is None or not covered_dict:
+                suspects.setdefault(model.__qualname__, set()).add(name)
+
+    assert not suspects, (
+        f"field(s) that look label-shaped but are not in LABEL_FIELD_NAMES and are not "
+        f"otherwise covered by a label_provenance field: {suspects}"
+    )
+
+
+@pytest.mark.req("FR-98")
+def test_known_models_declare_provenance_for_exactly_their_own_label_fields() -> None:
+    """`label_provenance_gaps` can only check *shape* for a `dict`-typed
+    field (a class definition carries no runtime dict content) - this
+    closes that gap for `Binding`/`EntrySummary`/`Designation`, by building
+    one of each through its own real assembler and checking the actual
+    keys and values.
+
+    `ConceptLookup` is deliberately not built here: round-2 review found
+    the version that used to live in this test hand-typed its
+    `label_provenance` dict as a literal rather than calling
+    `terminology.get_concept`'s own assembly code, so the only thing it
+    proved was that the test's own dict had the keys the test then
+    asserted - a typo in the route's real dict would not have been caught.
+    `test_api_terminology.py::test_lookup_resolves_fsn_with_tag_and_au_
+    preferred_term` asserts it instead, over the real HTTP route."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from nptc.api.routers.catalogue_shared import (
+        Designation,
+        EntrySummary,
+        binding_from_row,
+        designation_from_row,
+        entry_summary_fields,
+    )
+    from nptc.catalogue import queries
+
+    binding_row = queries.BindingRow(
+        id=uuid.uuid4(),
+        entry_id=uuid.uuid4(),
+        system="http://snomed.info/sct",
+        code="391483001",
+        fsn="Microscopy (acid fast bacilli) (procedure)",
+        au_preferred_term="Microscopy (acid fast bacilli)",
+        edition_hint="au",
+        status="active",
+        retirement_reason=None,
+        replaced_by_code=None,
+    )
+    binding = binding_from_row(binding_row)
+    assert {k: v.model_dump() for k, v in binding.label_provenance.items()} == {
+        "fsn": {"designation": "fsn", "semantic_tag": "intact"},
+        "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
+
+    summary = EntrySummary(
+        **entry_summary_fields(
+            business_key="NPTC-000001",
+            preferred_term="Full blood count",
+            length=17,
+            status="active",
+            specimen_unconstrained=False,
+            updated_at=datetime.now(UTC),
+            has_open_finding=False,
+        )
+    )
+    assert {k: v.model_dump() for k, v in summary.label_provenance.items()} == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"}
+    }
+
+    def _designation_row(*, use: str) -> queries.DesignationRow:
+        return queries.DesignationRow(
+            id=uuid.uuid4(),
+            entry_id=uuid.uuid4(),
+            term="Full blood count synonym",
+            use=use,
+            language="en-AU",
+            status="active",
+            length=25,
+        )
+
+    synonym = designation_from_row(_designation_row(use="synonym"))
+    assert isinstance(synonym, Designation)
+    assert synonym.label_provenance.model_dump() == {
+        "designation": "synonym",
+        "semantic_tag": "not_applicable",
+    }
+
+    # ADR-0022's contentious mapping (round-1 review): a `designation` row
+    # with `use="preferred"` is a non-en-AU preferred *variant*, never the
+    # catalogue's own AU preferred term - see `_DESIGNATION_LABEL_
+    # PROVENANCE`'s own comment in `catalogue_shared.py`.
+    preferred_variant = designation_from_row(_designation_row(use="preferred"))
+    assert preferred_variant.label_provenance.model_dump() == {
+        "designation": "preferred_variant",
+        "semantic_tag": "not_applicable",
+    }
+
+
+@pytest.mark.req("FR-98")
+def test_designation_label_provenance_covers_every_designation_use() -> None:
+    """`designation_from_row` looks up `_DESIGNATION_LABEL_PROVENANCE[row.
+    use]` unconditionally (round-1 review) - a `use` outside the two
+    mapped keys is an unhandled `KeyError`, an unmapped 500 on a read path,
+    rather than a documented refusal. Nothing ties the dict to
+    `DesignationUse` itself, so a third member added to that enum without
+    a matching dict entry would silently reintroduce the gap - this is the
+    staleness guard, mirroring `test_catalogue_bindings.py`'s own
+    `test_allowed_references_list_is_not_stale` idiom."""
+    from nptc.api.routers.catalogue_shared import _DESIGNATION_LABEL_PROVENANCE
+    from nptc.db.models.designation import DesignationUse
+
+    assert set(_DESIGNATION_LABEL_PROVENANCE) == {member.value for member in DesignationUse}
+
+
+# --- the 391483001 worked regression, over real HTTP -----------------------
+
+_api_support = _load("api_app_support")
+ApiTestApp = _api_support.ApiTestApp
+
+
+@pytest.fixture
+def api(app_db: Connection) -> Iterator[ApiTestApp]:
+    """`yield from`, not `next(iter(...))` (round-1 review): the latter
+    takes the generator's first value and then drops it, so nothing after
+    `build_api_test_app`'s own `yield` ever runs - its docstring names
+    exactly this as what the generator form exists to prevent, shutting
+    down the `StubIdp` HTTP server deterministically rather than at GC
+    time. A fixture is what lets pytest drive the teardown half after the
+    test finishes, matching every other consumer of `build_api_test_app`
+    in this suite (e.g. `test_api_terminology.py`'s identically-named
+    fixture)."""
+    yield from _api_support.build_api_test_app(app_db)
+
+
+@pytest.mark.req("FR-82")
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_391483001_fsn_is_served_verbatim_with_intact_provenance(api: ApiTestApp) -> None:
+    """PRD SS6.4's named regression case: `391483001`'s FSN carries two
+    parenthesised groups, and only the trailing `(procedure)` is the
+    semantic tag. FR-82 requires `fsn` served byte-for-byte (no
+    re-derivation); FR-98 requires the served payload to say, itself,
+    that the tag is intact - both asserted directly against the real
+    app rather than against the assembler in isolation.
+    """
+    seed = _load("public_catalogue_support")
+    seeded = seed.seed_public_catalogue(api.session)
+
+    response = api.get(f"/catalogue/entries/{seeded.canonical}/bindings")
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    active = next(item for item in items if item["code"] == seed.ACTIVE_CODE)
+
+    assert active["fsn"] == seed.ACTIVE_FSN
+    assert active["fsn"] == "Microscopy (acid fast bacilli) (procedure)"
+    assert "display_term" not in active
+    assert active["label_provenance"]["fsn"] == {
+        "designation": "fsn",
+        "semantic_tag": "intact",
+    }

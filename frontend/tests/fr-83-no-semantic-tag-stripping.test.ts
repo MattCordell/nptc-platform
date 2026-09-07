@@ -18,12 +18,14 @@ import { describe, expect, it } from "vitest";
 
 /**
  * FR-83's stripping rule (`nptc.exports.semantic_tag.strip_semantic_tag`) has
- * exactly one legitimate home, and it is server-side: `Binding.display_term`
- * is already the stripped value by the time it reaches the wire. The code
- * binding panel (issue #150) renders `fsn` verbatim and never `display_term`,
- * on purpose - see `bindings-panel.tsx`'s module docstring - because a second
- * strip anywhere in this frontend is exactly the double-stripping hazard
- * FR-83 exists to prevent (the backend's own guard,
+ * exactly one legitimate home, and it is server-side - the export renderer,
+ * never the API read path (issue #144 removed `Binding.display_term`
+ * entirely: `fsn` is served exactly as stored, and `label_provenance`
+ * declares that fact instead of a second, derived copy of the label). The
+ * code binding panel (issue #150) renders `fsn` verbatim, on purpose - see
+ * `bindings-panel.tsx`'s module docstring - because a strip anywhere in this
+ * frontend is exactly the double-stripping hazard FR-83 exists to prevent
+ * (the backend's own guard,
  * `test_catalogue_bindings.py::test_semantic_tag_functions_are_referenced_only_at_known_sites`,
  * is the AST walk this test mirrors on the frontend side).
  *
@@ -49,10 +51,17 @@ const BANNED_NAMES = new Set([
 
 /**
  * `schema.ts` is generated from the OpenAPI document (`pnpm generate:api`)
- * and must type the wire field `Binding.display_term` verbatim - that is the
- * value this guard exists to stop the frontend from *re-deriving*, not a
- * violation of deriving it. Its own name is enough of an allowlist: nothing
- * else under `frontend/src` should ever need to.
+ * and must type FR-98's `LabelProvenance.semantic_tag` field verbatim
+ * (issue #144) - a name collision with `BANNED_NAMES` above, not a
+ * violation: this is a wire field describing whether an FSN's tag is
+ * intact/stripped/not-applicable, never a call to or import of
+ * `nptc_shared.terminology`'s `semantic_tag`/`strip_semantic_tag`
+ * functions, which this generated file has no way to reach at all. The
+ * backend's own AST guard hits the identical false positive on
+ * `nptc.api.labels.LabelProvenance` itself, for the same reason -
+ * see `test_catalogue_bindings.py`'s `_ALLOWED_REFERENCES` entry for it.
+ * Its own name is enough of an allowlist: nothing else under `frontend/src`
+ * should ever need one.
  */
 const ALLOWED_FILES = new Set([resolve(SRC_ROOT, "api/schema.ts")]);
 

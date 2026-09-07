@@ -221,6 +221,7 @@ def test_add_designations_location_header_points_at_a_route_that_actually_serves
 
 
 @pytest.mark.req("FR-04")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_add_a_non_en_au_preferred_designation(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
@@ -239,6 +240,13 @@ def test_add_a_non_en_au_preferred_designation(api: ApiTestApp) -> None:
     (designation,) = response.json()["designations"]
     assert designation["use"] == "preferred"
     assert designation["language"] == "mi-NZ"
+    # FR-98 (issue #144): a `designation` row with `use="preferred"` is a
+    # non-en-AU preferred variant (ADR-0022), never the catalogue's own
+    # AU preferred term - `designation_from_row`'s own mapping.
+    assert designation["label_provenance"] == {
+        "designation": "preferred_variant",
+        "semantic_tag": "not_applicable",
+    }
 
 
 @pytest.mark.req("FR-04")
@@ -367,6 +375,7 @@ def test_retire_designation_audits_the_status_change_with_reason(api: ApiTestApp
 
 
 @pytest.mark.req("FR-05")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     api: ApiTestApp,
@@ -387,6 +396,13 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     assert response.status_code == 201, response.text
     warnings = response.json()["warnings"]
     assert {w["business_key"] for w in warnings} == {first_entry, second_entry}
+    # FR-98 (issue #144): `CollisionWarning.label_provenance` is a fixed
+    # dict on every instance - `term` is always the colliding synonym,
+    # `preferred_term` the colliding entry's own catalogue preferred term.
+    assert warnings[0]["label_provenance"] == {
+        "term": {"designation": "synonym", "semantic_tag": "not_applicable"},
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
 
     ack_response = api.post(
         f"/catalogue/entries/{third_entry}/designations/acknowledgement",
@@ -470,6 +486,7 @@ def test_acknowledge_collision_audits_the_created_row_with_reason(api: ApiTestAp
 
 
 @pytest.mark.req("FR-05")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_add_a_term_colliding_with_another_entrys_preferred_term_is_409_naming_it(
     api: ApiTestApp,
@@ -488,6 +505,13 @@ def test_add_a_term_colliding_with_another_entrys_preferred_term_is_409_naming_i
     assert collisions[0]["business_key"] == adrenal_ab_entry
     assert collisions[0]["preferred_term"] == "Adrenal Ab"
     assert collisions[0]["severity"] == "error"
+    # FR-98 (issue #144): `preferred_term` here is the colliding entry's
+    # own catalogue preferred term - the same designation type as
+    # `CollisionWarning.label_provenance["preferred_term"]`, its 200-path
+    # twin.
+    assert collisions[0]["label_provenance"] == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"}
+    }
 
 
 @pytest.mark.req("FR-04")
@@ -919,6 +943,7 @@ def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
 
 
 @pytest.mark.req("FR-36")
+@pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
     api: ApiTestApp,
@@ -941,6 +966,13 @@ def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
     assert body["designation"]["use"] == "preferred"
     assert body["designation"]["term"] == "Full blood count, automated"
     assert body["row_version"] == version + 1
+    # FR-98 (issue #144): `_preferred_term_as_designation`'s own branch -
+    # the catalogue's own AU preferred term, not `designation_from_row`'s
+    # `use="preferred"` mapping (which would be `preferred_variant`).
+    assert body["designation"]["label_provenance"] == {
+        "designation": "au_preferred_term",
+        "semantic_tag": "not_applicable",
+    }
     detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
     assert detail["preferred_term"] == "Full blood count, automated"
     # The shadowing synonym is untouched - one write, one term.
