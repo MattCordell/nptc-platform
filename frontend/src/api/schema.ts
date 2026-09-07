@@ -382,7 +382,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/catalogue/entries/bulk/properties/{property_key}": {
+    "/api/v1/catalogue/entries/bulk/properties/{key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -392,7 +392,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Replace a property's recorded values across many catalogue entries */
-        post: operations["save_property_bulk_api_v1_catalogue_entries_bulk_properties__property_key__post"];
+        post: operations["save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -791,7 +791,7 @@ export interface components {
         };
         /**
          * BulkSavePropertyValuesRequest
-         * @description The body of `POST /catalogue/entries/bulk/properties/{property_key}`
+         * @description The body of `POST /catalogue/entries/bulk/properties/{key}`
          *     (issue #265, FR-39). `values` is the one set every named entry ends up
          *     holding - a whole-set replace, identical to the singular route's own
          *     semantics, applied across `entries` rather than one.
@@ -2969,12 +2969,12 @@ export interface operations {
             };
         };
     };
-    save_property_bulk_api_v1_catalogue_entries_bulk_properties__property_key__post: {
+    save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                property_key: string;
+                key: string;
             };
             cookie?: never;
         };
@@ -3011,7 +3011,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No property definition matches `property_key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request. */
+            /** @description No property definition matches `key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request. */
             404: {
                 headers: {
                     [name: string]: unknown;

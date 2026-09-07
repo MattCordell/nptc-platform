@@ -1825,21 +1825,21 @@
         }
       }
     },
-    "/api/v1/catalogue/entries/bulk/properties/{property_key}": {
+    "/api/v1/catalogue/entries/bulk/properties/{key}": {
       "post": {
         "tags": [
           "catalogue-admin"
         ],
         "summary": "Replace a property's recorded values across many catalogue entries",
-        "operationId": "save_property_bulk_api_v1_catalogue_entries_bulk_properties__property_key__post",
+        "operationId": "save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post",
         "parameters": [
           {
-            "name": "property_key",
+            "name": "key",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Property Key"
+              "title": "Key"
             }
           }
         ],
@@ -1885,7 +1885,7 @@
             }
           },
           "404": {
-            "description": "No property definition matches `property_key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request.",
+            "description": "No property definition matches `key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1910,7 +1910,7 @@
                       "$ref": "#/components/schemas/PropertyValidationResponse"
                     }
                   ],
-                  "title": "Response 422 Save Property Bulk Api V1 Catalogue Entries Bulk Properties  Property Key  Post"
+                  "title": "Response 422 Save Property Bulk Api V1 Catalogue Entries Bulk Properties  Key  Post"
                 }
               }
             }
@@ -3267,7 +3267,7 @@
           "entries"
         ],
         "title": "BulkSavePropertyValuesRequest",
-        "description": "The body of `POST /catalogue/entries/bulk/properties/{property_key}`\n(issue #265, FR-39). `values` is the one set every named entry ends up\nholding - a whole-set replace, identical to the singular route's own\nsemantics, applied across `entries` rather than one."
+        "description": "The body of `POST /catalogue/entries/bulk/properties/{key}`\n(issue #265, FR-39). `values` is the one set every named entry ends up\nholding - a whole-set replace, identical to the singular route's own\nsemantics, applied across `entries` rather than one."
       },
       "BulkSavePropertyValuesResult": {
         "properties": {
