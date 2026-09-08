@@ -62,7 +62,6 @@ package is the only place that dispatch is allowed to exist
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Final
 
@@ -76,12 +75,15 @@ from nptc.api.routers.catalogue_shared import (
     BindingList,
     BusinessKeyPath,
     CodePath,
+    CursorQuery,
     DesignationList,
+    EntryCursorQuery,
     EntryDetail,
     EntryPage,
-    EntrySummary,
     Facet,
     FacetBucket,
+    FilterRequest,
+    LimitQuery,
     PropertyValue,
     SearchHit,
     SearchPage,
@@ -90,24 +92,16 @@ from nptc.api.routers.catalogue_shared import (
     build_entry_detail,
     designation_from_row,
     entry_summary_fields,
+    filter_parameter,
     property_value_from_row,
+    summary_from_entry,
 )
 from nptc.auth.permissions import Permission
 from nptc.auth.principal import Principal
 from nptc.catalogue import code_systems, history, queries
-from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
-from nptc.catalogue.facets import (
-    FILTER_OP_SEPARATOR,
-    FILTER_PARAM_PREFIX,
-    FILTER_VALUE_CAP,
-    FacetContext,
-    FilterSelection,
-    load_facet_context,
-    parse_filters,
-)
+from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.search import search_entries, search_facets
 from nptc.catalogue.term_hygiene import preferred_term_length
-from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
@@ -193,31 +187,6 @@ PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: 200 is the documented default and 200 is also the ceiling on what one
-#: response should carry; a caller wanting the whole catalogue pages through
-#: it with the cursor rather than asking for it in one request.
-LimitQuery = Annotated[
-    int,
-    Query(ge=1, le=200, description="Maximum entries in this page."),
-]
-
-#: `/catalogue/entries` pages on `business_key`, so its cursor *is* a
-#: business key and is validated as one. Constrained rather than accepted
-#: freely so a mangled cursor is a 422 here exactly as it is on
-#: `/catalogue/search` - an endpoint that silently serves "the page after
-#: whatever this sorts before" gives a client no way to notice it has been
-#: corrupting its own cursor.
-EntryCursorQuery = Annotated[
-    str | None,
-    Query(
-        pattern=BUSINESS_KEY_PATTERN.pattern,
-        description=(
-            "The `next_cursor` from the previous page. Pass it back unmodified, "
-            "and do not construct one."
-        ),
-    ),
-]
-
 #: `/catalogue/entries/{business_key}/history` pages on the audit log's own
 #: `sequence` - a globally monotonic identity column, so a plain digit
 #: string makes a total order with no possible tie. Exclusive: the next
@@ -244,98 +213,9 @@ HistoryCursorQuery = Annotated[
     ),
 ]
 
-#: `/catalogue/search` pages on `<score>:<query digest>:<business_key>`,
-#: which has no single pattern worth expressing here -
-#: `nptc.catalogue.search` parses it and raises `MalformedSearchCursorError`
-#: (also a 422) for anything it did not mint, including a cursor it minted
-#: for a different `q`.
-CursorQuery = Annotated[
-    str | None,
-    Query(
-        description=(
-            "The `next_cursor` from the previous page. Opaque: pass it back "
-            "unmodified, and do not construct one. It is bound to the `q` **and "
-            "the filters** it was issued for - sending it with either changed is "
-            "a 422, not a meaningless page, because a relevance score means "
-            "nothing against a different request."
-        )
-    ),
-]
-
-
-#: The FR-16 filter parameter, declared by hand (issue #139, ADR-0032).
-#:
-#: **Why by hand.** The parameter name is not fixed - it is
-#: `filter.<property_key>` for whatever properties an administrator has
-#: marked `filterable`, which is the whole point of FR-16 - and FastAPI
-#: generates parameters from a typed signature, which by construction can
-#: only name parameters known when this file is written. Reading the query
-#: string directly (`_filter_request` below) is the only way to accept the
-#: shape; declaring it here is what stops `docs/api/openapi.json` from
-#: quietly omitting a parameter the API does in fact accept. FR-20 makes
-#: that document the contract vendors build against, and the `breaking` CI
-#: job polices every later change to it - a parameter absent from the
-#: document is a parameter nobody is protecting.
-#:
-#: FastAPI merges `openapi_extra` into the generated operation with
-#: `deep_dict_update`, which *concatenates* lists - so this is appended to
-#: the parameters FastAPI derived from the signature rather than replacing
-#: them.
-#:
-#: `explode: true` over `style: form` is OpenAPI's own spelling of "repeat
-#: the key once per value", which is exactly the wire shape.
-FILTER_PARAMETER: Final[dict[str, Any]] = {
-    "name": f"{FILTER_PARAM_PREFIX}{{property_key}}",
-    "in": "query",
-    "required": False,
-    "style": "form",
-    "explode": True,
-    "schema": {"type": "array", "items": {"type": "string"}},
-    "description": (
-        "Filter by a facet. The parameter name is the facet's `key` prefixed "
-        f"with `{FILTER_PARAM_PREFIX}` - `?{FILTER_PARAM_PREFIX}discipline=chemistry`. "
-        "Repeat the parameter to select several values of one facet; they are "
-        "OR-ed. Filters on different facets are AND-ed, so adding one always "
-        "narrows the result. The facets available are not fixed: they are "
-        "every property an administrator has marked filterable, plus the "
-        "entry status, and `GET /catalogue/search` returns the current list "
-        "with counts. An operator other than the default `equals` is named "
-        f"after the key, separated by `{FILTER_OP_SEPARATOR}` - "
-        f"`?{FILTER_PARAM_PREFIX}assay_name{FILTER_OP_SEPARATOR}prefix=glu`, or "
-        f"`?{FILTER_PARAM_PREFIX}volume_ml{FILTER_OP_SEPARATOR}range=1..5`. "
-        "Which operators a facet accepts follows from the property's "
-        "datatype; one it does not accept is a 422, never a silently ignored "
-        f"parameter. At most {FILTER_VALUE_CAP} distinct values are accepted "
-        "in one facet's selection (repeated parameter or `:in` list alike); "
-        "more than that is also a 422. NOTE for generated clients: "
-        "`{property_key}` above is a "
-        "placeholder, not a literal parameter name - OpenAPI has no syntax "
-        "for a templated parameter name, so a generated client typically "
-        "renders one field named literally `filter.{property_key}`. Sending "
-        "that literal string is a 422 (`{property_key}` is not a filter this "
-        "endpoint offers); a real filter parameter's name is built by hand, "
-        "substituting an actual facet key (see ADR-0032)."
-    ),
-}
-
 #: Both collection routes accept filters; only `/catalogue/search` returns
 #: facets (ADR-0032).
-_FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [FILTER_PARAMETER]}
-
-
-@dataclass(frozen=True)
-class FilterRequest:
-    """The facets this request has, and the selection made against them.
-
-    Both, from one dependency, because they come from one read of
-    `property_definition` - resolving them separately would enumerate the
-    registry twice per request and could, under a concurrent registry
-    write, validate a filter against one facet list and count buckets
-    against another.
-    """
-
-    context: FacetContext
-    selections: tuple[FilterSelection, ...]
+_FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [filter_parameter("/catalogue/search")]}
 
 
 def _filter_request(
@@ -408,29 +288,12 @@ class HistoryPage(BaseModel):
     next_cursor: str | None
 
 
-# --- assembling the response models from query rows -----------------------
-#
-# `entry_summary_fields` and `property_value_from_row` live in
-# `catalogue_shared.py` now (issue #228) - `catalogue_admin.py`'s detail
-# route needs them too, and duplicating them here would let the two detail
-# routes' shapes drift apart by accident.
-
-
-def _summary(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
-    return EntrySummary(
-        **entry_summary_fields(
-            entry.business_key,
-            entry.preferred_term,
-            entry.length,
-            entry.status,
-            entry.specimen_unconstrained,
-            entry.updated_at,
-            has_open_finding,
-        )
-    )
-
-
 # --- routes ---------------------------------------------------------------
+#
+# `entry_summary_fields`, `property_value_from_row` and `summary_from_entry`
+# live in `catalogue_shared.py` (issues #228, #266) - `catalogue_admin.py`
+# needs them too, and duplicating them here would let the routers' shapes
+# drift apart by accident.
 
 SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
@@ -470,7 +333,9 @@ def list_entries(
         session, (entry.business_key for entry in page.entries)
     )
     return EntryPage(
-        items=[_summary(entry, entry.business_key in open_findings) for entry in page.entries],
+        items=[
+            summary_from_entry(entry, entry.business_key in open_findings) for entry in page.entries
+        ],
         next_cursor=page.next_cursor,
     )
 

@@ -80,33 +80,30 @@ from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue import (
-    FILTER_PARAMETER,
-    CursorQuery,
-    EntryCursorQuery,
-    FilterRequest,
-    LimitQuery,
-)
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
+    CursorQuery,
+    EntryCursorQuery,
     EntryDetail,
     EntryPage,
-    EntrySummary,
     Facet,
     FacetBucket,
+    FilterRequest,
+    LimitQuery,
     SearchHit,
     SearchPage,
     binding_from_row,
     designation_from_row,
     entry_summary_fields,
+    filter_parameter,
     property_value_from_row,
+    summary_from_entry,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.term_hygiene import preferred_term_length
-from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -147,15 +144,28 @@ _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: Issue #266's collection routes' own 422 - broader than `_RESPONSE_422`
-#: above (which names only the business-key path parameter's shape),
-#: matching `catalogue.py`'s own `_RESPONSE_422` for its collection routes.
-_RESPONSE_422_COLLECTION: Final[dict[str, Any]] = {
+#: `GET /catalogue/admin/entries`' own 422 - it takes no `q`, so it cannot
+#: produce a blank-search-query or query-cursor-mismatch refusal the way the
+#: search route can (issue #266 review: a shared response description that
+#: named the wrong cause for a given route is worse than two short ones).
+_RESPONSE_422_LISTING: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "A query parameter was unprocessable - a cursor this API did not issue, a "
+        "`limit` outside its range, or a `filter.*` parameter naming a facet this "
+        "endpoint does not offer, an operator the facet does not support, or a value "
+        "the property cannot hold. A filter is never silently ignored."
+    ),
+}
+
+#: `GET /catalogue/admin/search`'s own 422.
+_RESPONSE_422_SEARCH: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "A query parameter was unprocessable - a blank search query, a cursor this "
-        "API did not issue (including one issued for a different `q` or a different "
-        "filter set), a `limit` outside its range, or a `filter.*` parameter naming a "
+        "API did not issue (including one issued for a different `q`, filter set, or "
+        "status scope - a cursor from `GET /catalogue/search` is refused here, and "
+        "vice versa), a `limit` outside its range, or a `filter.*` parameter naming a "
         "facet this endpoint does not offer, an operator the facet does not support, "
         "or a value the property cannot hold. A filter is never silently ignored."
     ),
@@ -164,19 +174,23 @@ _RESPONSE_422_COLLECTION: Final[dict[str, Any]] = {
 #: The two all-status collection routes (issue #266). No 404, matching
 #: `catalogue.py`'s own `PUBLIC_COLLECTION_ERROR_RESPONSES` - see the module
 #: docstring.
-_RESPONSES_ADMIN_COLLECTION: Final[dict[int | str, dict[str, Any]]] = {
+_RESPONSES_ADMIN_LISTING: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
-    422: _RESPONSE_422_COLLECTION,
+    422: _RESPONSE_422_LISTING,
+}
+_RESPONSES_ADMIN_SEARCH: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    422: _RESPONSE_422_SEARCH,
 }
 
-#: `catalogue.py`'s own `_FILTER_OPENAPI`, rebuilt here rather than
-#: imported: that name carries a leading underscore there, marking it
-#: private to that module (ADR-0032's by-hand `filter.*` parameter has no
-#: other way to reach the generated document - see `FILTER_PARAMETER`'s own
-#: docstring), and the parameter itself (no underscore) is this surface's
-#: real, shared dependency.
-_ADMIN_FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [FILTER_PARAMETER]}
+#: `filter_parameter` (`catalogue_shared.py`) takes the search path so its
+#: description points a caller at *this* surface's own facet-and-counts
+#: route rather than the public one's (issue #266 review).
+_ADMIN_FILTER_OPENAPI: Final[dict[str, Any]] = {
+    "parameters": [filter_parameter("/catalogue/admin/search")]
+}
 
 SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
@@ -207,26 +221,10 @@ def _admin_filter_request(
 AdminFiltersDep = Annotated[FilterRequest, Depends(_admin_filter_request)]
 
 
-def _summary(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
-    """`catalogue.py`'s own `_summary` (private there, so rebuilt here
-    rather than imported - see `_ADMIN_FILTER_OPENAPI`'s own note)."""
-    return EntrySummary(
-        **entry_summary_fields(
-            entry.business_key,
-            entry.preferred_term,
-            entry.length,
-            entry.status,
-            entry.specimen_unconstrained,
-            entry.updated_at,
-            has_open_finding,
-        )
-    )
-
-
 @router.get(
     "/admin/entries",
     summary="One page of catalogue entries, any status (issue #266)",
-    responses=_RESPONSES_ADMIN_COLLECTION,
+    responses=_RESPONSES_ADMIN_LISTING,
     dependencies=[_EDIT],
     openapi_extra=_ADMIN_FILTER_OPENAPI,
 )
@@ -255,7 +253,9 @@ def list_entries_any_status(
         session, (entry.business_key for entry in page.entries)
     )
     return EntryPage(
-        items=[_summary(entry, entry.business_key in open_findings) for entry in page.entries],
+        items=[
+            summary_from_entry(entry, entry.business_key in open_findings) for entry in page.entries
+        ],
         next_cursor=page.next_cursor,
     )
 
@@ -263,7 +263,7 @@ def list_entries_any_status(
 @router.get(
     "/admin/search",
     summary="Search catalogue entries by term, any status (issue #266)",
-    responses=_RESPONSES_ADMIN_COLLECTION,
+    responses=_RESPONSES_ADMIN_SEARCH,
     dependencies=[_EDIT],
     openapi_extra=_ADMIN_FILTER_OPENAPI,
 )

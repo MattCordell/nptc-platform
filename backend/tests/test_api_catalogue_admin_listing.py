@@ -245,6 +245,39 @@ def test_a_search_cursor_replayed_under_a_different_query_is_a_422(
     assert replayed.status_code == 422, replayed.text
 
 
+@pytest.mark.req("FR-15")
+@pytest.mark.integration
+def test_a_search_cursor_does_not_cross_the_public_admin_status_boundary(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """Issue #266 review: `_request_digest` binds a search cursor to the
+    status scope it was scored under, not just to `q` and the filter set.
+    Without that, a `next_cursor` minted by one surface would be accepted
+    verbatim by the other for the same `q` and resume the `(score,
+    business_key)` keyset over a *different* population - an administrator
+    paging from a public cursor would silently skip every hidden entry
+    scoring above it, rather than getting this refusal."""
+    token = _admin_token(api, subject="sub-cursor-cross-surface")
+
+    public_first = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM, "limit": 1})
+    assert public_first.status_code == 200, public_first.text
+    public_cursor = public_first.json()["next_cursor"]
+    assert public_cursor is not None, "expected the public search to have a second page"
+
+    admin_replay = _admin_search(api, token, q=_seed.CANONICAL_TERM, after=public_cursor)
+    assert admin_replay.status_code == 422, admin_replay.text
+
+    admin_first = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=1)
+    assert admin_first.status_code == 200, admin_first.text
+    admin_cursor = admin_first.json()["next_cursor"]
+    assert admin_cursor is not None, "expected the admin search to have a second page"
+
+    public_replay = api.get(
+        "/catalogue/search", params={"q": _seed.CANONICAL_TERM, "after": admin_cursor}
+    )
+    assert public_replay.status_code == 422, public_replay.text
+
+
 # --- the status facet is non-degenerate (unlike the public one) ------------
 
 
@@ -270,6 +303,45 @@ def test_the_status_facet_has_more_than_one_bucket(
     bucket_values = {bucket["value"] for bucket in status_facet["buckets"]}
     assert len(bucket_values) > 1, status_facet
     assert bucket_values <= {status.value for status in CatalogueEntryStatus}
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_status_facet_count_matches_the_filtered_page(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """`search_entries` and `search_facets` (`nptc.catalogue.search`) take
+    `statuses` as two independent parameters with a "must agree" contract
+    the type system does not enforce (issue #266 review) -
+    `_matching_entry_ids`'s own docstring says the shared scored CTE exists
+    so the page and every facet count answer the same question about the
+    same population, and this is that parity check for the admin route,
+    matching `test_api_public_search.py::test_a_facet_bucket_s_count_is_
+    the_number_of_rows_that_bucket_returns`'s own pattern for the public
+    one. A facet count computed against a differently-scoped population
+    looks entirely plausible and is simply wrong."""
+    token = _admin_token(api, subject="sub-status-facet-parity")
+
+    search_response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
+    assert search_response.status_code == 200, search_response.text
+    facets = {facet["key"]: facet for facet in search_response.json()["facets"]}
+    status_facet = facets["status"]
+    assert status_facet["buckets"], "expected at least one status bucket for this query"
+
+    for bucket in status_facet["buckets"]:
+        filtered = _admin_search(
+            api,
+            token,
+            q=_seed.CANONICAL_TERM,
+            limit=200,
+            **{"filter.status": bucket["value"]},
+        )
+        assert filtered.status_code == 200, filtered.text
+        keys = [item["business_key"] for item in filtered.json()["items"]]
+        assert len(keys) == bucket["count"], (
+            f"status facet bucket {bucket['value']!r} claims {bucket['count']} entries "
+            f"and the filtered page returns {len(keys)}"
+        )
 
 
 @pytest.mark.req("FR-16")
@@ -301,6 +373,31 @@ def test_filtering_by_a_hidden_status_is_accepted_and_narrows_the_page(
 @pytest.mark.integration
 def test_no_credential_is_401_not_403(api: ApiTestApp, seeded: SeededCatalogue, call: Any) -> None:
     response = call(api, None, q=_seed.CANONICAL_TERM)
+
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize("call", [_admin_list, _admin_search])
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_no_credential_is_401_even_with_invalid_parameters(
+    api: ApiTestApp, seeded: SeededCatalogue, call: Any
+) -> None:
+    """The permission gate must outrank parameter validation (issue #266
+    review). FastAPI resolves a route's `dependencies=[_EDIT]` as part of
+    the same dependency graph as its own query parameters, and today a
+    sub-dependency that raises does so before parameter validation ever
+    runs - so an anonymous request 401s even carrying a cursor that is not
+    a well-formed cursor at all and a `limit` outside 1-200, rather than
+    422. That ordering is a fact about the dependency graph, not a
+    contract this route's code states anywhere, so a later refactor could
+    flip it silently; a 422 here would also tell an unauthenticated caller
+    something about the surface's own parameter shapes it has no
+    permission to see."""
+    response = call(
+        api, None, q=_seed.CANONICAL_TERM, after="not a well-formed cursor at all", limit=99999
+    )
 
     assert response.status_code == 401, response.text
     assert response.headers["WWW-Authenticate"] == "Bearer"

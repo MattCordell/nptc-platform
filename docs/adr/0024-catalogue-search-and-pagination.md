@@ -256,3 +256,12 @@ surface's job (#141), where it is the subject rather than a footnote.
   the `COUNT(*)` this ADR's keyset discipline does without is still absent from every
   page query; facet counts are the one bounded, asked-for exception, argued in ADR-0032
   and recorded in `nptc.catalogue.queries`' own docstring.
+- 2026-09-08: issue #266 adds a second caller of `nptc.catalogue.search.search_entries` -
+  the maintenance search, scored over `MAINTENANCE_STATUSES` rather than
+  `PUBLIC_STATUSES` - and the relevance cursor's digest now covers that status scope too,
+  for the identical reason the previous amendment gives for the filter set: a score is
+  meaningful only against the population it was computed over, and `PUBLIC_STATUSES` vs
+  `MAINTENANCE_STATUSES` is as much a fact about that population as the filter set is. A
+  cursor minted by one surface is refused by the other rather than silently resuming the
+  keyset over the wrong population - `backend/tests/test_api_catalogue_admin_listing.py`
+  replays one across the boundary, both directions.
