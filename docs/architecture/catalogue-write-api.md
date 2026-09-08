@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #227, #248, #249, #265)
+# The catalogue admin API: entry read, all-status listing/search, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #227, #248, #249, #265)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -58,6 +58,56 @@ on `EntryDetail` rather than `EntrySummary`.
 | 404 | No catalogue entry, of any status, has this `business_key`. Deliberately the same generic body the public route's 404 carries (they share the same `EntryNotFoundError` handler) - this route exists so an authenticated caller can see a `draft`, not so it can distinguish "never minted" from "exists but hidden". |
 | 422 | The business key is not `NPTC-nnnnnn`. |
 | 500 | A published code binding's stored FSN is not in the form the terminology server serves (FR-83), same as the public detail route's own 500. |
+
+## All-status listing and search (issue #266)
+
+| Path | Method | Returns |
+|---|---|---|
+| `/catalogue/admin/entries` | `GET` | `200 EntryPage` |
+| `/catalogue/admin/search` | `GET` | `200 SearchPage` |
+
+The collection counterpart to "Entry read, any status" above, and split out of the same
+gap: an edit screen needs a route to *find* a draft, deprecated or withdrawn entry before
+it can load and save one. [public-api.md](public-api.md#what-is-published-and-what-is-not)'s
+`GET /catalogue/entries` and `GET /catalogue/search` only ever serve `PUBLIC_STATUSES`
+(`active`), so these two routes are the maintenance-scoped counterparts, on the same
+`catalogue-admin`-tagged router and the same permission.
+
+Parameters, paging, ranking and the `filter.*` query surface are otherwise identical to
+their public counterparts - see [public-api.md](public-api.md#pagination) and
+[search.md](search.md#maintenance-search-issue-266) - with two differences:
+
+- **Every `CatalogueEntryStatus` is in scope**, not `active` alone.
+  `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` is derived from the enum rather than
+  hand-listed, so a fifth status is covered the day it is added.
+  `nptc.catalogue.queries`'s own rule that `PUBLIC_STATUSES` is the *only* status filter
+  that module applies is why the listing query lives in a new `maintenance.py` instead of
+  a `statuses=` parameter bolted onto `queries.list_entries`.
+- **`status` is meaningful to filter on.** `?filter.status=draft` is a 422 on the public
+  search (a status it can never show is refused, not silently emptied); here it is a real,
+  narrowing filter, and the search response's own `status` facet has a bucket per status
+  actually present rather than the public route's single `active` bucket.
+
+`status` is present on every row of both responses (`EntryPage.items[].status`,
+`SearchPage.items[].status`) - already true of `EntrySummary` generally
+([public-api.md](public-api.md)), stated here because it is this issue's own acceptance
+criterion: a caller has to be able to tell a draft from an active entry without a second
+call.
+
+Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission as the entry-read
+route above and the write routes below - no new permission was minted, for the identical
+reason "Entry read, any status" gives for its own gate.
+
+### Errors (all-status listing and search)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
+| 422 | A blank search query, a cursor this API did not issue (including one issued for a different `q` or filter set), a `limit` outside 1-200, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value it cannot hold. |
+
+No 404: neither route can produce one - an unmatched query or filter is an empty page,
+not a missing resource, matching the public collection routes' own contract.
 
 ## Code bindings
 
@@ -690,4 +740,10 @@ properties/{key}` is added the same way, with its own negative-auth coverage
 in `test_api_catalogue_properties.py` alongside the singular route's - no path
 collision with `PUT .../entries/{business_key}/properties/{key}`, since `bulk` is a
 literal path segment (not a `{business_key}` match) and the two routes use different
-HTTP methods regardless.
+HTTP methods regardless. Issue #266's `GET /catalogue/admin/entries` and
+`GET /catalogue/admin/search` are GETs, like #228's entry-read route before them, so
+`mutating_routes` never sees them and neither needs a `COVERED_WRITE_ROUTES` entry - their
+own negative-auth coverage is `test_api_catalogue_admin_listing.py`, and
+`test_api_catalogue_admin_read.py::test_every_catalogue_admin_get_route_401s_anonymously`
+picks both up automatically (it discovers every `catalogue-admin`-tagged GET from the
+OpenAPI document rather than naming routes by hand).

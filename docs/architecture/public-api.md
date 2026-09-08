@@ -80,10 +80,13 @@ never minted, deliberately: a distinguishable response would confirm the key exi
 which for a `draft` entry discloses unpublished editorial work. `backend/tests/
 test_api_public_status_filter.py` asserts this across every endpoint and every hidden
 status. This contract is for an anonymous or under-permissioned caller only - an
-authenticated Administrator loading an entry to edit it uses a separate, permission-gated
-route (`GET /catalogue/admin/entries/{business_key}`, issue #228,
-[catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228)), never
-this one.
+authenticated Administrator loading an entry to edit it, or finding one to edit in the
+first place, uses a separate, permission-gated surface instead, never this one:
+`GET /catalogue/admin/entries/{business_key}` (issue #228),
+`GET /catalogue/admin/entries` and `GET /catalogue/admin/search` (issue #266, every
+`CatalogueEntryStatus` rather than `PUBLIC_STATUSES` alone) - see
+[catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228) and
+[catalogue-write-api.md](catalogue-write-api.md#all-status-listing-and-search-issue-266).
 
 **Retired code bindings *are* published** (FR-08). An implementer holding a code that
 has since been inactivated needs to learn that here, with `retirement_reason` and -
