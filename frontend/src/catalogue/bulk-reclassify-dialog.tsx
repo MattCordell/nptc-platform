@@ -105,8 +105,13 @@ export function BulkReclassifyDialog({
 
   const overCap = entries.length > BULK_RECLASSIFY_MAX_ENTRIES;
   const submittedIndexes = nonEmptySlotIndexes(slots);
+  // `selectedDefinition?.key`, not the raw `propertyKey` state - both name
+  // the same property once a valid one is selected, but this reads it back
+  // off the server-sourced `activeDefinitions` array rather than off the
+  // `<select>`'s own DOM value, the same reasoning the `onChange` handler
+  // below re-validates against that array before storing anything.
   const validationErrors: FormError[] = propertyValidationFieldErrors(
-    propertyKey,
+    selectedDefinition?.key ?? "",
     save.error,
     submittedIndexes,
   );
@@ -180,7 +185,16 @@ export function BulkReclassifyDialog({
             label: definition.label,
           }))}
           onChange={(event) => {
-            setPropertyKey(event.target.value);
+            // Re-validated against the registry's own definitions, rather
+            // than stored as the raw `<select>` value: every downstream use
+            // of this key (the mutation path segment, the error-summary
+            // field ids `RepeatableValues` derives from it) should trace
+            // back to server-sourced data, not to an unvalidated DOM read.
+            const next =
+              activeDefinitions.find(
+                (definition) => definition.key === event.target.value,
+              )?.key ?? "";
+            setPropertyKey(next);
             setSlots([]);
             changelogNote.reset();
             if (save.isError) {
