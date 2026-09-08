@@ -384,6 +384,69 @@ describe("the entry it loads", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("does not permanently block a later, genuine step-up challenge for the same read", async () => {
+    // PR #284 review: the retry-once guard must protect only the immediate
+    // retry cycle, not this query's entire lifetime - a session that steps
+    // up once and later needs to again (a second, unrelated MFA
+    // requirement; the realm's loa-max-age elapsing) must still be offered
+    // step-up, not silently swallowed by a guard entry nothing ever cleared.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const CHALLENGE = {
+      status: 403,
+      body: { detail: "This action requires multi-factor authentication." },
+      headers: {
+        "WWW-Authenticate":
+          'Bearer error="insufficient_user_authentication", acr_values="2"',
+      },
+    };
+    const CONFLICT = {
+      method: "POST",
+      path: AMEND_PATH,
+      status: 409,
+      body: {
+        detail: "This entry was changed by someone else since you loaded it.",
+        business_key: BUSINESS_KEY,
+        expected_row_version: 3,
+        current_row_version: 4,
+        conflicts: [],
+        changed_by: "A Curator",
+        changed_at: "2026-09-02T01:00:00Z",
+      },
+    };
+    // First cycle: the load itself 403s (twice, under StrictMode) and the
+    // step-up's own retry succeeds. Second cycle: the amend's version
+    // conflict forces a refetch of the same read, which 403s again - a
+    // fresh challenge for the same `queryHash`, well after the first
+    // cycle's guard entry should have been cleared.
+    let amended = false;
+    stubApi([READ_OK, CONFLICT], {
+      vary: (call, priorSameCalls) => {
+        if (call.method === "POST") {
+          amended = true;
+          return null;
+        }
+        if (!call.path.endsWith(READ_OK.path)) {
+          return null;
+        }
+        if (amended) {
+          return { ...READ_OK, ...CHALLENGE };
+        }
+        return priorSameCalls < 2 ? { ...READ_OK, ...CHALLENGE } : null;
+      },
+    });
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+    expect(stepUp).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledTimes(2));
+  });
+
   it("does not trigger step-up for a plain 403 with no challenge header", async () => {
     // FR-44's own negative-case rule, applied to step-up: an ordinary
     // missing-permission refusal must not be sent through the step-up loop

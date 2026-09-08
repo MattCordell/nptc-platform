@@ -138,14 +138,19 @@ which screen made the call.
 
 1. Tries a silent `prompt=none` + the challenge's own `acr_values` first
    (`AuthContextValue.stepUp`, reusing `silent-renew.ts`'s hidden iframe).
-2. On success, a refused **query** is refetched in place — no navigation. A refused
-   **mutation** is never replayed automatically (ADR-0036 records why); the user
-   resubmits.
+2. On success, a refused **query** is refetched in place — no navigation — and
+   `useSession`'s own query is invalidated so `StepUpBanner` stops offering to verify
+   the moment it no longer needs to. A refused **mutation** is never replayed
+   automatically (ADR-0036 records why); the user resubmits.
 3. On failure (Keycloak needs interaction), shows a dialog explaining what is about to
    happen, then falls back to `signIn({ acrValues, redirect })` — an ordinary interactive
    redirect, using `signIn`'s existing transaction machinery to carry the return path.
-4. A `Set<queryHash>` inside the controller stops a query that 403s again after a
-   completed step-up from looping — it surfaces as an ordinary error instead.
+   `StepUpBanner`'s own "Verify now" goes through this same silent-first/dialog path
+   (`requestStepUp`), not a direct `signIn`.
+4. A `Set<queryHash>` inside the controller blocks a second challenge for the same query
+   only while this cycle's own step-up attempt and retry are still in flight — the hash
+   is removed once that cycle settles, so a *later*, genuinely new challenge for the same
+   query is still offered step-up rather than silently swallowed forever.
 
 `useSession()` (`GET /api/v1/auth/me`) and `StepUpBanner` (shown on every `/admin/*`
 screen via `AdminLayout`) let an administrator complete this step before walking into a

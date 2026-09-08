@@ -238,9 +238,15 @@ export function AuthProvider({
           issuedState = new URL(url).searchParams.get("state");
           const search = await silentAuthorize(url, config.redirectUri);
           const { tokens: next } = await completeSignIn(config, search);
-          if (mounted.current) {
-            store(next);
+          // A provider that unmounted while this attempt was in flight has
+          // no state left to store into (issue #243's precedent) - and
+          // `"done"` would be a lie a caller could act on (e.g. retrying a
+          // query expecting the new session to already be in place), so
+          // this reports the honest outcome instead: nothing changed.
+          if (!mounted.current) {
+            return "interaction-required";
           }
+          store(next);
           return "done";
         } catch {
           // `completeSignIn` already consumed the transaction on its own

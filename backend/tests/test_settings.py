@@ -133,6 +133,47 @@ def test_auth_settings_reads_a_comma_separated_list_of_trusted_issuers_from_env(
     assert AuthSettings().trusted_issuers == frozenset({"https://a.example", "https://b.example"})
 
 
+@pytest.mark.req("NFR-06")
+def test_auth_settings_rejects_an_empty_mfa_acr_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #284 review: an empty set makes `principal_for`'s `mfa_satisfied`
+    permanently `False` for every user - `claims.acr in mfa_acr_values` can
+    never be true against an empty set - while the SPA's own
+    `parseStepUpChallenge` refuses an `acr_values=""` challenge as
+    unrecognisable. Together that locks every administrator out with no
+    path to step up, so this is refused at settings-construction time
+    rather than discovered as a live incident."""
+    monkeypatch.setenv("NPTC_MFA_ACR_VALUES", "")
+
+    with pytest.raises(ValidationError, match="must not be empty"):
+        AuthSettings()
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.parametrize(
+    "value",
+    [
+        '2"',
+        # Not a trailing `\r`/`\n` - `_split_mfa_acr_values` already `.strip()`s
+        # that away. An *interior* one is the real injection vector a header
+        # value must never carry (a trailing one is caught fully upstream).
+        "2\rX-Injected: 1",
+        "2\nX-Injected: 1",
+    ],
+)
+def test_auth_settings_rejects_an_mfa_acr_value_with_a_quote_or_line_break(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """`nptc.api.errors._step_up_challenge` interpolates each value directly
+    into the `WWW-Authenticate` response header - a quote lets a value
+    escape the header's own quoted `acr_values="..."` parameter, and a CR/LF
+    is header injection. Refused here, at configuration time, rather than
+    by whatever HTTP layer first chokes on a malformed header."""
+    monkeypatch.setenv("NPTC_MFA_ACR_VALUES", value)
+
+    with pytest.raises(ValidationError, match="quote or line break"):
+        AuthSettings()
+
+
 @pytest.mark.req("NFR-01")
 @pytest.mark.parametrize(
     "value",

@@ -65,7 +65,12 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     }
     return new Response(JSON.stringify(route.body), {
       status: route.status,
-      headers: { "Content-Type": "application/json", ...route.headers },
+      // `route.headers` spread first, `Content-Type` set after: the
+      // docstring on `Route.headers` promises it cannot be overridden, and
+      // an object spread only keeps that promise in this order (PR #284
+      // review - the reverse order let a route's own `Content-Type` win,
+      // contradicting the doc with nothing to catch it).
+      headers: { ...route.headers, "Content-Type": "application/json" },
     });
   });
   vi.stubGlobal("fetch", fetchMock);

@@ -136,6 +136,37 @@ class AuthSettings(BaseSettings):
             return frozenset(item.strip() for item in value.split(",") if item.strip())
         return value
 
+    @field_validator("mfa_acr_values", mode="after")
+    @classmethod
+    def _mfa_acr_values_are_usable(cls, value: frozenset[str]) -> frozenset[str]:
+        """Issue #184 review: `nptc.api.errors._step_up_challenge` now builds
+        the RFC 9470 challenge header from this set instead of a literal
+        `"2"`, which turns a bad value here into a live production failure
+        rather than a typo nobody could reach. An empty set makes
+        `principal_for`'s `mfa_satisfied` permanently `False` for every
+        user (`claims.acr in mfa_acr_values` can never be true against an
+        empty set) while `parseStepUpChallenge` on the SPA refuses an
+        `acr_values=""` challenge as unrecognisable - locking every
+        administrator out with literally no path to step up. A value
+        containing a quote or line break would be interpolated straight
+        into the header value, which is refused here rather than by
+        whatever HTTP layer first chokes on a malformed header.
+        """
+        if not value:
+            raise ValueError(
+                "mfa_acr_values must not be empty - an empty set makes MFA "
+                "permanently unsatisfiable and leaves the SPA nothing to step up "
+                "to, locking every administrator out with no way back"
+            )
+        for item in value:
+            if '"' in item or "\r" in item or "\n" in item:
+                raise ValueError(
+                    f"mfa_acr_values item {item!r} contains a quote or line break, "
+                    "which would be interpolated directly into the WWW-Authenticate "
+                    "response header"
+                )
+        return value
+
 
 class ApiSettings(BaseSettings):
     """HTTP-layer configuration for the FastAPI app (issue #41).

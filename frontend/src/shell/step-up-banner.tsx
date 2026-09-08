@@ -1,7 +1,5 @@
-import { useLocation } from "@tanstack/react-router";
-
 import { useSession } from "../api/queries.ts";
-import { useAuth } from "../auth/session.ts";
+import { requestStepUp } from "../auth/step-up.tsx";
 
 /**
  * The one literal `acr_values` on the frontend (issue #184, NFR-06) -
@@ -35,15 +33,18 @@ const PRE_EMPTIVE_STEP_UP_ACR_VALUES = "2";
  * already MFA-satisfied, or the session query still in flight - so a
  * loading flash never appears for the common case of a user who is already
  * stepped up.
+ *
+ * "Verify now" goes through `requestStepUp` (PR #284 review), not a direct
+ * `signIn` redirect: that gives the pre-emptive path the same silent-first
+ * treatment as the reactive one - a click that the SSO session can satisfy
+ * without interaction closes the banner with no navigation at all, and
+ * only a click that genuinely needs Keycloak's help shows the same
+ * "you're about to be sent to sign in again" dialog `StepUpController`
+ * already shows for a reactive challenge, rather than redirecting
+ * unannounced.
  */
 export function StepUpBanner() {
-  const { signIn } = useAuth();
   const { data } = useSession();
-  // The router's own current location, not `window.location`: the app's
-  // memory-history test harness (`render-route.tsx`) never touches the
-  // real `window.location`, and `RequireAuth` already reads a redirect
-  // target the same way (`useLocation().href`).
-  const location = useLocation();
 
   if (!data || !data.authenticated || data.mfa_satisfied) {
     return null;
@@ -62,10 +63,7 @@ export function StepUpBanner() {
         type="button"
         className="cursor-pointer rounded-md border border-[var(--color-border)] bg-transparent px-3 py-1 font-medium underline"
         onClick={() => {
-          void signIn({
-            acrValues: PRE_EMPTIVE_STEP_UP_ACR_VALUES,
-            redirect: location.href,
-          });
+          requestStepUp(PRE_EMPTIVE_STEP_UP_ACR_VALUES);
         }}
       >
         Verify now

@@ -74,13 +74,60 @@ describe("StepUpBanner", () => {
     expect(screen.queryByRole("button", { name: "Verify now" })).not.toBeInTheDocument();
   });
 
-  it("verifying carries the current path and the realm's LoA into the redirect", async () => {
+  it("tries silently first, closing the banner with no dialog on success", async () => {
+    // PR #284 review: "Verify now" used to redirect unconditionally. It now
+    // goes through the same controller as a reactive challenge, so a step-up
+    // the SSO session can satisfy silently never shows the dialog at all -
+    // the banner just disappears once the (now-satisfied) session refetches.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    stubApi([sessionRoute()]);
+
+    await renderRoute("/admin", { auth: { ...SIGNED_IN.auth, stepUp } });
+    await user.click(await screen.findByRole("button", { name: "Verify now" }));
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledWith("2"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("stops offering to verify once a silent step-up actually invalidates the session", async () => {
+    // PR #284 review: nothing used to invalidate useSession's own query key
+    // after a successful step-up, so the banner kept saying "you have not
+    // completed yet" for the rest of the tab's life even once the session
+    // genuinely had. `StepUpController` now invalidates it directly.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    stubApi([], {
+      vary: (call, priorSameCalls) => {
+        if (call.method !== "GET" || !call.path.endsWith(SESSION_PATH)) {
+          return null;
+        }
+        // StrictMode double-mounts, so the load itself is two reads (same
+        // precedent as `admin-catalogue-edit.test.tsx`) - only the refetch
+        // `StepUpController`'s invalidation triggers is the satisfied one.
+        return priorSameCalls < 2
+          ? sessionRoute()
+          : sessionRoute({ mfa_satisfied: true });
+      },
+    });
+
+    await renderRoute("/admin", { auth: { ...SIGNED_IN.auth, stepUp } });
+    await user.click(await screen.findByRole("button", { name: "Verify now" }));
+
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("falls back to the same interactive dialog, carrying the current path and the realm's LoA", async () => {
     const user = userEvent.setup();
     const signIn = vi.fn().mockResolvedValue(undefined);
     stubApi([sessionRoute()]);
 
+    // The default test `stepUp` resolves "interaction-required"
+    // (`render-route.tsx`), so this exercises the fallback dialog rather
+    // than the silent path above.
     await renderRoute("/admin", { auth: { ...SIGNED_IN.auth, signIn } });
     await user.click(await screen.findByRole("button", { name: "Verify now" }));
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
 
     expect(signIn).toHaveBeenCalledWith({ acrValues: "2", redirect: "/admin" });
   });

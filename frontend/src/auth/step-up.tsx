@@ -1,4 +1,5 @@
 import { useLocation } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -40,6 +41,26 @@ export const stepUpChallengeHandler: StepUpChallengeHandler = (challenge, contex
 };
 
 /**
+ * `StepUpBanner`'s own entry point into the same controller (PR #284
+ * review) - a `"mutation"`-shaped context, since there is no query to
+ * retry, gets the identical silent-first/dialog/interactive-fallback
+ * treatment a reactive challenge would, rather than the banner redirecting
+ * unconditionally and unannounced the way it used to. A silent step-up
+ * that succeeds now closes the banner with no navigation at all.
+ */
+export function requestStepUp(acrValues: string): void {
+  activeHandler?.({ acrValues }, { kind: "mutation" });
+}
+
+/** `useSession`'s own query key (`queries.ts`) - re-invalidated after every
+ * successful step-up so `StepUpBanner` cannot keep telling a now-satisfied
+ * user they still need to verify (PR #284 review: nothing invalidated this
+ * before, so the banner stayed wrong for the rest of the tab's life after a
+ * silent step-up). Duplicated here rather than imported, to avoid a cycle
+ * (`queries.ts` -> `use-api-client.ts` -> `session.ts` <- this module). */
+const SESSION_QUERY_KEY = ["api", "/api/v1/auth/me"];
+
+/**
  * Reacts to an RFC 9470 step-up challenge surfaced by `createQueryClient`
  * (issue #184, NFR-06): tries a silent re-authentication first, and only
  * asks the user to do anything if that cannot be satisfied without
@@ -48,21 +69,25 @@ export const stepUpChallengeHandler: StepUpChallengeHandler = (challenge, contex
  * "detection lives at one seam" decision this issue's plan settled on.
  *
  * A **query** challenge is retried once the step-up succeeds, in place - no
- * navigation, no lost page state. A **mutation** challenge is never
- * replayed even on a successful silent step-up (see
- * `docs/adr/0036-spa-step-up-loop.md`): the user resubmits, and by then MFA
- * is satisfied.
+ * navigation, no lost page state. A **mutation** challenge (including
+ * `requestStepUp`'s pre-emptive one) is never replayed even on a
+ * successful silent step-up (see `docs/adr/0036-spa-step-up-loop.md`): the
+ * user resubmits, and by then MFA is satisfied.
  *
- * Retry-once: `attemptedQueryHashes` remembers every `queryHash` a step-up
- * has already been tried for, so a query that 403s again after a completed
- * step-up (a second, unrelated MFA requirement, or a step-up that silently
- * "succeeded" but still did not satisfy the server) surfaces as an ordinary
- * error instead of looping. Not a retry counter on the query itself -
- * `createQueryClient`'s `retry: false` default is unaffected.
+ * Retry-once, scoped to one challenge/retry cycle, not forever (PR #284
+ * review): `attemptedQueryHashes` blocks a *second* challenge for the same
+ * query while this cycle's own step-up attempt and retry are still in
+ * flight, so the retried read's own failure cannot re-trigger a second
+ * concurrent attempt - but the hash is removed once the cycle settles
+ * (`finally`, below), so a genuinely later challenge (a second, unrelated
+ * MFA requirement; the realm's `loa-max-age` elapsing) is not silently
+ * swallowed. Not a retry counter on the query itself - `createQueryClient`'s
+ * `retry: false` default is unaffected.
  */
 export function StepUpController() {
   const { stepUp, signIn } = useAuth();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const attemptedQueryHashes = useRef(new Set<string>());
   const mounted = useRef(true);
   useEffect(() => {
@@ -99,30 +124,48 @@ export function StepUpController() {
       }
 
       void (async () => {
-        const outcome = await stepUp(challenge.acrValues);
-        if (!mounted.current) {
-          return;
-        }
-        if (outcome === "done") {
-          if (context.kind === "query") {
-            context.retry();
+        try {
+          const outcome = await stepUp(challenge.acrValues);
+          if (!mounted.current) {
+            return;
           }
-          return;
+          if (outcome === "done") {
+            // Not scoped to `context.kind === "query"`: a session that just
+            // stepped up should stop `StepUpBanner` claiming otherwise
+            // regardless of what triggered this attempt.
+            void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
+            if (context.kind === "query") {
+              await context.retry();
+            }
+            return;
+          }
+          // Interactive fallback needs the user told first (issue #184's own
+          // acceptance criteria: an unannounced jump to an OTP prompt
+          // mid-action is disorienting) - so this opens a dialog rather than
+          // navigating immediately.
+          setPendingInteractive({ challenge, redirect: currentHref.current });
+        } finally {
+          if (context.kind === "query") {
+            attemptedQueryHashes.current.delete(context.queryHash);
+          }
         }
-        // Interactive fallback needs the user told first (issue #184's own
-        // acceptance criteria: an unannounced jump to an OTP prompt
-        // mid-action is disorienting) - so this opens a dialog rather than
-        // navigating immediately.
-        setPendingInteractive({ challenge, redirect: currentHref.current });
       })();
     },
-    [stepUp],
+    [stepUp, queryClient],
   );
 
   useEffect(() => {
     activeHandler = handleChallenge;
     return () => {
-      activeHandler = null;
+      // Guarded, not unconditional: an outgoing cleanup must only clear the
+      // slot if it still owns it. An unconditional `activeHandler = null`
+      // would let a mount that overlaps an unmount (a `RootLayout` remount,
+      // a future second controller) have its registration wiped out by the
+      // *outgoing* instance's cleanup, going silently dead with no error
+      // and no failing test (PR #284 review).
+      if (activeHandler === handleChallenge) {
+        activeHandler = null;
+      }
     };
   }, [handleChallenge]);
 

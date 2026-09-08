@@ -11,9 +11,16 @@ import { asStepUpChallenge, type StepUpChallenge } from "./step-up.ts";
  * place once the step-up succeeds); a mutation carries neither - see
  * `docs/adr/0036-spa-step-up-loop.md` for why a refused *write* is never
  * replayed automatically.
+ *
+ * `retry` resolves once the refetch settles - not fire-and-forget - so
+ * `StepUpController` can await it before releasing its own retry-once guard
+ * for this `queryHash` (PR #284 review): without that, a retried read that
+ * 403s again would race the guard's removal against the query cache's own
+ * `onError` for that same retry.
  */
 export type StepUpChallengeContext =
-  { kind: "query"; queryHash: string; retry: () => void } | { kind: "mutation" };
+  | { kind: "query"; queryHash: string; retry: () => Promise<unknown> }
+  | { kind: "mutation" };
 
 export type StepUpChallengeHandler = (
   challenge: StepUpChallenge,
@@ -58,9 +65,8 @@ export function createQueryClient(
         notify(error, {
           kind: "query",
           queryHash: query.queryHash,
-          retry: () => {
-            void queryClient.refetchQueries({ queryKey: query.queryKey, exact: true });
-          },
+          retry: () =>
+            queryClient.refetchQueries({ queryKey: query.queryKey, exact: true }),
         });
       },
     }),
