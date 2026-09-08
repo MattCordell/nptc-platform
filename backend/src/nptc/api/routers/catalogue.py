@@ -78,8 +78,13 @@ from nptc.api.routers.catalogue_shared import (
     CodePath,
     DesignationList,
     EntryDetail,
+    EntryPage,
     EntrySummary,
+    Facet,
+    FacetBucket,
     PropertyValue,
+    SearchHit,
+    SearchPage,
     SystemTokenPath,
     binding_from_row,
     build_entry_detail,
@@ -92,7 +97,6 @@ from nptc.auth.principal import Principal
 from nptc.catalogue import code_systems, history, queries
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
-    FACET_BUCKET_CAP,
     FILTER_OP_SEPARATOR,
     FILTER_PARAM_PREFIX,
     FILTER_VALUE_CAP,
@@ -363,17 +367,6 @@ def _filter_request(
 FiltersDep = Annotated[FilterRequest, Depends(_filter_request)]
 
 
-class EntryPage(BaseModel):
-    """`next_cursor` is `null` on the last page - which is the *only*
-    reliable signal that paging is finished. A client must not infer the end
-    from a short page: a page can be short and still have a successor."""
-
-    model_config = ConfigDict(frozen=True)
-
-    items: list[EntrySummary]
-    next_cursor: str | None
-
-
 class PropertyList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -413,97 +406,6 @@ class HistoryPage(BaseModel):
 
     items: list[HistoryEvent]
     next_cursor: str | None
-
-
-class SearchHit(EntrySummary):
-    """A summary plus its relevance score.
-
-    The score is exposed because it is what the ordering is, and a client
-    that cannot see it cannot tell a confident single match from a page of
-    weak ones. It is comparable *within* one response only - it is a
-    trigram similarity against this particular query, not a quality rating
-    of the entry.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    score: float = Field(description="Trigram similarity against `q`, between 0 and 1.")
-
-
-class FacetBucket(BaseModel):
-    """One value of one facet, with how many entries in the current result
-    set carry it."""
-
-    model_config = ConfigDict(frozen=True)
-
-    value: str = Field(
-        description=(
-            "Send this back as the filter value to select this bucket - "
-            "`?filter.<key>=<value>`. It is the stored value, not the label."
-        )
-    )
-    label: str = Field(
-        description=(
-            "How to show this bucket. For a coded property it is the display "
-            "term stored alongside the code when the value was recorded, never "
-            "a live terminology lookup, so it is stable and offline. Falls back "
-            "to `value` where the stored value carries no label of its own."
-        )
-    )
-    count: int = Field(
-        description=(
-            "Entries in the current result set carrying this value. An entry "
-            "with several values of one property counts once under each of "
-            "them, never several times under one."
-        )
-    )
-
-
-class Facet(BaseModel):
-    """One facet, derived from the property registry at request time.
-
-    Never a fixed list: a property an administrator marks filterable appears
-    here on the next request, with no deployment and no restart (FR-09,
-    FR-16). A client must therefore render whatever it is given rather than
-    hard-coding the facets it knows about.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str = Field(description="The property key, and the suffix of its `filter.` parameter.")
-    label: str = Field(description="The property's own label, as an administrator set it.")
-    facetable: bool = Field(
-        description=(
-            "`false` for a property that can be filtered on but not grouped - a "
-            "continuous numeric one, where every value would be its own bucket. "
-            "Such a facet is reported with no buckets rather than omitted, so a "
-            "client can tell it apart from a facet whose values happen to match "
-            "nothing."
-        )
-    )
-    truncated: bool = Field(
-        description=(
-            f"`true` when this facet has more than {FACET_BUCKET_CAP} distinct "
-            "values and only the most common were returned. There is no way to "
-            "page through the remainder; narrow the search instead."
-        )
-    )
-    buckets: list[FacetBucket]
-
-
-class SearchPage(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: list[SearchHit]
-    next_cursor: str | None
-    facets: list[Facet] = Field(
-        description=(
-            "Every facet available for this search, with counts over the whole "
-            "result set rather than this page. A facet's own selection is "
-            "excluded from its own counts, so a bucket you have not chosen "
-            "still tells you how many entries it would give you."
-        )
-    )
 
 
 # --- assembling the response models from query rows -----------------------

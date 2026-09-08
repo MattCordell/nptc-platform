@@ -18,6 +18,15 @@ moved here from `catalogue.py` when `catalogue_admin.py` was added (issue
 `catalogue.py`'s own detail route does, and reaching into another router's
 private helpers is exactly what this module exists to avoid.
 
+`EntryPage`/`SearchHit`/`SearchPage`/`Facet`/`FacetBucket` moved here for
+the identical reason when `catalogue_admin.py` grew its own all-status
+listing and search (issue #266): `GET /catalogue/admin/entries` and
+`GET /catalogue/admin/search` serve the same page/hit/facet shapes their
+public counterparts do, just over a different status scope, so one set of
+models rather than two that could drift. Model *class names* are unchanged
+by the move, so the generated `docs/api/openapi.json` component names are
+unaffected - only their import path changed.
+
 **`binding_from_row`/`designation_from_row`/`entry_summary_fields`/
 `property_value_from_row` carry no leading underscore, unlike every other
 free function in this module.** They are this module's actual
@@ -42,7 +51,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_api_settings
@@ -56,6 +65,7 @@ from nptc.api.labels import (
 from nptc.catalogue import queries
 from nptc.catalogue.code_systems import SYSTEM_TOKEN_PATTERN
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
+from nptc.catalogue.facets import FACET_BUCKET_CAP
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 
@@ -67,8 +77,13 @@ __all__ = [
     "Designation",
     "DesignationList",
     "EntryDetail",
+    "EntryPage",
     "EntrySummary",
+    "Facet",
+    "FacetBucket",
     "PropertyValue",
+    "SearchHit",
+    "SearchPage",
     "SystemTokenPath",
     "binding_from_row",
     "build_entry_detail",
@@ -232,6 +247,120 @@ class EntrySummary(BaseModel):
 _ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
     "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
 }
+
+
+class EntryPage(BaseModel):
+    """One page of `EntrySummary` rows, keyset-paginated on `business_key`.
+
+    Served by both `catalogue.py`'s public `GET /catalogue/entries`
+    (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+    `GET /catalogue/admin/entries` (any status, issue #266) - one shape, the
+    same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
+    is `null` on the last page - which is the *only* reliable signal that
+    paging is finished. A client must not infer the end from a short page: a
+    page can be short and still have a successor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[EntrySummary]
+    next_cursor: str | None
+
+
+class SearchHit(EntrySummary):
+    """A summary plus its relevance score.
+
+    The score is exposed because it is what the ordering is, and a client
+    that cannot see it cannot tell a confident single match from a page of
+    weak ones. It is comparable *within* one response only - it is a
+    trigram similarity against this particular query, not a quality rating
+    of the entry.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    score: float = Field(description="Trigram similarity against `q`, between 0 and 1.")
+
+
+class FacetBucket(BaseModel):
+    """One value of one facet, with how many entries in the current result
+    set carry it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str = Field(
+        description=(
+            "Send this back as the filter value to select this bucket - "
+            "`?filter.<key>=<value>`. It is the stored value, not the label."
+        )
+    )
+    label: str = Field(
+        description=(
+            "How to show this bucket. For a coded property it is the display "
+            "term stored alongside the code when the value was recorded, never "
+            "a live terminology lookup, so it is stable and offline. Falls back "
+            "to `value` where the stored value carries no label of its own."
+        )
+    )
+    count: int = Field(
+        description=(
+            "Entries in the current result set carrying this value. An entry "
+            "with several values of one property counts once under each of "
+            "them, never several times under one."
+        )
+    )
+
+
+class Facet(BaseModel):
+    """One facet, derived from the property registry at request time.
+
+    Never a fixed list: a property an administrator marks filterable appears
+    here on the next request, with no deployment and no restart (FR-09,
+    FR-16). A client must therefore render whatever it is given rather than
+    hard-coding the facets it knows about.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str = Field(description="The property key, and the suffix of its `filter.` parameter.")
+    label: str = Field(description="The property's own label, as an administrator set it.")
+    facetable: bool = Field(
+        description=(
+            "`false` for a property that can be filtered on but not grouped - a "
+            "continuous numeric one, where every value would be its own bucket. "
+            "Such a facet is reported with no buckets rather than omitted, so a "
+            "client can tell it apart from a facet whose values happen to match "
+            "nothing."
+        )
+    )
+    truncated: bool = Field(
+        description=(
+            f"`true` when this facet has more than {FACET_BUCKET_CAP} distinct "
+            "values and only the most common were returned. There is no way to "
+            "page through the remainder; narrow the search instead."
+        )
+    )
+    buckets: list[FacetBucket]
+
+
+class SearchPage(BaseModel):
+    """Served by both `catalogue.py`'s public `GET /catalogue/search`
+    (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+    `GET /catalogue/admin/search` (any status, issue #266) - see
+    `EntryPage`'s own docstring for why one shape rather than two."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[SearchHit]
+    next_cursor: str | None
+    facets: list[Facet] = Field(
+        description=(
+            "Every facet available for this search, with counts over the whole "
+            "result set rather than this page. A facet's own selection is "
+            "excluded from its own counts, so a bucket you have not chosen "
+            "still tells you how many entries it would give you."
+        )
+    )
 
 
 class PropertyValue(BaseModel):
