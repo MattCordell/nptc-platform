@@ -9,7 +9,9 @@ import { createQueryClient } from "./query-client.ts";
 import {
   useAcknowledgeCollision,
   useAddDesignations,
+  useAdminEntriesList,
   useAdminEntryDetail,
+  useAdminSearch,
   useAmendDesignation,
   useEntriesList,
   useEntryDetail,
@@ -223,6 +225,78 @@ describe("useAdminEntryDetail", () => {
     const fetchMock = stubFetch(200, {});
 
     renderHook(() => useAdminEntryDetail(""), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAdminEntriesList", () => {
+  it("fetches the admin entries page and exposes the parsed body", async () => {
+    const page = { items: [], next_cursor: null };
+    const fetchMock = stubFetch(200, page);
+
+    const { result } = renderHook(() => useAdminEntriesList({ limit: 20 }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(page);
+    const requestUrl = new URL(requestFor(fetchMock).url);
+    expect(requestUrl.pathname).toBe("/api/v1/catalogue/admin/entries");
+    expect(requestUrl.searchParams.get("limit")).toBe("20");
+  });
+
+  // Issue #276/ADR-0032: the one place a `filter.<key>` parameter name is
+  // built by hand for the generated client - this proves it actually reaches
+  // the wire as a repeated parameter, not a single comma-joined one.
+  it("sends each selected filter value as its own repeated filter.<key> parameter", async () => {
+    const fetchMock = stubFetch(200, { items: [], next_cursor: null });
+
+    renderHook(
+      () => useAdminEntriesList({ filters: { status: ["draft", "active"] } }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const requestUrl = new URL(requestFor(fetchMock).url);
+    expect(requestUrl.searchParams.getAll("filter.status")).toEqual(["draft", "active"]);
+  });
+
+  it("does not fetch when disabled", () => {
+    const fetchMock = stubFetch(200, {});
+
+    renderHook(() => useAdminEntriesList({ enabled: false }), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAdminSearch", () => {
+  it("fetches the admin search page and exposes the parsed body", async () => {
+    const page = { items: [], next_cursor: null, facets: [] };
+    const fetchMock = stubFetch(200, page);
+
+    const { result } = renderHook(() => useAdminSearch({ q: "glucose" }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(page);
+    const requestUrl = new URL(requestFor(fetchMock).url);
+    expect(requestUrl.pathname).toBe("/api/v1/catalogue/admin/search");
+    expect(requestUrl.searchParams.get("q")).toBe("glucose");
+  });
+
+  it("does not fetch for a blank query, even when enabled", () => {
+    const fetchMock = stubFetch(200, {});
+
+    renderHook(() => useAdminSearch({ q: "" }), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch when disabled, even with a non-blank query", () => {
+    const fetchMock = stubFetch(200, {});
+
+    renderHook(() => useAdminSearch({ q: "glucose", enabled: false }), { wrapper });
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
