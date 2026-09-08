@@ -1,13 +1,23 @@
-/** A failed API response, carrying the status code and parsed error body. */
+/**
+ * A failed API response, carrying the status code, parsed error body, and
+ * response headers.
+ *
+ * `headers` is what issue #184's step-up detection reads
+ * `WWW-Authenticate` from (see `nptc/api/step-up.ts`) - without it here,
+ * the challenge is discarded at this single throw site and every call site
+ * would need its own access to the raw `Response` to react to it.
+ */
 export class ApiError extends Error {
   readonly status: number;
   readonly body: unknown;
+  readonly headers: Headers;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, headers: Headers = new Headers()) {
     super(`API request failed with status ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.headers = headers;
   }
 }
 
@@ -28,7 +38,7 @@ export function unwrap<T>(result: { data?: T; error?: unknown; response: Respons
   if (!result.response.ok) {
     // openapi-fetch never populates `data` for a non-ok response, so
     // `result.error` alone is what ApiError.body can hold here.
-    throw new ApiError(result.response.status, result.error);
+    throw new ApiError(result.response.status, result.error, result.response.headers);
   }
   return result.data as T;
 }

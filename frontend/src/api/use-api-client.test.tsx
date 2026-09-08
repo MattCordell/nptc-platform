@@ -9,6 +9,7 @@ const AUTH: AuthContextValue = {
   status: "signed-in",
   getAccessToken: () => Promise.resolve("test-token"),
   signIn: () => Promise.resolve(),
+  stepUp: () => Promise.resolve("interaction-required"),
   signOut: () => Promise.resolve(),
   register: () => Promise.resolve(),
   restore: () => Promise.resolve(),

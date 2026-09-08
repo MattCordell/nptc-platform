@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 
 import { createQueryClient } from "../api/query-client.ts";
 import { AuthContext, type AuthContextValue } from "../auth/session.ts";
+import { stepUpChallengeHandler } from "../auth/step-up.tsx";
 import { createAppRouter } from "../router/router.tsx";
 
 /**
@@ -20,6 +21,7 @@ const DEFAULT_AUTH: AuthContextValue = {
   status: "unavailable",
   getAccessToken: () => Promise.resolve(null),
   signIn: () => Promise.resolve(),
+  stepUp: () => Promise.resolve("interaction-required"),
   signOut: () => Promise.resolve(),
   register: () => Promise.resolve(),
   restore: () => Promise.resolve(),
@@ -61,8 +63,11 @@ export async function renderRoute(
   // never shared across renders: a shared client would leak cached query
   // state between tests, and its `retry: false` default keeps a route that
   // hits a stubbed-failure query from retrying under StrictMode's
-  // double-mount.
-  const queryClient = createQueryClient();
+  // double-mount. `stepUpChallengeHandler` is wired the same way main.tsx
+  // wires it, so a route test exercising a step-up challenge (issue #184)
+  // sees the real detection and retry path, not a silent no-op -
+  // `RootLayout`'s own `StepUpController` is what it forwards to.
+  const queryClient = createQueryClient(stepUpChallengeHandler);
   const result = render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

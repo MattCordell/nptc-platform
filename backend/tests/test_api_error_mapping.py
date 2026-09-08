@@ -50,6 +50,7 @@ _support_spec.loader.exec_module(_support)
 
 build_api_test_app = _support.build_api_test_app
 ApiTestApp = _support.ApiTestApp
+FRONTEND_ORIGIN = _support.FRONTEND_ORIGIN
 
 #: An Administrator-only permission, so it is also MFA-required
 #: (MFA_REQUIRED_PERMISSIONS is derived as exactly ADMINISTRATOR_ONLY).
@@ -178,6 +179,68 @@ def test_administrator_with_mfa_is_allowed_through(api: ApiTestApp) -> None:
     response = _post_gated(api, api.token(subject="sub-admin-mfa", extra_claims={"acr": "2"}))
 
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_step_up_challenge_acr_values_come_from_settings_not_a_literal(
+    app_db: Connection,
+) -> None:
+    """A regression guard for the wiring, not just the behaviour:
+    `_STEP_UP_CHALLENGE` used to be a literal `'acr_values="2"'` in
+    `nptc.api.errors`, so changing the realm's LoA mapping
+    (`AuthSettings.mfa_acr_values`/`NPTC_MFA_ACR_VALUES`) needed a matching
+    code change here. Configuring a value other than the default `"2"` is
+    what proves the header is actually read from settings rather than
+    hard-coded - the same discipline
+    `test_mfa_acr_values_setting_is_actually_consulted`
+    (`test_api_auth_session.py`) applies to `mfa_satisfied` itself.
+    """
+    from nptc.auth.grants import grant_role_unchecked
+    from nptc.db.models.user import User
+
+    for harness in build_api_test_app(app_db, mfa_acr_values=frozenset({"3"})):
+
+        @harness.app.post(f"{API_PREFIX}/_test/gated")
+        def _gated(_p: Principal = Depends(permission_dep(_ADMIN_PERMISSION))) -> dict[str, bool]:  # noqa: B008
+            return {"ok": True}
+
+        token = harness.token(subject="sub-admin-loa3")
+        harness.get("/auth/me", token=token)
+        user = harness.session.query(User).order_by(User.created_at.desc()).first()
+        assert user is not None
+        grant_role_unchecked(
+            harness.session,
+            target_user_id=user.id,
+            role=Role.ADMINISTRATOR,
+            granted_by_user_id=None,
+            audit=_audit_context(),
+        )
+        harness.session.flush()
+
+        response = _post_gated(harness, token)
+
+        assert response.status_code == 403, response.text
+        challenge = response.headers["WWW-Authenticate"]
+        assert 'error="insufficient_user_authentication"' in challenge
+        assert 'acr_values="3"' in challenge
+
+
+@pytest.mark.req("NFR-06")
+def test_www_authenticate_is_exposed_to_cross_origin_js(api: ApiTestApp) -> None:
+    """Without `expose_headers=["WWW-Authenticate"]` on the CORS middleware,
+    a browser's `fetch`/XHR hides the header from JS on every cross-origin
+    response - the SPA's step-up handler would read `null` and never fire,
+    silently, in any deployment where the SPA is not same-origin with the
+    API (`vite dev` included). No auth needed: the CORS middleware adds
+    this header to every response carrying an `Origin`, regardless of
+    status."""
+    response = api.client.get(
+        f"{API_PREFIX}/_test/raises/closed", headers={"Origin": FRONTEND_ORIGIN}
+    )
+
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert "WWW-Authenticate" in exposed
 
 
 @pytest.mark.req("FR-44")

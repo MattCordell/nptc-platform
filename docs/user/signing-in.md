@@ -32,9 +32,15 @@ Ordinary use needs only your username and password. **Administrators** must addi
 confirm a one-time code from an authenticator app before performing administrative
 actions. You will be prompted to set this up the first time it is required.
 
-If you hold the Administrator role but have not completed that second step, administrative
-actions are refused and you are prompted to sign in again and complete it. Everything
-your other roles allow continues to work as normal.
+If you hold the Administrator role but have not completed that second step, the catalogue
+takes you through it automatically the first time you attempt an administrative action —
+often without leaving the page at all. Where it cannot complete that silently, you are
+told what is about to happen, then sent to confirm your one-time code before being brought
+back to finish what you were doing. If you cancel, you stay signed in with your other roles
+working as normal; only the administrative action is left undone.
+
+An **Administration** screen also shows a banner offering to complete this step in
+advance, before you attempt anything that needs it.
 
 ## Signing out
 

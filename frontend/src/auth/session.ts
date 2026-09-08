@@ -27,6 +27,15 @@ import { createContext, useContext } from "react";
  */
 export type AuthStatus = "restoring" | "signed-in" | "signed-out" | "unavailable";
 
+/**
+ * `"done"`: the session now carries an `acr` satisfying the requested LoA -
+ * `getAccessToken`'s next call returns it. `"interaction-required"`:
+ * Keycloak could not satisfy the request silently (no live LoA-2 grant to
+ * reuse, or the SSO session itself has ended) and the caller must fall back
+ * to an interactive `signIn({ acrValues })` (issue #184, NFR-06).
+ */
+export type StepUpOutcome = "done" | "interaction-required";
+
 export interface AuthContextValue {
   status: AuthStatus;
   /**
@@ -36,6 +45,16 @@ export interface AuthContextValue {
    */
   getAccessToken: () => Promise<string | null>;
   signIn: (options?: { redirect?: string; acrValues?: string }) => Promise<void>;
+  /**
+   * Attempts a silent (`prompt=none`) re-authentication at `acrValues`
+   * (issue #184, NFR-06) - the step-up controller's first move on an RFC
+   * 9470 challenge. Never ends the existing session on failure: unlike
+   * `renew()`/`getAccessToken`, a refused step-up says nothing about
+   * whether the LoA-1 session it started from is still good, so the
+   * caller stays signed in either way and falls back to
+   * `signIn({ acrValues })` only on `"interaction-required"`.
+   */
+  stepUp: (acrValues: string) => Promise<StepUpOutcome>;
   signOut: () => Promise<void>;
   register: () => Promise<void>;
   /**

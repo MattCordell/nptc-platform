@@ -1,6 +1,7 @@
 import { HeadContent, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, type RefObject } from "react";
 
+import { StepUpController } from "../auth/step-up.tsx";
 import { SiteFooter } from "./site-footer.tsx";
 import { SiteHeader } from "./site-header.tsx";
 import { SkipLink } from "./skip-link.tsx";
@@ -55,6 +56,11 @@ export function RootLayout() {
         <Outlet />
       </main>
       <SiteFooter />
+      {/* Issue #184: reacts to any RFC 9470 step-up challenge, from any
+          route. Mounted once, here, rather than per-screen - see
+          `step-up.tsx`'s own docstring for why it lives inside the router
+          tree rather than being passed down from `main.tsx`. */}
+      <StepUpController />
     </>
   );
 }

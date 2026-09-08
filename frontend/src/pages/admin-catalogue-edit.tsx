@@ -111,27 +111,20 @@ export function AdminCatalogueEditPage() {
 /**
  * A failed load, in the terms the reader can act on.
  *
- * 403 is called out separately because it is the likely one here and the
- * generic sentence would mislead: `catalogue.edit_published` requires
- * multi-factor authentication, and the SPA does not yet answer the step-up
- * challenge the API sends with that refusal (issue #184). Until it does, an
- * administrator signed in without MFA lands here, and telling them to sign in
- * again is the only advice that actually works.
+ * No 401/403 special case any more (issue #184): `catalogue.edit_published`
+ * requiring multi-factor authentication is now answered by
+ * `RootLayout`'s `StepUpController`, which reacts to `WWW-Authenticate`'s
+ * RFC 9470 challenge before this component's own `entry.isError` ever has a
+ * chance to render - a silent step-up retries the read in place, and an
+ * interactive one navigates away entirely. What lands here for a 403 is a
+ * step-up that the user abandoned, which is an ordinary refusal like any
+ * other.
  */
 function LoadFailure({ businessKey, error }: { businessKey: string; error: unknown }) {
   const status = error instanceof ApiError ? error.status : null;
 
   if (status === 404) {
     return <p>No catalogue entry was found for {businessKey}. Check the identifier.</p>;
-  }
-  if (status === 401 || status === 403) {
-    return (
-      <p>
-        You cannot edit this entry with your current sign-in. Editing the catalogue
-        requires an administrator account with multi-factor authentication. Sign out and
-        sign in again, completing the second step, then try once more.
-      </p>
-    );
   }
   return (
     <p>

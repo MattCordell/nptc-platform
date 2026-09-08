@@ -213,7 +213,16 @@ describe("the entry it loads", () => {
 
     await renderLoaded();
 
-    expect(calls[0]?.path).toBe(`/api/v1/catalogue/admin/entries/${BUSINESS_KEY}`);
+    // Not `calls[0]`: `AdminLayout`'s `StepUpBanner` (issue #184) fires its
+    // own `GET /auth/me` on every admin route, racing this read, so the
+    // entry read is no longer guaranteed to be the first call recorded.
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.path === `/api/v1/catalogue/admin/entries/${BUSINESS_KEY}`,
+      ),
+    ).toBe(true);
     expect(screen.getByText("Entry status").nextElementSibling).toHaveTextContent(
       "draft",
     );
@@ -238,11 +247,211 @@ describe("the entry it loads", () => {
     expect(container.querySelector("input[name*='length' i]")).toBeNull();
   });
 
-  it("says what to do when the API refuses the load for want of MFA", async () => {
-    // `catalogue.edit_published` is MFA-gated and the SPA does not yet answer
-    // the RFC 9470 step-up challenge (#184). The generic "no permission"
-    // sentence would strand an administrator who simply has not done the
-    // second step, so this refusal names the remedy that actually works.
+  it("triggers the step-up dialog when the API refuses the load for want of MFA", async () => {
+    // `catalogue.edit_published` is MFA-gated. Before issue #184 this landed
+    // on a hand-written "sign out and sign in again" paragraph; now the
+    // step-up controller (mounted app-wide in `RootLayout`) reacts to the
+    // RFC 9470 challenge itself, and the default test `stepUp` stub resolves
+    // `"interaction-required"` (`render-route.tsx`), so this exercises the
+    // interactive fallback.
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, SIGNED_IN);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Sign in again to continue" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Sign out and sign in again/)).not.toBeInTheDocument();
+  });
+
+  it("carries the challenge's acr_values and the current path into the interactive fallback", async () => {
+    const user = userEvent.setup();
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, signIn } });
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
+
+    expect(signIn).toHaveBeenCalledWith({ acrValues: "2", redirect: EDIT_URL });
+  });
+
+  it("abandoning the interactive fallback leaves a usable screen and never signs out", async () => {
+    const user = userEvent.setup();
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    const signOut = vi.fn().mockResolvedValue(undefined);
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, signIn, signOut } });
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+    // Still on the same screen, with the refusal's own text visible - not a
+    // blank page and not bounced anywhere.
+    expect(
+      screen.getByText("This action requires multi-factor authentication."),
+    ).toBeInTheDocument();
+  });
+
+  it("retries the read in place after a silent step-up succeeds, with no dialog", async () => {
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([READ_OK], {
+      vary: (call, priorSameCalls) => {
+        if (call.method !== "GET" || !call.path.endsWith(READ_OK.path)) {
+          return null;
+        }
+        // StrictMode double-mounts the load itself, so the first two reads
+        // are the ones that hit the MFA-gated route unsatisfied; every read
+        // from the third onward is the retried one, after step-up.
+        return priorSameCalls < 2
+          ? {
+              ...READ_OK,
+              status: 403,
+              body: { detail: "This action requires multi-factor authentication." },
+              headers: {
+                "WWW-Authenticate":
+                  'Bearer error="insufficient_user_authentication", acr_values="2"',
+              },
+            }
+          : null;
+      },
+    });
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+
+    expect(
+      await screen.findByRole("heading", { name: "Ferritin", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(stepUp).toHaveBeenCalledWith("2");
+    expect(readsOf(calls).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("does not repeat the step-up attempt once one has run for this read", async () => {
+    // Every response 403s with the same challenge - without the
+    // retry-once guard, a silent step-up that "succeeds" but still does
+    // not satisfy the server would retry forever.
+    const stepUp = vi.fn().mockResolvedValue("done");
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+
+    expect(
+      await screen.findByText("This action requires multi-factor authentication."),
+    ).toBeInTheDocument();
+    expect(stepUp).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not permanently block a later, genuine step-up challenge for the same read", async () => {
+    // PR #284 review: the retry-once guard must protect only the immediate
+    // retry cycle, not this query's entire lifetime - a session that steps
+    // up once and later needs to again (a second, unrelated MFA
+    // requirement; the realm's loa-max-age elapsing) must still be offered
+    // step-up, not silently swallowed by a guard entry nothing ever cleared.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const CHALLENGE = {
+      status: 403,
+      body: { detail: "This action requires multi-factor authentication." },
+      headers: {
+        "WWW-Authenticate":
+          'Bearer error="insufficient_user_authentication", acr_values="2"',
+      },
+    };
+    const CONFLICT = {
+      method: "POST",
+      path: AMEND_PATH,
+      status: 409,
+      body: {
+        detail: "This entry was changed by someone else since you loaded it.",
+        business_key: BUSINESS_KEY,
+        expected_row_version: 3,
+        current_row_version: 4,
+        conflicts: [],
+        changed_by: "A Curator",
+        changed_at: "2026-09-02T01:00:00Z",
+      },
+    };
+    // First cycle: the load itself 403s (twice, under StrictMode) and the
+    // step-up's own retry succeeds. Second cycle: the amend's version
+    // conflict forces a refetch of the same read, which 403s again - a
+    // fresh challenge for the same `queryHash`, well after the first
+    // cycle's guard entry should have been cleared.
+    let amended = false;
+    stubApi([READ_OK, CONFLICT], {
+      vary: (call, priorSameCalls) => {
+        if (call.method === "POST") {
+          amended = true;
+          return null;
+        }
+        if (!call.path.endsWith(READ_OK.path)) {
+          return null;
+        }
+        if (amended) {
+          return { ...READ_OK, ...CHALLENGE };
+        }
+        return priorSameCalls < 2 ? { ...READ_OK, ...CHALLENGE } : null;
+      },
+    });
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+    expect(stepUp).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
+    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not trigger step-up for a plain 403 with no challenge header", async () => {
+    // FR-44's own negative-case rule, applied to step-up: an ordinary
+    // missing-permission refusal must not be sent through the step-up loop
+    // just because it happens to be a 403.
+    const stepUp = vi.fn().mockResolvedValue("done");
     stubApi([
       {
         ...READ_OK,
@@ -251,11 +460,13 @@ describe("the entry it loads", () => {
       },
     ]);
 
-    await renderRoute(EDIT_URL, SIGNED_IN);
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
 
     expect(
-      await screen.findByText(/requires an administrator account with multi-factor/i),
+      await screen.findByText("You do not have permission to do this."),
     ).toBeInTheDocument();
+    expect(stepUp).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("names the identifier when there is no such entry", async () => {
@@ -442,6 +653,43 @@ describe("the terms table", () => {
 });
 
 describe("adding synonyms", () => {
+  it("does not replay a refused write even after a successful silent step-up", async () => {
+    // Out of scope by design (issue #184's own ADR): a refused mutation is
+    // never replayed automatically, silent step-up or not. The user keeps
+    // their typed input and resubmits.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: ADD_PATH,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+
+    await user.type(screen.getByLabelText("Synonyms"), "Zovirax");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the brand name",
+    );
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledWith("2"));
+    // The form is still exactly as the editor left it - nothing navigated
+    // away and nothing was cleared out from under them.
+    expect(screen.getByLabelText("Synonyms")).toHaveValue("Zovirax");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
+  });
+
   it("splits a pasted cell into individual terms and shows what it will create", async () => {
     // FR-04's own acceptance criterion, end to end: the doubled semicolon in
     // "Zovirax;;Cyclir" must produce two terms and no empty row - and the

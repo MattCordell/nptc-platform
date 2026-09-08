@@ -352,6 +352,84 @@ describe("signIn", () => {
   });
 });
 
+describe("stepUp", () => {
+  it("requests the given acrValues silently, and stores the new session on success", async () => {
+    const renewal = succeedingRenewal();
+    renderProvider(renewal);
+    await act(async () => {
+      await api().restore();
+    });
+
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = await api().stepUp("2");
+    });
+
+    expect(outcome).toBe("done");
+    const url = new URL(renewal.mock.calls.at(-1)?.[0] as string);
+    expect(url.searchParams.get("prompt")).toBe("none");
+    expect(url.searchParams.get("acr_values")).toBe("2");
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBe("access-token");
+    });
+    // One from `restore()`'s own renewal, one from `stepUp` - `stepUp`'s
+    // `store(next)` is what satisfies `getAccessToken` with no third round
+    // trip.
+    expect(renewal).toHaveBeenCalledTimes(2);
+  });
+
+  // The acceptance criterion this whole function exists to satisfy: a
+  // silent step-up that cannot be satisfied says nothing about whether the
+  // LoA-1 session it started from is still good.
+  it("never ends the existing session when the silent attempt fails", async () => {
+    // A live SSO session that satisfies an ordinary (LoA-1) renewal but
+    // cannot silently reach LoA-2 - `acr_values` in the request is what
+    // tells the two apart, the same way the real IdP would refuse one and
+    // not the other.
+    const renewal = vi.fn((url: string) => {
+      if (new URL(url).searchParams.has("acr_values")) {
+        return Promise.reject(new InteractionRequiredError("interaction_required"));
+      }
+      const state = new URL(url).searchParams.get("state") ?? "";
+      return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+    });
+    renderProvider(renewal);
+    await act(async () => {
+      await api().restore();
+    });
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = await api().stepUp("2");
+    });
+
+    expect(outcome).toBe("interaction-required");
+    // Still signed in, at the LoA-1 session `restore()` established - a
+    // refused step-up must not degrade it the way a refused ordinary
+    // renewal would (`unavailable`) or end it (`signed-out`).
+    expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBe("access-token");
+    });
+  });
+
+  it("shares one attempt across concurrent callers requesting the same acrValues", async () => {
+    const renewal = succeedingRenewal();
+    renderProvider(renewal);
+    await act(async () => {
+      await api().restore();
+    });
+
+    await act(async () => {
+      await Promise.all([api().stepUp("2"), api().stepUp("2")]);
+    });
+
+    // One renewal from `restore`, one from the shared `stepUp` attempt.
+    expect(renewal).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("signOut", () => {
   it("clears the local session before redirecting to end the remote one", async () => {
     const renewal = succeedingRenewal();

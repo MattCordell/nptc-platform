@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nptc.api.dependencies import get_terminology_client
+from nptc.api.dependencies import get_auth_settings, get_terminology_client
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers import (
@@ -28,12 +28,14 @@ from nptc.api.routers import (
     registry,
     terminology,
 )
-from nptc.settings import ApiSettings
+from nptc.settings import ApiSettings, AuthSettings
 
 __all__ = ["API_PREFIX", "create_app"]
 
 
-def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
+def create_app(
+    *, settings: ApiSettings | None = None, auth_settings: AuthSettings | None = None
+) -> FastAPI:
     app = FastAPI(
         title="NPTC Catalogue Maintenance Platform",
         version="0.0.0",
@@ -41,6 +43,14 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
         docs_url=f"{API_PREFIX}/docs",
     )
     api_settings = settings or ApiSettings()
+    # Not resolved via `Depends(get_auth_settings)`: `register_exception_handlers`
+    # runs at app-construction time, before any request exists for FastAPI's DI
+    # to resolve against. `get_auth_settings()` is the same process-wide
+    # `AuthSettings` `current_principal` reads for the *positive* MFA check
+    # (`nptc.api.dependencies`) - passing an explicit `auth_settings` here is
+    # what lets a test build both from one object instead of two independently
+    # configured settings silently drifting apart.
+    step_up_auth_settings = auth_settings or get_auth_settings()
 
     # Built here, not on the first request that needs it. The construction
     # itself is cheap and opens no socket, so this is not about warming a
@@ -75,9 +85,17 @@ def create_app(*, settings: ApiSettings | None = None) -> FastAPI:
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
+        # NFR-06/issue #184: the browser's `fetch`/XHR API hides every
+        # response header not on this allowlist, `WWW-Authenticate` included,
+        # even same-origin-looking-but-actually-cross-origin `vite dev`
+        # traffic. Without this the SPA's step-up challenge handler reads
+        # `null` for the header on every response and silently never fires -
+        # no error, no failing test, just a feature that does nothing outside
+        # of same-origin deployments.
+        expose_headers=["WWW-Authenticate"],
     )
 
-    register_exception_handlers(app)
+    register_exception_handlers(app, step_up_auth_settings)
     app.include_router(auth.router, prefix=API_PREFIX)
     # FR-20 (issue #142): the public read API. Under the same `/api/v1`
     # prefix as everything else - it is one versioned API with a public

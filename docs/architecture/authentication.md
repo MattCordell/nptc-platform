@@ -32,9 +32,10 @@ issuer, audience and expiry, then identity resolution, then permission derivatio
 | `transaction.ts` | The in-flight `{state, code_verifier, nonce, redirect}`, in `sessionStorage`, **keyed by `state`** and **read-and-deleted in one step** |
 | `flow.ts` | Builds the authorize URL; validates `state` and exchanges the code; builds the logout and registration URLs |
 | `silent-renew.ts` | `prompt=none` in a hidden iframe |
-| `auth-context.tsx` | The session: tokens in memory, the cold-load probe, renewal, sign-in/out, callback completion |
-| `session.ts` | The context object, its value type, `AuthStatus`, and `useAuth` |
+| `auth-context.tsx` | The session: tokens in memory, the cold-load probe, renewal, sign-in/out, callback completion, and `stepUp` (a silent re-authentication at a given LoA) |
+| `session.ts` | The context object, its value type, `AuthStatus`, `StepUpOutcome`, and `useAuth` |
 | `auth-status.ts` | The `useAuthStatus()` seam ADR-0020 reserved, unchanged in shape |
+| `step-up.tsx` | `StepUpController` (mounted once in `RootLayout`): reacts to an RFC 9470 challenge with a silent attempt, then an interstitial dialog and interactive fallback — see [ADR-0036](../adr/0036-spa-step-up-loop.md) |
 
 ### What the browser is not allowed to decide
 
@@ -117,6 +118,44 @@ one is simply missing the permission — it cannot know a credential was never o
 Response bodies name neither a role nor an internal identifier (FR-44, NFR-04). The
 exception messages do, deliberately, and go to the log instead.
 
+`acr_values` in the fourth row's header is built from `AuthSettings.mfa_acr_values`
+(`nptc.api.errors._step_up_challenge`), not the literal `"2"` — so changing the realm's
+LoA mapping (`NPTC_MFA_ACR_VALUES`) needs no code change on either side of the loop below.
+The CORS middleware in `create_app` also declares `expose_headers=["WWW-Authenticate"]`;
+without it a browser hides the header from JavaScript on every cross-origin response, and
+the SPA reaction below does nothing, silently, whenever the SPA is not same-origin with
+the API (`vite dev` included).
+
+### The SPA's reaction to the fourth row (issue #184, NFR-06)
+
+`ApiError` (`frontend/src/api/unwrap.ts`) carries the response headers, so
+`frontend/src/api/step-up.ts`'s `asStepUpChallenge` can recognise the fourth row from any
+failed query or mutation. `createQueryClient`'s `QueryCache`/`MutationCache` `onError`
+(`frontend/src/api/query-client.ts`) is the one seam this is detected at, regardless of
+which screen made the call.
+
+`StepUpController` then:
+
+1. Tries a silent `prompt=none` + the challenge's own `acr_values` first
+   (`AuthContextValue.stepUp`, reusing `silent-renew.ts`'s hidden iframe).
+2. On success, a refused **query** is refetched in place — no navigation — and
+   `useSession`'s own query is invalidated so `StepUpBanner` stops offering to verify
+   the moment it no longer needs to. A refused **mutation** is never replayed
+   automatically (ADR-0036 records why); the user resubmits.
+3. On failure (Keycloak needs interaction), shows a dialog explaining what is about to
+   happen, then falls back to `signIn({ acrValues, redirect })` — an ordinary interactive
+   redirect, using `signIn`'s existing transaction machinery to carry the return path.
+   `StepUpBanner`'s own "Verify now" goes through this same silent-first/dialog path
+   (`requestStepUp`), not a direct `signIn`.
+4. A `Set<queryHash>` inside the controller blocks a second challenge for the same query
+   only while this cycle's own step-up attempt and retry are still in flight — the hash
+   is removed once that cycle settles, so a *later*, genuinely new challenge for the same
+   query is still offered step-up rather than silently swallowed forever.
+
+`useSession()` (`GET /api/v1/auth/me`) and `StepUpBanner` (shown on every `/admin/*`
+screen via `AdminLayout`) let an administrator complete this step before walking into a
+403 at all, not only in reaction to one.
+
 ### Audit attribution has two phases
 
 `resolve_user_for_claims` emits `user_identity.created` (and, on a first login,
@@ -174,7 +213,15 @@ ADR-0021 for the evidence.
   Keycloak image, including the two checks Keycloak owns (mismatched `code_verifier`,
   replayed code) and that logout ends the SSO session.
 - `backend/tests/test_api_auth_session.py` — the dependency chain over HTTP.
-- `backend/tests/test_api_error_mapping.py` — the 401/403/409 table above.
+- `backend/tests/test_api_error_mapping.py` — the 401/403/409 table above, the
+  `AuthSettings`-derived `acr_values`, and the CORS `expose_headers` assertion.
 - `frontend/src/auth/*.test.ts(x)` — the browser's own half: `state` validation, the
-  single-use transaction, renewal, and what each route renders per status.
+  single-use transaction, renewal, and what each route renders per status; `stepUp`'s own
+  silent-success and never-degrades-the-session-on-refusal behaviour.
+- `frontend/src/api/step-up.test.ts` — the RFC 9470 challenge parser and guard.
+- `frontend/src/pages/admin-catalogue-edit.test.tsx` — the step-up controller end to end
+  against a real admin route: the interactive fallback, the silent-success retry, the
+  retry-once guard, and that a refused mutation is never replayed.
+- `frontend/src/shell/step-up-banner.test.tsx` — the pre-emptive banner's visibility and
+  its own redirect.
 - `frontend/scripts/assert-no-secret-in-bundle.mjs` — NFR-01 against the built assets.

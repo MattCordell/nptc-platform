@@ -123,6 +123,7 @@ from nptc.registry.definitions import (
     SystemPropertyDeprecationRefusedError,
 )
 from nptc.registry.handlers import UnknownDatatypeError
+from nptc.settings import AuthSettings
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -299,11 +300,18 @@ class PreferredTermVersionRequiredError(Exception):
     http_status: ClassVar[int] = 422
 
 
-#: RFC 9470 step-up challenge - pre-specified in
-#: docs/architecture/permissions.md. `acr_values` names the LoA the realm's
-#: `nptc loa-2 condition` maps to, which is also what
-#: `AuthSettings.mfa_acr_values` defaults to.
-_STEP_UP_CHALLENGE = 'Bearer error="insufficient_user_authentication", acr_values="2"'
+def _step_up_challenge(mfa_acr_values: frozenset[str]) -> str:
+    """RFC 9470 step-up challenge - pre-specified in
+    docs/architecture/permissions.md. `acr_values` names the LoA(s) the
+    realm's `nptc loa-2 condition` maps to - read from
+    `AuthSettings.mfa_acr_values` rather than a literal `"2"`, so changing
+    the realm's LoA map (`NPTC_MFA_ACR_VALUES`) needs no code change here.
+    Space-joined per RFC 9470's `acr_values` syntax when more than one
+    value satisfies the requirement; sorted so the header is deterministic
+    across runs of a `frozenset`.
+    """
+    return f'Bearer error="insufficient_user_authentication", acr_values="{" ".join(sorted(mfa_acr_values))}"'
+
 
 #: Deliberately not `str(exc)`. See the module docstring.
 _DETAIL_UNAUTHENTICATED = "Your credentials could not be verified. Sign in and try again."
@@ -470,7 +478,9 @@ def _unauthenticated(detail: str) -> JSONResponse:
     )
 
 
-def register_exception_handlers(app: FastAPI) -> None:
+def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> None:
+    step_up_challenge = _step_up_challenge(auth_settings.mfa_acr_values)
+
     @app.exception_handler(TokenError)
     async def _handle_token_error(_request: Request, exc: TokenError) -> JSONResponse:
         # Logged at INFO, not WARNING: an expired token is the single most
@@ -504,7 +514,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             return JSONResponse(
                 status_code=exc.http_status,
                 content={"detail": _DETAIL_STEP_UP},
-                headers={"WWW-Authenticate": _STEP_UP_CHALLENGE},
+                headers={"WWW-Authenticate": step_up_challenge},
             )
         if isinstance(exc, ManualLinkRequiredError):
             return JSONResponse(

@@ -11,13 +11,6 @@ Open an entry for editing at **Administration → Catalogue → Edit**, or go st
 `/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
 published yet can be edited the same way as published ones.
 
-> **Multi-factor authentication is not yet prompted for automatically.** Changing the
-> catalogue requires an administrator account that has completed the second sign-in step.
-> If you have not, this screen refuses to load and tells you to sign in again. Until the
-> automatic prompt lands, sign out and sign in again, completing the second step, then
-> return here. See the follow-up issue linked from
-> [ADR-0021](../adr/0021-browser-side-pkce-login.md).
-
 ## The three sections
 
 - **[Editing an entry's terms](editing-designations.md)** — the preferred term and its

@@ -9,7 +9,7 @@ import {
   InteractionRequiredError,
   type TokenSet,
 } from "./flow.ts";
-import { AuthContext, type AuthContextValue } from "./session.ts";
+import { AuthContext, type AuthContextValue, type StepUpOutcome } from "./session.ts";
 import {
   silentAuthorize as defaultSilentAuthorize,
   type SilentAuthorize,
@@ -65,6 +65,11 @@ export function AuthProvider({
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
   const renewal = useRef<Promise<TokenSet | null> | null>(null);
+  // Keyed by `acrValues`, not a single slot like `renewal` above: a step-up
+  // is always for a specific LoA, and two callers asking for the same one
+  // concurrently (two admin queries 403ing at once) must share one iframe
+  // round trip rather than opening two.
+  const stepUpsInFlight = useRef<Map<string, Promise<StepUpOutcome>>>(new Map());
   // Guards every setState call below so a probe or renewal still in flight
   // when this provider unmounts (e.g. between tests, or a remount
   // elsewhere in the app) can never touch a torn-down instance's state
@@ -215,6 +220,61 @@ export function AuthProvider({
     return renewal.current;
   }, [config, store, silentAuthorize]);
 
+  const stepUp = useCallback(
+    async (acrValues: string): Promise<StepUpOutcome> => {
+      if (!config) {
+        return "interaction-required";
+      }
+      const inFlight = stepUpsInFlight.current.get(acrValues);
+      if (inFlight) {
+        return inFlight;
+      }
+      const attempt = (async (): Promise<StepUpOutcome> => {
+        // Remembered so a refusal cleans up *this* attempt's transaction and
+        // nothing else - same reasoning as `renew()`'s own `issuedState`.
+        let issuedState: string | null = null;
+        try {
+          const url = await buildAuthorizeUrl(config, { prompt: "none", acrValues });
+          issuedState = new URL(url).searchParams.get("state");
+          const search = await silentAuthorize(url, config.redirectUri);
+          const { tokens: next } = await completeSignIn(config, search);
+          // A provider that unmounted while this attempt was in flight has
+          // no state left to store into (issue #243's precedent) - and
+          // `"done"` would be a lie a caller could act on (e.g. retrying a
+          // query expecting the new session to already be in place), so
+          // this reports the honest outcome instead: nothing changed.
+          if (!mounted.current) {
+            return "interaction-required";
+          }
+          store(next);
+          return "done";
+        } catch {
+          // `completeSignIn` already consumed the transaction on its own
+          // error paths; this only fires when `silentAuthorize` itself threw
+          // first (most commonly its own timeout), which never reached
+          // `completeSignIn` at all.
+          if (issuedState) {
+            takeTransaction(issuedState);
+          }
+          // Deliberately not `store(null)`/`setUnavailable(true)` on any
+          // failure here, unlike `renew()`'s catch: a step-up that could not
+          // be satisfied silently says nothing about whether the LoA-1
+          // session it started from is still good, and the acceptance
+          // criteria require the user stay signed in at LoA-1 regardless of
+          // why the silent attempt failed.
+          return "interaction-required";
+        }
+      })();
+      stepUpsInFlight.current.set(acrValues, attempt);
+      try {
+        return await attempt;
+      } finally {
+        stepUpsInFlight.current.delete(acrValues);
+      }
+    },
+    [config, silentAuthorize, store],
+  );
+
   const getAccessToken = useCallback(async (): Promise<string | null> => {
     const current = tokensRef.current;
     if (current && current.expiresAt - RENEW_SKEW_MS > Date.now()) {
@@ -346,6 +406,7 @@ export function AuthProvider({
               : "restoring",
       getAccessToken,
       signIn,
+      stepUp,
       signOut,
       register,
       restore,
@@ -358,6 +419,7 @@ export function AuthProvider({
       restored,
       getAccessToken,
       signIn,
+      stepUp,
       signOut,
       register,
       restore,

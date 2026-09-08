@@ -31,6 +31,41 @@ import { useApiClient } from "./use-api-client.ts";
  *   `useAmendDesignation`.
  */
 
+/**
+ * `useSession`'s own query key - exported (PR #284 review round 2) so
+ * `StepUpController` can invalidate the exact key this hook reads rather
+ * than a hand-retyped copy that could drift from it: drift here would
+ * silently reinstate the stale-banner bug that invalidation was added to
+ * fix, with the invalidation call still apparently present in the code.
+ */
+export const SESSION_QUERY_KEY = ["api", "/api/v1/auth/me"];
+
+/**
+ * The current session's user, roles and permissions (issue #184, NFR-06) -
+ * `mfa_satisfied` is what `StepUpBanner` reads to offer step-up *before* an
+ * administrator walks into a 403, rather than only reacting to one.
+ *
+ * Not gated on `enabled`: `GET /auth/me` never 401s for an anonymous caller
+ * (see the route's own docstring), so this is safe to call unconditionally -
+ * `authenticated: false` is itself a legitimate, renderable answer.
+ *
+ * `staleTime: 30_000` (PR #284 review): every `/admin/*` mount and
+ * navigation re-runs this query under the app-wide default, one more
+ * request than the screen itself needs on every click. `StepUpController`
+ * invalidates this key directly the moment a step-up actually succeeds, so
+ * this window is only ever "the banner is briefly stale", never "the
+ * banner never updates".
+ */
+export function useSession() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: SESSION_QUERY_KEY,
+    queryFn: async ({ signal }) =>
+      unwrap(await client.GET("/api/v1/auth/me", { signal })),
+    staleTime: 30_000,
+  });
+}
+
 export interface EntriesListParams {
   limit?: number;
   after?: string | null;

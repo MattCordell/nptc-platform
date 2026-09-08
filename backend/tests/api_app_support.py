@@ -169,7 +169,14 @@ def build_api_test_app(
         # opens no socket (see that function's own docstring).
         terminology_client = StubTerminologyClient()
 
-        app = create_app(settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN))
+        # `auth_settings=settings`, not left to `create_app`'s
+        # `get_auth_settings()` default: that default is process-wide
+        # `@lru_cache`d, so a test overriding `mfa_acr_values` here would
+        # otherwise build a step-up challenge from whichever `AuthSettings`
+        # happened to be cached first, not from this test's own settings.
+        app = create_app(
+            settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN), auth_settings=settings
+        )
         app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings

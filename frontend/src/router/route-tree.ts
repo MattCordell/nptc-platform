@@ -7,6 +7,7 @@ import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
 import { SignInPage } from "../pages/sign-in.tsx";
 import { SignOutPage } from "../pages/sign-out.tsx";
+import { AdminLayout } from "../shell/admin-layout.tsx";
 import { RequireAuth } from "../shell/require-auth.tsx";
 import { RootLayout } from "../shell/root-layout.tsx";
 import {
@@ -276,6 +277,7 @@ const accountRoute = createRoute({
 const adminRoute = createRoute({
   getParentRoute: () => authenticatedRoute,
   path: "admin",
+  component: AdminLayout,
 });
 
 const adminHomeRoute = createRoute({

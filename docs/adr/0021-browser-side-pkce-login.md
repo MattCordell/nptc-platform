@@ -160,9 +160,9 @@ NFR-23's restrictive CSP.
   registration page, which captures no acceptance. This needs its own issue.
 - **The `acr` claim is absent from tokens issued at LoA 1.** It is present when the
   step-up flow runs, which is all `principal_for` needs (an absent `acr` correctly yields
-  `mfa_satisfied: false`), but the SPA's own step-up loop — reacting to an
-  `insufficient_user_authentication` challenge by re-authenticating with `acr_values=2` —
-  is still a frontend follow-up, as `docs/architecture/permissions.md` already notes.
+  `mfa_satisfied: false`). The SPA's own step-up loop — reacting to an
+  `insufficient_user_authentication` challenge by re-authenticating at the requested LoA —
+  is built; see ADR-0036 for the browser-side half of this decision.
 - **ADR-0019's manual verification** that "the token's `acr` claim reads `2` after OTP
   completion" remains manual; scripting a TOTP enrolment round trip was again judged
   disproportionate. What is now automated is that `acr_values=2` demands OTP at all.

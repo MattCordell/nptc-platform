@@ -1,4 +1,35 @@
-import { QueryClient } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
+
+import { asStepUpChallenge, type StepUpChallenge } from "./step-up.ts";
+
+/**
+ * What a query/mutation cache handler is told about the request an
+ * `insufficient_user_authentication` challenge (issue #184, NFR-06) came
+ * back on.
+ *
+ * A query carries `queryHash` and `retry` (re-running the refused read in
+ * place once the step-up succeeds). `"no-retry"` covers everything else that
+ * should get the same silent-first/dialog/interactive-fallback treatment
+ * without a retry: a refused mutation (see
+ * `docs/adr/0036-spa-step-up-loop.md` for why a refused *write* is never
+ * replayed automatically) and `StepUpBanner`'s pre-emptive `requestStepUp`
+ * (PR #284 review round 2 - named for what both share, "nothing to retry",
+ * rather than `"mutation"`, which described only one of its two callers).
+ *
+ * `retry` resolves once the refetch settles - not fire-and-forget - so
+ * `StepUpController` can await it before releasing its own retry-once guard
+ * for this `queryHash` (PR #284 review): without that, a retried read that
+ * 403s again would race the guard's removal against the query cache's own
+ * `onError` for that same retry.
+ */
+export type StepUpChallengeContext =
+  | { kind: "query"; queryHash: string; retry: () => Promise<unknown> }
+  | { kind: "no-retry" };
+
+export type StepUpChallengeHandler = (
+  challenge: StepUpChallenge,
+  context: StepUpChallengeContext,
+) => Promise<void>;
 
 /**
  * The shared TanStack Query defaults (issue #147).
@@ -13,13 +44,50 @@ import { QueryClient } from "@tanstack/react-query";
  * audited 4xx paths), not a flaky network - retrying those just delays the
  * error the UI needs to show, and makes tests slower and more prone to
  * timing flakiness under StrictMode.
+ *
+ * `onStepUpChallenge` is the one seam issue #184's step-up detection needs:
+ * every failed query and mutation passes through this cache's `onError`
+ * regardless of which screen made the call, so a step-up challenge is
+ * recognised here once rather than at each of #147's call sites. The
+ * callback itself is optional and does nothing by default - a caller (only
+ * `main.tsx` and `render-route.tsx`) wires it to `auth.stepUp`/the step-up
+ * controller; a test that does not care about step-up simply omits it.
  */
-export function createQueryClient(): QueryClient {
-  return new QueryClient({
+export function createQueryClient(
+  onStepUpChallenge?: StepUpChallengeHandler,
+): QueryClient {
+  const notify = (error: unknown, context: StepUpChallengeContext): void => {
+    const challenge = asStepUpChallenge(error);
+    if (challenge && onStepUpChallenge) {
+      // Fire-and-forget from the cache's own point of view - a cache
+      // `onError` hook cannot usefully await a step-up attempt, and
+      // `onStepUpChallenge`'s own promise never rejects (see
+      // `StepUpController.handleChallenge`), so there is nothing to catch.
+      void onStepUpChallenge(challenge, context);
+    }
+  };
+
+  const queryClient = new QueryClient({
+    queryCache: new QueryCache({
+      onError: (error, query) => {
+        notify(error, {
+          kind: "query",
+          queryHash: query.queryHash,
+          retry: () =>
+            queryClient.refetchQueries({ queryKey: query.queryKey, exact: true }),
+        });
+      },
+    }),
+    mutationCache: new MutationCache({
+      onError: (error) => {
+        notify(error, { kind: "no-retry" });
+      },
+    }),
     defaultOptions: {
       queries: {
         retry: false,
       },
     },
   });
+  return queryClient;
 }

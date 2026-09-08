@@ -216,12 +216,13 @@ requirement automatically.
 **Configuration**: `AuthSettings.mfa_acr_values` (`NPTC_MFA_ACR_VALUES`, default `{"2"}`)
 must match the realm's `loa-condition-level`.
 
-**What is not yet closed.** The SPA must still request `acr_values` on login and handle
-an `insufficient_user_authentication` challenge for the loop to close end to end — a
-frontend follow-up issue. Full "the token's `acr` claim reads `2` after OTP completion"
-was verified manually against a real container rather than automated (scripting a TOTP
-enrolment round-trip end to end was judged disproportionate effort for this issue); the
-automated coverage proves the flow binds and its executor resolves correctly on import.
+The SPA reacts to the challenge end to end (issue #184, ADR-0036): a silent
+`prompt=none` + the challenge's `acr_values` first, an interactive `signIn` fallback when
+that cannot be satisfied without interaction. Full "the token's `acr` claim reads `2`
+after OTP completion" was verified manually against a real container rather than
+automated (scripting a TOTP enrolment round-trip end to end was judged disproportionate
+effort for this issue); the automated coverage proves the flow binds and its executor
+resolves correctly on import.
 
 ## FR-80 and FR-81: provable without a single endpoint
 
@@ -264,5 +265,6 @@ Three layers, in `backend/tests/`:
   property tests here are stronger than any per-endpoint test, but the issue's own
   acceptance criterion is vacuously true at zero endpoints; the route inventory test
   (with its positive control) holds that debt honestly.
-- **NFR-06**: `in-progress` — server refusal and realm step-up flow done and verified
-  against a real container; the SPA-side request/challenge handling is a follow-up issue.
+- **NFR-06**: `implemented` — server refusal and realm step-up flow verified against a
+  real container, and the SPA-side request/challenge handling closes the loop end to end
+  (issue #184, ADR-0036).
