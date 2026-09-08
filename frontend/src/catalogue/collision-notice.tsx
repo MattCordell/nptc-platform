@@ -60,27 +60,57 @@ function CollisionNotice({ body }: { body: CollisionBody }) {
 }
 
 /**
- * `conflicts` is empty whenever the concurrent edit touched a *different*
- * field: the entry still moved, so this save is still refused, but there is no
- * field-level disagreement to show. Both shapes have to read correctly.
+ * `submitted`/`current` are deliberately untyped on the wire - a term, a
+ * status, a flag - so they are rendered as quoted text rather than assumed to
+ * be strings.
  */
-function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
+export function formatValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "nothing";
+  }
+  return typeof value === "string" ? `"${value}"` : JSON.stringify(value);
+}
+
+/**
+ * The who/when a concurrent edit happened, plus the field-level diff if any
+ * (`conflicts` is empty whenever the concurrent edit touched a *different*
+ * field - the entry still moved, so the save is still refused, but there is
+ * no field-level disagreement to show). Shared between the single-entry 409
+ * notice below and the bulk reclassify per-entry conflict summary (issue
+ * #63) - both read an identical `VersionConflictResponse` body, and only the
+ * "since when" clause and the submitted/current verb differ by context.
+ */
+export function ConflictAttribution({
+  body,
+  since,
+  submittedLabel,
+}: {
+  body: VersionConflictBody;
+  /** The clause naming when the concurrent edit happened, e.g. "while you
+   * had it open" or "since this entry was selected". */
+  since: string;
+  /** The verb describing what was submitted, e.g. "you sent" - required,
+   * not defaulted: both call sites already override it ("you sent" for the
+   * single-entry dialog, "the batch sent" for the bulk outcome list), and a
+   * bare "sent" reads ungrammatically in the sentence it feeds ("What sent,
+   * and what the entry holds now:") - see PR #290 review. */
+  submittedLabel: string;
+}) {
   const changedAt = body.changed_at === null ? null : new Date(body.changed_at);
   return (
-    <div>
+    <>
       <p>
-        Someone else changed this entry while you had it open
+        Someone else changed this entry {since}
         {body.changed_by === null ? "" : `, most recently ${body.changed_by}`}
-        {changedAt === null ? "" : ` at ${changedAt.toLocaleString()}`}. Nothing has been
-        saved.
+        {changedAt === null ? "" : ` at ${changedAt.toLocaleString()}`}.
       </p>
       {body.conflicts.length > 0 && (
         <>
-          <p>What you sent, and what the entry holds now:</p>
+          <p>What {submittedLabel}, and what the entry holds now:</p>
           <ul>
             {body.conflicts.map((conflict) => (
               <li key={conflict.field}>
-                <strong>{conflict.field}</strong>: you sent{" "}
+                <strong>{conflict.field}</strong>: {submittedLabel}{" "}
                 {formatValue(conflict.submitted)}; it is now{" "}
                 {formatValue(conflict.current)}
               </li>
@@ -88,6 +118,19 @@ function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
           </ul>
         </>
       )}
+    </>
+  );
+}
+
+function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
+  return (
+    <div>
+      <ConflictAttribution
+        body={body}
+        since="while you had it open"
+        submittedLabel="you sent"
+      />
+      <p>Nothing has been saved.</p>
       {/* Not "reload the page": `useAmendDesignation` refetches the entry on
           this refusal, so the screen behind the dialog is already fetching
           their change. Present tense, because it says so the moment the 409
@@ -100,18 +143,6 @@ function VersionConflictNotice({ body }: { body: VersionConflictBody }) {
       </p>
     </div>
   );
-}
-
-/**
- * `submitted`/`current` are deliberately untyped on the wire - a term, a
- * status, a flag - so they are rendered as quoted text rather than assumed to
- * be strings.
- */
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "nothing";
-  }
-  return typeof value === "string" ? `"${value}"` : JSON.stringify(value);
 }
 
 /**

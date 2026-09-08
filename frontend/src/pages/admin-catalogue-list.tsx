@@ -6,6 +6,9 @@ import { refusalDetail } from "../api/conflicts.ts";
 import { useAdminEntriesList, useAdminSearch } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
+import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
+import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
+import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -130,13 +133,53 @@ export function AdminCatalogueListPage() {
   }
 
   const hasAnnouncedRef = useRef(false);
+  // Set from the bulk-reclassify completion handler right before it clears
+  // the selection (below), so that clearing's own "No rows selected." does
+  // not overwrite the more informative reclassify-outcome announcement
+  // racing it - both go through `useAnnounce`'s identical `setTimeout(0)`,
+  // and the selection effect below runs after the completion handler's own
+  // render, so without this guard its announcement is the one left
+  // standing. Reset by the `bulkResult` effect further down, not by this
+  // one: tying the reset to `bulkResult` (set in the exact same handler that
+  // sets this flag) rather than to `selected.size` (which the flag's own
+  // setter also happens to change) keeps the two independent, so a future
+  // change to either effect's trigger can't strand the flag set (PR #290
+  // review).
+  const suppressSelectionAnnouncementRef = useRef(false);
   useEffect(() => {
     if (!hasAnnouncedRef.current) {
       hasAnnouncedRef.current = true;
       return;
     }
+    if (suppressSelectionAnnouncementRef.current) {
+      return;
+    }
     announce(selectionAnnouncement(selected.size));
   }, [selected.size, announce]);
+
+  // Issue #63's bulk reclassify. `bulkResult` is a durable record shown on
+  // this screen after the dialog closes, not tied to the dialog's own
+  // lifetime - an operator who scrolls away and back still sees what the
+  // last batch did, until the next one replaces it.
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{
+    result: components["schemas"]["BulkSavePropertyValuesResult"];
+    propertyLabel: string;
+  } | null>(null);
+  const bulkResultsSectionRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    suppressSelectionAnnouncementRef.current = false;
+    // Moves focus to the results section once it exists, since `Dialog`'s
+    // own focus-restore (`dialog.tsx`) targets whatever triggered it - the
+    // "Reclassify selected" toolbar button - and that button unmounts the
+    // moment the selection it completed against is cleared, dropping focus
+    // to `<body>` for a keyboard or screen-reader operator right as this
+    // section appears (PR #290 review).
+    if (bulkResult) {
+      bulkResultsSectionRef.current?.focus();
+    }
+  }, [bulkResult]);
 
   // Same render-time-adjustment pattern as the selection reset above: the
   // draft mirrors `search.q` (so Back/Forward or a pasted link's `q` shows
@@ -255,6 +298,27 @@ export function AdminCatalogueListPage() {
 
       {active.data && (
         <>
+          <BulkReclassifyToolbar
+            selectedCount={selected.size}
+            onLaunch={() => {
+              // Cleared here, not left to `onComplete`'s next call: a batch
+              // that aborts whole (FR-89's 422) leaves the dialog open with
+              // nothing applied, and without this the *previous* batch's
+              // tallies would still be showing behind it, reading as this
+              // batch's own outcome (PR #290 review).
+              setBulkResult(null);
+              setBulkDialogOpen(true);
+            }}
+          />
+
+          {bulkResult && (
+            <BulkOutcomeSummary
+              ref={bulkResultsSectionRef}
+              result={bulkResult.result}
+              propertyLabel={bulkResult.propertyLabel}
+            />
+          )}
+
           <DataTable
             caption="Catalogue entries"
             columns={[
@@ -326,6 +390,28 @@ export function AdminCatalogueListPage() {
             </button>
           )}
         </>
+      )}
+
+      {bulkDialogOpen && (
+        <BulkReclassifyDialog
+          entries={Array.from(selected, ([business_key, expected_row_version]) => ({
+            business_key,
+            expected_row_version,
+          }))}
+          onClose={() => setBulkDialogOpen(false)}
+          onComplete={(result, propertyLabel) => {
+            setBulkDialogOpen(false);
+            // Every captured `expected_row_version` is stale the moment
+            // anything applied - refreshing them from the outcome list
+            // instead would let a second submit blind-overwrite whatever a
+            // concurrent editor did in between (issue #63 plan). The results
+            // panel below is the durable record of what to revisit.
+            suppressSelectionAnnouncementRef.current = true;
+            setSelected(new Map());
+            setBulkResult({ result, propertyLabel });
+            announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);
+          }}
+        />
       )}
     </section>
   );

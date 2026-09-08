@@ -541,6 +541,56 @@ export function useSavePropertyValues(businessKey: string, key: string) {
   });
 }
 
+type BulkSavePropertyValuesBody = components["schemas"]["BulkSavePropertyValuesRequest"];
+
+/**
+ * Replace one property's recorded values across many entries in one audited
+ * batch (issue #63, #265; FR-38, FR-39) - `save_property_values`'s plural
+ * form, `POST /catalogue/entries/bulk/properties/{key}` (ADR-0035).
+ *
+ * `key` is fixed per hook instance, matching `useSavePropertyValues`'s own
+ * split (one dialog targets one property); `entries` (each carrying the
+ * `expected_row_version` selected at tick time) and `values` both vary per
+ * call, so both live in the mutation body.
+ *
+ * **Never throws a version conflict.** Unlike every other write hook here,
+ * this route always answers `200` - a stale `expected_row_version` is a
+ * per-entry `conflict` outcome inside the result body, not a thrown
+ * `ApiError` (ADR-0035). So there is no `onError` branch: the caller reads
+ * `outcomes[]` from the resolved value instead.
+ *
+ * Invalidates by *prefix* - the admin list/search pages (whichever one is
+ * mounted) and every admin entry-detail cache - rather than the single
+ * `adminEntryDetailKey(businessKey)` every other hook here targets: a batch
+ * can touch up to 100 entries, and `invalidateQueries` already matches every
+ * query whose key starts with the one given, so one call per prefix covers
+ * all of them without zipping `outcomes` into a per-entry key list.
+ */
+export function useBulkSavePropertyValues(key: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkSavePropertyValuesBody) =>
+      unwrap(
+        await client.POST("/api/v1/catalogue/entries/bulk/properties/{key}", {
+          params: { path: { key } },
+          body,
+        }),
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["api", "/api/v1/catalogue/admin/entries"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["api", "/api/v1/catalogue/admin/search"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["api", "/api/v1/catalogue/admin/entries/{business_key}"],
+      });
+    },
+  });
+}
+
 /**
  * Set an entry's core `status` and/or `specimen_unconstrained` flag (issue
  * #249, FR-36, FR-89) - the one write this screen needs that is not a

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -623,5 +623,169 @@ describe("AdminCatalogueListPage", () => {
     await screen.findByRole("link", { name: DRAFT_KEY });
 
     await expectNoA11yViolations(container);
+  });
+
+  // Issue #63's bulk reclassify, driven end to end from this screen -
+  // `bulk-reclassify-dialog.test.tsx` covers the dialog's own gates and
+  // submit behaviour in isolation; this is the dedicated coverage that test
+  // file's own "PUTs the whole selection..." test points readers at, for
+  // what happens on *this* screen once that dialog completes (PR #290
+  // review).
+  describe("bulk reclassify", () => {
+    // A text-valued active property, matching `bulk-reclassify-dialog.test
+    // .tsx`'s own `usage_guidance` fixture, so a value can be typed with no
+    // extra concept-picker network round trip.
+    const PROPERTIES_WITH_USAGE_GUIDANCE: Route = {
+      method: "GET",
+      path: "/registry/properties",
+      status: 200,
+      body: {
+        items: [
+          ...(PROPERTIES_OK.body as { items: unknown[] }).items,
+          {
+            key: "usage_guidance",
+            label: "Usage guidance",
+            datatype: "string",
+            cardinality: "0..1",
+            scope: "maintenance",
+            required_for_submission: false,
+            required_for_publication: false,
+            binding_target: null,
+            value_set_uri: null,
+            strength: null,
+            edition: null,
+            local_code_system_key: null,
+            filterable: false,
+            origin: "system",
+            status: "active",
+            display_order: 40,
+            constraints: {},
+            row_version: 1,
+            form_control: { control: "textarea", params: {} },
+          },
+        ],
+      },
+    };
+
+    function bulkWriteOk(): Route {
+      return {
+        method: "POST",
+        path: "/catalogue/entries/bulk/properties/usage_guidance",
+        status: 200,
+        body: {
+          outcomes: [
+            { business_key: DRAFT_KEY, status: "applied", row_version: 4 },
+            { business_key: ACTIVE_KEY, status: "applied", row_version: 8 },
+          ],
+          applied: 2,
+          unchanged: 0,
+          conflict: 0,
+          not_found: 0,
+        },
+      };
+    }
+
+    async function runBulkReclassify(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Reclassify selected" }));
+      const dialog = within(await screen.findByRole("dialog"));
+      await user.selectOptions(dialog.getByLabelText("Property"), "usage_guidance");
+      await user.type(dialog.getByLabelText("Usage guidance"), "Fasting required");
+      await user.type(dialog.getByLabelText("Changelog note"), "Reclassify both");
+      await user.click(dialog.getByRole("button", { name: "Reclassify" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    }
+
+    it("clears the selection, shows a durable results panel, and moves focus to it", async () => {
+      stubApi([
+        ENTRIES_OK,
+        PROPERTIES_WITH_USAGE_GUIDANCE,
+        DISCIPLINE_VALUES_OK,
+        bulkWriteOk(),
+      ]);
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await runBulkReclassify(user);
+
+      // Selection cleared: the toolbar (only rendered while something is
+      // selected) is gone, and both row checkboxes are unchecked.
+      expect(
+        screen.queryByRole("button", { name: "Reclassify selected" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }),
+      ).not.toBeChecked();
+
+      // A durable results panel - present after the dialog that produced it
+      // has closed, not tied to the dialog's own lifetime.
+      const results = screen.getByRole("region", {
+        name: "Reclassify Usage guidance: results",
+      });
+      expect(results).toHaveTextContent(
+        "2 applied, 0 unchanged, 0 conflicts, 0 not found.",
+      );
+
+      // Focus lands on the results section itself, not on <body> - `Dialog`'s
+      // own focus-restore targets the "Reclassify selected" button, which no
+      // longer exists once the selection it completed against is cleared
+      // (PR #290 review).
+      expect(document.activeElement).toBe(results);
+    });
+
+    it("announces the results outcome, not a stale 'no rows selected'", async () => {
+      stubApi([
+        ENTRIES_OK,
+        PROPERTIES_WITH_USAGE_GUIDANCE,
+        DISCIPLINE_VALUES_OK,
+        bulkWriteOk(),
+      ]);
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await runBulkReclassify(user);
+
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "Reclassify Usage guidance: 2 applied, 0 unchanged, 0 conflicts, 0 not found.",
+        ),
+      );
+    });
+
+    it("clears the previous batch's results panel as soon as a new one is launched", async () => {
+      stubApi([
+        ENTRIES_OK,
+        PROPERTIES_WITH_USAGE_GUIDANCE,
+        DISCIPLINE_VALUES_OK,
+        bulkWriteOk(),
+      ]);
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await runBulkReclassify(user);
+      expect(
+        screen.getByRole("region", { name: "Reclassify Usage guidance: results" }),
+      ).toBeInTheDocument();
+
+      // A second batch is launched but not yet submitted - the first
+      // batch's tallies must not still be on screen behind the dialog,
+      // where they would read as this batch's own outcome (PR #290 review).
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Reclassify selected" }));
+      await screen.findByRole("dialog");
+
+      expect(
+        screen.queryByRole("region", { name: "Reclassify Usage guidance: results" }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

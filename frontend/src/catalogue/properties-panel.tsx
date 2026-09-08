@@ -17,13 +17,12 @@ import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
+import { propertyValidationFieldErrors } from "./property-form-errors.ts";
 import {
   CONTROLS,
   RepeatableValues,
-  groupFieldId,
   isEmptySlotValue,
   newSlotId,
-  slotFieldId,
 } from "./property-controls/index.ts";
 import type { PropertyValueSlot } from "./property-controls/index.ts";
 
@@ -318,14 +317,11 @@ function PropertyEditDialog({
   // raw ordinal (wrong the moment an earlier slot is left blank).
   const submittedIndexes = nonEmptySlotIndexes(slots);
   const validation = asPropertyValidationError(save.error);
-  const errors: FormError[] =
-    validation?.issues.map((issue) => ({
-      fieldId:
-        issue.ordinal === null
-          ? groupFieldId(definition.key)
-          : slotFieldId(definition.key, submittedIndexes[issue.ordinal] ?? issue.ordinal),
-      message: issue.message,
-    })) ?? [];
+  const errors: FormError[] = propertyValidationFieldErrors(
+    definition.key,
+    save.error,
+    submittedIndexes,
+  );
 
   return (
     <Dialog open onClose={onClose} title={`Edit ${definition.label}`}>
