@@ -31,6 +31,24 @@ import { useApiClient } from "./use-api-client.ts";
  *   `useAmendDesignation`.
  */
 
+/**
+ * The current session's user, roles and permissions (issue #184, NFR-06) -
+ * `mfa_satisfied` is what `StepUpBanner` reads to offer step-up *before* an
+ * administrator walks into a 403, rather than only reacting to one.
+ *
+ * Not gated on `enabled`: `GET /auth/me` never 401s for an anonymous caller
+ * (see the route's own docstring), so this is safe to call unconditionally -
+ * `authenticated: false` is itself a legitimate, renderable answer.
+ */
+export function useSession() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/auth/me"],
+    queryFn: async ({ signal }) =>
+      unwrap(await client.GET("/api/v1/auth/me", { signal })),
+  });
+}
+
 export interface EntriesListParams {
   limit?: number;
   after?: string | null;

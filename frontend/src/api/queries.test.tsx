@@ -18,6 +18,7 @@ import {
   usePropertyValueOptions,
   useRetireDesignation,
   useSavePropertyValues,
+  useSession,
 } from "./queries.ts";
 
 /**
@@ -32,6 +33,7 @@ const AUTH: AuthContextValue = {
   status: "signed-in",
   getAccessToken: () => Promise.resolve("test-token"),
   signIn: () => Promise.resolve(),
+  stepUp: () => Promise.resolve("interaction-required"),
   signOut: () => Promise.resolve(),
   register: () => Promise.resolve(),
   restore: () => Promise.resolve(),
@@ -135,6 +137,50 @@ describe("useEntryDetail", () => {
     renderHook(() => useEntryDetail(""), { wrapper });
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSession", () => {
+  it("exposes mfa_satisfied from /auth/me for the pre-emptive step-up banner", async () => {
+    const session = {
+      authenticated: true,
+      user: {
+        username: "a.curator",
+        display_name: "A Curator",
+        organisation: null,
+        status: "active",
+      },
+      roles: ["Administrator"],
+      permissions: ["role.grant_member"],
+      mfa_satisfied: false,
+    };
+    const fetchMock = stubFetch(200, session);
+
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(session);
+    const requestUrl = new URL((fetchMock.mock.calls[0]?.[0] as Request).url);
+    expect(requestUrl.pathname).toBe("/api/v1/auth/me");
+  });
+
+  // The route's own docstring: never 401s for an anonymous caller. This
+  // hook must not gate the request on any prior knowledge of auth status.
+  it("fetches even for an anonymous caller", async () => {
+    const fetchMock = stubFetch(200, {
+      authenticated: false,
+      user: null,
+      roles: [],
+      permissions: [],
+      mfa_satisfied: false,
+    });
+
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.data?.authenticated).toBe(false);
   });
 });
 

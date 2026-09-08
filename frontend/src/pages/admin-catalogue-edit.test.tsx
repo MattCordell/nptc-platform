@@ -213,7 +213,16 @@ describe("the entry it loads", () => {
 
     await renderLoaded();
 
-    expect(calls[0]?.path).toBe(`/api/v1/catalogue/admin/entries/${BUSINESS_KEY}`);
+    // Not `calls[0]`: `AdminLayout`'s `StepUpBanner` (issue #184) fires its
+    // own `GET /auth/me` on every admin route, racing this read, so the
+    // entry read is no longer guaranteed to be the first call recorded.
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.path === `/api/v1/catalogue/admin/entries/${BUSINESS_KEY}`,
+      ),
+    ).toBe(true);
     expect(screen.getByText("Entry status").nextElementSibling).toHaveTextContent(
       "draft",
     );
@@ -238,24 +247,52 @@ describe("the entry it loads", () => {
     expect(container.querySelector("input[name*='length' i]")).toBeNull();
   });
 
-  it("says what to do when the API refuses the load for want of MFA", async () => {
-    // `catalogue.edit_published` is MFA-gated and the SPA does not yet answer
-    // the RFC 9470 step-up challenge (#184). The generic "no permission"
-    // sentence would strand an administrator who simply has not done the
-    // second step, so this refusal names the remedy that actually works.
+  it("triggers the step-up dialog when the API refuses the load for want of MFA", async () => {
+    // `catalogue.edit_published` is MFA-gated. Before issue #184 this landed
+    // on a hand-written "sign out and sign in again" paragraph; now the
+    // step-up controller (mounted app-wide in `RootLayout`) reacts to the
+    // RFC 9470 challenge itself, and the default test `stepUp` stub resolves
+    // `"interaction-required"` (`render-route.tsx`), so this exercises the
+    // interactive fallback.
     stubApi([
       {
         ...READ_OK,
         status: 403,
-        body: { detail: "You do not have permission to do this." },
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
       },
     ]);
 
     await renderRoute(EDIT_URL, SIGNED_IN);
 
     expect(
-      await screen.findByText(/requires an administrator account with multi-factor/i),
+      await screen.findByRole("dialog", { name: "Sign in again to continue" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Sign out and sign in again/)).not.toBeInTheDocument();
+  });
+
+  it("carries the challenge's acr_values and the current path into the interactive fallback", async () => {
+    const user = userEvent.setup();
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, signIn } });
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
+
+    expect(signIn).toHaveBeenCalledWith({ acrValues: "2", redirect: EDIT_URL });
   });
 
   it("names the identifier when there is no such entry", async () => {

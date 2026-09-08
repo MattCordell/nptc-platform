@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 
 import { createQueryClient } from "./api/query-client.ts";
 import { AuthProvider } from "./auth/auth-context.tsx";
+import { stepUpChallengeHandler } from "./auth/step-up.tsx";
 import { createAppRouter } from "./router/router.tsx";
 import "./styles/app.css";
 
@@ -14,7 +15,11 @@ if (!container) {
 }
 
 const router = createAppRouter();
-const queryClient = createQueryClient();
+// `stepUpChallengeHandler` forwards to whichever `StepUpController` is
+// currently mounted (`RootLayout`, inside the router - see that module's
+// own docstring for why it cannot be a prop passed from here) (issue #184,
+// NFR-06).
+const queryClient = createQueryClient(stepUpChallengeHandler);
 
 createRoot(container).render(
   <StrictMode>

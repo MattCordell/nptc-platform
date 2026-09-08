@@ -17,6 +17,12 @@ export interface Route {
   path: string;
   status: number;
   body: unknown;
+  /**
+   * Extra response headers - `Content-Type` is always set below and cannot
+   * be overridden here. Added for issue #184's step-up tests, which need a
+   * stubbed 403 to carry its own `WWW-Authenticate` challenge.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface StubOptions {
@@ -59,7 +65,7 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     }
     return new Response(JSON.stringify(route.body), {
       status: route.status,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...route.headers },
     });
   });
   vi.stubGlobal("fetch", fetchMock);
