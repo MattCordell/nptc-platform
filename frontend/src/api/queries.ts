@@ -157,11 +157,14 @@ export interface AdminSearchParams {
 
 /**
  * Search catalogue entries by term, any status (issue #266, #267) - the
- * search half of the admin list screen's dual-surface dispatch (non-empty
- * `q`). `enabled` is combined with a non-empty `q` rather than trusted alone
- * - the route itself 422s a blank query, and a caller that flips `enabled`
- * true a render early (before `q` has actually been typed) should not fire a
- * request only to fail.
+ * search half of the admin list screen's dual-surface dispatch (non-blank
+ * `q`). `enabled` is combined with a non-blank (trimmed) `q` rather than
+ * trusted alone - the route itself 422s a blank query, and a caller that
+ * flips `enabled` true a render early (before `q` has actually been typed)
+ * should not fire a request only to fail. Trimmed, not merely non-empty
+ * (PR #285 review finding 5), so this can never be enabled in a state the
+ * page's own `mode` (`admin-catalogue-list.tsx`, computed with the same
+ * `.trim()`) considers browse.
  */
 export function useAdminSearch(params: AdminSearchParams) {
   const client = useApiClient();
@@ -176,7 +179,7 @@ export function useAdminSearch(params: AdminSearchParams) {
           signal,
         }),
       ),
-    enabled: enabled && q.length > 0,
+    enabled: enabled && q.trim().length > 0,
   });
 }
 

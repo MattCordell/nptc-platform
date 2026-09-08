@@ -292,6 +292,17 @@ describe("useAdminSearch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // PR #285 review finding 5: trimmed, not merely non-empty, so this can
+  // never fire in a state the page's own `mode` considers browse (it
+  // computes `mode` with the identical `.trim()`).
+  it("does not fetch for a whitespace-only query, even when enabled", () => {
+    const fetchMock = stubFetch(200, {});
+
+    renderHook(() => useAdminSearch({ q: "   " }), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not fetch when disabled, even with a non-blank query", () => {
     const fetchMock = stubFetch(200, {});
 

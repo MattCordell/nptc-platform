@@ -25,7 +25,11 @@ type CheckboxProps = {
   /** Sets the DOM `indeterminate` property for a tri-state "select all"
    * box (issue #267) - neither a valid HTML attribute nor a React prop
    * `<input>` accepts directly, so it is applied imperatively via a ref
-   * rather than spread onto the element like every other prop here. */
+   * rather than spread onto the element like every other prop here. Applied
+   * every render (no dependency array on the effect below), not only when
+   * this value changes: the property lives on the DOM node, not in React
+   * state, so a remount with the same `indeterminate` value would otherwise
+   * leave a fresh node on the default `false` (PR #285 review finding 4). */
   indeterminate?: boolean;
 } & Omit<ComponentPropsWithoutRef<"input">, "id" | "type" | "children">;
 
@@ -61,7 +65,7 @@ export function Checkbox({
     if (inputRef.current) {
       inputRef.current.indeterminate = indeterminate ?? false;
     }
-  }, [indeterminate]);
+  });
 
   return (
     <div className="flex flex-col gap-1">

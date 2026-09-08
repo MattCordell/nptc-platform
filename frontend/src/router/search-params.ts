@@ -268,6 +268,43 @@ export function filterSelections(search: AdminCatalogueSearch): Record<string, s
 }
 
 /**
+ * Every `filter.*` selection in a validated search, flattened to one entry
+ * per selected value (PR #285 review finding 1) - the shape a "what's
+ * applied right now" chip list wants, and one that (unlike `filterSelections`)
+ * survives a `filter.<key>` the panel does not recognise: a filterable
+ * property with no `concept_picker` control, or one dropped from the
+ * registry after the link that named it was shared, both still round-trip
+ * through here even though neither ever gets a checkbox. Without this, a
+ * facet in that state is invisible to the panel and to the URL alike -
+ * applied, but with no control on screen that could ever clear it.
+ */
+export function activeFilterEntries(
+  search: AdminCatalogueSearch,
+): { facetKey: string; value: string }[] {
+  const entries: { facetKey: string; value: string }[] = [];
+  for (const [key, value] of Object.entries(search)) {
+    if (key.startsWith(FILTER_PARAM_PREFIX) && Array.isArray(value)) {
+      const facetKey = key.slice(FILTER_PARAM_PREFIX.length);
+      for (const oneValue of value) {
+        entries.push({ facetKey, value: oneValue });
+      }
+    }
+  }
+  return entries;
+}
+
+/**
+ * Drops every `filter.*` selection and the `after` cursor, keeping `q`
+ * unchanged (PR #285 review finding 1) - the "Clear all filters" control's
+ * own handler, for the same reason `toggleFilterValue` drops `after`: the
+ * population being paged over no longer exists once the filter set changes
+ * underneath it.
+ */
+export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSearch {
+  return { q: search.q };
+}
+
+/**
  * One facet value toggled on or off (issue #267) - the filter panel's own
  * `onChange`, so every facet checkbox shares one implementation of
  * "add/remove a value and invalidate the current page" rather than each

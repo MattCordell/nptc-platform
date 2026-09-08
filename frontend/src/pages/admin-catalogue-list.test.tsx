@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -244,6 +244,98 @@ describe("AdminCatalogueListPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  // PR #285 review finding 1: a `filter.*` the panel renders no control for
+  // (not `concept_picker`, or since dropped from the registry) used to be
+  // unclearable from a bookmarked or shared link - the exact FR-36 scenario
+  // this screen exists for.
+  describe("active filters escape hatch", () => {
+    it("shows a removable chip for a filter the panel has no control for, and clears it", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(`${LIST_URL}?filter.volume_ml=5`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      // `volume_ml` is filterable but not `concept_picker` - the panel
+      // renders no checkbox or text box for it (see the test above), so the
+      // chip is the only control that names it at all.
+      expect(screen.queryByRole("checkbox", { name: /volume/i })).not.toBeInTheDocument();
+      const chip = screen.getByRole("button", { name: "Remove filter volume_ml: 5" });
+      expect(chip).toBeInTheDocument();
+
+      await user.click(chip);
+
+      await waitFor(() =>
+        expect(router.state.location.href).not.toContain("filter.volume_ml"),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Remove filter volume_ml: 5" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears every active filter at once via Clear all filters", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(
+        `${LIST_URL}?filter.status=draft&filter.volume_ml=5`,
+        SIGNED_IN,
+      );
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.click(screen.getByRole("button", { name: "Clear all filters" }));
+
+      await waitFor(() => {
+        expect(router.state.location.href).not.toContain("filter.status");
+        expect(router.state.location.href).not.toContain("filter.volume_ml");
+      });
+      expect(screen.getByRole("checkbox", { name: "Draft" })).not.toBeChecked();
+      expect(
+        screen.queryByRole("button", { name: "Clear all filters" }),
+      ).not.toBeInTheDocument();
+    });
+
+    // Scenario 2 from the review: a filter the server refuses (deprecated
+    // or un-filterable since the link was shared) leaves the whole screen on
+    // a refusal message - the chip/Clear all controls must stay reachable,
+    // since they are the only way out of that state.
+    it("keeps the filter controls reachable even while the listing itself is refused", async () => {
+      stubApi([
+        {
+          method: "GET",
+          path: "/catalogue/admin/entries",
+          status: 422,
+          body: { detail: "Filter is not available: volume_ml" },
+        },
+        PROPERTIES_OK,
+        DISCIPLINE_VALUES_OK,
+      ]);
+
+      await renderRoute(`${LIST_URL}?filter.volume_ml=5`, SIGNED_IN);
+
+      expect(
+        await screen.findByText("Filter is not available: volume_ml"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Remove filter volume_ml: 5" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Clear all filters" }),
+      ).toBeInTheDocument();
+    });
+
+    it("has no chip and no Clear all filters control when nothing is selected", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        screen.queryByRole("button", { name: "Clear all filters" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   // Acceptance criterion: rows can be selected individually and all at
   // once, and the selection is announced accessibly.
   describe("row selection", () => {
@@ -277,15 +369,22 @@ describe("AdminCatalogueListPage", () => {
       await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
       expect(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` })).toBeChecked();
 
-      await user.type(
-        screen.getByRole("textbox", { name: "Search term or SNOMED CT code" }),
-        "glucose",
-      );
+      const searchBox = screen.getByRole("textbox", {
+        name: "Search term or SNOMED CT code",
+      });
+      await user.type(searchBox, "glucose");
       await user.click(screen.getByRole("button", { name: "Search" }));
-
       await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      // Clearing q returns to browse mode and re-renders the very same
+      // DRAFT_KEY row - if the selection had merely been hidden rather than
+      // actually cleared, its checkbox would still read checked here.
+      await user.clear(searchBox);
+      await user.click(screen.getByRole("button", { name: "Search" }));
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
       expect(
-        screen.queryByRole("checkbox", { name: `Select ${ACTIVE_KEY}` }),
+        screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }),
       ).not.toBeChecked();
     });
 
@@ -304,6 +403,129 @@ describe("AdminCatalogueListPage", () => {
     });
   });
 
+  // PR #285 review finding 2: every fixture elsewhere in this file has
+  // `next_cursor: null`, so paging itself, selection surviving a page
+  // change, and `after` being dropped once a filter is then toggled had no
+  // coverage at all.
+  describe("paging", () => {
+    const PAGE_1 = {
+      items: [
+        entrySummary({
+          business_key: DRAFT_KEY,
+          preferred_term: "Ferritin",
+          status: "draft",
+        }),
+      ],
+      next_cursor: DRAFT_KEY,
+    };
+    const PAGE_2 = {
+      items: [
+        entrySummary({
+          business_key: ACTIVE_KEY,
+          preferred_term: "Full blood count",
+          status: "active",
+        }),
+      ],
+      next_cursor: null,
+    };
+
+    // Not `stubApi`'s own `vary` (issue #149's own mechanism): it dispatches
+    // on `{method, path}` alone, with the query string already stripped -
+    // exactly the one thing that distinguishes a first page's request from
+    // a second's here (both hit the identical path; only `after` differs).
+    // A call-count-based `vary` was tried first and is flaky by construction
+    // under this app's own `<StrictMode>` (`render-route.tsx`): the initial
+    // mount's own query fetches `/catalogue/admin/entries` twice (matching
+    // `admin-catalogue-edit.test.tsx`'s documented "two reads under
+    // StrictMode"), so a counter reaches 2 - "page two" - before the test
+    // ever clicks "Next page". Keying on `after` itself sidesteps the
+    // duplicate-call count entirely: both duplicate initial reads carry no
+    // `after` and get the identical first page.
+    function stubTwoPages() {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (request: Request) => {
+          const url = new URL(request.url);
+          const method = request.method;
+          if (method === "GET" && url.pathname.endsWith("/catalogue/admin/entries")) {
+            const body = url.searchParams.get("after") === null ? PAGE_1 : PAGE_2;
+            return new Response(JSON.stringify(body), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          const route = [PROPERTIES_OK, DISCIPLINE_VALUES_OK].find(
+            (r) => r.method === method && url.pathname.endsWith(r.path),
+          );
+          if (route === undefined) {
+            return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
+          }
+          return new Response(JSON.stringify(route.body), {
+            status: route.status,
+            headers: { "Content-Type": "application/json" },
+          });
+        }),
+      );
+    }
+
+    it("(a) pushes the cursor into the URL and shows the next page's entries", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+      expect(router.state.location.href).toContain(`after=${DRAFT_KEY}`);
+      expect(screen.queryByRole("link", { name: DRAFT_KEY })).not.toBeInTheDocument();
+      // Keyset-paginated (ADR-0024): no "previous page" control exists.
+      expect(
+        screen.queryByRole("button", { name: /previous page/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("(b) keeps a row checked on an earlier page selected after paging forward", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
+      expect(await screen.findByRole("status")).toHaveTextContent("1 row selected.");
+
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      // Selecting this page's own row on top of the still-checked prior
+      // one proves the earlier selection survived the page change - if it
+      // had been cleared, this announcement would read "1 row selected."
+      await user.click(screen.getByRole("checkbox", { name: `Select ${ACTIVE_KEY}` }));
+      expect(await screen.findByRole("status")).toHaveTextContent("2 rows selected.");
+    });
+
+    it("(c) drops the after cursor once a filter is toggled from a later page", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+      expect(router.state.location.href).toContain("after=");
+
+      await user.click(screen.getByRole("checkbox", { name: "Active" }));
+
+      await waitFor(() =>
+        expect(router.state.location.href).toContain("filter.status=active"),
+      );
+      expect(router.state.location.href).not.toContain("after=");
+    });
+  });
+
   it("shows a refusal message when the listing cannot be loaded", async () => {
     stubApi([
       {
@@ -319,6 +541,77 @@ describe("AdminCatalogueListPage", () => {
     await renderRoute(LIST_URL, SIGNED_IN);
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
+  });
+
+  // PR #285 review finding 3: the hard-failure paragraph used to be
+  // rendered but never announced - silence for a screen-reader user.
+  it("announces a refusal message when the listing cannot be loaded", async () => {
+    stubApi([
+      {
+        method: "GET",
+        path: "/catalogue/admin/entries",
+        status: 500,
+        body: { detail: "boom" },
+      },
+      PROPERTIES_OK,
+      DISCIPLINE_VALUES_OK,
+    ]);
+
+    await renderRoute(LIST_URL, SIGNED_IN);
+
+    // `waitFor`, not `findByRole` then a separate assertion: the live
+    // region is present (and empty) from first render (`LiveRegion`'s own
+    // docstring - a screen reader needs it mounted before the text change,
+    // not created and filled in the same tick), so `findByRole("status")`
+    // alone resolves the instant it exists, racing `useAnnounce`'s
+    // `setTimeout(0)` that actually fills it in.
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("boom"));
+  });
+
+  // PR #285 review finding 2: this branch (a fetch that fails while a
+  // *previous* successful fetch's data is still on screen) had no coverage
+  // at all - only the initial-load failure above did. `queryClient` is
+  // driven directly because nothing in this page's own UI otherwise
+  // triggers a background refetch of the identical query on demand.
+  it("shows a stale-data warning, not a blank screen, when a refresh fails over data already shown", async () => {
+    // A flag the test itself flips, not a call count: the initial mount's
+    // own query fetches this path twice under `<StrictMode>` (see the
+    // "paging" describe block's own comment on this), so a counter reaching
+    // 2 would already misfire the initial load rather than only the
+    // deliberate refetch below.
+    let shouldFail = false;
+    stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+      vary: (call) => {
+        if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
+          return shouldFail
+            ? { method: "GET", path: call.path, status: 500, body: { detail: "boom" } }
+            : ENTRIES_OK;
+        }
+        return null;
+      },
+    });
+
+    const { queryClient } = await renderRoute(LIST_URL, SIGNED_IN);
+    await screen.findByRole("link", { name: DRAFT_KEY });
+
+    shouldFail = true;
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: ["api", "/api/v1/catalogue/admin/entries"],
+      });
+    });
+
+    // Two elements carry this text on purpose - the visible warning
+    // paragraph and the live region announcing it (`STALE_DATA_WARNING`'s
+    // own docstring: "one string ... so the two cannot drift apart").
+    expect(
+      await screen.findAllByText(
+        "Catalogue entries could not be refreshed just now, so what follows may be out of date.",
+      ),
+    ).toHaveLength(2);
+    // The previously-loaded row is still shown - a refresh failure does not
+    // blank out data already on screen.
+    expect(screen.getByRole("link", { name: DRAFT_KEY })).toBeInTheDocument();
   });
 
   it("shows the empty state, not a headers-only table, when there are no entries", async () => {

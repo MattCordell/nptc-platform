@@ -83,5 +83,10 @@ export async function renderRoute(
   await act(async () => {
     await router.load();
   });
-  return { ...result, router, auth };
+  // `queryClient` is returned alongside `router`/`auth` so a test can drive a
+  // query directly - e.g. `queryClient.refetchQueries` to reproduce a
+  // background refetch failing over data already on screen, which nothing
+  // in this app's own UI otherwise triggers on demand (PR #285 review
+  // finding 2's `staleData` branch).
+  return { ...result, router, auth, queryClient };
 }

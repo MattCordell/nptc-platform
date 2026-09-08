@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  activeFilterEntries,
+  clearAllFilters,
   filterSelections,
   toggleFilterValue,
   validateAdminCatalogueSearch,
@@ -275,6 +277,59 @@ describe("toggleFilterValue", () => {
     const result = toggleFilterValue(search, "status", "draft");
 
     expect("after" in result).toBe(false);
+  });
+});
+
+// PR #285 review finding 1: an escape hatch for a `filter.*` the panel
+// cannot render a control for (not `concept_picker`, or since dropped from
+// the registry) - both `activeFilterEntries` and `clearAllFilters` must work
+// from the raw search object alone, never from the panel's own recognised
+// facets, or they would be exactly as blind to the unrecognised key as the
+// panel is.
+describe("activeFilterEntries", () => {
+  it("returns nothing when there are no filters", () => {
+    expect(activeFilterEntries({ q: "glucose" })).toEqual([]);
+  });
+
+  it("flattens one entry per selected value, across every facet", () => {
+    const search: AdminCatalogueSearch = {
+      q: "",
+      "filter.status": ["draft", "active"],
+      "filter.discipline": ["chemistry"],
+    };
+
+    expect(activeFilterEntries(search)).toEqual([
+      { facetKey: "status", value: "draft" },
+      { facetKey: "status", value: "active" },
+      { facetKey: "discipline", value: "chemistry" },
+    ]);
+  });
+
+  // The exact shape of PR #285 review finding 1's first scenario: a
+  // `filter.*` key the panel never renders a control for still round-trips
+  // here, since this reads the raw search object rather than the panel's
+  // own definition-derived facet list.
+  it("includes a filter key the caller does not recognise as a known facet", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.volume_ml": ["5"] };
+
+    expect(activeFilterEntries(search)).toEqual([{ facetKey: "volume_ml", value: "5" }]);
+  });
+});
+
+describe("clearAllFilters", () => {
+  it("drops every filter and the after cursor, keeping q", () => {
+    const search: AdminCatalogueSearch = {
+      q: "glucose",
+      after: "NPTC-000123",
+      "filter.status": ["draft"],
+      "filter.discipline": ["chemistry"],
+    };
+
+    expect(clearAllFilters(search)).toEqual({ q: "glucose" });
+  });
+
+  it("is a no-op on a search with no filters", () => {
+    expect(clearAllFilters({ q: "glucose" })).toEqual({ q: "glucose" });
   });
 });
 

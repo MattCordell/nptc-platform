@@ -9,7 +9,12 @@ import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-p
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
-import { filterSelections, toggleFilterValue } from "../router/search-params.ts";
+import {
+  activeFilterEntries,
+  clearAllFilters,
+  filterSelections,
+  toggleFilterValue,
+} from "../router/search-params.ts";
 
 /**
  * The admin catalogue list screen (issue #267; FR-14, FR-15, FR-16, FR-36,
@@ -78,6 +83,13 @@ export function AdminCatalogueListPage() {
   const filters = useMemo(() => filterSelections(search), [search]);
   const mode: "browse" | "search" = search.q.trim().length > 0 ? "search" : "browse";
 
+  // Every active `filter.*` selection, flattened - deliberately not derived
+  // from `filters` (the panel's own recognised-facet shape): a facet the
+  // panel does not render a control for (not `concept_picker`, or dropped
+  // from the registry since the link was shared) still needs a way to be
+  // seen and cleared (PR #285 review finding 1).
+  const activeFilters = useMemo(() => activeFilterEntries(search), [search]);
+
   const listQuery = useAdminEntriesList({
     limit: 50,
     after: search.after,
@@ -140,11 +152,24 @@ export function AdminCatalogueListPage() {
 
   function handleSearchSubmit(event: FormEvent) {
     event.preventDefault();
-    void navigate({ search: (prev) => ({ ...prev, q: queryDraft, after: undefined }) });
+    // Trimmed before it ever reaches the URL (PR #285 review finding 5): a
+    // whitespace-only value used to land in `q` untrimmed while `mode` (and,
+    // below, `useAdminSearch`'s own guard) is computed with `.trim()` -
+    // agreeing that this is browse, while a stray `q=%20` sat in the address
+    // bar claiming otherwise.
+    const trimmed = queryDraft.trim();
+    void navigate({ search: (prev) => ({ ...prev, q: trimmed, after: undefined }) });
   }
 
+  // Also the chip list's own "remove" handler below - toggling off an
+  // already-selected value is exactly "remove it" (`toggleFilterValue`
+  // add/removes by whether `value` is already present).
   function handleFilterToggle(facetKey: string, value: string) {
     void navigate({ search: (prev) => toggleFilterValue(prev, facetKey, value) });
+  }
+
+  function handleClearAllFilters() {
+    void navigate({ search: (prev) => clearAllFilters(prev) });
   }
 
   function handleNextPage() {
@@ -159,6 +184,21 @@ export function AdminCatalogueListPage() {
       announce(STALE_DATA_WARNING);
     }
   }, [staleData, announce]);
+
+  // A hard failure (no prior data to fall back on) was rendered but never
+  // announced (PR #285 review finding 3) - a screen-reader user who submits
+  // a search or filter selection that 4xxs (a realistic path once finding 1's
+  // unrecognised `filter.*` reaches the server) got silence. The message text
+  // is derived the same way it is rendered below, so the two cannot drift.
+  const hardFailure = active.isError && active.data === undefined;
+  const hardFailureMessage =
+    refusalDetail(active.error) ??
+    "Catalogue entries could not be loaded. Try again, or contact an administrator if the problem persists.";
+  useEffect(() => {
+    if (hardFailure) {
+      announce(hardFailureMessage);
+    }
+  }, [hardFailure, hardFailureMessage, announce]);
 
   return (
     <section aria-labelledby="catalogue-list-heading">
@@ -179,14 +219,37 @@ export function AdminCatalogueListPage() {
 
       <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
 
+      {/* Kept outside the `active.data &&` gate below, deliberately: this is
+          the one control that must stay reachable even while the listing
+          itself is refused (e.g. a filter the server no longer recognises),
+          since it is the only way out of that state (PR #285 review
+          finding 1). */}
+      {activeFilters.length > 0 && (
+        <div
+          role="group"
+          aria-label="Active filters"
+          className="flex flex-wrap items-center gap-2"
+        >
+          {activeFilters.map(({ facetKey, value }) => (
+            <button
+              key={`${facetKey}:${value}`}
+              type="button"
+              aria-label={`Remove filter ${facetKey}: ${value}`}
+              onClick={() => handleFilterToggle(facetKey, value)}
+            >
+              {facetKey}: {value}
+              <span aria-hidden="true"> ✕</span>
+            </button>
+          ))}
+          <button type="button" onClick={handleClearAllFilters}>
+            Clear all filters
+          </button>
+        </div>
+      )}
+
       {active.isPending && <p>Loading catalogue entries…</p>}
 
-      {active.isError && active.data === undefined && (
-        <p>
-          {refusalDetail(active.error) ??
-            "Catalogue entries could not be loaded. Try again, or contact an administrator if the problem persists."}
-        </p>
-      )}
+      {hardFailure && <p>{hardFailureMessage}</p>}
 
       {staleData && <p>{STALE_DATA_WARNING}</p>}
 
