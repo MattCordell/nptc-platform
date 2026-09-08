@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react
 
 import { HomePage } from "../pages/home.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
+import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
@@ -11,10 +12,13 @@ import { AdminLayout } from "../shell/admin-layout.tsx";
 import { RequireAuth } from "../shell/require-auth.tsx";
 import { RootLayout } from "../shell/root-layout.tsx";
 import {
+  validateAdminCatalogueSearch,
   validateCatalogueSearch,
   validateLookupSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
+  type AdminCatalogueSearch,
+  type AdminCatalogueSearchInput,
   type CatalogueSearch,
   type CatalogueSearchInput,
   type LookupSearch,
@@ -293,10 +297,23 @@ const adminCatalogueRoute = createRoute({
   path: "catalogue",
 });
 
+// FR-14..16, FR-36, NFR-31 (issue #267). Filter and paging state lives
+// entirely in the URL, matching `catalogueSearchRoute`'s own reasoning - a
+// pasted link restores the same filtered view.
 const adminCatalogueListRoute = createRoute({
   getParentRoute: () => adminCatalogueRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Catalogue administration" }),
+  validateSearch: validateAdminCatalogueSearch as (
+    search: AdminCatalogueSearchInput,
+  ) => AdminCatalogueSearch,
+  // Only `q`'s default is worth stripping from the committed URL - unlike
+  // `catalogueSearchRoute`'s `page`/`sort`, there is no fixed default value
+  // for a `filter.<key>` key to compare against (its very presence *is* the
+  // selection), so `stripSearchParams` only ever names `q` here.
+  search: {
+    middlewares: [stripSearchParams({ q: "" })],
+  },
+  component: AdminCatalogueListPage,
   head: titled("Catalogue administration"),
 });
 

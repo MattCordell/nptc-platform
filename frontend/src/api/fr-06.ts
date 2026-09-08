@@ -35,6 +35,13 @@ const _entrySummaryBusinessKeyIsString: AssertString<
   components["schemas"]["EntrySummary"]["business_key"]
 > = true;
 
+// `AdminEntrySummary.business_key` (issue #267) - the admin listing/search
+// collection routes' own row shape, extending `EntrySummary` with
+// `row_version` but not otherwise changing this field.
+const _adminEntrySummaryBusinessKeyIsString: AssertString<
+  components["schemas"]["AdminEntrySummary"]["business_key"]
+> = true;
+
 // `BindCodeRequest.code` and `ReplacementSuccessor.code` (issue #150) - the
 // two *request* fields a code binding form sends. This is the direction FR-06
 // cares about most: with no browser Verhoeff mirror (see `catalogue/sctid.ts`
@@ -60,6 +67,7 @@ export const fr06Assertions = {
   _bindingReplacedByCodeIsString,
   _entryDetailBusinessKeyIsString,
   _entrySummaryBusinessKeyIsString,
+  _adminEntrySummaryBusinessKeyIsString,
   _bindCodeRequestCodeIsString,
   _replacementSuccessorCodeIsString,
   _conceptLookupCodeIsString,

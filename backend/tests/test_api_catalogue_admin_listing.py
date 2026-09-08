@@ -365,6 +365,59 @@ def test_filtering_by_a_hidden_status_is_accepted_and_narrows_the_page(
     assert keys == {seeded.draft}
 
 
+# --- row_version on the wire (issue #267) -----------------------------------
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_the_listing_carries_row_version_per_row(api: ApiTestApp, seeded: SeededCatalogue) -> None:
+    """Issue #267: the maintenance list screen's row-selection surface locks
+    on `(business_key, expected_row_version)` (FR-38, FR-39), so
+    `AdminEntryPage`'s rows - unlike the public `EntryPage`'s own
+    `EntrySummary` rows - carry the token without a second read."""
+    token = _admin_token(api, subject="sub-list-row-version")
+
+    response = _admin_list(api, token, after=seeded.before_all, limit=200)
+
+    assert response.status_code == 200, response.text
+    rows = {item["business_key"]: item["row_version"] for item in response.json()["items"]}
+    assert rows[seeded.canonical] >= 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_the_search_carries_row_version_per_row(api: ApiTestApp, seeded: SeededCatalogue) -> None:
+    """The search counterpart of the test above - `AdminSearchHit` carries
+    `row_version` the same way `AdminEntrySummary` does."""
+    token = _admin_token(api, subject="sub-search-row-version")
+
+    response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
+
+    assert response.status_code == 200, response.text
+    rows = {item["business_key"]: item["row_version"] for item in response.json()["items"]}
+    assert rows[seeded.canonical] >= 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_the_public_listing_and_search_do_not_carry_row_version(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """The other half of issue #267's decision: `row_version` is an
+    admin-only field. `EntryDetail` (the single-entry route) already
+    publishes it (`test_api_public_response_hygiene.py`'s own test) - this
+    proves the two *collection* routes do not, so a public consumer never
+    sees a per-row counter that exists only to serve #63's bulk reclassify
+    (`AdminEntrySummary`'s own docstring)."""
+    listing = api.get("/catalogue/entries", params={"after": seeded.before_all, "limit": 200})
+    assert listing.status_code == 200, listing.text
+    assert all("row_version" not in item for item in listing.json()["items"])
+
+    search_response = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM, "limit": 200})
+    assert search_response.status_code == 200, search_response.text
+    assert all("row_version" not in item for item in search_response.json()["items"])
+
+
 # --- authorisation (FR-44, NFR-06, NFR-20) ----------------------------------
 
 

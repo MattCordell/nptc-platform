@@ -1,5 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
 import { DataTable } from "./data-table.tsx";
@@ -128,5 +130,146 @@ describe("DataTable", () => {
     );
 
     await expectNoA11yViolations(container);
+  });
+
+  describe("row selection (issue #267)", () => {
+    /** Owns selection state itself, matching how a real caller (the
+     * screen, not this table) would - the tests below exercise the actual
+     * select/deselect/select-all round trip, not a mocked-out callback. */
+    function SelectableTable({ initial = [] as string[] }: { initial?: string[] }) {
+      const [selected, setSelected] = useState<Set<string>>(new Set(initial));
+      return (
+        <DataTable
+          caption="Catalogue entries"
+          columns={COLUMNS}
+          rows={ENTRIES}
+          getRowKey={(row) => row.id}
+          emptyState="No entries"
+          selection={{
+            selectedKeys: selected,
+            onSelectRow: (key, isSelected) =>
+              setSelected((current) => {
+                const next = new Set(current);
+                if (isSelected) {
+                  next.add(key);
+                } else {
+                  next.delete(key);
+                }
+                return next;
+              }),
+            onSelectAll: (isSelected) =>
+              setSelected(isSelected ? new Set(ENTRIES.map((row) => row.id)) : new Set()),
+            selectAllLabel: "Select all rows",
+            getRowLabel: (row) => `Select ${row.id}`,
+          }}
+        />
+      );
+    }
+
+    it("adds a leading selection column with an accessibly labelled box per row", () => {
+      render(<SelectableTable />);
+
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-1" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-2" })).not.toBeChecked();
+    });
+
+    it("selects and deselects one row independently of the others", async () => {
+      const user = userEvent.setup();
+      render(<SelectableTable />);
+
+      await user.click(screen.getByRole("checkbox", { name: "Select NPTC-1" }));
+
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-1" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-2" })).not.toBeChecked();
+
+      await user.click(screen.getByRole("checkbox", { name: "Select NPTC-1" }));
+
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-1" })).not.toBeChecked();
+    });
+
+    it("selects and deselects every row from the select-all box", async () => {
+      const user = userEvent.setup();
+      render(<SelectableTable />);
+
+      await user.click(screen.getByRole("checkbox", { name: "Select all rows" }));
+
+      for (const row of ENTRIES) {
+        expect(screen.getByRole("checkbox", { name: `Select ${row.id}` })).toBeChecked();
+      }
+
+      await user.click(screen.getByRole("checkbox", { name: "Select all rows" }));
+
+      for (const row of ENTRIES) {
+        expect(
+          screen.getByRole("checkbox", { name: `Select ${row.id}` }),
+        ).not.toBeChecked();
+      }
+    });
+
+    it("marks the select-all box checked once every row is individually selected", async () => {
+      const user = userEvent.setup();
+      render(<SelectableTable />);
+
+      for (const row of ENTRIES) {
+        await user.click(screen.getByRole("checkbox", { name: `Select ${row.id}` }));
+      }
+
+      expect(screen.getByRole("checkbox", { name: "Select all rows" })).toBeChecked();
+    });
+
+    it("marks the select-all box indeterminate, not checked, for a partial selection", async () => {
+      const user = userEvent.setup();
+      render(<SelectableTable />);
+
+      await user.click(screen.getByRole("checkbox", { name: "Select NPTC-1" }));
+
+      const selectAll = screen.getByRole("checkbox", { name: "Select all rows" });
+      expect(selectAll).not.toBeChecked();
+      expect((selectAll as HTMLInputElement).indeterminate).toBe(true);
+    });
+
+    it("is operable by keyboard alone", async () => {
+      const user = userEvent.setup();
+      render(<SelectableTable />);
+
+      await user.tab();
+      expect(screen.getByRole("checkbox", { name: "Select all rows" })).toHaveFocus();
+
+      await user.tab();
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-1" })).toHaveFocus();
+
+      await user.keyboard("{ }");
+      expect(screen.getByRole("checkbox", { name: "Select NPTC-1" })).toBeChecked();
+    });
+
+    it("accounts for the extra column in the empty-state colspan", () => {
+      const onSelectAll = vi.fn();
+      const onSelectRow = vi.fn();
+      render(
+        <DataTable
+          caption="Catalogue entries"
+          columns={COLUMNS}
+          rows={[]}
+          getRowKey={(row) => row.id}
+          emptyState="No entries match this filter"
+          selection={{
+            selectedKeys: new Set(),
+            onSelectRow,
+            onSelectAll,
+            selectAllLabel: "Select all rows",
+            getRowLabel: (row) => `Select ${row.id}`,
+          }}
+        />,
+      );
+
+      const emptyCell = screen.getByText("No entries match this filter");
+      expect(emptyCell).toHaveAttribute("colspan", String(COLUMNS.length + 1));
+    });
+
+    it("has no automated accessibility violations with a selection column", async () => {
+      const { container } = render(<SelectableTable initial={["NPTC-1"]} />);
+
+      await expectNoA11yViolations(container);
+    });
   });
 });

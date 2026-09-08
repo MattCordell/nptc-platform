@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  activeFilterEntries,
+  clearAllFilters,
+  filterSelections,
+  toggleFilterValue,
+  validateAdminCatalogueSearch,
   validateCatalogueSearch,
   validateLookupSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
+  type AdminCatalogueSearch,
 } from "./search-params.ts";
 
 describe("validateCatalogueSearch", () => {
@@ -133,6 +139,200 @@ describe("validateSignInSearch", () => {
   });
 });
 
+describe("validateAdminCatalogueSearch", () => {
+  it("defaults to an empty q with no after and no filters", () => {
+    expect(validateAdminCatalogueSearch({})).toEqual({ q: "" });
+  });
+
+  it("passes through q and after unchanged", () => {
+    expect(validateAdminCatalogueSearch({ q: "glucose", after: "NPTC-000123" })).toEqual({
+      q: "glucose",
+      after: "NPTC-000123",
+    });
+  });
+
+  // `parseSearch` (router.tsx) gives a bare string for a filter that appears
+  // exactly once in the URL - this must still normalise to a one-element
+  // array, matching the shape a repeated value would arrive as.
+  it("normalises a single-value filter to a one-element array", () => {
+    expect(validateAdminCatalogueSearch({ "filter.status": "draft" })).toEqual({
+      q: "",
+      "filter.status": ["draft"],
+    });
+  });
+
+  it("keeps a repeated filter as an array of every value", () => {
+    expect(
+      validateAdminCatalogueSearch({ "filter.discipline": ["chemistry", "haematology"] }),
+    ).toEqual({ q: "", "filter.discipline": ["chemistry", "haematology"] });
+  });
+
+  it("keeps two different filters as two separate keys", () => {
+    expect(
+      validateAdminCatalogueSearch({
+        "filter.status": "draft",
+        "filter.discipline": "chemistry",
+      }),
+    ).toEqual({ q: "", "filter.status": ["draft"], "filter.discipline": ["chemistry"] });
+  });
+
+  it("drops a filter whose only value is blank, rather than sending an empty selection", () => {
+    expect(validateAdminCatalogueSearch({ "filter.status": "" })).toEqual({ q: "" });
+  });
+
+  it("ignores a query parameter that does not carry the filter. prefix", () => {
+    expect(validateAdminCatalogueSearch({ q: "glucose", page: "3" })).toEqual({
+      q: "glucose",
+    });
+  });
+
+  it("is idempotent - validating its own output reproduces it", () => {
+    const once = validateAdminCatalogueSearch({
+      q: "glucose",
+      after: "NPTC-000123",
+      "filter.status": ["draft", "active"],
+    });
+    const twice = validateAdminCatalogueSearch(
+      once as unknown as Record<string, unknown>,
+    );
+    expect(twice).toEqual(once);
+  });
+});
+
+describe("filterSelections", () => {
+  it("returns an empty record when there are no filters", () => {
+    expect(filterSelections({ q: "glucose" })).toEqual({});
+  });
+
+  it("strips the filter. prefix from each key", () => {
+    const search: AdminCatalogueSearch = {
+      q: "",
+      "filter.status": ["draft"],
+      "filter.discipline": ["chemistry", "haematology"],
+    };
+
+    expect(filterSelections(search)).toEqual({
+      status: ["draft"],
+      discipline: ["chemistry", "haematology"],
+    });
+  });
+});
+
+describe("toggleFilterValue", () => {
+  it("adds a value to a facet with no existing selection", () => {
+    const search: AdminCatalogueSearch = { q: "glucose" };
+
+    expect(toggleFilterValue(search, "status", "draft")).toEqual({
+      q: "glucose",
+      "filter.status": ["draft"],
+    });
+  });
+
+  it("adds a second value to an existing selection", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.status": ["draft"] };
+
+    expect(toggleFilterValue(search, "status", "active")).toEqual({
+      q: "",
+      "filter.status": ["draft", "active"],
+    });
+  });
+
+  it("removes a value already selected, rather than adding a duplicate", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.status": ["draft", "active"] };
+
+    expect(toggleFilterValue(search, "status", "draft")).toEqual({
+      q: "",
+      "filter.status": ["active"],
+    });
+  });
+
+  it("drops the parameter entirely once its last value is removed", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.status": ["draft"] };
+
+    const result = toggleFilterValue(search, "status", "draft");
+
+    expect(result).toEqual({ q: "" });
+    expect("filter.status" in result).toBe(false);
+  });
+
+  it("leaves other facets untouched", () => {
+    const search: AdminCatalogueSearch = {
+      q: "",
+      "filter.status": ["draft"],
+      "filter.discipline": ["chemistry"],
+    };
+
+    expect(toggleFilterValue(search, "status", "active")).toEqual({
+      q: "",
+      "filter.status": ["draft", "active"],
+      "filter.discipline": ["chemistry"],
+    });
+  });
+
+  // ADR-0024: a cursor is only meaningful against the request that produced
+  // it, and changing the filter set changes the population being paged.
+  it("drops the after cursor, since the population it was paging over has changed", () => {
+    const search: AdminCatalogueSearch = { q: "", after: "NPTC-000123" };
+
+    const result = toggleFilterValue(search, "status", "draft");
+
+    expect("after" in result).toBe(false);
+  });
+});
+
+// PR #285 review finding 1: an escape hatch for a `filter.*` the panel
+// cannot render a control for (not `concept_picker`, or since dropped from
+// the registry) - both `activeFilterEntries` and `clearAllFilters` must work
+// from the raw search object alone, never from the panel's own recognised
+// facets, or they would be exactly as blind to the unrecognised key as the
+// panel is.
+describe("activeFilterEntries", () => {
+  it("returns nothing when there are no filters", () => {
+    expect(activeFilterEntries({ q: "glucose" })).toEqual([]);
+  });
+
+  it("flattens one entry per selected value, across every facet", () => {
+    const search: AdminCatalogueSearch = {
+      q: "",
+      "filter.status": ["draft", "active"],
+      "filter.discipline": ["chemistry"],
+    };
+
+    expect(activeFilterEntries(search)).toEqual([
+      { facetKey: "status", value: "draft" },
+      { facetKey: "status", value: "active" },
+      { facetKey: "discipline", value: "chemistry" },
+    ]);
+  });
+
+  // The exact shape of PR #285 review finding 1's first scenario: a
+  // `filter.*` key the panel never renders a control for still round-trips
+  // here, since this reads the raw search object rather than the panel's
+  // own definition-derived facet list.
+  it("includes a filter key the caller does not recognise as a known facet", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.volume_ml": ["5"] };
+
+    expect(activeFilterEntries(search)).toEqual([{ facetKey: "volume_ml", value: "5" }]);
+  });
+});
+
+describe("clearAllFilters", () => {
+  it("drops every filter and the after cursor, keeping q", () => {
+    const search: AdminCatalogueSearch = {
+      q: "glucose",
+      after: "NPTC-000123",
+      "filter.status": ["draft"],
+      "filter.discipline": ["chemistry"],
+    };
+
+    expect(clearAllFilters(search)).toEqual({ q: "glucose" });
+  });
+
+  it("is a no-op on a search with no filters", () => {
+    expect(clearAllFilters({ q: "glucose" })).toEqual({ q: "glucose" });
+  });
+});
+
 describe("every validator is idempotent", () => {
   // TanStack Router calls validateSearch more than once per navigation, and
   // a later call passes the validator's own previously-validated output back
@@ -146,6 +346,7 @@ describe("every validator is idempotent", () => {
     ["validateLookupSearch", validateLookupSearch],
     ["validateReleaseCompareSearch", validateReleaseCompareSearch],
     ["validateSignInSearch", validateSignInSearch],
+    ["validateAdminCatalogueSearch", validateAdminCatalogueSearch],
   ];
 
   it.each(cases)(

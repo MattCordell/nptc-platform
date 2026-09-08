@@ -171,3 +171,167 @@ export function validateSignInSearch(search: Record<string, unknown>): SignInSea
   const redirect = asInternalRedirect(search.redirect);
   return redirect ? { redirect } : {};
 }
+
+// --- admin catalogue list (issue #267) --------------------------------------
+
+/**
+ * The `filter.<key>` parameter name prefix (ADR-0032, matching the backend's
+ * own `FILTER_PARAM_PREFIX` in `nptc.catalogue.facets`). Declared once here
+ * rather than repeated as a string literal at every call site in this module
+ * and in `api/filter-params.ts`.
+ */
+export const FILTER_PARAM_PREFIX = "filter.";
+
+/**
+ * A `filter.*` value, normalised to an array of strings.
+ *
+ * `parseSearch` (router.tsx) gives a *bare string* for a parameter that
+ * appears exactly once in the URL and an array only once it is repeated -
+ * `?filter.status=draft` and `?filter.status=draft&filter.status=active`
+ * arrive as different shapes for the identical concept (one selected value
+ * vs. two). This always returns an array, so every consumer of a validated
+ * search - the filter panel, `filterSelections`, `filterQueryParams` - sees
+ * one shape regardless of how many values were selected. Never `Number()`s a
+ * value: a facet value can be a SNOMED CT code (FR-06).
+ */
+function asStringArray(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : [value];
+  return items.map((item) => asString(item)).filter((item) => item.length > 0);
+}
+
+/**
+ * Search state for `/admin/catalogue/` (issue #267, FR-16, FR-36).
+ *
+ * Deliberately flat, not `{ q, after, filters: Record<string, string[]> }`:
+ * `router.tsx`'s own `stringifySearch` throws for a non-scalar value (a
+ * nested object is not "a scalar or an array of scalars"), so a `filters`
+ * key holding a record would break the URL round trip the moment there was
+ * more than one active facet. Each `filter.<key>` stays its own top-level
+ * key, exactly as it appears on the wire (ADR-0032) - `filterSelections`
+ * below is what turns this back into a keyed record for a caller that wants
+ * one.
+ *
+ * `after` is a cursor, not a page number (unlike `CatalogueSearch.page`):
+ * both `/catalogue/admin/entries` and `/catalogue/admin/search` are
+ * keyset-paginated (ADR-0024), so there is no page number to restore, only
+ * "the cursor from the last page the caller saw" - see `docs/adr/
+ * 0024-catalogue-search-and-pagination.md`.
+ */
+export type AdminCatalogueSearch = {
+  q: string;
+  after?: string;
+} & {
+  [key: `${typeof FILTER_PARAM_PREFIX}${string}`]: string[] | undefined;
+};
+
+/**
+ * What a caller may supply when navigating *to* `/admin/catalogue/` -
+ * matching `CatalogueSearchInput`'s own reasoning (every field optional, a
+ * `SearchSchemaInput` brand for TanStack Router's narrower-input mechanism).
+ */
+export type AdminCatalogueSearchInput = Partial<AdminCatalogueSearch> & SearchSchemaInput;
+
+export function validateAdminCatalogueSearch(
+  search: Record<string, unknown>,
+): AdminCatalogueSearch {
+  const validated: AdminCatalogueSearch = { q: asString(search.q) };
+  const after = asString(search.after);
+  if (after.length > 0) {
+    validated.after = after;
+  }
+  for (const [key, value] of Object.entries(search)) {
+    if (!key.startsWith(FILTER_PARAM_PREFIX)) {
+      continue;
+    }
+    const values = asStringArray(value);
+    if (values.length > 0) {
+      validated[key as `${typeof FILTER_PARAM_PREFIX}${string}`] = values;
+    }
+  }
+  return validated;
+}
+
+/**
+ * The `filter.*` entries of a validated admin catalogue search, keyed by
+ * facet alone (the `filter.` prefix stripped) - the shape the filter panel
+ * and `api/filter-params.ts`'s `filterQueryParams` both want, so neither
+ * re-derives it from the flat validated search object by hand.
+ */
+export function filterSelections(search: AdminCatalogueSearch): Record<string, string[]> {
+  const selections: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(search)) {
+    if (key.startsWith(FILTER_PARAM_PREFIX) && Array.isArray(value)) {
+      selections[key.slice(FILTER_PARAM_PREFIX.length)] = value;
+    }
+  }
+  return selections;
+}
+
+/**
+ * Every `filter.*` selection in a validated search, flattened to one entry
+ * per selected value (PR #285 review finding 1) - the shape a "what's
+ * applied right now" chip list wants. Built from `filterSelections` itself
+ * (PR #285 review round 2's own nit) rather than re-scanning `search` a
+ * second time: the two would otherwise be two independent implementations of
+ * the identical `filter.` prefix strip, free to drift silently apart.
+ * Because it reads `filterSelections`'s own output rather than the panel's
+ * definition-derived facet list, it still survives a `filter.<key>` the
+ * panel does not recognise: a filterable property with no `concept_picker`
+ * control, or one dropped from the registry after the link that named it
+ * was shared, both still round-trip through here even though neither ever
+ * gets a checkbox. Without this, a facet in that state is invisible to the
+ * panel and to the URL alike - applied, but with no control on screen that
+ * could ever clear it.
+ */
+export function activeFilterEntries(
+  search: AdminCatalogueSearch,
+): { facetKey: string; value: string }[] {
+  return Object.entries(filterSelections(search)).flatMap(([facetKey, values]) =>
+    values.map((value) => ({ facetKey, value })),
+  );
+}
+
+/**
+ * Drops every `filter.*` selection and the `after` cursor, keeping `q`
+ * unchanged (PR #285 review finding 1) - the "Clear all filters" control's
+ * own handler, for the same reason `toggleFilterValue` drops `after`: the
+ * population being paged over no longer exists once the filter set changes
+ * underneath it.
+ */
+export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSearch {
+  return { q: search.q };
+}
+
+/**
+ * One facet value toggled on or off (issue #267) - the filter panel's own
+ * `onChange`, so every facet checkbox shares one implementation of
+ * "add/remove a value and invalidate the current page" rather than each
+ * re-deriving the parameter name and the add/remove logic.
+ *
+ * Toggling any filter drops `after`: the population a cursor was paging over
+ * no longer exists once the filter set changes underneath it - the same
+ * fact `MalformedSearchCursorError`'s `SearchCursorQueryMismatchError`
+ * subclass refuses server-side for a search cursor (ADR-0024), applied here
+ * before a stale cursor is ever sent.
+ */
+export function toggleFilterValue(
+  search: AdminCatalogueSearch,
+  facetKey: string,
+  value: string,
+): AdminCatalogueSearch {
+  const paramKey =
+    `${FILTER_PARAM_PREFIX}${facetKey}` as `${typeof FILTER_PARAM_PREFIX}${string}`;
+  const current = search[paramKey] ?? [];
+  const next = current.includes(value)
+    ? current.filter((existing) => existing !== value)
+    : [...current, value];
+
+  const updated: AdminCatalogueSearch = { ...search };
+  delete updated.after;
+  if (next.length > 0) {
+    updated[paramKey] = next;
+  } else {
+    delete updated[paramKey];
+  }
+  return updated;
+}

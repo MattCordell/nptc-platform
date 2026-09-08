@@ -1,6 +1,7 @@
 # User guides
 
 - [Signing in, registering, and signing out](signing-in.md) — issue #41.
+- [Finding and filtering entries for editing](finding-entries.md) — issue #267.
 - [Editing an entry](editing-an-entry.md) — issue #61, an orienting overview of the three
   guides below.
 - [Editing an entry's terms](editing-designations.md) — issue #149.

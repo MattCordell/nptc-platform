@@ -66,4 +66,21 @@ describe("Checkbox", () => {
 
     await expectNoA11yViolations(container);
   });
+
+  it("keeps a visually-hidden label in the accessible name (issue #267)", () => {
+    render(<Checkbox label="Select NPTC-000123" labelHidden />);
+
+    const checkbox = screen.getByLabelText("Select NPTC-000123");
+    const label = checkbox.parentElement?.querySelector("label");
+    expect(label).toHaveClass("visually-hidden");
+  });
+
+  it("sets the DOM indeterminate property, which no HTML attribute can express (issue #267)", () => {
+    render(<Checkbox label="Select all rows" indeterminate />);
+
+    expect(screen.getByLabelText("Select all rows")).toHaveProperty(
+      "indeterminate",
+      true,
+    );
+  });
 });

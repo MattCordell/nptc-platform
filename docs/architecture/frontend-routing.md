@@ -35,7 +35,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/sign-in?redirect=`, `/sign-out`, `/register`, `/auth/callback` | issue #41 |
 | `/submissions`, `/submissions/new`, `/submissions/$submissionId` | FR-23–FR-31 |
 | `/interest`, `/account` | FR-32–FR-34 |
-| `/admin`, `/admin/catalogue{,/new,/$businessKey/edit}` | FR-36–FR-39 |
+| `/admin`, `/admin/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #267), `/admin/catalogue{/new,/$businessKey/edit}` | FR-36–FR-39 |
 | `/admin/properties{,/new,/$propertyKey}` | FR-08–FR-13 |
 | `/admin/users{,/$userId}` | FR-40–FR-43 |
 | `/admin/validation{,/$findingId}` | FR-45–FR-55 |
@@ -115,6 +115,21 @@ path (must start with a single `/`, not `//`, and reject a backslash) — accept
 arbitrary value would make it an open redirect, since issue #41 uses it to send a
 just-signed-in user back where they were.
 
+## `from` means two different things depending on the hook
+
+`useSearch({ from })`/`useParams({ from })` key off a route's **internal id**, which
+includes a pathless layout segment such as `authenticated` (`shell/require-auth.tsx`'s own
+route, contributing no URL segment of its own) - matching `admin-catalogue-edit.tsx`'s own
+`useParams({ from: "/authenticated/admin/catalogue/$businessKey/edit" })`.
+`useNavigate({ from })`/`<Link from>` key off the **resolved URL path** instead, which never
+includes a pathless segment - `/admin/catalogue/$businessKey/edit`, with no
+`/authenticated` prefix (issue #267 review; confirmed against the router's own
+`routesById`, not assumed from the URL, after `tsc` rejected the id-shaped string with an
+opaque "not assignable to `FromPathOption`" error that named no missing route). A route
+nested under `admin-catalogue-list.tsx`'s two constants (`ROUTE_ID` for `useSearch`,
+`ROUTE_PATH` for `useNavigate`) is the pattern to copy for a new screen under `/admin`
+needing both.
+
 ## Building a URL
 
 Every internal link goes through the route table's types — `<Link to>`, `useNavigate`, or
@@ -159,6 +174,19 @@ only affects what gets written to the URL bar; it does not change `validateCatal
 itself.
 
 No schema library (zod/valibot) is used for search validation — see ADR-0020.
+
+`/admin/catalogue`'s search state (issue #267, ADR-0032) is the one search shape in this
+file with a dynamic set of keys: each selected facet is its own top-level `filter.<key>`
+key (`filter.status=draft`, `filter.discipline=chemistry`), never nested under a `filters`
+object — `stringifySearch` throws on exactly that shape, since a plain object is not "a
+scalar or an array of scalars". `validateAdminCatalogueSearch` normalises a facet's value
+to an array regardless of whether it appeared once or several times in the URL (`parseSearch`
+gives a bare string for the former), and stays idempotent the same way `asPage` does.
+`filterSelections`/`toggleFilterValue` (`search-params.ts`) convert the flat validated
+search to and from a keyed `Record<string, string[]>` for the filter panel and the API
+client's own query params (`api/filter-params.ts` - the one place a `filter.<key>`
+parameter name is built by hand for the generated client, since the OpenAPI document can
+only type it as a single literal templated field).
 
 ## The layout shell
 

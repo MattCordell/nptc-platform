@@ -419,6 +419,10 @@ export interface paths {
          *     `maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the
          *     same reason they are not on `/catalogue/entries`: `GET
          *     /catalogue/admin/search` is where the facet list with counts lives.
+         *
+         *     Rows carry `row_version` (issue #267) - `AdminEntryPage`, not the public
+         *     `EntryPage` - so the maintenance list screen's selection surface can
+         *     carry FR-38's optimistic-locking token per row without a second read.
          */
         get: operations["list_entries_any_status_api_v1_catalogue_admin_entries_get"];
         put?: never;
@@ -449,6 +453,11 @@ export interface paths {
          *     the same `?filter.*` parameters - including `status`, whose bucket list
          *     is non-degenerate here (every status an administrator might filter by),
          *     unlike the public surface's single-bucket `active` facet.
+         *
+         *     Hits carry `row_version` (issue #267) - `nptc.catalogue.search.SearchHit`
+         *     reads it straight off `scored`'s own join to `catalogue_entry`, see that
+         *     module's docstring - so `AdminSearchHit`, not the public `SearchHit`,
+         *     carries it onto the wire here.
          */
         get: operations["search_any_status_api_v1_catalogue_admin_search_get"];
         put?: never;
@@ -645,6 +654,115 @@ export interface components {
             use: components["schemas"]["DesignationUse"];
             /** Reason */
             reason: string;
+        };
+        /**
+         * AdminEntryPage
+         * @description The admin counterpart to `catalogue_shared.EntryPage` (issue #267) -
+         *     same shape, rows that additionally carry `row_version`. A standalone
+         *     model rather than a subclass of `EntryPage`: overriding `items`' element
+         *     type in a subclass is the field-covariance trap `mypy --strict` (and
+         *     Liskov substitution generally) flags on a model a caller might still
+         *     pass around as the parent type.
+         */
+        AdminEntryPage: {
+            /** Items */
+            items: components["schemas"]["AdminEntrySummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * AdminEntrySummary
+         * @description `EntrySummary` plus FR-38's optimistic-locking token (issue #267).
+         *
+         *     Defined here, not in `catalogue_shared.py`: that module is imported by
+         *     the public router, and a field the public surface must never carry
+         *     (`EntryDetail`'s own docstring explains why `EntrySummary` does not
+         *     carry it) has to live somewhere the public router cannot reach by
+         *     construction, not merely by convention. `test_api_public_response_
+         *     hygiene.py` asserts the public listing/search routes still omit it.
+         *
+         *     The bulk reclassify route (FR-39, #63) locks on `(business_key,
+         *     expected_row_version)`; this is what lets its selection surface (this
+         *     issue) read a `row_version` per row instead of re-reading the entry
+         *     once selected.
+         */
+        AdminEntrySummary: {
+            /** Business Key */
+            business_key: string;
+            /** Preferred Term */
+            preferred_term: string;
+            /** Length */
+            length: number;
+            /** Status */
+            status: string;
+            /** Specimen Unconstrained */
+            specimen_unconstrained: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Has Open Finding */
+            has_open_finding: boolean;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
+            /** Row Version */
+            row_version: number;
+        };
+        /**
+         * AdminSearchHit
+         * @description `AdminEntrySummary` plus a relevance score - the admin counterpart to
+         *     `catalogue_shared.SearchHit`, matching that model's own field for field
+         *     (issue #267).
+         */
+        AdminSearchHit: {
+            /** Business Key */
+            business_key: string;
+            /** Preferred Term */
+            preferred_term: string;
+            /** Length */
+            length: number;
+            /** Status */
+            status: string;
+            /** Specimen Unconstrained */
+            specimen_unconstrained: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Has Open Finding */
+            has_open_finding: boolean;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
+            /** Row Version */
+            row_version: number;
+            /**
+             * Score
+             * @description Trigram similarity against `q`, between 0 and 1.
+             */
+            score: number;
+        };
+        /**
+         * AdminSearchPage
+         * @description The admin counterpart to `catalogue_shared.SearchPage` (issue #267) -
+         *     see `AdminEntryPage`'s own docstring for why this is a standalone model
+         *     rather than a subclass.
+         */
+        AdminSearchPage: {
+            /** Items */
+            items: components["schemas"]["AdminSearchHit"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Facets
+             * @description Every facet available for this search, with counts over the whole result set rather than this page. A facet's own selection is excluded from its own counts, so a bucket you have not chosen still tells you how many entries it would give you.
+             */
+            facets: components["schemas"]["Facet"][];
         };
         /**
          * AmendDesignationRequest
@@ -3134,7 +3252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EntryPage"];
+                    "application/json": components["schemas"]["AdminEntryPage"];
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -3190,7 +3308,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SearchPage"];
+                    "application/json": components["schemas"]["AdminSearchPage"];
                 };
             };
             /** @description No credential, or one that could not be verified. */

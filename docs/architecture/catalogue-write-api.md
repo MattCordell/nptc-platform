@@ -63,8 +63,8 @@ on `EntryDetail` rather than `EntrySummary`.
 
 | Path | Method | Returns |
 |---|---|---|
-| `/catalogue/admin/entries` | `GET` | `200 EntryPage` |
-| `/catalogue/admin/search` | `GET` | `200 SearchPage` |
+| `/catalogue/admin/entries` | `GET` | `200 AdminEntryPage` |
+| `/catalogue/admin/search` | `GET` | `200 AdminSearchPage` |
 
 The collection counterpart to "Entry read, any status" above, and split out of the same
 gap: an edit screen needs a route to *find* a draft, deprecated or withdrawn entry before
@@ -88,8 +88,8 @@ their public counterparts - see [public-api.md](public-api.md#pagination) and
   narrowing filter, and the search response's own `status` facet has a bucket per status
   actually present rather than the public route's single `active` bucket.
 
-`status` is present on every row of both responses (`EntryPage.items[].status`,
-`SearchPage.items[].status`) - already true of `EntrySummary` generally
+`status` is present on every row of both responses (`AdminEntryPage.items[].status`,
+`AdminSearchPage.items[].status`) - already true of `EntrySummary` generally
 ([public-api.md](public-api.md)), stated here because it is this issue's own acceptance
 criterion: a caller has to be able to tell a draft from an active entry without a second
 call.
@@ -97,6 +97,17 @@ call.
 Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission as the entry-read
 route above and the write routes below - no new permission was minted, for the identical
 reason "Entry read, any status" gives for its own gate.
+
+**Rows also carry `row_version` (issue #267).** `AdminEntrySummary`/`AdminSearchHit` -
+`EntrySummary`/`SearchHit` plus FR-38's optimistic-locking token - are what these two
+routes actually return, not the public shapes: `AdminEntryPage.items: [AdminEntrySummary]`,
+`AdminSearchPage.items: [AdminSearchHit]`. Defined in `catalogue_admin.py`, not
+`catalogue_shared.py` (which the public router also imports), so the public
+`/catalogue/entries`/`/catalogue/search` stay byte-identical by construction -
+`test_api_public_response_hygiene.py` asserts they still omit the field. The admin
+catalogue list screen's row-selection surface is the reason: it locks the bulk
+property-value write route below on `(business_key, expected_row_version)`, and a list is
+where that token has to come from without a second read per selected row.
 
 ### Errors (all-status listing and search)
 

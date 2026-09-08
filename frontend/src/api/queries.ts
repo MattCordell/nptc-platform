@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { asVersionConflict } from "./conflicts.ts";
-import type { components } from "./schema.ts";
+import { filterQueryParams } from "./filter-params.ts";
+import type { components, paths } from "./schema.ts";
 import { unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
 
@@ -99,6 +100,86 @@ export function useEntryDetail(businessKey: string) {
     // A blank business key can't resolve to a real entry - don't fire the
     // request only to fail with a 422.
     enabled: businessKey.length > 0,
+  });
+}
+
+type AdminEntriesQuery = NonNullable<
+  paths["/api/v1/catalogue/admin/entries"]["get"]["parameters"]["query"]
+>;
+type AdminSearchQuery = NonNullable<
+  paths["/api/v1/catalogue/admin/search"]["get"]["parameters"]["query"]
+>;
+
+export interface AdminEntriesListParams {
+  limit?: number;
+  after?: string;
+  /** Keyed by facet alone (`filterSelections`'s own output shape,
+   * `router/search-params.ts`) - turned into the wire `filter.<key>`
+   * parameters by `filterQueryParams` (`api/filter-params.ts`). */
+  filters?: Record<string, string[]>;
+  enabled?: boolean;
+}
+
+/**
+ * One page of catalogue entries, any status (issue #266, #267) - the browse
+ * half of the admin list screen's dual-surface dispatch (empty `q`).
+ *
+ * The merged query object is cast through the generated operation's own
+ * query type (`AdminEntriesQuery`), not the single literal
+ * `"filter.{property_key}"` field it types that parameter as - see
+ * `api/filter-params.ts`'s own docstring for why a real facet key cannot be
+ * assigned to that field directly.
+ */
+export function useAdminEntriesList(params: AdminEntriesListParams = {}) {
+  const client = useApiClient();
+  const { limit, after, filters = {}, enabled = true } = params;
+  const query = { limit, after, ...filterQueryParams(filters) };
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/admin/entries", query],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/admin/entries", {
+          params: { query: query as unknown as AdminEntriesQuery },
+          signal,
+        }),
+      ),
+    enabled,
+  });
+}
+
+export interface AdminSearchParams {
+  q: string;
+  limit?: number;
+  after?: string;
+  filters?: Record<string, string[]>;
+  enabled?: boolean;
+}
+
+/**
+ * Search catalogue entries by term, any status (issue #266, #267) - the
+ * search half of the admin list screen's dual-surface dispatch (non-blank
+ * `q`). `enabled` is combined with a non-blank (trimmed) `q` rather than
+ * trusted alone - the route itself 422s a blank query, and a caller that
+ * flips `enabled` true a render early (before `q` has actually been typed)
+ * should not fire a request only to fail. Trimmed, not merely non-empty
+ * (PR #285 review finding 5), so this can never be enabled in a state the
+ * page's own `mode` (`admin-catalogue-list.tsx`, computed with the same
+ * `.trim()`) considers browse.
+ */
+export function useAdminSearch(params: AdminSearchParams) {
+  const client = useApiClient();
+  const { q, limit, after, filters = {}, enabled = true } = params;
+  const query = { q, limit, after, ...filterQueryParams(filters) };
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/admin/search", query],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/admin/search", {
+          params: { query: query as unknown as AdminSearchQuery },
+          signal,
+        }),
+      ),
+    enabled: enabled && q.trim().length > 0,
   });
 }
 

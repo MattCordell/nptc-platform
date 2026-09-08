@@ -7,9 +7,9 @@ its own guide with the full detail.
 You need the Administrator role to change any of them. Acknowledging a possible duplicate
 term is the one exception — that needs only the Reviewer role.
 
-Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
-`/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
-published yet can be edited the same way as published ones.
+Open an entry for editing from **[Administration → Catalogue](finding-entries.md)**, or go
+straight to `/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not
+been published yet can be edited the same way as published ones.
 
 ## The three sections
 
