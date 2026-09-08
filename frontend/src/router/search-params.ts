@@ -270,27 +270,25 @@ export function filterSelections(search: AdminCatalogueSearch): Record<string, s
 /**
  * Every `filter.*` selection in a validated search, flattened to one entry
  * per selected value (PR #285 review finding 1) - the shape a "what's
- * applied right now" chip list wants, and one that (unlike `filterSelections`)
- * survives a `filter.<key>` the panel does not recognise: a filterable
- * property with no `concept_picker` control, or one dropped from the
- * registry after the link that named it was shared, both still round-trip
- * through here even though neither ever gets a checkbox. Without this, a
- * facet in that state is invisible to the panel and to the URL alike -
- * applied, but with no control on screen that could ever clear it.
+ * applied right now" chip list wants. Built from `filterSelections` itself
+ * (PR #285 review round 2's own nit) rather than re-scanning `search` a
+ * second time: the two would otherwise be two independent implementations of
+ * the identical `filter.` prefix strip, free to drift silently apart.
+ * Because it reads `filterSelections`'s own output rather than the panel's
+ * definition-derived facet list, it still survives a `filter.<key>` the
+ * panel does not recognise: a filterable property with no `concept_picker`
+ * control, or one dropped from the registry after the link that named it
+ * was shared, both still round-trip through here even though neither ever
+ * gets a checkbox. Without this, a facet in that state is invisible to the
+ * panel and to the URL alike - applied, but with no control on screen that
+ * could ever clear it.
  */
 export function activeFilterEntries(
   search: AdminCatalogueSearch,
 ): { facetKey: string; value: string }[] {
-  const entries: { facetKey: string; value: string }[] = [];
-  for (const [key, value] of Object.entries(search)) {
-    if (key.startsWith(FILTER_PARAM_PREFIX) && Array.isArray(value)) {
-      const facetKey = key.slice(FILTER_PARAM_PREFIX.length);
-      for (const oneValue of value) {
-        entries.push({ facetKey, value: oneValue });
-      }
-    }
-  }
-  return entries;
+  return Object.entries(filterSelections(search)).flatMap(([facetKey, values]) =>
+    values.map((value) => ({ facetKey, value })),
+  );
 }
 
 /**

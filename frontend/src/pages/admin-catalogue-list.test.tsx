@@ -429,43 +429,26 @@ describe("AdminCatalogueListPage", () => {
       next_cursor: null,
     };
 
-    // Not `stubApi`'s own `vary` (issue #149's own mechanism): it dispatches
-    // on `{method, path}` alone, with the query string already stripped -
-    // exactly the one thing that distinguishes a first page's request from
-    // a second's here (both hit the identical path; only `after` differs).
-    // A call-count-based `vary` was tried first and is flaky by construction
-    // under this app's own `<StrictMode>` (`render-route.tsx`): the initial
-    // mount's own query fetches `/catalogue/admin/entries` twice (matching
+    // Keyed on `after` itself, not a call count (PR #285 review round 2):
+    // `path` alone can't tell a first-page request from a second's - both hit
+    // the identical path, and only the query string differs - and a
+    // call-count-based `vary` is flaky by construction under this app's own
+    // `<StrictMode>` (`render-route.tsx`): the initial mount's own query
+    // fetches `/catalogue/admin/entries` twice (matching
     // `admin-catalogue-edit.test.tsx`'s documented "two reads under
-    // StrictMode"), so a counter reaches 2 - "page two" - before the test
-    // ever clicks "Next page". Keying on `after` itself sidesteps the
-    // duplicate-call count entirely: both duplicate initial reads carry no
+    // StrictMode"), so a counter would reach 2 - "page two" - before the
+    // test ever clicks "Next page". Both duplicate initial reads carry no
     // `after` and get the identical first page.
     function stubTwoPages() {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (request: Request) => {
-          const url = new URL(request.url);
-          const method = request.method;
-          if (method === "GET" && url.pathname.endsWith("/catalogue/admin/entries")) {
-            const body = url.searchParams.get("after") === null ? PAGE_1 : PAGE_2;
-            return new Response(JSON.stringify(body), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            });
+      return stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
+            const body = call.searchParams.get("after") === null ? PAGE_1 : PAGE_2;
+            return { method: "GET", path: call.path, status: 200, body };
           }
-          const route = [PROPERTIES_OK, DISCIPLINE_VALUES_OK].find(
-            (r) => r.method === method && url.pathname.endsWith(r.path),
-          );
-          if (route === undefined) {
-            return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
-          }
-          return new Response(JSON.stringify(route.body), {
-            status: route.status,
-            headers: { "Content-Type": "application/json" },
-          });
-        }),
-      );
+          return null;
+        },
+      });
     }
 
     it("(a) pushes the cursor into the URL and shows the next page's entries", async () => {

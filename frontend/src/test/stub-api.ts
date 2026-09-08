@@ -33,8 +33,20 @@ export interface StubOptions {
    *
    * This rather than re-stubbing `fetch` mid-test: the API client holds the
    * reference it was created with, so a second `vi.stubGlobal` is never seen.
+   *
+   * `searchParams` carries the request's own query string (PR #285 review
+   * round 2): `path` alone is the request URL's pathname, which is identical
+   * across e.g. a keyset-paginated route's first and second page - only the
+   * query string (`after=...`) tells those two calls apart. Varying on
+   * `priorSameCalls` instead works only when a route's *n*th call always
+   * means the same thing every render, which a `<StrictMode>` double-fetch
+   * of the very first page breaks (issue #267's own `admin-catalogue-list`
+   * paging tests hit exactly this before switching to `searchParams`).
    */
-  vary?: (call: { method: string; path: string }, priorSameCalls: number) => Route | null;
+  vary?: (
+    call: { method: string; path: string; searchParams: URLSearchParams },
+    priorSameCalls: number,
+  ) => Route | null;
 }
 
 /**
@@ -45,7 +57,8 @@ export interface StubOptions {
 export function stubApi(routes: Route[], options: StubOptions = {}) {
   const calls: { method: string; path: string; body: unknown; text: string }[] = [];
   const fetchMock = vi.fn(async (request: Request) => {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
     const method = request.method;
     // The raw wire text, alongside the parsed body: `JSON.parse` (like
     // `request.json()`) cannot tell a quoted SCTID from a bare number once
@@ -58,7 +71,7 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     ).length;
     calls.push({ method, path, body, text });
     const route =
-      options.vary?.({ method, path }, priorSameCalls) ??
+      options.vary?.({ method, path, searchParams: url.searchParams }, priorSameCalls) ??
       routes.find((r) => r.method === method && path.endsWith(r.path));
     if (route === undefined) {
       return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
