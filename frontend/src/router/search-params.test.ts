@@ -167,7 +167,10 @@ describe("validateAdminCatalogueSearch", () => {
 
   it("keeps two different filters as two separate keys", () => {
     expect(
-      validateAdminCatalogueSearch({ "filter.status": "draft", "filter.discipline": "chemistry" }),
+      validateAdminCatalogueSearch({
+        "filter.status": "draft",
+        "filter.discipline": "chemistry",
+      }),
     ).toEqual({ q: "", "filter.status": ["draft"], "filter.discipline": ["chemistry"] });
   });
 
@@ -176,7 +179,9 @@ describe("validateAdminCatalogueSearch", () => {
   });
 
   it("ignores a query parameter that does not carry the filter. prefix", () => {
-    expect(validateAdminCatalogueSearch({ q: "glucose", page: "3" })).toEqual({ q: "glucose" });
+    expect(validateAdminCatalogueSearch({ q: "glucose", page: "3" })).toEqual({
+      q: "glucose",
+    });
   });
 
   it("is idempotent - validating its own output reproduces it", () => {
@@ -185,7 +190,9 @@ describe("validateAdminCatalogueSearch", () => {
       after: "NPTC-000123",
       "filter.status": ["draft", "active"],
     });
-    const twice = validateAdminCatalogueSearch(once as unknown as Record<string, unknown>);
+    const twice = validateAdminCatalogueSearch(
+      once as unknown as Record<string, unknown>,
+    );
     expect(twice).toEqual(once);
   });
 });

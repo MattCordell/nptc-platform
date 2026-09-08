@@ -78,6 +78,9 @@ describe("Checkbox", () => {
   it("sets the DOM indeterminate property, which no HTML attribute can express (issue #267)", () => {
     render(<Checkbox label="Select all rows" indeterminate />);
 
-    expect(screen.getByLabelText("Select all rows")).toHaveProperty("indeterminate", true);
+    expect(screen.getByLabelText("Select all rows")).toHaveProperty(
+      "indeterminate",
+      true,
+    );
   });
 });

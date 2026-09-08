@@ -251,10 +251,9 @@ describe("useAdminEntriesList", () => {
   it("sends each selected filter value as its own repeated filter.<key> parameter", async () => {
     const fetchMock = stubFetch(200, { items: [], next_cursor: null });
 
-    renderHook(
-      () => useAdminEntriesList({ filters: { status: ["draft", "active"] } }),
-      { wrapper },
-    );
+    renderHook(() => useAdminEntriesList({ filters: { status: ["draft", "active"] } }), {
+      wrapper,
+    });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const requestUrl = new URL(requestFor(fetchMock).url);

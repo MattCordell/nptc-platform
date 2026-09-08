@@ -50,8 +50,7 @@ const ROUTE_ID = "/authenticated/admin/catalogue/" as const;
 const ROUTE_PATH = "/admin/catalogue/" as const;
 
 type Row =
-  | components["schemas"]["AdminEntrySummary"]
-  | components["schemas"]["AdminSearchHit"];
+  components["schemas"]["AdminEntrySummary"] | components["schemas"]["AdminSearchHit"];
 
 function emptyStateText(mode: "browse" | "search", q: string): string {
   return mode === "search"
@@ -108,10 +107,10 @@ export function AdminCatalogueListPage() {
   // the previous selection no longer names a population that still exists,
   // so there is nothing to synchronise with an external system here, only
   // React state to keep consistent with itself before this render commits.
-  const populationKey = useMemo(() => JSON.stringify({ q: search.q, filters }), [
-    search.q,
-    filters,
-  ]);
+  const populationKey = useMemo(
+    () => JSON.stringify({ q: search.q, filters }),
+    [search.q, filters],
+  );
   const [committedPopulationKey, setCommittedPopulationKey] = useState(populationKey);
   if (populationKey !== committedPopulationKey) {
     setCommittedPopulationKey(populationKey);

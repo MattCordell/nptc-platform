@@ -34,7 +34,9 @@ import { FILTER_PARAM_PREFIX } from "../router/search-params.ts";
  * selected values, so an emptied-out filter does not send
  * `?filter.discipline=` and narrow the result to nothing.
  */
-export function filterQueryParams(selections: Record<string, string[]>): Record<string, string[]> {
+export function filterQueryParams(
+  selections: Record<string, string[]>,
+): Record<string, string[]> {
   const params: Record<string, string[]> = {};
   for (const [key, values] of Object.entries(selections)) {
     if (values.length > 0) {

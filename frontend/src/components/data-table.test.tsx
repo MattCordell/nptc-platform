@@ -200,7 +200,9 @@ describe("DataTable", () => {
       await user.click(screen.getByRole("checkbox", { name: "Select all rows" }));
 
       for (const row of ENTRIES) {
-        expect(screen.getByRole("checkbox", { name: `Select ${row.id}` })).not.toBeChecked();
+        expect(
+          screen.getByRole("checkbox", { name: `Select ${row.id}` }),
+        ).not.toBeChecked();
       }
     });
 

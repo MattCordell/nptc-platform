@@ -114,7 +114,11 @@ function PropertyFacetGroup({
 
   return (
     <div className="flex flex-col gap-2">
-      <Field id={filterId} label={`Filter ${label}`} hint="Type to narrow the list below.">
+      <Field
+        id={filterId}
+        label={`Filter ${label}`}
+        hint="Type to narrow the list below."
+      >
         {(controlProps) => (
           <input
             {...controlProps}

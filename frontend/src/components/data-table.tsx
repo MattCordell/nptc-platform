@@ -73,7 +73,8 @@ export function DataTable<Row>({
   const selectedCount = selection
     ? rows.filter((row) => selection.selectedKeys.has(getRowKey(row))).length
     : 0;
-  const allSelected = selection !== undefined && rows.length > 0 && selectedCount === rows.length;
+  const allSelected =
+    selection !== undefined && rows.length > 0 && selectedCount === rows.length;
   const someSelected = selectedCount > 0 && !allSelected;
 
   return (
@@ -126,7 +127,9 @@ export function DataTable<Row>({
                       label={selection.getRowLabel(row)}
                       labelHidden
                       checked={selection.selectedKeys.has(rowKey)}
-                      onChange={(event) => selection.onSelectRow(rowKey, event.target.checked)}
+                      onChange={(event) =>
+                        selection.onSelectRow(rowKey, event.target.checked)
+                      }
                     />
                   </td>
                 ) : null}

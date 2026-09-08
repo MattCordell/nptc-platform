@@ -284,7 +284,8 @@ export function toggleFilterValue(
   facetKey: string,
   value: string,
 ): AdminCatalogueSearch {
-  const paramKey = `${FILTER_PARAM_PREFIX}${facetKey}` as `${typeof FILTER_PARAM_PREFIX}${string}`;
+  const paramKey =
+    `${FILTER_PARAM_PREFIX}${facetKey}` as `${typeof FILTER_PARAM_PREFIX}${string}`;
   const current = search[paramKey] ?? [];
   const next = current.includes(value)
     ? current.filter((existing) => existing !== value)

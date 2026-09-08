@@ -45,7 +45,11 @@ function entrySummary(overrides: Record<string, unknown>) {
 
 const ENTRIES_PAGE = {
   items: [
-    entrySummary({ business_key: DRAFT_KEY, preferred_term: "Ferritin", status: "draft" }),
+    entrySummary({
+      business_key: DRAFT_KEY,
+      preferred_term: "Ferritin",
+      status: "draft",
+    }),
     entrySummary({
       business_key: ACTIVE_KEY,
       preferred_term: "Full blood count",
@@ -149,8 +153,12 @@ describe("AdminCatalogueListPage", () => {
 
     expect(await screen.findByRole("link", { name: DRAFT_KEY })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: ACTIVE_KEY })).toBeInTheDocument();
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(true);
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(
+      true,
+    );
+    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(
+      false,
+    );
   });
 
   it("dispatches to the search route once q is set in the URL", async () => {
@@ -159,9 +167,13 @@ describe("AdminCatalogueListPage", () => {
     await renderRoute(`${LIST_URL}?q=glucose`, SIGNED_IN);
 
     await waitFor(() =>
-      expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(true),
+      expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(
+        true,
+      ),
     );
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(
+      false,
+    );
   });
 
   // Acceptance criterion: an administrator can find a draft entry from the
@@ -171,7 +183,12 @@ describe("AdminCatalogueListPage", () => {
       ENTRIES_OK,
       PROPERTIES_OK,
       DISCIPLINE_VALUES_OK,
-      { method: "GET", path: `/catalogue/admin/entries/${DRAFT_KEY}`, status: 200, body: {} },
+      {
+        method: "GET",
+        path: `/catalogue/admin/entries/${DRAFT_KEY}`,
+        status: 200,
+        body: {},
+      },
     ]);
     const user = userEvent.setup();
 
@@ -206,7 +223,9 @@ describe("AdminCatalogueListPage", () => {
 
     await user.click(screen.getByRole("checkbox", { name: "Draft" }));
 
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Draft" })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: "Draft" })).toBeChecked(),
+    );
     expect(router.state.location.href).toContain("filter.status=draft");
   });
 
@@ -220,7 +239,9 @@ describe("AdminCatalogueListPage", () => {
       await screen.findByRole("checkbox", { name: "Chemistry" }, { timeout: 2000 }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Volume" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Filter Volume" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Filter Volume" }),
+    ).not.toBeInTheDocument();
   });
 
   // Acceptance criterion: rows can be selected individually and all at
@@ -236,10 +257,14 @@ describe("AdminCatalogueListPage", () => {
       await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
       expect(await screen.findByRole("status")).toHaveTextContent("1 row selected.");
 
-      await user.click(screen.getByRole("checkbox", { name: "Select all rows on this page" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+      );
       expect(await screen.findByRole("status")).toHaveTextContent("2 rows selected.");
 
-      await user.click(screen.getByRole("checkbox", { name: "Select all rows on this page" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+      );
       expect(await screen.findByRole("status")).toHaveTextContent("No rows selected.");
     });
 
@@ -281,7 +306,12 @@ describe("AdminCatalogueListPage", () => {
 
   it("shows a refusal message when the listing cannot be loaded", async () => {
     stubApi([
-      { method: "GET", path: "/catalogue/admin/entries", status: 500, body: { detail: "boom" } },
+      {
+        method: "GET",
+        path: "/catalogue/admin/entries",
+        status: 500,
+        body: { detail: "boom" },
+      },
       PROPERTIES_OK,
       DISCIPLINE_VALUES_OK,
     ]);
@@ -293,14 +323,21 @@ describe("AdminCatalogueListPage", () => {
 
   it("shows the empty state, not a headers-only table, when there are no entries", async () => {
     stubApi([
-      { method: "GET", path: "/catalogue/admin/entries", status: 200, body: { items: [], next_cursor: null } },
+      {
+        method: "GET",
+        path: "/catalogue/admin/entries",
+        status: 200,
+        body: { items: [], next_cursor: null },
+      },
       PROPERTIES_OK,
       DISCIPLINE_VALUES_OK,
     ]);
 
     await renderRoute(LIST_URL, SIGNED_IN);
 
-    expect(await screen.findByText("No catalogue entries match this filter.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No catalogue entries match this filter."),
+    ).toBeInTheDocument();
   });
 
   it("has no automated accessibility violations", async () => {
