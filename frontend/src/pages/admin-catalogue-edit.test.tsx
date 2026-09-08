@@ -295,6 +295,35 @@ describe("the entry it loads", () => {
     expect(signIn).toHaveBeenCalledWith({ acrValues: "2", redirect: EDIT_URL });
   });
 
+  it("abandoning the interactive fallback leaves a usable screen and never signs out", async () => {
+    const user = userEvent.setup();
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    const signOut = vi.fn().mockResolvedValue(undefined);
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, signIn, signOut } });
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
+    // Still on the same screen, with the refusal's own text visible - not a
+    // blank page and not bounced anywhere.
+    expect(
+      screen.getByText("This action requires multi-factor authentication."),
+    ).toBeInTheDocument();
+  });
+
   it("retries the read in place after a silent step-up succeeds, with no dialog", async () => {
     const stepUp = vi.fn().mockResolvedValue("done");
     const calls = stubApi([READ_OK], {
@@ -352,6 +381,28 @@ describe("the entry it loads", () => {
       await screen.findByText("This action requires multi-factor authentication."),
     ).toBeInTheDocument();
     expect(stepUp).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not trigger step-up for a plain 403 with no challenge header", async () => {
+    // FR-44's own negative-case rule, applied to step-up: an ordinary
+    // missing-permission refusal must not be sent through the step-up loop
+    // just because it happens to be a 403.
+    const stepUp = vi.fn().mockResolvedValue("done");
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "You do not have permission to do this." },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+
+    expect(
+      await screen.findByText("You do not have permission to do this."),
+    ).toBeInTheDocument();
+    expect(stepUp).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
