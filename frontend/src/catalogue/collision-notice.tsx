@@ -83,16 +83,18 @@ export function formatValue(value: unknown): string {
 export function ConflictAttribution({
   body,
   since,
-  submittedLabel = "sent",
+  submittedLabel,
 }: {
   body: VersionConflictBody;
   /** The clause naming when the concurrent edit happened, e.g. "while you
    * had it open" or "since this entry was selected". */
   since: string;
-  /** The verb describing what was submitted, e.g. "you sent" (default
-   * "sent") - varies because a single-entry dialog can say "you", while a
-   * bulk outcome list is describing a batch, not one person's own action. */
-  submittedLabel?: string;
+  /** The verb describing what was submitted, e.g. "you sent" - required,
+   * not defaulted: both call sites already override it ("you sent" for the
+   * single-entry dialog, "the batch sent" for the bulk outcome list), and a
+   * bare "sent" reads ungrammatically in the sentence it feeds ("What sent,
+   * and what the entry holds now:") - see PR #290 review. */
+  submittedLabel: string;
 }) {
   const changedAt = body.changed_at === null ? null : new Date(body.changed_at);
   return (

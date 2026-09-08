@@ -13,6 +13,7 @@ import { propertyValidationFieldErrors } from "./property-form-errors.ts";
 import {
   CONTROLS,
   RepeatableValues,
+  groupFieldId,
   isEmptySlotValue,
 } from "./property-controls/index.ts";
 import type { PropertyValueSlot } from "./property-controls/index.ts";
@@ -120,20 +121,34 @@ export function BulkReclassifyDialog({
   // abort with `ordinal: null`) falls back to the generic slot instead.
   const genericRefusal = save.isError && validationErrors.length === 0;
 
-  // `Form` takes one `submitBlocked`/`blockedReason` pair, so the three
-  // gates this dialog has - the cap, no property chosen yet, and the
-  // changelog note - are composed here in priority order, each unlinked
-  // except the two with an obvious field to send focus to.
+  const noValuesEntered = selectedDefinition !== null && submittedIndexes.length === 0;
+
+  // `Form` takes one `submitBlocked`/`blockedReason` pair, so the four gates
+  // this dialog has - the cap, no property chosen yet, no value entered, and
+  // the changelog note - are composed here in priority order, each unlinked
+  // except the three with an obvious field to send focus to.
+  //
+  // The no-values gate exists because the server places no floor on
+  // `values.length` (a bulk write is a whole-set replace, and an empty set is
+  // a legitimate way to *clear* a property - see `catalogue_properties.py`):
+  // without it, choosing a property and submitting with every auto-rendered
+  // slot left blank clears that property across every selected entry, which
+  // reads nothing like what "Every value set here replaces..." above warns
+  // about.
   const blockedReason = overCap
     ? overCapMessage(entries.length)
     : selectedDefinition === null
       ? "Choose a property to reclassify."
-      : changelogNote.blockedReason;
+      : noValuesEntered
+        ? "Add at least one value before reclassifying."
+        : changelogNote.blockedReason;
   const blockedFieldId = overCap
     ? undefined
     : selectedDefinition === null
       ? PROPERTY_FIELD_ID
-      : changelogNote.fieldId;
+      : noValuesEntered
+        ? groupFieldId(selectedDefinition.key)
+        : changelogNote.fieldId;
 
   return (
     <Dialog open onClose={onClose} title="Reclassify selected entries">
@@ -143,7 +158,12 @@ export function BulkReclassifyDialog({
         pending={save.isPending}
         errors={validationErrors}
         formError={genericRefusal ? <RefusalNotice error={save.error} /> : undefined}
-        submitBlocked={overCap || selectedDefinition === null || changelogNote.blocked}
+        submitBlocked={
+          overCap ||
+          selectedDefinition === null ||
+          noValuesEntered ||
+          changelogNote.blocked
+        }
         blockedReason={blockedReason}
         blockedFieldId={blockedFieldId}
         onSubmitBlocked={changelogNote.markSubmitAttempted}
@@ -196,7 +216,11 @@ export function BulkReclassifyDialog({
               )?.key ?? "";
             setPropertyKey(next);
             setSlots([]);
-            changelogNote.reset();
+            // The note is property-independent (it describes the batch, not
+            // one property's values), so switching properties clears the
+            // now-stale `slots` but must leave it alone - `reset()` would
+            // also discard any note text already typed (review finding on
+            // PR #290).
             if (save.isError) {
               save.reset();
             }

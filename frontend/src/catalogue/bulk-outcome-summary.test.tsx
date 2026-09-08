@@ -207,7 +207,7 @@ describe("BulkOutcomeSummary", () => {
     await expectNoA11yViolations(region);
   });
 
-  it("shows no skipped-rows table when every entry applied or was unchanged", async () => {
+  it("shows an explicit 'nothing was skipped' row when every entry applied or was unchanged", async () => {
     stubApi([
       ENTRIES_OK,
       PROPERTIES_OK,
@@ -236,7 +236,7 @@ describe("BulkOutcomeSummary", () => {
     expect(
       panel.getByText("1 applied, 1 unchanged, 0 conflicts, 0 not found."),
     ).toBeInTheDocument();
-    expect(panel.queryByRole("table")).not.toBeInTheDocument();
+    expect(panel.getByText("Nothing was skipped.")).toBeInTheDocument();
   });
 
   it("has no accessibility violations", async () => {

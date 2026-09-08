@@ -203,6 +203,24 @@ describe("property picker", () => {
       (await dialog().findByLabelText("Discipline 1")) as HTMLSelectElement,
     ).toHaveValue("");
   });
+
+  // The note describes the batch, not one property's own values, so
+  // switching properties must not discard prose the operator already typed
+  // (PR #290 review) - unlike `slots`, which the test above confirms *is*
+  // reset.
+  it("keeps the changelog note when the property is switched", async () => {
+    stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+    const user = await openDialogWithOneRowSelected();
+
+    await user.selectOptions(dialog().getByLabelText("Property"), "discipline");
+    await user.type(dialog().getByLabelText("Changelog note"), "Already have a reason");
+
+    await user.selectOptions(dialog().getByLabelText("Property"), "usage_guidance");
+
+    expect(dialog().getByLabelText("Changelog note")).toHaveValue(
+      "Already have a reason",
+    );
+  });
 });
 
 describe("submit gates", () => {
@@ -214,6 +232,28 @@ describe("submit gates", () => {
 
     expect(
       await dialog().findByText("Choose a property to reclassify."),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.path.includes("/bulk/properties/"))).toBe(false);
+  });
+
+  // The server places no floor on `values.length` - a bulk write is a
+  // whole-set replace, and an empty set is how a property is cleared - so
+  // nothing there stops a submit with a property chosen but every
+  // auto-rendered slot left blank from silently clearing that property
+  // across every selected entry (PR #290 review).
+  it("refuses to submit with a property chosen but no value entered, making no request", async () => {
+    const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+    const user = await openDialogWithOneRowSelected();
+
+    await user.selectOptions(dialog().getByLabelText("Property"), "usage_guidance");
+    await user.type(
+      dialog().getByLabelText("Changelog note"),
+      "Try to clear it by leaving the value blank",
+    );
+    await user.click(dialog().getByRole("button", { name: "Reclassify" }));
+
+    expect(
+      await dialog().findByText("Add at least one value before reclassifying."),
     ).toBeInTheDocument();
     expect(calls.some((call) => call.path.includes("/bulk/properties/"))).toBe(false);
   });
@@ -340,8 +380,10 @@ describe("submitting", () => {
       reason: "December discipline reclassify",
       entries: [{ business_key: DRAFT_KEY, expected_row_version: 3 }],
     });
-    // The list's own selection is cleared and a results summary announced -
-    // see admin-catalogue-list.test.tsx for the dedicated coverage of that.
+    // The list's own selection is cleared, a results panel shown with focus
+    // moved to it, and a results summary announced - see
+    // admin-catalogue-list.test.tsx's "bulk reclassify" describe block for
+    // the dedicated coverage of that.
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Reclassify Usage guidance: 1 applied",
     );
