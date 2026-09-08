@@ -6,6 +6,9 @@ import { refusalDetail } from "../api/conflicts.ts";
 import { useAdminEntriesList, useAdminSearch } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
+import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
+import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
+import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -138,6 +141,16 @@ export function AdminCatalogueListPage() {
     announce(selectionAnnouncement(selected.size));
   }, [selected.size, announce]);
 
+  // Issue #63's bulk reclassify. `bulkResult` is a durable record shown on
+  // this screen after the dialog closes, not tied to the dialog's own
+  // lifetime - an operator who scrolls away and back still sees what the
+  // last batch did, until the next one replaces it.
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{
+    result: components["schemas"]["BulkSavePropertyValuesResult"];
+    propertyLabel: string;
+  } | null>(null);
+
   // Same render-time-adjustment pattern as the selection reset above: the
   // draft mirrors `search.q` (so Back/Forward or a pasted link's `q` shows
   // in the box) but must still be freely editable between keystrokes and
@@ -255,6 +268,18 @@ export function AdminCatalogueListPage() {
 
       {active.data && (
         <>
+          <BulkReclassifyToolbar
+            selectedCount={selected.size}
+            onLaunch={() => setBulkDialogOpen(true)}
+          />
+
+          {bulkResult && (
+            <BulkOutcomeSummary
+              result={bulkResult.result}
+              propertyLabel={bulkResult.propertyLabel}
+            />
+          )}
+
           <DataTable
             caption="Catalogue entries"
             columns={[
@@ -326,6 +351,27 @@ export function AdminCatalogueListPage() {
             </button>
           )}
         </>
+      )}
+
+      {bulkDialogOpen && (
+        <BulkReclassifyDialog
+          entries={Array.from(selected, ([business_key, expected_row_version]) => ({
+            business_key,
+            expected_row_version,
+          }))}
+          onClose={() => setBulkDialogOpen(false)}
+          onComplete={(result, propertyLabel) => {
+            setBulkDialogOpen(false);
+            // Every captured `expected_row_version` is stale the moment
+            // anything applied - refreshing them from the outcome list
+            // instead would let a second submit blind-overwrite whatever a
+            // concurrent editor did in between (issue #63 plan). The results
+            // panel below is the durable record of what to revisit.
+            setSelected(new Map());
+            setBulkResult({ result, propertyLabel });
+            announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);
+          }}
+        />
       )}
     </section>
   );
