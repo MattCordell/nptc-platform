@@ -171,9 +171,10 @@ describe("BulkOutcomeSummary", () => {
 
     await submitBulkReclassify();
 
-    const panel = within(
-      screen.getByRole("region", { name: "Reclassify Usage guidance: results" }),
-    );
+    const region = screen.getByRole("region", {
+      name: "Reclassify Usage guidance: results",
+    });
+    const panel = within(region);
     expect(
       panel.getByText("1 applied, 1 unchanged, 2 conflicts, 1 not found."),
     ).toBeInTheDocument();
@@ -202,6 +203,8 @@ describe("BulkOutcomeSummary", () => {
         "This entry was replaced while the change was running, so it was skipped.",
       ),
     ).toBeInTheDocument();
+
+    await expectNoA11yViolations(region);
   });
 
   it("shows no skipped-rows table when every entry applied or was unchanged", async () => {
