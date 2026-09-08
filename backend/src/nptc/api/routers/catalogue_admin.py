@@ -56,15 +56,19 @@ status tuple widened, kept as a separate function for the identical reason
 - `queries.py`'s rule one is that `PUBLIC_STATUSES` is the *only* filter it
 ever applies, not merely the default one.
 
-**Serves the identical `EntryDetail`/`EntryPage`/`SearchPage` shapes the
-public routes do**, assembled from the same loaders and the same
-`nptc.catalogue.search` ranking - an edit screen consuming these routes
-today gets the same fields a public consumer of the same entry, once
-published, would see, just with every status in scope and `status` on the
-wire so a caller can tell a draft from an active entry (issue #266's own
-acceptance criterion). See `catalogue_shared.py`'s own docstring for why
-these models and their assembly helpers live there rather than being
-duplicated here.
+**Serves the identical `EntryDetail` shape the public detail route does**,
+assembled from the same loaders and the same `nptc.catalogue.search`
+ranking - an edit screen consuming this route today gets the same fields a
+public consumer of the same entry, once published, would see, just with
+every status in scope and `status` on the wire so a caller can tell a draft
+from an active entry (issue #266's own acceptance criterion). See
+`catalogue_shared.py`'s own docstring for why this model and its assembly
+helpers live there rather than being duplicated here.
+
+**The two collection routes serve `AdminEntryPage`/`AdminSearchPage`, not
+`EntryPage`/`SearchPage`** (issue #267): the same shape as their public
+counterparts, plus `row_version` per row. Defined in this module, not
+`catalogue_shared.py` - see `AdminEntrySummary`'s own docstring for why.
 
 **The two collection routes have no 404**, matching
 `catalogue.py`'s own `PUBLIC_COLLECTION_ERROR_RESPONSES`: an unmatched
@@ -76,6 +80,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
@@ -85,25 +90,23 @@ from nptc.api.routers.catalogue_shared import (
     CursorQuery,
     EntryCursorQuery,
     EntryDetail,
-    EntryPage,
+    EntrySummary,
     Facet,
     FacetBucket,
     FilterRequest,
     LimitQuery,
-    SearchHit,
-    SearchPage,
     binding_from_row,
     designation_from_row,
     entry_summary_fields,
     filter_parameter,
     property_value_from_row,
-    summary_from_entry,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.term_hygiene import preferred_term_length
+from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -197,6 +200,88 @@ RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 
 
+class AdminEntrySummary(EntrySummary):
+    """`EntrySummary` plus FR-38's optimistic-locking token (issue #267).
+
+    Defined here, not in `catalogue_shared.py`: that module is imported by
+    the public router, and a field the public surface must never carry
+    (`EntryDetail`'s own docstring explains why `EntrySummary` does not
+    carry it) has to live somewhere the public router cannot reach by
+    construction, not merely by convention. `test_api_public_response_
+    hygiene.py` asserts the public listing/search routes still omit it.
+
+    The bulk reclassify route (FR-39, #63) locks on `(business_key,
+    expected_row_version)`; this is what lets its selection surface (this
+    issue) read a `row_version` per row instead of re-reading the entry
+    once selected.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    row_version: int
+
+
+class AdminEntryPage(BaseModel):
+    """The admin counterpart to `catalogue_shared.EntryPage` (issue #267) -
+    same shape, rows that additionally carry `row_version`. A standalone
+    model rather than a subclass of `EntryPage`: overriding `items`' element
+    type in a subclass is the field-covariance trap `mypy --strict` (and
+    Liskov substitution generally) flags on a model a caller might still
+    pass around as the parent type."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[AdminEntrySummary]
+    next_cursor: str | None
+
+
+class AdminSearchHit(AdminEntrySummary):
+    """`AdminEntrySummary` plus a relevance score - the admin counterpart to
+    `catalogue_shared.SearchHit`, matching that model's own field for field
+    (issue #267)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    score: float = Field(description="Trigram similarity against `q`, between 0 and 1.")
+
+
+class AdminSearchPage(BaseModel):
+    """The admin counterpart to `catalogue_shared.SearchPage` (issue #267) -
+    see `AdminEntryPage`'s own docstring for why this is a standalone model
+    rather than a subclass."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[AdminSearchHit]
+    next_cursor: str | None
+    facets: list[Facet] = Field(
+        description=(
+            "Every facet available for this search, with counts over the whole "
+            "result set rather than this page. A facet's own selection is "
+            "excluded from its own counts, so a bucket you have not chosen "
+            "still tells you how many entries it would give you."
+        )
+    )
+
+
+def _admin_summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> AdminEntrySummary:
+    """`summary_from_entry`'s admin counterpart: the one extra field is
+    read directly off the loaded row, exactly as `EntryDetail`'s own
+    assembly already does for the single-entry route."""
+    return AdminEntrySummary(
+        **entry_summary_fields(
+            entry.business_key,
+            entry.preferred_term,
+            entry.length,
+            entry.status,
+            entry.specimen_unconstrained,
+            entry.updated_at,
+            has_open_finding,
+        ),
+        row_version=entry.row_version,
+    )
+
+
 def _admin_filter_request(
     request: Request,
     session: SessionDep,
@@ -233,7 +318,7 @@ def list_entries_any_status(
     filters: AdminFiltersDep,
     limit: LimitQuery = 50,
     after: EntryCursorQuery = None,
-) -> EntryPage:
+) -> AdminEntryPage:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
     public `list_entries`: identical keyset paging on `business_key`, every
     status in scope rather than `PUBLIC_STATUSES` alone, and `status` on
@@ -245,6 +330,10 @@ def list_entries_any_status(
     `maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the
     same reason they are not on `/catalogue/entries`: `GET
     /catalogue/admin/search` is where the facet list with counts lives.
+
+    Rows carry `row_version` (issue #267) - `AdminEntryPage`, not the public
+    `EntryPage` - so the maintenance list screen's selection surface can
+    carry FR-38's optimistic-locking token per row without a second read.
     """
     page = maintenance.list_entries_any_status(
         session, limit=limit, after=after, filters=filters.selections
@@ -252,9 +341,10 @@ def list_entries_any_status(
     open_findings = queries.open_finding_business_keys(
         session, (entry.business_key for entry in page.entries)
     )
-    return EntryPage(
+    return AdminEntryPage(
         items=[
-            summary_from_entry(entry, entry.business_key in open_findings) for entry in page.entries
+            _admin_summary_from_entry(entry, entry.business_key in open_findings)
+            for entry in page.entries
         ],
         next_cursor=page.next_cursor,
     )
@@ -282,7 +372,7 @@ def search_any_status(
     ],
     limit: LimitQuery = 50,
     after: CursorQuery = None,
-) -> SearchPage:
+) -> AdminSearchPage:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
     public `search`: identical ranking, threshold and keyset paging
     (`nptc.catalogue.search`, called with `statuses=maintenance.
@@ -294,6 +384,11 @@ def search_any_status(
     the same `?filter.*` parameters - including `status`, whose bucket list
     is non-degenerate here (every status an administrator might filter by),
     unlike the public surface's single-bucket `active` facet.
+
+    Hits carry `row_version` (issue #267) - `nptc.catalogue.search.SearchHit`
+    reads it straight off `scored`'s own join to `catalogue_entry`, see that
+    module's docstring - so `AdminSearchHit`, not the public `SearchHit`,
+    carries it onto the wire here.
     """
     page = search.search_entries(
         session,
@@ -313,9 +408,9 @@ def search_any_status(
     open_findings = queries.open_finding_business_keys(
         session, (hit.business_key for hit in page.hits)
     )
-    return SearchPage(
+    return AdminSearchPage(
         items=[
-            SearchHit(
+            AdminSearchHit(
                 **entry_summary_fields(
                     hit.business_key,
                     hit.preferred_term,
@@ -325,6 +420,7 @@ def search_any_status(
                     hit.updated_at,
                     hit.business_key in open_findings,
                 ),
+                row_version=hit.row_version,
                 score=hit.score,
             )
             for hit in page.hits

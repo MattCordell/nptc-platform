@@ -540,6 +540,12 @@ class SearchHit:
     deliberately not an entry id: a search result is a pointer to
     `/catalogue/entries/{business_key}`, which is a public identifier
     (PRD SS6.2).
+
+    `row_version` (issue #267) is a domain fact about the row, carried here
+    unconditionally - the withholding of it from the *public* surface is the
+    HTTP response model's job (`catalogue_shared.SearchHit` never reads this
+    field), not this module's. `catalogue_admin.py`'s `AdminSearchHit` is
+    the one caller that does.
     """
 
     business_key: str
@@ -547,6 +553,7 @@ class SearchHit:
     status: str
     specimen_unconstrained: bool
     updated_at: datetime
+    row_version: int
     score: float
 
 
@@ -825,6 +832,7 @@ def build_search_statement(
                 CatalogueEntry.status,
                 CatalogueEntry.specimen_unconstrained,
                 CatalogueEntry.updated_at,
+                CatalogueEntry.row_version,
                 scored.c.score.label("score"),
             ],
             filter_predicates(filters),
@@ -900,6 +908,7 @@ def search_entries(
             status=row.status,
             specimen_unconstrained=row.specimen_unconstrained,
             updated_at=row.updated_at,
+            row_version=row.row_version,
             score=float(row.score),
         )
         for row in rows
