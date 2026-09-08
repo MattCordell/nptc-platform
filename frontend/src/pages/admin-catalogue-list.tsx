@@ -133,9 +133,20 @@ export function AdminCatalogueListPage() {
   }
 
   const hasAnnouncedRef = useRef(false);
+  // Set right before a bulk reclassify completion clears the selection
+  // (below), so that clearing's own "No rows selected." does not overwrite
+  // the more informative reclassify-outcome announcement racing it - both
+  // go through `useAnnounce`'s identical `setTimeout(0)`, and the selection
+  // effect runs after the completion handler's own render, so without this
+  // guard its announcement is the one left standing.
+  const suppressSelectionAnnouncementRef = useRef(false);
   useEffect(() => {
     if (!hasAnnouncedRef.current) {
       hasAnnouncedRef.current = true;
+      return;
+    }
+    if (suppressSelectionAnnouncementRef.current) {
+      suppressSelectionAnnouncementRef.current = false;
       return;
     }
     announce(selectionAnnouncement(selected.size));
@@ -367,6 +378,7 @@ export function AdminCatalogueListPage() {
             // instead would let a second submit blind-overwrite whatever a
             // concurrent editor did in between (issue #63 plan). The results
             // panel below is the durable record of what to revisit.
+            suppressSelectionAnnouncementRef.current = true;
             setSelected(new Map());
             setBulkResult({ result, propertyLabel });
             announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);

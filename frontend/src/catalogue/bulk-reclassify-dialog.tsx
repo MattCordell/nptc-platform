@@ -91,9 +91,12 @@ export function BulkReclassifyDialog({
   // target - matching `properties-panel.tsx`'s own `buildRows` rule that a
   // deprecated property takes no new value, generated fresh from the
   // registry rather than naming any property key here (ADR-0013, FR-77).
-  const activeDefinitions = (definitions.data?.items ?? []).filter(
-    (definition) => definition.status === "active",
-  );
+  // Sorted by `display_order`, matching `buildRows`' own generation order
+  // (FR-09), so the picker lists properties the same way the single-entry
+  // panel does.
+  const activeDefinitions = (definitions.data?.items ?? [])
+    .filter((definition) => definition.status === "active")
+    .sort((a, b) => a.display_order - b.display_order);
   const selectedDefinition =
     activeDefinitions.find((definition) => definition.key === propertyKey) ?? null;
   const Control = selectedDefinition
