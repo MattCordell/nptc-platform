@@ -295,6 +295,66 @@ describe("the entry it loads", () => {
     expect(signIn).toHaveBeenCalledWith({ acrValues: "2", redirect: EDIT_URL });
   });
 
+  it("retries the read in place after a silent step-up succeeds, with no dialog", async () => {
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([READ_OK], {
+      vary: (call, priorSameCalls) => {
+        if (call.method !== "GET" || !call.path.endsWith(READ_OK.path)) {
+          return null;
+        }
+        // StrictMode double-mounts the load itself, so the first two reads
+        // are the ones that hit the MFA-gated route unsatisfied; every read
+        // from the third onward is the retried one, after step-up.
+        return priorSameCalls < 2
+          ? {
+              ...READ_OK,
+              status: 403,
+              body: { detail: "This action requires multi-factor authentication." },
+              headers: {
+                "WWW-Authenticate":
+                  'Bearer error="insufficient_user_authentication", acr_values="2"',
+              },
+            }
+          : null;
+      },
+    });
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+
+    expect(
+      await screen.findByRole("heading", { name: "Ferritin", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(stepUp).toHaveBeenCalledWith("2");
+    expect(readsOf(calls).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("does not repeat the step-up attempt once one has run for this read", async () => {
+    // Every response 403s with the same challenge - without the
+    // retry-once guard, a silent step-up that "succeeds" but still does
+    // not satisfy the server would retry forever.
+    const stepUp = vi.fn().mockResolvedValue("done");
+    stubApi([
+      {
+        ...READ_OK,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+
+    expect(
+      await screen.findByText("This action requires multi-factor authentication."),
+    ).toBeInTheDocument();
+    expect(stepUp).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("names the identifier when there is no such entry", async () => {
     stubApi([
       { ...READ_OK, status: 404, body: { detail: "No catalogue entry was found." } },
@@ -479,6 +539,43 @@ describe("the terms table", () => {
 });
 
 describe("adding synonyms", () => {
+  it("does not replay a refused write even after a successful silent step-up", async () => {
+    // Out of scope by design (issue #184's own ADR): a refused mutation is
+    // never replayed automatically, silent step-up or not. The user keeps
+    // their typed input and resubmits.
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: ADD_PATH,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+
+    await user.type(screen.getByLabelText("Synonyms"), "Zovirax");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the brand name",
+    );
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledWith("2"));
+    // The form is still exactly as the editor left it - nothing navigated
+    // away and nothing was cleared out from under them.
+    expect(screen.getByLabelText("Synonyms")).toHaveValue("Zovirax");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
+  });
+
   it("splits a pasted cell into individual terms and shows what it will create", async () => {
     // FR-04's own acceptance criterion, end to end: the doubled semicolon in
     // "Zovirax;;Cyclir" must produce two terms and no empty row - and the

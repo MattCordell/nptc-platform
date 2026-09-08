@@ -1,3 +1,5 @@
+import { useLocation } from "@tanstack/react-router";
+
 import { useSession } from "../api/queries.ts";
 import { useAuth } from "../auth/session.ts";
 
@@ -27,6 +29,11 @@ const PRE_EMPTIVE_STEP_UP_ACR_VALUES = "2";
 export function StepUpBanner() {
   const { signIn } = useAuth();
   const { data } = useSession();
+  // The router's own current location, not `window.location`: the app's
+  // memory-history test harness (`render-route.tsx`) never touches the
+  // real `window.location`, and `RequireAuth` already reads a redirect
+  // target the same way (`useLocation().href`).
+  const location = useLocation();
 
   if (!data || !data.authenticated || data.mfa_satisfied) {
     return null;
@@ -47,7 +54,7 @@ export function StepUpBanner() {
         onClick={() => {
           void signIn({
             acrValues: PRE_EMPTIVE_STEP_UP_ACR_VALUES,
-            redirect: window.location.pathname + window.location.search,
+            redirect: location.href,
           });
         }}
       >
