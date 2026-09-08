@@ -44,9 +44,9 @@ Tick a row's checkbox to select it, or the checkbox in the column header to sele
 row currently on screen. The number of rows selected is announced as you change it, for
 anyone using a screen reader to follow along.
 
-> **Selection has no action yet.** Ticking rows here does not do anything on its own today —
-> it is the groundwork for a future bulk action (reclassifying several entries at once), not
-> yet built. See issue #63.
+Once at least one row is selected, a **Reclassify selected** button appears above the
+list — see [Bulk reclassify](bulk-reclassify.md) for setting one property to one value
+across everything you have selected in a single step.
 
 Your selection carries across pages as you page forward, but starting a new search or
 changing a filter clears it: at that point you are choosing from a different set of
