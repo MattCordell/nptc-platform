@@ -32,6 +32,15 @@ import { useApiClient } from "./use-api-client.ts";
  */
 
 /**
+ * `useSession`'s own query key - exported (PR #284 review round 2) so
+ * `StepUpController` can invalidate the exact key this hook reads rather
+ * than a hand-retyped copy that could drift from it: drift here would
+ * silently reinstate the stale-banner bug that invalidation was added to
+ * fix, with the invalidation call still apparently present in the code.
+ */
+export const SESSION_QUERY_KEY = ["api", "/api/v1/auth/me"];
+
+/**
  * The current session's user, roles and permissions (issue #184, NFR-06) -
  * `mfa_satisfied` is what `StepUpBanner` reads to offer step-up *before* an
  * administrator walks into a 403, rather than only reacting to one.
@@ -50,7 +59,7 @@ import { useApiClient } from "./use-api-client.ts";
 export function useSession() {
   const client = useApiClient();
   return useQuery({
-    queryKey: ["api", "/api/v1/auth/me"],
+    queryKey: SESSION_QUERY_KEY,
     queryFn: async ({ signal }) =>
       unwrap(await client.GET("/api/v1/auth/me", { signal })),
     staleTime: 30_000,

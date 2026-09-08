@@ -117,6 +117,35 @@ describe("StepUpBanner", () => {
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
 
+  it("shows a pending state while the silent attempt is still in flight", async () => {
+    // PR #284 review round 2: a click used to leave the button looking
+    // inert for up to SILENT_RENEW_TIMEOUT_MS (10s) with no feedback at
+    // all. `requestStepUp` now returns the attempt's own promise, so the
+    // banner can show one.
+    const user = userEvent.setup();
+    let resolveStepUp: (outcome: "done" | "interaction-required") => void = () => {
+      throw new Error("stepUp was not called");
+    };
+    const stepUp = vi.fn(
+      () =>
+        new Promise<"done" | "interaction-required">((resolve) => {
+          resolveStepUp = resolve;
+        }),
+    );
+    stubApi([sessionRoute()]);
+
+    await renderRoute("/admin", { auth: { ...SIGNED_IN.auth, stepUp } });
+    await user.click(await screen.findByRole("button", { name: "Verify now" }));
+
+    const pendingButton = await screen.findByRole("button", { name: "Checking…" });
+    expect(pendingButton).toBeDisabled();
+
+    resolveStepUp("interaction-required");
+
+    await screen.findByRole("button", { name: "Verify now" });
+    expect(screen.getByRole("button", { name: "Verify now" })).not.toBeDisabled();
+  });
+
   it("falls back to the same interactive dialog, carrying the current path and the realm's LoA", async () => {
     const user = userEvent.setup();
     const signIn = vi.fn().mockResolvedValue(undefined);

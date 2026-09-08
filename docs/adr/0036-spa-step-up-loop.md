@@ -75,6 +75,19 @@ always comes from the server's own challenge, never a constant, so changing the 
 LoA mapping needs no frontend change. The banner's own constant is a narrower promise,
 and changing `AuthSettings.mfa_acr_values` needs this one literal updated to match.
 
+"Verify now" does not redirect on its own (PR #284 review, round 1): it calls
+`requestStepUp`, which hands the same acr value to `StepUpController` as a `{ kind:
+"no-retry" }` context — the same shape a refused mutation's challenge carries, since
+neither has a query to retry. A click gets the identical silent-first/dialog/
+interactive-fallback treatment a reactive challenge would, rather than the unconditional,
+unannounced `signIn` redirect the banner used before: a click the SSO session can satisfy
+silently closes the banner with no navigation at all, and only one that genuinely needs
+Keycloak's help shows the same "you're about to be sent to sign in again" dialog. Because
+that silent attempt can take up to `SILENT_RENEW_TIMEOUT_MS` (`silent-renew.ts`, 10s),
+`requestStepUp` returns the attempt's own promise and the banner tracks its own pending
+state ("Checking…", disabled) rather than leaving the click looking inert for the wait
+(PR #284 review, round 2).
+
 ### The backend challenge itself stopped being a literal too
 
 `nptc.api.errors._STEP_UP_CHALLENGE` was `'Bearer error="insufficient_user_authentication",
@@ -106,7 +119,7 @@ challenge from `mfa_acr_values`, so both ends read the one configured value.
 | **`onResponse` middleware in `frontend/src/api/client.ts`** | Closer to the transport, but `openapi-fetch` middleware sees every response before `unwrap` has decided pass/fail, so it would have to re-implement `unwrap`'s own ok/error gating (issue #147 review) to know whether a given response is a refusal worth reacting to at all. The query/mutation cache already sits downstream of that decision. |
 | **Replaying a refused mutation automatically after a successful silent step-up** | Considered and rejected — see the Decision section above. Left as a documented non-goal rather than a silent gap. |
 | **Persisting form state across an interactive redirect (any mechanism)** | Same NFR-26/NFR-35 question the mutation-replay rejection raises, for no benefit in the common (silent) case. Out of scope; the interactive fallback only ever fires for a query when the silent attempt fails, and the query itself needs no persisted state to retry. |
-| **A retry counter on the query itself** (`useQuery`'s own `retry` option) | Would conflate an ordinary network retry with a step-up retry, and `retry: false` is deliberately the app-wide default (`query-client.ts`) for unrelated reasons (this app's principal failure mode is an authorisation refusal, not a flaky network). The retry-once guard is instead a `Set<queryHash>` inside `StepUpController`, scoped to step-up specifically. |
+| **A retry counter on the query itself** (`useQuery`'s own `retry` option) | Would conflate an ordinary network retry with a step-up retry, and `retry: false` is deliberately the app-wide default (`query-client.ts`) for unrelated reasons (this app's principal failure mode is an authorisation refusal, not a flaky network). The retry-once guard is instead a `Set<queryHash>` inside `StepUpController`, scoped to one challenge/retry cycle — added before the attempt starts and removed once it settles, not a permanent per-query record (PR #284 review, round 1: an unscoped guard would silently swallow a genuinely later challenge for the same query). |
 | **A backend Keycloak integration test for `prompt=none` plus `acr_values=2`** | `test_keycloak_pkce_login.py` covers `prompt=none` for logout only and asserts nothing about `acr`. Whether Keycloak can satisfy LoA-2 silently within `loa-max-age` (36000s on this realm) is worth knowing but is a container test on its own, and the interactive fallback is correct either way regardless of the answer. Noted as a follow-up rather than growing this change further. |
 
 ## Follow-ups

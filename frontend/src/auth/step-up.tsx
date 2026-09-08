@@ -1,7 +1,8 @@
-import { useLocation } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { SESSION_QUERY_KEY } from "../api/queries.ts";
 import type {
   StepUpChallengeContext,
   StepUpChallengeHandler,
@@ -36,29 +37,27 @@ let activeHandler: StepUpChallengeHandler | null = null;
  * currently mounted, or does nothing before one has (the very first render,
  * or a narrow component test that mounts no router at all).
  */
-export const stepUpChallengeHandler: StepUpChallengeHandler = (challenge, context) => {
-  activeHandler?.(challenge, context);
-};
+export const stepUpChallengeHandler: StepUpChallengeHandler = (challenge, context) =>
+  activeHandler?.(challenge, context) ?? Promise.resolve();
 
 /**
  * `StepUpBanner`'s own entry point into the same controller (PR #284
- * review) - a `"mutation"`-shaped context, since there is no query to
- * retry, gets the identical silent-first/dialog/interactive-fallback
- * treatment a reactive challenge would, rather than the banner redirecting
- * unconditionally and unannounced the way it used to. A silent step-up
- * that succeeds now closes the banner with no navigation at all.
+ * review) - a `"no-retry"`-shaped context, since there is nothing to retry,
+ * gets the identical silent-first/dialog/interactive-fallback treatment a
+ * reactive challenge would, rather than the banner redirecting
+ * unconditionally and unannounced the way it used to. A silent step-up that
+ * succeeds now closes the banner with no navigation at all.
+ *
+ * Returns the attempt's own promise (PR #284 review round 2) so a caller -
+ * today, only `StepUpBanner` - can show its own pending state (a disabled
+ * button, a "Checking..." label) while a silent attempt is in flight, rather
+ * than leaving a click with no feedback for up to `SILENT_RENEW_TIMEOUT_MS`.
+ * The promise itself never rejects - see `handleChallenge` below - so
+ * awaiting it needs no `catch`.
  */
-export function requestStepUp(acrValues: string): void {
-  activeHandler?.({ acrValues }, { kind: "mutation" });
+export function requestStepUp(acrValues: string): Promise<void> {
+  return activeHandler?.({ acrValues }, { kind: "no-retry" }) ?? Promise.resolve();
 }
-
-/** `useSession`'s own query key (`queries.ts`) - re-invalidated after every
- * successful step-up so `StepUpBanner` cannot keep telling a now-satisfied
- * user they still need to verify (PR #284 review: nothing invalidated this
- * before, so the banner stayed wrong for the rest of the tab's life after a
- * silent step-up). Duplicated here rather than imported, to avoid a cycle
- * (`queries.ts` -> `use-api-client.ts` -> `session.ts` <- this module). */
-const SESSION_QUERY_KEY = ["api", "/api/v1/auth/me"];
 
 /**
  * Reacts to an RFC 9470 step-up challenge surfaced by `createQueryClient`
@@ -69,9 +68,9 @@ const SESSION_QUERY_KEY = ["api", "/api/v1/auth/me"];
  * "detection lives at one seam" decision this issue's plan settled on.
  *
  * A **query** challenge is retried once the step-up succeeds, in place - no
- * navigation, no lost page state. A **mutation** challenge (including
- * `requestStepUp`'s pre-emptive one) is never replayed even on a
- * successful silent step-up (see `docs/adr/0036-spa-step-up-loop.md`): the
+ * navigation, no lost page state. A **no-retry** challenge - a refused
+ * mutation, or `requestStepUp`'s pre-emptive one - is never replayed even on
+ * a successful silent step-up (see `docs/adr/0036-spa-step-up-loop.md`): the
  * user resubmits, and by then MFA is satisfied.
  *
  * Retry-once, scoped to one challenge/retry cycle, not forever (PR #284
@@ -115,15 +114,15 @@ export function StepUpController() {
   } | null>(null);
 
   const handleChallenge = useCallback(
-    (challenge: StepUpChallenge, context: StepUpChallengeContext) => {
+    (challenge: StepUpChallenge, context: StepUpChallengeContext): Promise<void> => {
       if (context.kind === "query") {
         if (attemptedQueryHashes.current.has(context.queryHash)) {
-          return;
+          return Promise.resolve();
         }
         attemptedQueryHashes.current.add(context.queryHash);
       }
 
-      void (async () => {
+      return (async () => {
         try {
           const outcome = await stepUp(challenge.acrValues);
           if (!mounted.current) {
@@ -144,6 +143,15 @@ export function StepUpController() {
           // mid-action is disorienting) - so this opens a dialog rather than
           // navigating immediately.
           setPendingInteractive({ challenge, redirect: currentHref.current });
+        } catch {
+          // Swallowed, not surfaced (PR #284 review round 2): `stepUp`
+          // itself never throws, and `context.retry()` is today's only other
+          // fallible call in this block - but neither this callback's
+          // fire-and-forget caller (`createQueryClient`'s cache `onError`)
+          // nor `requestStepUp`'s awaiting one has anywhere to put an error,
+          // so a future fallible addition here fails closed (the dialog
+          // simply does not open) rather than becoming an unhandled
+          // rejection.
         } finally {
           if (context.kind === "query") {
             attemptedQueryHashes.current.delete(context.queryHash);

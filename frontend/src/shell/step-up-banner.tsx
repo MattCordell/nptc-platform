@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import { useSession } from "../api/queries.ts";
 import { requestStepUp } from "../auth/step-up.tsx";
 
@@ -42,9 +44,23 @@ const PRE_EMPTIVE_STEP_UP_ACR_VALUES = "2";
  * "you're about to be sent to sign in again" dialog `StepUpController`
  * already shows for a reactive challenge, rather than redirecting
  * unannounced.
+ *
+ * That silent attempt can take up to `SILENT_RENEW_TIMEOUT_MS`
+ * (`silent-renew.ts`, 10s) before the dialog opens or the banner clears, with
+ * nothing else in the click handler to show for the wait - so this tracks
+ * its own pending state, awaiting `requestStepUp`'s own promise (PR #284
+ * review round 2), rather than leaving the button looking inert throughout.
  */
 export function StepUpBanner() {
   const { data } = useSession();
+  const [pending, setPending] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   if (!data || !data.authenticated || data.mfa_satisfied) {
     return null;
@@ -61,12 +77,18 @@ export function StepUpBanner() {
       </p>
       <button
         type="button"
-        className="cursor-pointer rounded-md border border-[var(--color-border)] bg-transparent px-3 py-1 font-medium underline"
+        disabled={pending}
+        className="cursor-pointer rounded-md border border-[var(--color-border)] bg-transparent px-3 py-1 font-medium underline disabled:cursor-default disabled:opacity-70"
         onClick={() => {
-          requestStepUp(PRE_EMPTIVE_STEP_UP_ACR_VALUES);
+          setPending(true);
+          void requestStepUp(PRE_EMPTIVE_STEP_UP_ACR_VALUES).finally(() => {
+            if (mounted.current) {
+              setPending(false);
+            }
+          });
         }}
       >
-        Verify now
+        {pending ? "Checking…" : "Verify now"}
       </button>
     </div>
   );
