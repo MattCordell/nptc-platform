@@ -1825,6 +1825,109 @@
         }
       }
     },
+    "/api/v1/catalogue/entries/bulk/properties/{key}": {
+      "post": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Replace a property's recorded values across many catalogue entries",
+        "operationId": "save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkSavePropertyValuesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSavePropertyValuesResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No property definition matches `key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PropertyValidationResponse"
+                    }
+                  ],
+                  "title": "Response 422 Save Property Bulk Api V1 Catalogue Entries Bulk Properties  Key  Post"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/admin/entries/{business_key}": {
       "get": {
         "tags": [
@@ -3066,6 +3169,142 @@
           "local_code_system"
         ],
         "title": "BindingTarget"
+      },
+      "BulkPropertyEntryTarget": {
+        "properties": {
+          "business_key": {
+            "type": "string",
+            "pattern": "^NPTC-([0-9]{6,})$",
+            "title": "Business Key"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "title": "Expected Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_key",
+          "expected_row_version"
+        ],
+        "title": "BulkPropertyEntryTarget",
+        "description": "One `(business_key, expected_row_version)` selection for the bulk\nwrite - the version this entry held when the caller selected it, not\nresolved server-side (see `nptc.catalogue.property_values.\nEntryPropertyTarget`'s own docstring for why a filter expression could\nnever do this instead, ADR-0035).\n\n`business_key`'s shape is validated here, in the request body, the same\npattern `BusinessKeyPath` enforces on the singular route's path segment\n- derivable from the request alone, so it belongs on the whole-request\nside of the split (see `BulkSavePropertyValuesRequest`'s own docstring):\na malformed key is a 422 for the whole batch, not a `not-found` outcome\nindistinguishable from a well-formed key that simply does not exist."
+      },
+      "BulkPropertyOutcomeItem": {
+        "properties": {
+          "business_key": {
+            "type": "string",
+            "title": "Business Key"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "unchanged",
+              "conflict",
+              "not-found"
+            ],
+            "title": "Status"
+          },
+          "row_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Version"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionConflictResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "business_key",
+          "status",
+          "row_version"
+        ],
+        "title": "BulkPropertyOutcomeItem",
+        "description": "One target's result, in request order - see `nptc.catalogue.\nproperty_values.BulkPropertyOutcome`'s own docstring for what each\n`status` means and when `row_version`/`conflict` are populated. No\n`values` echo: the batch wrote one set every caller already has."
+      },
+      "BulkSavePropertyValuesRequest": {
+        "properties": {
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyValueItemRequest"
+            },
+            "type": "array",
+            "title": "Values"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/BulkPropertyEntryTarget"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "values",
+          "reason",
+          "entries"
+        ],
+        "title": "BulkSavePropertyValuesRequest",
+        "description": "The body of `POST /catalogue/entries/bulk/properties/{key}`\n(issue #265, FR-39). `values` is the one set every named entry ends up\nholding - a whole-set replace, identical to the singular route's own\nsemantics, applied across `entries` rather than one."
+      },
+      "BulkSavePropertyValuesResult": {
+        "properties": {
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/BulkPropertyOutcomeItem"
+            },
+            "type": "array",
+            "title": "Outcomes"
+          },
+          "applied": {
+            "type": "integer",
+            "title": "Applied"
+          },
+          "unchanged": {
+            "type": "integer",
+            "title": "Unchanged"
+          },
+          "conflict": {
+            "type": "integer",
+            "title": "Conflict"
+          },
+          "not_found": {
+            "type": "integer",
+            "title": "Not Found"
+          }
+        },
+        "type": "object",
+        "required": [
+          "outcomes",
+          "applied",
+          "unchanged",
+          "conflict",
+          "not_found"
+        ],
+        "title": "BulkSavePropertyValuesResult",
+        "description": "The per-entry outcome list, plus its own tallies. Always a 200: the\nrequest was authorised, well-formed, and fully processed, and the\noutcomes *are* the representation - including a batch where every\nentry conflicted (issue #265's plan: a whole-request 409 would have to\ndiscard the applied entries' new `row_version`s, the one thing a\nretrying client needs)."
       },
       "CatalogueEntryStatus": {
         "type": "string",

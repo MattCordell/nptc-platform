@@ -562,10 +562,13 @@ def save_entries(
 ) -> list[CatalogueEntry]:
     """Applies a batch of `(business_key, expected_row_version, changes)`
     updates, one `save_entry` call - and one savepoint - per entry (FR-39's
-    "one audit event per affected entry"). This is the seam #63's bulk
-    reclassify is meant to call instead of a Core bulk `update()`: it
-    exists now, ahead of that issue, specifically so there is a correct
-    path to reach for rather than one to invent under deadline."""
+    "one audit event per affected entry"). This is the seam for a bulk
+    write to `EntryChanges`' own columns (`preferred_term`/`status`/
+    `specimen_unconstrained`) - it is **not** the seam for #63's bulk
+    reclassify, which sets a coded registry property (discipline,
+    `origin=system`) and so must go through
+    `nptc.catalogue.property_values.save_property_values_for_entries`
+    instead (issue #265)."""
     return [
         save_entry(
             session,

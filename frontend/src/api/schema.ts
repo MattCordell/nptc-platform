@@ -382,6 +382,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/entries/bulk/properties/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace a property's recorded values across many catalogue entries */
+        post: operations["save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalogue/admin/entries/{business_key}": {
         parameters: {
             query?: never;
@@ -732,6 +749,82 @@ export interface components {
          * @enum {string}
          */
         BindingTarget: "value_set" | "local_code_system";
+        /**
+         * BulkPropertyEntryTarget
+         * @description One `(business_key, expected_row_version)` selection for the bulk
+         *     write - the version this entry held when the caller selected it, not
+         *     resolved server-side (see `nptc.catalogue.property_values.
+         *     EntryPropertyTarget`'s own docstring for why a filter expression could
+         *     never do this instead, ADR-0035).
+         *
+         *     `business_key`'s shape is validated here, in the request body, the same
+         *     pattern `BusinessKeyPath` enforces on the singular route's path segment
+         *     - derivable from the request alone, so it belongs on the whole-request
+         *     side of the split (see `BulkSavePropertyValuesRequest`'s own docstring):
+         *     a malformed key is a 422 for the whole batch, not a `not-found` outcome
+         *     indistinguishable from a well-formed key that simply does not exist.
+         */
+        BulkPropertyEntryTarget: {
+            /** Business Key */
+            business_key: string;
+            /** Expected Row Version */
+            expected_row_version: number;
+        };
+        /**
+         * BulkPropertyOutcomeItem
+         * @description One target's result, in request order - see `nptc.catalogue.
+         *     property_values.BulkPropertyOutcome`'s own docstring for what each
+         *     `status` means and when `row_version`/`conflict` are populated. No
+         *     `values` echo: the batch wrote one set every caller already has.
+         */
+        BulkPropertyOutcomeItem: {
+            /** Business Key */
+            business_key: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "applied" | "unchanged" | "conflict" | "not-found";
+            /** Row Version */
+            row_version: number | null;
+            conflict?: components["schemas"]["VersionConflictResponse"] | null;
+        };
+        /**
+         * BulkSavePropertyValuesRequest
+         * @description The body of `POST /catalogue/entries/bulk/properties/{key}`
+         *     (issue #265, FR-39). `values` is the one set every named entry ends up
+         *     holding - a whole-set replace, identical to the singular route's own
+         *     semantics, applied across `entries` rather than one.
+         */
+        BulkSavePropertyValuesRequest: {
+            /** Values */
+            values: components["schemas"]["PropertyValueItemRequest"][];
+            /** Reason */
+            reason: string;
+            /** Entries */
+            entries: components["schemas"]["BulkPropertyEntryTarget"][];
+        };
+        /**
+         * BulkSavePropertyValuesResult
+         * @description The per-entry outcome list, plus its own tallies. Always a 200: the
+         *     request was authorised, well-formed, and fully processed, and the
+         *     outcomes *are* the representation - including a batch where every
+         *     entry conflicted (issue #265's plan: a whole-request 409 would have to
+         *     discard the applied entries' new `row_version`s, the one thing a
+         *     retrying client needs).
+         */
+        BulkSavePropertyValuesResult: {
+            /** Outcomes */
+            outcomes: components["schemas"]["BulkPropertyOutcomeItem"][];
+            /** Applied */
+            applied: number;
+            /** Unchanged */
+            unchanged: number;
+            /** Conflict */
+            conflict: number;
+            /** Not Found */
+            not_found: number;
+        };
         /**
          * CatalogueEntryStatus
          * @enum {string}
@@ -2854,6 +2947,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
+                };
+            };
+            /** @description The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                };
+            };
+            /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_property_bulk_api_v1_catalogue_entries_bulk_properties__key__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkSavePropertyValuesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkSavePropertyValuesResult"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No property definition matches `key`. An unknown `business_key` among `entries` is a per-entry `not-found` outcome in the 200 response, never a 404 for the whole request. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description The `reason` is missing or low-information (FR-37), the write targets a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names the `property_key`, `label` and `ordinal` of each failing value. */

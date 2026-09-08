@@ -154,6 +154,23 @@ def _put_values(
     )
 
 
+def _post_bulk_values(
+    api: ApiTestApp,
+    token: str | None,
+    *,
+    property_key: str,
+    values: list[dict[str, object]],
+    entries: list[dict[str, object]],
+    reason: str = _REASON,
+) -> Any:
+    return api.request(
+        "POST",
+        f"/catalogue/entries/bulk/properties/{property_key}",
+        token=token,
+        json={"values": values, "reason": reason, "entries": entries},
+    )
+
+
 # --- happy path --------------------------------------------------------
 
 
@@ -630,6 +647,472 @@ def test_save_property_values_administrator_without_mfa_gets_step_up_challenge(
         property_key=key,
         values=[{"value": "a value"}],
         expected_row_version=entry.row_version,
+    )
+
+    assert response.status_code == 403, response.text
+    assert 'error="insufficient_user_authentication"' in response.headers["WWW-Authenticate"]
+
+
+# --- issue #265: bulk property-value write route (FR-39) -------------------
+
+_PROPERTY_VALUE_BULK_ENTITY_TYPE = "property_value_bulk"
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_bulk_save_applies_across_entries_and_emits_one_batch_event(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-happy")
+    key = _unique_key("bulk_happy")
+    _create_string_property(api, token, key=key)
+    entry_a = _new_entry(api, "Bulk HTTP entry A")
+    entry_b = _new_entry(api, "Bulk HTTP entry B")
+    before = _audit_event_count(api)
+    # Captured before the POST: `entry_a`/`entry_b` are the same identity-
+    # mapped ORM instances the route's own session mutates, so their
+    # `row_version` already reflects the post-write value once the call
+    # returns (see the singular route's own happy-path test above).
+    starting_version_a = entry_a.row_version
+    starting_version_b = entry_b.row_version
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[
+            {"business_key": entry_a.business_key, "expected_row_version": starting_version_a},
+            {"business_key": entry_b.business_key, "expected_row_version": starting_version_b},
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["applied"] == 2
+    assert body["unchanged"] == 0
+    assert body["conflict"] == 0
+    assert body["not_found"] == 0
+    outcomes = {outcome["business_key"]: outcome for outcome in body["outcomes"]}
+    assert outcomes[entry_a.business_key]["status"] == "applied"
+    assert outcomes[entry_a.business_key]["row_version"] == starting_version_a + 1
+    assert outcomes[entry_b.business_key]["status"] == "applied"
+    assert _property_value_count(api, entry_id=entry_a.id, property_key=key) == 1
+    assert _property_value_count(api, entry_id=entry_b.id, property_key=key) == 1
+    # Two per-entry events plus one batch header.
+    assert _audit_event_count(api) == before + 3
+    bulk_event = latest_audit_event(
+        api.session, entity_type=_PROPERTY_VALUE_BULK_ENTITY_TYPE, entity_id=key
+    )
+    assert bulk_event.action == "property_value.bulk_set"
+    assert bulk_event.before is None
+    # Tallies are carried structurally in `after` (issue #265 review), not
+    # appended to `reason` - the response body's own counts and the audit
+    # header's tallies come from the same `tally_bulk_outcomes` call.
+    assert bulk_event.after == {"applied": 2, "unchanged": 0, "conflict": 0, "not-found": 0}
+    assert bulk_event.reason == _REASON
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_bulk_save_a_stale_entry_is_a_conflict_outcome_in_a_200_not_a_409(
+    api: ApiTestApp,
+) -> None:
+    token = _admin_token(api, subject="sub-bulk-conflict")
+    key = _unique_key("bulk_conflict")
+    _create_string_property(api, token, key=key)
+    entry_stale = _new_entry(api, "Bulk HTTP stale entry")
+    entry_fresh = _new_entry(api, "Bulk HTTP fresh entry")
+    stale_version = entry_stale.row_version
+    first = _put_values(
+        api,
+        token,
+        business_key=entry_stale.business_key,
+        property_key=key,
+        values=[{"value": "already-set"}],
+        expected_row_version=stale_version,
+    )
+    assert first.status_code == 200, first.text
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[
+            {"business_key": entry_stale.business_key, "expected_row_version": stale_version},
+            {
+                "business_key": entry_fresh.business_key,
+                "expected_row_version": entry_fresh.row_version,
+            },
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    outcomes = {outcome["business_key"]: outcome for outcome in body["outcomes"]}
+    stale_outcome = outcomes[entry_stale.business_key]
+    assert stale_outcome["status"] == "conflict"
+    assert stale_outcome["conflict"]["current_row_version"] == first.json()["row_version"]
+    assert outcomes[entry_fresh.business_key]["status"] == "applied"
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_a_missing_business_key_is_a_not_found_outcome(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-not-found")
+    key = _unique_key("bulk_not_found")
+    _create_string_property(api, token, key=key)
+    entry = _new_entry(api, "Bulk HTTP present entry")
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[
+            {"business_key": "NPTC-999998", "expected_row_version": 1},
+            {"business_key": entry.business_key, "expected_row_version": entry.row_version},
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    outcomes = {outcome["business_key"]: outcome for outcome in body["outcomes"]}
+    assert outcomes["NPTC-999998"]["status"] == "not-found"
+    assert outcomes["NPTC-999998"]["row_version"] is None
+    assert outcomes[entry.business_key]["status"] == "applied"
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_a_malformed_business_key_is_422_not_a_not_found_outcome(
+    api: ApiTestApp,
+) -> None:
+    """`business_key` shape is derivable from the request alone, so it is a
+    whole-request 422 (matching the singular route's own `BusinessKeyPath`
+    422 on a malformed path segment) - never a `not-found` outcome, which
+    would make a typo indistinguishable from a well-formed key that simply
+    does not exist."""
+    token = _admin_token(api, subject="sub-bulk-malformed-key")
+    key = _unique_key("bulk_malformed_key")
+    _create_string_property(api, token, key=key)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": "not-a-business-key", "expected_row_version": 1}],
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_unknown_property_key_is_404(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-404")
+    entry = _new_entry(api, "Bulk HTTP 404 entry")
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key="no_such_property_key",
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": entry.business_key, "expected_row_version": entry.row_version}],
+    )
+
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_bulk_save_with_no_reason_is_422_before_touching_any_entry(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-no-reason")
+    key = _unique_key("bulk_no_reason")
+    _create_string_property(api, token, key=key)
+    entry = _new_entry(api, "Bulk HTTP no-reason entry")
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": entry.business_key, "expected_row_version": entry.row_version}],
+        reason="",
+    )
+
+    assert response.status_code == 422, response.text
+    assert _property_value_count(api, entry_id=entry.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_duplicate_business_key_is_422(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-duplicate")
+    key = _unique_key("bulk_duplicate")
+    _create_string_property(api, token, key=key)
+    entry = _new_entry(api, "Bulk HTTP duplicate entry")
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[
+            {"business_key": entry.business_key, "expected_row_version": entry.row_version},
+            {"business_key": entry.business_key, "expected_row_version": entry.row_version},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_more_than_the_batch_cap_is_422(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-cap")
+    key = _unique_key("bulk_cap")
+    _create_string_property(api, token, key=key)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": f"NPTC-{n:06d}", "expected_row_version": 1} for n in range(101)],
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_a_schema_violation_writes_nothing_for_any_entry(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-schema")
+    key = _unique_key("bulk_schema")
+    _create_string_property(api, token, key=key, max_length=3)
+    entry_a = _new_entry(api, "Bulk HTTP schema A")
+    entry_b = _new_entry(api, "Bulk HTTP schema B")
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "this value is far too long"}],
+        entries=[
+            {"business_key": entry_a.business_key, "expected_row_version": entry_a.row_version},
+            {"business_key": entry_b.business_key, "expected_row_version": entry_b.row_version},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert _property_value_count(api, entry_id=entry_a.id, property_key=key) == 0
+    assert _property_value_count(api, entry_id=entry_b.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_save_against_a_deprecated_property_is_422_before_touching_any_entry(
+    api: ApiTestApp,
+) -> None:
+    """The batch-abort half of FR-11 (issue #265 review): `test_save_
+    property_values_against_a_deprecated_property_is_422_untouched` already
+    proves the singular route's identical check via the shared
+    `_load_active_property_definition` helper, but never proves the
+    whole-*batch* refusal a multi-entry request needs - that neither entry
+    is touched, not just the one entry a singular write names."""
+    token = _admin_token(api, subject="sub-bulk-deprecated")
+    key = _unique_key("bulk_deprecated")
+    created = _create_string_property(api, token, key=key)
+    entry_a = _new_entry(api, "Bulk HTTP deprecated A")
+    entry_b = _new_entry(api, "Bulk HTTP deprecated B")
+
+    deprecate_response = api.post(
+        f"/registry/properties/{key}/deprecation",
+        token=token,
+        json={"expected_row_version": created["row_version"], "reason": _REASON},
+    )
+    assert deprecate_response.status_code == 200, deprecate_response.text
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "should be refused"}],
+        entries=[
+            {"business_key": entry_a.business_key, "expected_row_version": entry_a.row_version},
+            {"business_key": entry_b.business_key, "expected_row_version": entry_b.row_version},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert _property_value_count(api, entry_id=entry_a.id, property_key=key) == 0
+    assert _property_value_count(api, entry_id=entry_b.id, property_key=key) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-39")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_bulk_save_emits_no_batch_header_when_nothing_applied(api: ApiTestApp) -> None:
+    """A batch where the only target is `not-found` changed nothing, so it
+    emits no `property_value.bulk_set` header (issue #265 review) - matching
+    ADR-0018's "a no-op write emits no audit event" posture."""
+    token = _admin_token(api, subject="sub-bulk-no-header")
+    key = _unique_key("bulk_no_header")
+    _create_string_property(api, token, key=key)
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "bulk value"}],
+        entries=[{"business_key": "NPTC-999996", "expected_row_version": 1}],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["applied"] == 0
+    assert body["not_found"] == 1
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.req("FR-39")
+@pytest.mark.integration
+def test_bulk_specimen_conflict_rolls_back_an_earlier_entry_already_applied_in_the_same_request(
+    api: ApiTestApp,
+) -> None:
+    """The request-granularity half of "a batch that fails partway leaves
+    no entry half-applied" (ADR-0035): unlike a per-entry conflict (caught
+    by that entry's own savepoint, the rest of the batch still commits),
+    FR-89's specimen check aborts the whole request - `get_session`'s own
+    `session_scope` rolls back everything, including `entry_ok`'s write,
+    which reached (and committed) its own per-entry savepoint *before* the
+    loop ever reached the entry that triggers the abort. The service-layer
+    equivalent of this test cannot prove this half on its own - it never
+    goes through `session_scope`, only through this route."""
+    from nptc.db.bootstrap import seed_system_properties
+
+    token = _admin_token(api, subject="sub-bulk-specimen-abort")
+    key = _unique_key("bulk_specimen_abort")
+    _create_string_property(api, token, key=key)
+    entry_ok = _new_entry(api, "Bulk HTTP specimen ok")
+    entry_unconstrained = _new_entry(api, "Bulk HTTP specimen unconstrained")
+    seed_system_properties(api.session)
+    api.session.flush()
+    api.terminology.seed_validate_code(
+        "specimen-1",
+        ValidationResult(code="specimen-1", result=True),
+        value_set_url=_SPECIMEN_VALUE_SET_URI,
+        edition=_SPECIMEN_EDITION,
+    )
+    patch_unconstrained = api.request(
+        "PATCH",
+        f"/catalogue/entries/{entry_unconstrained.business_key}",
+        token=token,
+        json={
+            "specimen_unconstrained": True,
+            "reason": _REASON,
+            "expected_row_version": entry_unconstrained.row_version,
+        },
+    )
+    assert patch_unconstrained.status_code == 200, patch_unconstrained.text
+    before = _audit_event_count(api)
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key="specimen",
+        values=[{"value": {"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}}],
+        entries=[
+            {"business_key": entry_ok.business_key, "expected_row_version": entry_ok.row_version},
+            {
+                "business_key": entry_unconstrained.business_key,
+                "expected_row_version": patch_unconstrained.json()["row_version"],
+            },
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert any(
+        issue["code"] == "specimen-unconstrained-conflict" for issue in response.json()["issues"]
+    )
+    # entry_ok's own write reached and committed its per-entry savepoint
+    # before the loop reached entry_unconstrained - proving this requires
+    # a fresh read, since api.session's own identity map would otherwise
+    # show the pre-rollback in-memory state.
+    api.session.expire_all()
+    assert _property_value_count(api, entry_id=entry_ok.id, property_key="specimen") == 0
+    assert _audit_event_count(api) == before
+
+
+# --- authorisation (FR-44, NFR-06) ------------------------------------------
+
+
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_bulk_save_no_credential_is_401(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-bulk-setup-401")
+    key = _unique_key("bulk_no_cred")
+    _create_string_property(api, admin_token, key=key)
+    entry = _new_entry(api, "Bulk HTTP 401 entry")
+
+    response = _post_bulk_values(
+        api,
+        None,
+        property_key=key,
+        values=[{"value": "a value"}],
+        entries=[{"business_key": entry.business_key, "expected_row_version": entry.row_version}],
+    )
+
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_bulk_save_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    admin_token = _admin_token(api, subject="sub-bulk-setup-403")
+    key = _unique_key("bulk_no_permission")
+    _create_string_property(api, admin_token, key=key)
+    entry = _new_entry(api, "Bulk HTTP 403 entry")
+    token = api.token(subject="sub-bulk-no-permission")
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "a value"}],
+        entries=[{"business_key": entry.business_key, "expected_row_version": entry.row_version}],
+    )
+
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_bulk_save_administrator_without_mfa_gets_step_up_challenge(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-bulk-no-mfa", with_mfa=False)
+    key = _unique_key("bulk_no_mfa")
+    admin_token = _admin_token(api, subject="sub-bulk-no-mfa-setup")
+    _create_string_property(api, admin_token, key=key)
+    entry = _new_entry(api, "Bulk HTTP no-mfa entry")
+
+    response = _post_bulk_values(
+        api,
+        token,
+        property_key=key,
+        values=[{"value": "a value"}],
+        entries=[{"business_key": entry.business_key, "expected_row_version": entry.row_version}],
     )
 
     assert response.status_code == 403, response.text

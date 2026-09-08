@@ -162,6 +162,41 @@ def _row_digest_fields(row: AuditEvent) -> dict[str, Any]:
     return {name: getattr(row, name) for name in names}
 
 
+def acquire_append_lock(session: Session) -> None:
+    """Acquires the audit append lock (step 1/1a above) without performing a
+    write of its own - the piece of `append_audit_event` a multi-row caller
+    needs to run *before* taking its first row lock, not merely before its
+    first audit append (issue #265 review).
+
+    `nptc.catalogue.property_values.save_property_values_for_entries` is the
+    first caller: a transaction that mutates several `catalogue_entry` rows
+    one at a time, each followed by its own audit append, only acquires this
+    lock (indirectly, via `append_audit_event`) at whichever entry happens to
+    be the first one that actually changes something - an `unchanged`
+    (no-op) entry never calls `append_audit_event` at all. That makes the
+    lock's acquisition point data-dependent on which entries in the batch
+    turn out to be no-ops, which is the wrong thing to reason about a lock-
+    ordering invariant against. Calling this once, unconditionally, before
+    the per-entry loop starts makes the acquisition point deterministic
+    instead - see that function's own docstring and ADR-0035's addendum for
+    why this narrows, but does not by itself eliminate, the residual
+    deadlock risk against a concurrent *single*-entry writer.
+
+    `pg_advisory_xact_lock` nests safely within one transaction: calling
+    this here and then again inside `append_audit_event` for the same
+    transaction is not a double-acquire, just a redundant (and cheap)
+    re-assertion of a lock already held.
+    """
+    session.execute(_ACQUIRE_APPEND_LOCK_SQL, {"key": AUDIT_APPEND_LOCK_KEY})
+
+    isolation_level = session.execute(_CHECK_ISOLATION_LEVEL_SQL).scalar_one()
+    if isolation_level != _REQUIRED_ISOLATION_LEVEL:
+        raise AuditIsolationLevelError(
+            "append_audit_event requires READ COMMITTED isolation to keep the "
+            f"chain from forking, got {isolation_level!r}"
+        )
+
+
 def append_audit_event(
     session: Session,
     ctx: AuditContext,
@@ -176,14 +211,7 @@ def append_audit_event(
     """Appends one row to `audit_event`, computing and linking its hash
     chain fields. See the module docstring for the exact sequence and why
     each step exists."""
-    session.execute(_ACQUIRE_APPEND_LOCK_SQL, {"key": AUDIT_APPEND_LOCK_KEY})
-
-    isolation_level = session.execute(_CHECK_ISOLATION_LEVEL_SQL).scalar_one()
-    if isolation_level != _REQUIRED_ISOLATION_LEVEL:
-        raise AuditIsolationLevelError(
-            "append_audit_event requires READ COMMITTED isolation to keep the "
-            f"chain from forking, got {isolation_level!r}"
-        )
+    acquire_append_lock(session)
 
     session.flush()
     prev_hash = _read_prev_hash(session)
