@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Checkbox } from "./checkbox.tsx";
+
 type Column<Row> = {
   key: string;
   header: string;
@@ -8,6 +10,22 @@ type Column<Row> = {
    * column should set this. */
   isRowHeader?: boolean;
   render: (row: Row) => ReactNode;
+};
+
+type SelectionProps<Row> = {
+  /** Keys of the currently selected rows, per `getRowKey` - a `Set` rather
+   * than a predicate, so the caller (not this component) owns what
+   * "selected" means across a data change (issue #267). */
+  selectedKeys: ReadonlySet<string>;
+  onSelectRow: (key: string, selected: boolean) => void;
+  onSelectAll: (selected: boolean) => void;
+  /** The select-all box's accessible label, e.g. "Select all rows". */
+  selectAllLabel: string;
+  /** One row's box accessible label, e.g. `` `Select ${row.businessKey}` ``
+   * - a bare checkbox in a cell is unlabelled to a screen reader, and the
+   * row's own identifying text is usually already rendered in another
+   * column, so this label is visually hidden rather than shown twice. */
+  getRowLabel: (row: Row) => string;
 };
 
 type DataTableProps<Row> = {
@@ -21,6 +39,11 @@ type DataTableProps<Row> = {
    * `rows` is empty, so "there is nothing here" is itself conveyed to
    * assistive technology rather than the table silently disappearing. */
   emptyState: ReactNode;
+  /** Adds a leading selection column with a per-row box and a select-all
+   * box in the header (issue #267). Omitted entirely (not merely unused)
+   * for every existing caller - `Column` and every other prop are
+   * untouched, so this is additive. */
+  selection?: SelectionProps<Row>;
 };
 
 /**
@@ -36,6 +59,7 @@ export function DataTable<Row>({
   rows,
   getRowKey,
   emptyState,
+  selection,
 }: DataTableProps<Row>) {
   // Only the first `isRowHeader` column, if any, is actually treated as the
   // row header - a caller declaring two would otherwise produce two
@@ -44,6 +68,13 @@ export function DataTable<Row>({
   // a rendering component degrading to "first one wins" is preferable to
   // crashing a screen over a caller mistake in a column list.
   const rowHeaderKey = columns.find((column) => column.isRowHeader)?.key;
+  const columnCount = columns.length + (selection ? 1 : 0);
+
+  const selectedCount = selection
+    ? rows.filter((row) => selection.selectedKeys.has(getRowKey(row))).length
+    : 0;
+  const allSelected = selection !== undefined && rows.length > 0 && selectedCount === rows.length;
+  const someSelected = selectedCount > 0 && !allSelected;
 
   return (
     <table className="w-full border-collapse text-sm">
@@ -52,6 +83,20 @@ export function DataTable<Row>({
       </caption>
       <thead>
         <tr>
+          {selection ? (
+            <th
+              scope="col"
+              className="border-b border-[var(--color-border)] p-2 text-left"
+            >
+              <Checkbox
+                label={selection.selectAllLabel}
+                labelHidden
+                checked={allSelected}
+                indeterminate={someSelected}
+                onChange={(event) => selection.onSelectAll(event.target.checked)}
+              />
+            </th>
+          ) : null}
           {columns.map((column) => (
             <th
               key={column.key}
@@ -66,33 +111,46 @@ export function DataTable<Row>({
       <tbody>
         {rows.length === 0 ? (
           <tr>
-            <td colSpan={columns.length} className="p-2 text-[var(--color-text-muted)]">
+            <td colSpan={columnCount} className="p-2 text-[var(--color-text-muted)]">
               {emptyState}
             </td>
           </tr>
         ) : (
-          rows.map((row) => (
-            <tr key={getRowKey(row)}>
-              {columns.map((column) =>
-                column.key === rowHeaderKey ? (
-                  <th
-                    key={column.key}
-                    scope="row"
-                    className="border-b border-[var(--color-border)] p-2 text-left font-normal"
-                  >
-                    {column.render(row)}
-                  </th>
-                ) : (
-                  <td
-                    key={column.key}
-                    className="border-b border-[var(--color-border)] p-2"
-                  >
-                    {column.render(row)}
+          rows.map((row) => {
+            const rowKey = getRowKey(row);
+            return (
+              <tr key={rowKey}>
+                {selection ? (
+                  <td className="border-b border-[var(--color-border)] p-2">
+                    <Checkbox
+                      label={selection.getRowLabel(row)}
+                      labelHidden
+                      checked={selection.selectedKeys.has(rowKey)}
+                      onChange={(event) => selection.onSelectRow(rowKey, event.target.checked)}
+                    />
                   </td>
-                ),
-              )}
-            </tr>
-          ))
+                ) : null}
+                {columns.map((column) =>
+                  column.key === rowHeaderKey ? (
+                    <th
+                      key={column.key}
+                      scope="row"
+                      className="border-b border-[var(--color-border)] p-2 text-left font-normal"
+                    >
+                      {column.render(row)}
+                    </th>
+                  ) : (
+                    <td
+                      key={column.key}
+                      className="border-b border-[var(--color-border)] p-2"
+                    >
+                      {column.render(row)}
+                    </td>
+                  ),
+                )}
+              </tr>
+            );
+          })
         )}
       </tbody>
     </table>

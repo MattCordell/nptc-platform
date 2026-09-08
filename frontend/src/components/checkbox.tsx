@@ -1,9 +1,11 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 type CheckboxProps = {
-  /** The visible label text. Required, for the same reason `Field`'s is
-   * (issue #148): there is no unlabelled fallback. */
+  /** The label text. Required, for the same reason `Field`'s is (issue
+   * #148): there is no unlabelled fallback - see `labelHidden` for a box
+   * whose label should still describe it accessibly without being visible
+   * text. */
   label: string;
   /** A caller-supplied id for the input - an `ErrorSummary` item links to
    * `#id` to move focus here (issue #210). Generated with `useId` when
@@ -14,6 +16,17 @@ type CheckboxProps = {
    * for the reason recorded in `field.tsx`: a control that already
    * describes itself by this text would otherwise announce it twice. */
   error?: ReactNode;
+  /** Visually hides `label` (`visually-hidden`) while keeping it in the
+   * accessibility tree - for a box whose label would otherwise repeat text
+   * already visible beside it, e.g. a per-row selection box in a
+   * `DataTable` naming a row the adjacent column already shows (issue
+   * #267). */
+  labelHidden?: boolean;
+  /** Sets the DOM `indeterminate` property for a tri-state "select all"
+   * box (issue #267) - neither a valid HTML attribute nor a React prop
+   * `<input>` accepts directly, so it is applied imperatively via a ref
+   * rather than spread onto the element like every other prop here. */
+  indeterminate?: boolean;
 } & Omit<ComponentPropsWithoutRef<"input">, "id" | "type" | "children">;
 
 /**
@@ -32,6 +45,8 @@ export function Checkbox({
   label,
   hint,
   error,
+  labelHidden,
+  indeterminate,
   className,
   ...rest
 }: CheckboxProps) {
@@ -40,19 +55,35 @@ export function Checkbox({
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.indeterminate = indeterminate ?? false;
+    }
+  }, [indeterminate]);
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
         <input
           {...rest}
+          ref={inputRef}
           type="checkbox"
           id={id}
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
           className={["h-4 w-4", className ?? ""].filter(Boolean).join(" ")}
         />
-        <label htmlFor={id} className="text-sm font-medium text-[var(--color-text)]">
+        <label
+          htmlFor={id}
+          className={[
+            "text-sm font-medium text-[var(--color-text)]",
+            labelHidden ? "visually-hidden" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {label}
         </label>
       </div>
