@@ -18,6 +18,27 @@ moved here from `catalogue.py` when `catalogue_admin.py` was added (issue
 `catalogue.py`'s own detail route does, and reaching into another router's
 private helpers is exactly what this module exists to avoid.
 
+`EntryPage`/`SearchHit`/`SearchPage`/`Facet`/`FacetBucket` moved here for
+the identical reason when `catalogue_admin.py` grew its own all-status
+listing and search (issue #266): `GET /catalogue/admin/entries` and
+`GET /catalogue/admin/search` serve the same page/hit/facet shapes their
+public counterparts do, just over a different status scope, so one set of
+models rather than two that could drift. Model *class names* are unchanged
+by the move, so the generated `docs/api/openapi.json` component names are
+unaffected - only their import path changed.
+
+`LimitQuery`/`EntryCursorQuery`/`CursorQuery`/`FilterRequest`/
+`filter_parameter` moved here in the same PR's review pass, for the same
+reason and not a different one: `catalogue_admin.py` had started importing
+these five names directly from `catalogue.py` (and re-declaring
+`_summary`/its own filter-openapi constant byte-for-byte) to serve its two
+new collection routes, which is exactly the router-to-router coupling this
+module's own paragraph above says the shared response models exist to
+avoid - a query-parameter type is no different from a response model in
+that respect. `summary_from_entry` is the same move for the one assembly
+helper (`EntrySummary` from a `CatalogueEntry` row) both routers' listing
+routes need and neither had a shared name for.
+
 **`binding_from_row`/`designation_from_row`/`entry_summary_fields`/
 `property_value_from_row` carry no leading underscore, unlike every other
 free function in this module.** They are this module's actual
@@ -38,11 +59,12 @@ allowlisted read-path consumer and no longer is.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import Path
-from pydantic import BaseModel, ConfigDict
+from fastapi import Path, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_api_settings
@@ -56,6 +78,14 @@ from nptc.api.labels import (
 from nptc.catalogue import queries
 from nptc.catalogue.code_systems import SYSTEM_TOKEN_PATTERN
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
+from nptc.catalogue.facets import (
+    FACET_BUCKET_CAP,
+    FILTER_OP_SEPARATOR,
+    FILTER_PARAM_PREFIX,
+    FILTER_VALUE_CAP,
+    FacetContext,
+    FilterSelection,
+)
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 
@@ -64,17 +94,28 @@ __all__ = [
     "BindingList",
     "BusinessKeyPath",
     "CodePath",
+    "CursorQuery",
     "Designation",
     "DesignationList",
+    "EntryCursorQuery",
     "EntryDetail",
+    "EntryPage",
     "EntrySummary",
+    "Facet",
+    "FacetBucket",
+    "FilterRequest",
+    "LimitQuery",
     "PropertyValue",
+    "SearchHit",
+    "SearchPage",
     "SystemTokenPath",
     "binding_from_row",
     "build_entry_detail",
     "designation_from_row",
     "entry_summary_fields",
+    "filter_parameter",
     "property_value_from_row",
+    "summary_from_entry",
 ]
 
 #: Shared by every route addressing an entry by its public identifier. A
@@ -117,6 +158,143 @@ CodePath = Annotated[
     str,
     Path(description="The exact code to resolve.", examples=["49466006"]),
 ]
+
+#: 200 is the documented default and 200 is also the ceiling on what one
+#: response should carry; a caller wanting the whole catalogue pages through
+#: it with the cursor rather than asking for it in one request. Shared by
+#: every collection route, public or admin (issue #266).
+LimitQuery = Annotated[
+    int,
+    Query(ge=1, le=200, description="Maximum entries in this page."),
+]
+
+#: `/catalogue/entries` and `/catalogue/admin/entries` (issue #266) both page
+#: on `business_key`, so this cursor *is* a business key and is validated as
+#: one. Constrained rather than accepted freely so a mangled cursor is a 422
+#: here exactly as it is on the search routes - an endpoint that silently
+#: serves "the page after whatever this sorts before" gives a client no way
+#: to notice it has been corrupting its own cursor.
+EntryCursorQuery = Annotated[
+    str | None,
+    Query(
+        pattern=BUSINESS_KEY_PATTERN.pattern,
+        description=(
+            "The `next_cursor` from the previous page. Pass it back unmodified, "
+            "and do not construct one."
+        ),
+    ),
+]
+
+#: `/catalogue/search` and `/catalogue/admin/search` (issue #266) both page
+#: on `<score>:<request digest>:<business_key>`, which has no single pattern
+#: worth expressing here - `nptc.catalogue.search` parses it and raises
+#: `MalformedSearchCursorError` (also a 422) for anything it did not mint,
+#: including a cursor it minted for a different `q`, filter set, or status
+#: scope (see that module's own docstring).
+CursorQuery = Annotated[
+    str | None,
+    Query(
+        description=(
+            "The `next_cursor` from the previous page. Opaque: pass it back "
+            "unmodified, and do not construct one. It is bound to the `q`, the "
+            "filters, and this endpoint's own status scope - sending it with any "
+            "changed (including replaying it against the other collection route) "
+            "is a 422, not a meaningless page, because a relevance score means "
+            "nothing against a different request."
+        )
+    ),
+]
+
+
+def filter_parameter(search_path: str) -> dict[str, Any]:
+    """The FR-16 filter query parameter, declared by hand (issue #139,
+    ADR-0032) - shared because `catalogue.py` and `catalogue_admin.py`
+    (issue #266) both accept `?filter.<key>=<value>` on their collection
+    routes.
+
+    **Why by hand.** The parameter name is not fixed - it is
+    `filter.<property_key>` for whatever properties an administrator has
+    marked `filterable`, which is the whole point of FR-16 - and FastAPI
+    generates parameters from a typed signature, which by construction can
+    only name parameters known when this file is written. Reading the query
+    string directly (each router's own `_filter_request`) is the only way to
+    accept the shape; declaring it here is what stops `docs/api/openapi.json`
+    from quietly omitting a parameter the API does in fact accept. FR-20
+    makes that document the contract vendors build against, and the
+    `breaking` CI job polices every later change to it - a parameter absent
+    from the document is a parameter nobody is protecting.
+
+    `search_path` names *this collection's own* search route -
+    `/catalogue/search` for the public surface, `/catalogue/admin/search`
+    for the maintenance one - so the description below points a caller at
+    the endpoint that actually returns this facet's current bucket list with
+    counts. The two are not interchangeable: the admin one covers every
+    `CatalogueEntryStatus`, the public one `active` alone (issue #266
+    review - the two routes had shared one hard-coded sentence naming only
+    the public path).
+
+    FastAPI merges `openapi_extra` into the generated operation with
+    `deep_dict_update`, which *concatenates* lists - so this is appended to
+    the parameters FastAPI derived from the signature rather than replacing
+    them.
+
+    `explode: true` over `style: form` is OpenAPI's own spelling of "repeat
+    the key once per value", which is exactly the wire shape.
+    """
+    return {
+        "name": f"{FILTER_PARAM_PREFIX}{{property_key}}",
+        "in": "query",
+        "required": False,
+        "style": "form",
+        "explode": True,
+        "schema": {"type": "array", "items": {"type": "string"}},
+        "description": (
+            "Filter by a facet. The parameter name is the facet's `key` prefixed "
+            f"with `{FILTER_PARAM_PREFIX}` - `?{FILTER_PARAM_PREFIX}discipline=chemistry`. "
+            "Repeat the parameter to select several values of one facet; they are "
+            "OR-ed. Filters on different facets are AND-ed, so adding one always "
+            "narrows the result. The facets available are not fixed: they are "
+            "every property an administrator has marked filterable, plus the "
+            f"entry status, and `GET {search_path}` returns the current list "
+            "with counts. An operator other than the default `equals` is named "
+            f"after the key, separated by `{FILTER_OP_SEPARATOR}` - "
+            f"`?{FILTER_PARAM_PREFIX}assay_name{FILTER_OP_SEPARATOR}prefix=glu`, or "
+            f"`?{FILTER_PARAM_PREFIX}volume_ml{FILTER_OP_SEPARATOR}range=1..5`. "
+            "Which operators a facet accepts follows from the property's "
+            "datatype; one it does not accept is a 422, never a silently ignored "
+            f"parameter. At most {FILTER_VALUE_CAP} distinct values are accepted "
+            "in one facet's selection (repeated parameter or `:in` list alike); "
+            "more than that is also a 422. NOTE for generated clients: "
+            "`{property_key}` above is a "
+            "placeholder, not a literal parameter name - OpenAPI has no syntax "
+            "for a templated parameter name, so a generated client typically "
+            "renders one field named literally `filter.{property_key}`. Sending "
+            "that literal string is a 422 (`{property_key}` is not a filter this "
+            "endpoint offers); a real filter parameter's name is built by hand, "
+            "substituting an actual facet key (see ADR-0032)."
+        ),
+    }
+
+
+@dataclass(frozen=True)
+class FilterRequest:
+    """The facets one request has, and the selection made against them.
+
+    Both, from one dependency, because they come from one read of
+    `property_definition` - resolving them separately would enumerate the
+    registry twice per request and could, under a concurrent registry
+    write, validate a filter against one facet list and count buckets
+    against another.
+
+    Shared between `catalogue.py` and `catalogue_admin.py` (issue #266): the
+    shape is identical on both surfaces, and only the `status_values` each
+    router's own `_filter_request` passes to `load_facet_context` differs
+    (`queries.PUBLIC_STATUSES` vs `nptc.catalogue.maintenance.
+    MAINTENANCE_STATUSES`) - see each router's own filter dependency.
+    """
+
+    context: FacetContext
+    selections: tuple[FilterSelection, ...]
 
 
 class Binding(BaseModel):
@@ -234,6 +412,120 @@ _ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
 }
 
 
+class EntryPage(BaseModel):
+    """One page of `EntrySummary` rows, keyset-paginated on `business_key`.
+
+    Served by both `catalogue.py`'s public `GET /catalogue/entries`
+    (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+    `GET /catalogue/admin/entries` (any status, issue #266) - one shape, the
+    same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
+    is `null` on the last page - which is the *only* reliable signal that
+    paging is finished. A client must not infer the end from a short page: a
+    page can be short and still have a successor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[EntrySummary]
+    next_cursor: str | None
+
+
+class SearchHit(EntrySummary):
+    """A summary plus its relevance score.
+
+    The score is exposed because it is what the ordering is, and a client
+    that cannot see it cannot tell a confident single match from a page of
+    weak ones. It is comparable *within* one response only - it is a
+    trigram similarity against this particular query, not a quality rating
+    of the entry.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    score: float = Field(description="Trigram similarity against `q`, between 0 and 1.")
+
+
+class FacetBucket(BaseModel):
+    """One value of one facet, with how many entries in the current result
+    set carry it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str = Field(
+        description=(
+            "Send this back as the filter value to select this bucket - "
+            "`?filter.<key>=<value>`. It is the stored value, not the label."
+        )
+    )
+    label: str = Field(
+        description=(
+            "How to show this bucket. For a coded property it is the display "
+            "term stored alongside the code when the value was recorded, never "
+            "a live terminology lookup, so it is stable and offline. Falls back "
+            "to `value` where the stored value carries no label of its own."
+        )
+    )
+    count: int = Field(
+        description=(
+            "Entries in the current result set carrying this value. An entry "
+            "with several values of one property counts once under each of "
+            "them, never several times under one."
+        )
+    )
+
+
+class Facet(BaseModel):
+    """One facet, derived from the property registry at request time.
+
+    Never a fixed list: a property an administrator marks filterable appears
+    here on the next request, with no deployment and no restart (FR-09,
+    FR-16). A client must therefore render whatever it is given rather than
+    hard-coding the facets it knows about.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str = Field(description="The property key, and the suffix of its `filter.` parameter.")
+    label: str = Field(description="The property's own label, as an administrator set it.")
+    facetable: bool = Field(
+        description=(
+            "`false` for a property that can be filtered on but not grouped - a "
+            "continuous numeric one, where every value would be its own bucket. "
+            "Such a facet is reported with no buckets rather than omitted, so a "
+            "client can tell it apart from a facet whose values happen to match "
+            "nothing."
+        )
+    )
+    truncated: bool = Field(
+        description=(
+            f"`true` when this facet has more than {FACET_BUCKET_CAP} distinct "
+            "values and only the most common were returned. There is no way to "
+            "page through the remainder; narrow the search instead."
+        )
+    )
+    buckets: list[FacetBucket]
+
+
+class SearchPage(BaseModel):
+    """Served by both `catalogue.py`'s public `GET /catalogue/search`
+    (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+    `GET /catalogue/admin/search` (any status, issue #266) - see
+    `EntryPage`'s own docstring for why one shape rather than two."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[SearchHit]
+    next_cursor: str | None
+    facets: list[Facet] = Field(
+        description=(
+            "Every facet available for this search, with counts over the whole "
+            "result set rather than this page. A facet's own selection is "
+            "excluded from its own counts, so a bucket you have not chosen "
+            "still tells you how many entries it would give you."
+        )
+    )
+
+
 class PropertyValue(BaseModel):
     """One property value, rendered by its datatype's own handler.
 
@@ -329,6 +621,26 @@ def entry_summary_fields(
         "has_open_finding": has_open_finding,
         "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }
+
+
+def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
+    """The `EntrySummary` for one loaded `CatalogueEntry` row - the listing
+    routes' own assembler, shared between `catalogue.py`'s `list_entries`
+    and `catalogue_admin.py`'s `list_entries_any_status` (issue #266 review):
+    both were carrying a byte-for-byte copy of this three-line function
+    under a leading-underscore name, which is the identical drift risk this
+    module's own docstring gives for not duplicating a response model."""
+    return EntrySummary(
+        **entry_summary_fields(
+            entry.business_key,
+            entry.preferred_term,
+            entry.length,
+            entry.status,
+            entry.specimen_unconstrained,
+            entry.updated_at,
+            has_open_finding,
+        )
+    )
 
 
 def build_entry_detail(

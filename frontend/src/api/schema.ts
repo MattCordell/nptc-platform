@@ -399,6 +399,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/admin/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of catalogue entries, any status (issue #266)
+         * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
+         *     public `list_entries`: identical keyset paging on `business_key`, every
+         *     status in scope rather than `PUBLIC_STATUSES` alone, and `status` on
+         *     each row so a caller can tell a draft from an active entry.
+         *
+         *     `filter.*` parameters behave as they do on the public surface, except
+         *     `?filter.status=` now accepts any `CatalogueEntryStatus` value rather
+         *     than only `active` - `AdminFiltersDep` builds its facet context from
+         *     `maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the
+         *     same reason they are not on `/catalogue/entries`: `GET
+         *     /catalogue/admin/search` is where the facet list with counts lives.
+         */
+        get: operations["list_entries_any_status_api_v1_catalogue_admin_entries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalogue/admin/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search catalogue entries by term, any status (issue #266)
+         * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
+         *     public `search`: identical ranking, threshold and keyset paging
+         *     (`nptc.catalogue.search`, called with `statuses=maintenance.
+         *     MAINTENANCE_STATUSES` instead of the default `PUBLIC_STATUSES`), so a
+         *     draft, deprecated or withdrawn entry is findable by an administrator the
+         *     same way an active one is findable by anyone.
+         *
+         *     `facets` is derived the same way `GET /catalogue/search`'s own is, over
+         *     the same `?filter.*` parameters - including `status`, whose bucket list
+         *     is non-degenerate here (every status an administrator might filter by),
+         *     unlike the public surface's single-bucket `active` facet.
+         */
+        get: operations["search_any_status_api_v1_catalogue_admin_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalogue/admin/entries/{business_key}": {
         parameters: {
             query?: never;
@@ -1167,9 +1227,15 @@ export interface components {
         };
         /**
          * EntryPage
-         * @description `next_cursor` is `null` on the last page - which is the *only*
-         *     reliable signal that paging is finished. A client must not infer the end
-         *     from a short page: a page can be short and still have a successor.
+         * @description One page of `EntrySummary` rows, keyset-paginated on `business_key`.
+         *
+         *     Served by both `catalogue.py`'s public `GET /catalogue/entries`
+         *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+         *     `GET /catalogue/admin/entries` (any status, issue #266) - one shape, the
+         *     same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
+         *     is `null` on the last page - which is the *only* reliable signal that
+         *     paging is finished. A client must not infer the end from a short page: a
+         *     page can be short and still have a successor.
          */
         EntryPage: {
             /** Items */
@@ -1662,7 +1728,13 @@ export interface components {
              */
             score: number;
         };
-        /** SearchPage */
+        /**
+         * SearchPage
+         * @description Served by both `catalogue.py`'s public `GET /catalogue/search`
+         *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
+         *     `GET /catalogue/admin/search` (any status, issue #266) - see
+         *     `EntryPage`'s own docstring for why one shape rather than two.
+         */
         SearchPage: {
             /** Items */
             items: components["schemas"]["SearchHit"][];
@@ -1881,7 +1953,7 @@ export interface operations {
                 q: string;
                 /** @description Maximum entries in this page. */
                 limit?: number;
-                /** @description The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q` **and the filters** it was issued for - sending it with either changed is a 422, not a meaningless page, because a relevance score means nothing against a different request. */
+                /** @description The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q`, the filters, and this endpoint's own status scope - sending it with any changed (including replaying it against the other collection route) is a 422, not a meaningless page, because a relevance score means nothing against a different request. */
                 after?: string | null;
                 /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
                 "filter.{property_key}"?: string[];
@@ -3031,6 +3103,116 @@ export interface operations {
             };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_entries_any_status_api_v1_catalogue_admin_entries_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum entries in this page. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
+                after?: string | null;
+                /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/admin/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
+                "filter.{property_key}"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryPage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_any_status_api_v1_catalogue_admin_search_get: {
+        parameters: {
+            query: {
+                /** @description Free text, or a SNOMED CT code - identical matching and ranking to `GET /catalogue/search` (FR-14, FR-15), over entries of any status. */
+                q: string;
+                /** @description Maximum entries in this page. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to the `q`, the filters, and this endpoint's own status scope - sending it with any changed (including replaying it against the other collection route) is a 422, not a meaningless page, because a relevance score means nothing against a different request. */
+                after?: string | null;
+                /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/admin/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
+                "filter.{property_key}"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchPage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A query parameter was unprocessable - a blank search query, a cursor this API did not issue (including one issued for a different `q`, filter set, or status scope - a cursor from `GET /catalogue/search` is refused here, and vice versa), a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

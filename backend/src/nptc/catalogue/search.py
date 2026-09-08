@@ -150,19 +150,25 @@ an `@@` or an `=` test.
 **Relevance keyset.** The cursor is
 `"<score>:<request digest>:<business_key>"` - the score and key are both
 values the client just received, neither an internal id, and the digest
-binds the cursor to the request that minted it: the `q`, and (issue #139)
-the filter set alongside it.
+binds the cursor to the request that minted it: the `q`, (issue #139) the
+filter set, and (issue #266) the status scope, all alongside it.
 `business_key` is the tie-break, and it is not optional decoration:
 trigram scores are floats over a small catalogue and tie constantly, so
 ordering by score alone is not a total order and a page boundary landing
 inside a tie would drop or repeat rows. The digest exists because a score
 is only meaningful against the request it was computed for:
-replaying a cursor under a different `q` - or a different filter set, which
-changes which entries exist to be scored at all - would otherwise be served
-a window with no defined meaning, silently, which is worse than a refusal.
-`backend/tests/test_api_public_search.py` pages across a deliberate tie, and
-replays a cursor under a second query and under a second filter set, for
-exactly these reasons.
+replaying a cursor under a different `q`, a different filter set, or a
+different status scope - each changes which entries exist to be scored at
+all - would otherwise be served a window with no defined meaning, silently,
+which is worse than a refusal. The status scope matters for the identical
+reason: `GET /catalogue/search`'s cursor and `GET /catalogue/admin/search`'s
+score the same `q` against different populations (`PUBLIC_STATUSES` vs
+`MAINTENANCE_STATUSES`), so a cursor minted by one accepted by the other
+would silently resume the keyset over the wrong population rather than
+being refused. `backend/tests/test_api_public_search.py` pages across a
+deliberate tie and replays a cursor under a second query and under a
+second filter set; `backend/tests/test_api_catalogue_admin_listing.py`
+replays one across the public/admin status-scope boundary, both directions.
 """
 
 from __future__ import annotations
@@ -563,9 +569,36 @@ def _query_digest(q: str) -> str:
     return hashlib.blake2s(q.encode("utf-8"), digest_size=_CURSOR_QUERY_DIGEST_BYTES).hexdigest()
 
 
-def _request_digest(q: str, filters: Sequence[FilterSelection]) -> str:
+def _status_digest_material(statuses: Sequence[str]) -> str:
+    """The cursor digest's fingerprint of the status scope (issue #266
+    review).
+
+    `search_entries`/`search_facets` take `statuses` so one surface's
+    default (`PUBLIC_STATUSES`) and another's (`MAINTENANCE_STATUSES`) share
+    every other line of ranking and paging code - but a cursor minted under
+    one scope is a fact about *that* population only. Without this, a
+    `next_cursor` from `GET /catalogue/search` is accepted verbatim by
+    `GET /catalogue/admin/search` for the same `q` and filter set (and vice
+    versa) and resumes the `(score, business_key)` keyset over a *different*
+    population - an administrator paging from a public cursor would silently
+    skip every draft/deprecated/withdrawn entry scoring above it, rather than
+    getting the refusal a mismatched `q` already earns.
+
+    Sorted and netstring-encoded exactly like `filter_digest_material`'s own
+    values, for the same two reasons: order must not matter (`statuses` is a
+    set of permitted values, not a meaningful sequence) and a value must not
+    be able to run together with its neighbour.
+    """
+    values = "".join(f"{len(status.encode())}:{status}" for status in sorted(statuses))
+    return f"{len(values.encode())}:{values}"
+
+
+def _request_digest(
+    q: str, filters: Sequence[FilterSelection], statuses: Sequence[str] = PUBLIC_STATUSES
+) -> str:
     """The cursor's fingerprint of the *whole* request, not just `q`
-    (issue #139).
+    (issue #139), including the status scope it was scored under (issue
+    #266 - see `_status_digest_material`).
 
     A score is meaningful only against the request that produced it, and
     the filter set is as much a part of that request as `q` is: narrowing
@@ -573,8 +606,8 @@ def _request_digest(q: str, filters: Sequence[FilterSelection]) -> str:
     :after_score` under a different filter set selects a window that is
     neither the next page of the new request nor of the old one. That is
     the silently-wrong answer `SearchCursorQueryMismatchError` already
-    exists to refuse for a changed `q`; a changed filter set is the same
-    fault and earns the same refusal.
+    exists to refuse for a changed `q`; a changed filter set - or a changed
+    status scope - is the same fault and earns the same refusal.
 
     `q` is length-prefixed (`<byte length>:<q>`, matching
     `filter_digest_material`'s own netstring encoding) rather than
@@ -588,14 +621,30 @@ def _request_digest(q: str, filters: Sequence[FilterSelection]) -> str:
     equivalent collision for a filter value: an unambiguous length in place
     of a separator or a framing invariant that has to be trusted to hold.
     """
-    return _query_digest(f"{len(q.encode())}:{q}{filter_digest_material(filters)}")
+    return _query_digest(
+        f"{len(q.encode())}:{q}{filter_digest_material(filters)}{_status_digest_material(statuses)}"
+    )
 
 
-def _format_cursor(hit: SearchHit, *, q: str, filters: Sequence[FilterSelection]) -> str:
-    return _CURSOR_SEPARATOR.join((repr(hit.score), _request_digest(q, filters), hit.business_key))
+def _format_cursor(
+    hit: SearchHit,
+    *,
+    q: str,
+    filters: Sequence[FilterSelection],
+    statuses: Sequence[str] = PUBLIC_STATUSES,
+) -> str:
+    return _CURSOR_SEPARATOR.join(
+        (repr(hit.score), _request_digest(q, filters, statuses), hit.business_key)
+    )
 
 
-def _parse_cursor(cursor: str, *, q: str, filters: Sequence[FilterSelection]) -> tuple[float, str]:
+def _parse_cursor(
+    cursor: str,
+    *,
+    q: str,
+    filters: Sequence[FilterSelection],
+    statuses: Sequence[str] = PUBLIC_STATUSES,
+) -> tuple[float, str]:
     score_text, separator, remainder = cursor.partition(_CURSOR_SEPARATOR)
     digest, key_separator, business_key = remainder.partition(_CURSOR_SEPARATOR)
     if not separator or not key_separator:
@@ -632,19 +681,27 @@ def _parse_cursor(cursor: str, *, q: str, filters: Sequence[FilterSelection]) ->
     # `compare_digest` rather than `==`: not because this is a secret, but
     # because it is the spelling that does not invite someone to later
     # "optimise" a digest comparison into a prefix check.
-    if not hmac.compare_digest(digest, _request_digest(q, filters)):
+    if not hmac.compare_digest(digest, _request_digest(q, filters, statuses)):
         raise SearchCursorQueryMismatchError(
-            f"search cursor {cursor!r} was issued for a different query or filter set"
+            f"search cursor {cursor!r} was issued for a different query, filter set, or "
+            "status scope"
         )
     return score, business_key
 
 
-def _text_parameters(q: str) -> dict[str, Any]:
+def _text_parameters(q: str, *, statuses: Sequence[str] = PUBLIC_STATUSES) -> dict[str, Any]:
     """Every value `_SCORED_SQL` binds.
 
     Kept in one function because the CTE is now used by several statements
     - the result page, and one aggregation per facet - and several copies
     of this dict would be several places for a weight to go stale.
+
+    `statuses` defaults to `PUBLIC_STATUSES` for every existing caller
+    (`/catalogue/search`); issue #266's maintenance search passes
+    `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` instead. Only the
+    entry-side branches ever read it - see `_SCORED_SQL`'s own docstring on
+    why the `designation`/`code_binding` status literals stay `'active'`
+    regardless.
     """
     return {
         "q": q,
@@ -657,7 +714,7 @@ def _text_parameters(q: str) -> dict[str, Any]:
         # trigram and full-text branches, and the cursor digest, all use
         # the string the caller actually sent.
         "q_exact": q.strip(),
-        "statuses": list(PUBLIC_STATUSES),
+        "statuses": list(statuses),
         "threshold": SIMILARITY_THRESHOLD,
         # Bound, not interpolated, for the same reason every other value
         # here is (NFR-22) - and bound rather than written into the
@@ -676,9 +733,11 @@ def _select_from_scored(
     scored: Any,
     columns: Sequence[Any],
     predicates: Sequence[ColumnElement[bool]],
+    *,
+    statuses: Sequence[str] = PUBLIC_STATUSES,
 ) -> Select[Any]:
     """The one join between `catalogue_entry` and the scored CTE, filtered to
-    public statuses and this request's filter predicates.
+    `statuses` and this request's filter predicates.
 
     Both `_matching_entry_ids` and `build_search_statement` call this rather
     than each writing their own `.join(...).where(...)` - the earlier
@@ -688,17 +747,26 @@ def _select_from_scored(
     silently answer different questions about different populations, with
     nothing to catch it but the count/result parity test noticing after the
     fact. `columns` is the only thing that varies between the two callers.
+
+    `statuses` defaults to `PUBLIC_STATUSES`, matching `_text_parameters`'s
+    own default - issue #266's maintenance search passes
+    `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` instead.
     """
     return (
         select(*columns)
         .select_from(CatalogueEntry)
         .join(scored, scored.c.entry_id == CatalogueEntry.id)
-        .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
+        .where(CatalogueEntry.status.in_(statuses))
         .where(*predicates)
     )
 
 
-def _matching_entry_ids(scored: Any, predicates: Sequence[ColumnElement[bool]]) -> Select[Any]:
+def _matching_entry_ids(
+    scored: Any,
+    predicates: Sequence[ColumnElement[bool]],
+    *,
+    statuses: Sequence[str] = PUBLIC_STATUSES,
+) -> Select[Any]:
     """The entry ids `q` and `predicates` between them select.
 
     So the result page and every facet count are answering the same
@@ -706,7 +774,7 @@ def _matching_entry_ids(scored: Any, predicates: Sequence[ColumnElement[bool]]) 
     differently-composed base is exactly the drift
     `test_api_public_search.py`'s count/result parity test exists to catch.
     """
-    return _select_from_scored(scored, [CatalogueEntry.id], predicates)
+    return _select_from_scored(scored, [CatalogueEntry.id], predicates, statuses=statuses)
 
 
 def build_search_statement(
@@ -715,8 +783,14 @@ def build_search_statement(
     after_score: float | None = None,
     after_key: str | None = None,
     limit: int,
+    statuses: Sequence[str] = PUBLIC_STATUSES,
 ) -> Select[Any]:
     """The composed result statement `search_entries` runs.
+
+    `statuses` defaults to `PUBLIC_STATUSES`; issue #266's maintenance
+    search passes `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` so a
+    draft, deprecated or withdrawn entry can be found by an administrator
+    without loosening the public default.
 
     Public because `backend/tests/test_db_search_index.py` `EXPLAIN`s the
     statement the module actually runs, and the whole point of that test is
@@ -754,6 +828,7 @@ def build_search_statement(
                 scored.c.score.label("score"),
             ],
             filter_predicates(filters),
+            statuses=statuses,
         )
         .order_by(scored.c.score.desc(), CatalogueEntry.business_key.asc())
         # One more row than asked for, exactly as `list_entries` does: its
@@ -778,15 +853,21 @@ def search_entries(
     limit: int,
     after: str | None = None,
     filters: Sequence[FilterSelection] = (),
+    statuses: Sequence[str] = PUBLIC_STATUSES,
 ) -> SearchPage:
-    """One keyset page of active entries matching `q` and `filters`, best
-    first.
+    """One keyset page of entries matching `q` and `filters`, best first.
 
     Raises `EmptySearchQueryError` before any SQL runs for a blank query,
     `MalformedSearchCursorError` for an `after` value this module did not
     produce, and its `SearchCursorQueryMismatchError` subclass for one it
-    produced for a different `q` *or a different filter set* (issue #139 -
-    see `_request_digest`).
+    produced for a different `q`, a different filter set (issue #139), or a
+    different status scope (issue #266 - see `_request_digest`).
+
+    `statuses` defaults to `PUBLIC_STATUSES` - what `/catalogue/search`
+    passes. Issue #266's `/catalogue/admin/search` passes
+    `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` instead, so the same
+    ranking and paging machinery serves both surfaces rather than a forked
+    implementation.
     """
     if not q.strip():
         raise EmptySearchQueryError(
@@ -796,7 +877,7 @@ def search_entries(
     after_score: float | None = None
     after_key: str | None = None
     if after is not None:
-        after_score, after_key = _parse_cursor(after, q=q, filters=filters)
+        after_score, after_key = _parse_cursor(after, q=q, filters=filters, statuses=statuses)
 
     # Transaction-scoped, and re-asserted in `scored`'s own WHERE - see the
     # module docstring on why both, and on what that restatement does and
@@ -804,9 +885,13 @@ def search_entries(
     session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
 
     statement = build_search_statement(
-        filters=filters, after_score=after_score, after_key=after_key, limit=limit
+        filters=filters,
+        after_score=after_score,
+        after_key=after_key,
+        limit=limit,
+        statuses=statuses,
     )
-    rows = session.execute(statement, _text_parameters(q)).all()
+    rows = session.execute(statement, _text_parameters(q, statuses=statuses)).all()
 
     hits = tuple(
         SearchHit(
@@ -821,7 +906,8 @@ def search_entries(
     )
     if len(hits) > limit:
         page = hits[:limit]
-        return SearchPage(hits=page, next_cursor=_format_cursor(page[-1], q=q, filters=filters))
+        cursor = _format_cursor(page[-1], q=q, filters=filters, statuses=statuses)
+        return SearchPage(hits=page, next_cursor=cursor)
     return SearchPage(hits=hits, next_cursor=None)
 
 
@@ -831,6 +917,7 @@ def search_facets(
     q: str,
     context: FacetContext,
     filters: Sequence[FilterSelection] = (),
+    statuses: Sequence[str] = PUBLIC_STATUSES,
 ) -> tuple[Facet, ...]:
     """Every facet's buckets, counted over the entries `q` matches.
 
@@ -844,6 +931,9 @@ def search_facets(
     statements over the same `%` scans, and a facet count computed at a
     different threshold from the page it describes would be quietly,
     unfalsifiably wrong.
+
+    `statuses` must match whatever `search_entries` was called with for the
+    same request - see `search_entries`' own docstring.
     """
     if not q.strip():
         raise EmptySearchQueryError(
@@ -855,6 +945,8 @@ def search_facets(
         session,
         context=context,
         selections=filters,
-        base_entry_ids=lambda predicates: _matching_entry_ids(scored, predicates),
-        params=_text_parameters(q),
+        base_entry_ids=lambda predicates: _matching_entry_ids(
+            scored, predicates, statuses=statuses
+        ),
+        params=_text_parameters(q, statuses=statuses),
     )

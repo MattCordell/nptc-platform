@@ -25,6 +25,9 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import ClauseElement, Executable
 
+from nptc.catalogue.maintenance import MAINTENANCE_STATUSES
+from nptc.catalogue.search import PUBLIC_STATUSES
+
 _NORMALISE_SQL = text("SELECT nptc_search_text(:value)")
 
 _INDEX_DEFINITION_SQL = text(
@@ -344,7 +347,12 @@ def _explain(db: Connection, statement: ClauseElement, params: dict[str, object]
 
 @pytest.mark.req("FR-15")
 @pytest.mark.integration
-def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection) -> None:
+@pytest.mark.parametrize(
+    "statuses", [PUBLIC_STATUSES, MAINTENANCE_STATUSES], ids=["public", "maintenance"]
+)
+def test_the_real_search_query_plans_against_the_trigram_indexes(
+    db: Connection, statuses: tuple[str, ...]
+) -> None:
     """`EXPLAIN` on the exact statement `nptc.catalogue.search` runs.
 
     Builds the statement through `build_search_statement` on purpose:
@@ -354,6 +362,14 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     select over `_SCORED_SQL`'s CTE rather than one raw literal - the nine
     scans this test is about are unchanged, and the assertions below are
     what proves it.
+
+    Parametrised over both `PUBLIC_STATUSES` and `MAINTENANCE_STATUSES`
+    (issue #266 review): the entry-side indexes were built non-partial on
+    `status` specifically so the maintenance search's widened `:statuses`
+    binding would plan identically to the public search's, and nothing
+    asserted that until now - a future partial-on-status index would have
+    turned the maintenance search into a sequential scan while this test,
+    run only against `PUBLIC_STATUSES`, stayed green.
 
     **Why `enable_seqscan = off`, and why that is not cheating.** What this
     test needs to establish is that the predicate is *expressed so the index
@@ -398,8 +414,8 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
     term: str = db.execute(_ONE_TERM_SQL).scalar_one()
     plan = _explain(
         db,
-        search.build_search_statement(limit=50),
-        dict(search._text_parameters(term)),
+        search.build_search_statement(limit=50, statuses=statuses),
+        dict(search._text_parameters(term, statuses=statuses)),
     )
 
     # Every branch, by name. Asserting the count alone would let one index
@@ -428,7 +444,12 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(db: Connection)
 
 @pytest.mark.req("FR-14")
 @pytest.mark.integration
-def test_a_negation_only_query_plans_away_the_full_text_branches(db: Connection) -> None:
+@pytest.mark.parametrize(
+    "statuses", [PUBLIC_STATUSES, MAINTENANCE_STATUSES], ids=["public", "maintenance"]
+)
+def test_a_negation_only_query_plans_away_the_full_text_branches(
+    db: Connection, statuses: tuple[str, ...]
+) -> None:
     """The plan-level half of the guard added in PR #237 review.
 
     `-glucose` lexes to `!'glucos'`, a tsquery `@@` satisfies for every row
@@ -444,13 +465,18 @@ def test_a_negation_only_query_plans_away_the_full_text_branches(db: Connection)
     `One-Time Filter: false` nodes is that pruning, one per full-text branch,
     and no `to_tsvector` index condition surviving is the same statement from
     the other side. No fixture rows are needed - a one-time filter is decided
-    at plan time, not from statistics."""
+    at plan time, not from statistics.
+
+    Parametrised over both status scopes (issue #266 review) alongside its
+    sibling test above, for the same reason - this pruning depends only on
+    `:q`, so it should be provably unaffected by `:statuses` too, not merely
+    assumed to be."""
     from nptc.catalogue import search
 
     plan = _explain(
         db,
-        search.build_search_statement(limit=50),
-        dict(search._text_parameters("-glucose")),
+        search.build_search_statement(limit=50, statuses=statuses),
+        dict(search._text_parameters("-glucose", statuses=statuses)),
     )
 
     assert plan.count("One-Time Filter: false") == 4, plan

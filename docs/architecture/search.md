@@ -25,8 +25,9 @@ FR-14 requires one query field covering five things. All five are reached from `
 binding are history, not a route to the entry, so every `designation` and `code_binding`
 index is partial on `status = 'active'` and the query spells that predicate as a literal
 so the planner can prove the partial index covers it. Entry status is filtered separately
-and parameterised (`PUBLIC_STATUSES`), because the entry-side indexes are deliberately
-*not* partial - the maintenance UI (issue #149) searches drafts.
+and parameterised (`:statuses`), because the entry-side indexes are deliberately *not*
+partial - `PUBLIC_STATUSES` on the public route, and issue #266's `MAINTENANCE_STATUSES`
+on the maintenance one (see [Maintenance search](#maintenance-search-issue-266) below).
 
 **The two SNOMED labels are searched exactly as served, semantic tag intact** (FR-82).
 There is no stripped second copy of either column. FR-98's requirement that both tag
@@ -299,6 +300,40 @@ total whatever the filters are.
 | An unknown, non-filterable, badly-operated or badly-valued filter is refused | `test_api_public_search.py`, `test_catalogue_facets.py` |
 | A cursor replayed under a different filter set is refused | `test_api_public_search.py` |
 | The filter predicate reaches #54's generated index; the count reads one property, not the table | `test_db_property_index_plan.py` |
+| A hidden entry is found by `GET /catalogue/admin/search` and still absent from `GET /catalogue/search` | `test_api_catalogue_admin_listing.py` |
+| The admin status facet has more than one bucket, and `?filter.status=draft` narrows rather than 422s | `test_api_catalogue_admin_listing.py` |
+
+## Maintenance search (issue #266)
+
+`GET /catalogue/admin/search` runs the identical query, ranking and paging this document
+describes - `nptc.catalogue.search.search_entries`/`search_facets` take a `statuses`
+argument, and the admin route is the one caller that passes
+`nptc.catalogue.maintenance.MAINTENANCE_STATUSES` (every `CatalogueEntryStatus`) instead
+of the default `PUBLIC_STATUSES`. Nothing else about the query changes: the
+`designation`/`code_binding` branches still carry their literal `status = 'active'`
+predicates regardless of caller, because those are about a synonym or a binding being
+published, not about the entry's own status - a draft entry is still found through its
+own preferred term even though only its *active* synonyms and bindings are searchable,
+exactly as an active entry's retired synonyms are not.
+
+This is why the substrate this section describes was built non-partial in the first
+place: `ix_catalogue_entry_preferred_term_trgm` and `ix_catalogue_entry_preferred_term_fts`
+carry no `WHERE status = 'active'`, unlike every `designation`/`code_binding` index, so
+widening `:statuses` at the call site is all this issue needed - no index changed and no
+new branch was added to `_SCORED_SQL`.
+
+The status facet is the other half of this: [How facets are derived](#how-facets-are-derived-fr-16)'s
+core-column descriptor takes its `allowed_values` from the caller's own `status_values`,
+so the public route's facet has exactly one bucket (`active`) while the admin route's has
+one per status actually present in the matched result - `?filter.status=draft` is a
+real, narrowing filter there rather than the public route's refusal (a status this surface
+can never show is a 422, not a silently empty page - see this section's own **Refusals**
+paragraph above).
+
+Gated on `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44), same as `GET
+/catalogue/admin/entries` and the #228/#219/#224 write routes - see
+[catalogue-write-api.md](catalogue-write-api.md#all-status-listing-and-search-issue-266)
+for the request/response contract and error table.
 
 ## Not here
 
@@ -306,8 +341,8 @@ total whatever the filters are.
   see [public-api.md](public-api.md#exact-code-lookup-fr-17). Typing a code into `q` still
   works, as FR-14 requires; the dedicated addressable URL is a different, non-scored
   lookup.
-- **Draft and other non-active entries** are never served here. The maintenance UI's own
-  search over drafts is issue #149; the entry-side indexes are already non-partial so
-  that it can use them.
+- **Draft and other non-active entries** are never served by the *public* route. Issue
+  #266's maintenance search above is where they are found, using the same query this
+  document describes.
 - **The NFR-32 performance measurement** (500 ms at the 95th percentile over 20,000
   entries) is epic #57's, in phase P5.
