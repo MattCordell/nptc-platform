@@ -16,15 +16,25 @@ import { useAuth } from "../auth/session.ts";
 const PRE_EMPTIVE_STEP_UP_ACR_VALUES = "2";
 
 /**
- * Shown on every `/admin/*` screen (`admin-layout.tsx`) for a signed-in
- * administrator who has not yet completed the realm's second authentication
- * factor - so they can complete it before walking into a refusal, rather
+ * Shown on every `/admin/*` screen (`admin-layout.tsx`) for any signed-in
+ * user who has not completed the realm's second authentication factor - so
+ * an administrator can complete it before walking into a refusal, rather
  * than only after one (issue #184's last acceptance criterion).
+ *
+ * Gated on `mfa_satisfied` alone, per `SessionResponse`'s own contract
+ * (`nptc.api.routers.auth`) - not on holding the Administrator role, which
+ * `GET /auth/me` cannot answer for a suppressed administrator anyway:
+ * `principal_for` structurally drops a role suppressed for want of MFA from
+ * `roles` before it is ever serialised (NFR-06), so a signed-in
+ * administrator who needs this banner and an ordinary member who does not
+ * hold the role at all are indistinguishable from `roles` alone. A visitor
+ * with no administrative permission sees the same offer and can harmlessly
+ * ignore it - the copy says "some administrative actions", not "you".
  *
  * Renders nothing for every other case - signed out, unauthenticated,
  * already MFA-satisfied, or the session query still in flight - so a
- * loading flash never appears for the common case of an administrator who
- * is already stepped up.
+ * loading flash never appears for the common case of a user who is already
+ * stepped up.
  */
 export function StepUpBanner() {
   const { signIn } = useAuth();

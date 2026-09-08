@@ -93,9 +93,10 @@ challenge from `mfa_acr_values`, so both ends read the one configured value.
   free through the same `QueryCache`/`MutationCache` seam; no screen needs its own
   MFA-refusal branch.
 - `createQueryClient` takes an optional `onStepUpChallenge` — `main.tsx` and
-  `frontend/src/test/render-route.tsx` both wire the same
-  `stepUpChallengeHandler`/`StepUpController` pair, so a route test exercising a step-up
-  challenge sees the real detection and retry path rather than a silent no-op.
+  `frontend/src/test/render-route.tsx` both pass it the same `stepUpChallengeHandler`,
+  which forwards to whichever `StepUpController` the shared route tree's `RootLayout` has
+  mounted, so a route test exercising a step-up challenge sees the real detection and
+  retry path rather than a silent no-op.
 
 ## Rejected alternatives
 
