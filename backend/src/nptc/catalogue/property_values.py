@@ -780,15 +780,27 @@ def save_property_values_for_entries(
                     )
                 )
                 continue
-            # Defensive only (see the comment above `assert_entry_row_
-            # version` just raised its exception): if the refreshed version
-            # somehow already matches what was expected, there is nothing
-            # stale left to report.
+            # Defensive only (issue #265 round-3 review): `assert_entry_row_
+            # version` was expected to always raise here (see the comment
+            # above it) but did not. Whatever the write's own savepoint just
+            # rolled back was still discarded - reporting `unchanged` would
+            # tell the caller the entry already held the target values when
+            # it does not, which is wrong even in a case that "can't happen"
+            # (e.g. the entry was deleted and a new one recreated under the
+            # same business_key, landing back at row_version=1). `conflict`,
+            # built directly from `refreshed` rather than raised through
+            # `assert_entry_row_version`, is honest about the discarded
+            # write regardless of why the version compared equal.
             outcomes.append(
                 BulkPropertyOutcome(
                     business_key=target.business_key,
-                    status="unchanged",
+                    status="conflict",
                     row_version=refreshed.row_version,
+                    conflict=ConflictReport(
+                        business_key=refreshed.business_key,
+                        expected_row_version=target.expected_row_version,
+                        current_row_version=refreshed.row_version,
+                    ),
                 )
             )
             continue

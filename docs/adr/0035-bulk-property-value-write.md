@@ -214,6 +214,17 @@ change than this issue's own scope and is filed as a follow-up (issue #281).
   than corrupting data, but that side's caller sees a `500` and must retry. Issue #281
   tracks the complete fix (a single lock-ordering rule applied to every catalogue-entry
   writer).
+- **Round-3 review addition:** acquiring the audit append lock before the loop widens,
+  not narrows, how long it is held. The lock is application-global (every audited write
+  anywhere in the platform serialises on it), and a bulk request now holds it from before
+  its first entry load until commit — every entry's load, validation, and flush for the
+  whole batch, not just the moment of an audit append. Round-1's lazy, per-entry
+  acquisition held it only from the first applied entry onward; round-2's fix trades a
+  deadlock risk for a longer global-serialisation window, bounded by the same 100-entry
+  cap. This is the right trade (availability cost, not a correctness one), but issue
+  #281's "same ordering for every catalogue-entry writer" inherits the identical widened
+  window for every write path it touches, not just this one, and should be sized with
+  that in mind.
 
 ## Alternatives rejected
 
@@ -226,4 +237,4 @@ change than this issue's own scope and is filed as a follow-up (issue #281).
 | Always emitting the batch header, even when nothing applied (round-1) | A client retrying a stale selection would append one permanent, hash-chained audit row per attempt for a batch that changed nothing — superseded by the `tallies["applied"] > 0` gate (round-2). |
 | A `specimen-conflict` per-entry outcome status | Reports partial success for a batch that silently skipped an entry the operator explicitly selected — a worse failure mode than refusing the batch outright. |
 | Pre-loading every targeted entry up front to check FR-89 before any write starts | Would still need a per-entry `not-found` outcome for a missing `business_key`, so `load_entry_for_update`'s `EntryNotFoundError` has to be caught inside the loop regardless; pre-loading buys no order-independence FR-89's own abort-on-conflict semantics need, since the check still cannot run before its own entry is reached. |
-| Sorting `targets` into a fixed order (e.g. by `business_key`) before the per-entry loop | Would close a bulk-vs-bulk lock-ordering cycle (two concurrent batches locking rows in different orders) but not the bulk-vs-singular one a round-2 review finding actually identified, and it would cost the documented "outcomes returned in request order" contract for a partial fix — rejected in favour of documenting the residual risk (see the new "Lock ordering" decision below) and filing a follow-up for the complete fix. |
+| Sorting `targets` into a fixed order (e.g. by `business_key`) before the per-entry loop | Would only close the bulk-vs-bulk lock-ordering cycle (two concurrent batches locking rows in different orders) — and `acquire_append_lock` before the loop already closes that case, without needing to reorder processing at all (a sort could still preserve request-order reporting by sorting a working copy and emitting outcomes in the caller's original order, so that was never the blocking cost). Rejected because it buys nothing beyond what the lock-ordering fix above already provides, not because it conflicts with the outcome-ordering contract. |
