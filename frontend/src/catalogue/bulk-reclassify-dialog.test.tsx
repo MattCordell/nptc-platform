@@ -234,35 +234,63 @@ describe("submit gates", () => {
 
   // FR-39's own cap (ADR-0035's `_MAX_BULK_ENTRIES`) - composed into `Form`'s
   // single submitBlocked/blockedReason pair ahead of the changelog note gate.
-  it("blocks submit over the 100-entry cap, unlinked, making no request", async () => {
-    const manyItems = Array.from({ length: 101 }, (_, index) =>
+  //
+  // Reaches 102 selected across three lighter, 34-row pages rather than one
+  // 101-row page (issue #267's own "selection persists across a page
+  // change" behaviour) - a single 101-row render is real DOM/instrumentation
+  // weight this test does not need to pay for just to prove the cap, and
+  // under `pnpm test:coverage`'s v8 instrumentation across the full suite
+  // it pushed this one test past the 20s default timeout.
+  function pageItems(start: number, count: number) {
+    return Array.from({ length: count }, (_, index) =>
       entrySummary({
-        business_key: `NPTC-${String(index + 1).padStart(6, "0")}`,
-        preferred_term: `Entry ${index + 1}`,
+        business_key: `NPTC-${String(start + index).padStart(6, "0")}`,
+        preferred_term: `Entry ${start + index}`,
       }),
     );
-    const calls = stubApi([
-      {
-        method: "GET",
-        path: "/catalogue/admin/entries",
-        status: 200,
-        body: {
-          items: manyItems,
-          next_cursor: null,
-        },
+  }
+
+  function stubThreePages() {
+    return stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+      vary: (call) => {
+        if (call.method !== "GET" || !call.path.endsWith("/catalogue/admin/entries")) {
+          return null;
+        }
+        const after = call.searchParams.get("after");
+        const body =
+          after === null
+            ? { items: pageItems(1, 34), next_cursor: "NPTC-000034" }
+            : after === "NPTC-000034"
+              ? { items: pageItems(35, 34), next_cursor: "NPTC-000068" }
+              : { items: pageItems(69, 34), next_cursor: null };
+        return { method: "GET", path: call.path, status: 200, body };
       },
-      PROPERTIES_OK,
-      DISCIPLINE_VALUES_OK,
-    ]);
+    });
+  }
+
+  it("blocks submit over the 100-entry cap, unlinked, making no request", async () => {
+    const calls = stubThreePages();
     const user = userEvent.setup();
     await renderRoute(LIST_URL, SIGNED_IN);
     await screen.findByRole("link", { name: "NPTC-000001" });
+
     await user.click(
       screen.getByRole("checkbox", { name: "Select all rows on this page" }),
     );
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("link", { name: "NPTC-000035" });
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("link", { name: "NPTC-000069" });
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all rows on this page" }),
+    );
+    expect(await screen.findByText("102 entries selected.")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Reclassify selected" }));
     await screen.findByRole("dialog", { name: "Reclassify selected entries" });
-
     await user.selectOptions(dialog().getByLabelText("Property"), "usage_guidance");
     await user.type(dialog().getByLabelText("Usage guidance"), "Fasting required");
     await user.type(dialog().getByLabelText("Changelog note"), "Reclassify everything");
