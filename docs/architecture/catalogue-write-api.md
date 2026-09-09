@@ -402,8 +402,8 @@ writes `catalogue_entry` directly and the other does not:
 | the entry's own preferred term | `nptc.catalogue.entries.save_entry`, which already required and bumped the version before issue #300 - unchanged by it. |
 | an active `designation` row | `nptc.catalogue.entries.entry_child_write`, the same helper `/designations` and `/retirement` use - new in issue #300. |
 
-Required outright everywhere, not left optional on the designation branch the way issue
-#227's first cut of `/amendment` did: bumping the version on a write that let the field
+Required outright everywhere, not left optional on `/amendment`'s designation branch the
+way issue #227 originally shipped it: bumping the version on a write that let the field
 stay optional would silently invalidate every other editor's still-current token the
 moment a caller that omits it saves, which is worse than the concurrency gap it would
 close. This is a breaking change to all three routes' request bodies (and to
