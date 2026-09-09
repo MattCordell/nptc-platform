@@ -318,12 +318,13 @@ describe("the entry it loads", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     // Still on the same screen, with the refusal's own text visible - not a
-    // blank page and not bounced anywhere. Scoped to the rendered paragraph,
-    // not the live region: #288 now announces this same hard failure too, so
-    // an unscoped query matches both.
+    // blank page and not bounced anywhere. Excludes the live region (#288
+    // now announces this same hard failure too, so an unscoped query would
+    // match both) rather than pinning to a `<p>`, so this stays correct if
+    // the rendered element ever changes tag.
     expect(
       screen.getByText("This action requires multi-factor authentication.", {
-        selector: "p",
+        ignore: '[role="status"], [role="alert"]',
       }),
     ).toBeInTheDocument();
   });
@@ -466,12 +467,12 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
 
-    // Scoped to the rendered paragraph, not the live region: #288 also
-    // announces this hard failure, so an unscoped query can match both once
-    // the announcement's own setTimeout(0) has fired.
+    // Excludes the live region: #288 also announces this hard failure, so an
+    // unscoped query can match both once the announcement's own
+    // setTimeout(0) has fired.
     expect(
       await screen.findByText("You do not have permission to do this.", {
-        selector: "p",
+        ignore: '[role="status"], [role="alert"]',
       }),
     ).toBeInTheDocument();
     expect(stepUp).not.toHaveBeenCalled();
@@ -488,7 +489,7 @@ describe("the entry it loads", () => {
     expect(
       await screen.findByText(
         new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
-        { selector: "p" },
+        { ignore: '[role="status"], [role="alert"]' },
       ),
     ).toBeInTheDocument();
     // #288: the initial-load failure was rendered but never announced -
@@ -508,8 +509,37 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, SIGNED_IN);
 
-    expect(await screen.findByText("boom", { selector: "p" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("boom", { ignore: '[role="status"], [role="alert"]' }),
+    ).toBeInTheDocument();
     await waitFor(() => expect(announced()).toContain("boom"));
+  });
+
+  it("falls back to a generic message when the initial-load refusal carries no detail sentence", async () => {
+    // Review finding 2: `loadFailureMessage`'s `??` fallback arm was not
+    // exercised by any test - the 404 case takes the first branch, and the
+    // 500 case above supplies a string `detail`, so `refusalDetail` wins
+    // there too. `refusalDetail` refuses a non-string `detail`, which is
+    // exactly what FastAPI's own validation error sends (`HTTPValidationError`
+    // - an array of issues, not a sentence) - the principal failure mode of
+    // this branch, per CLAUDE.md's testing conventions.
+    stubApi([
+      {
+        ...READ_OK,
+        status: 422,
+        body: { detail: [{ msg: "bad request", loc: ["query"], type: "value_error" }] },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, SIGNED_IN);
+
+    const message = `${BUSINESS_KEY} could not be loaded. Try again, or contact an administrator if the problem persists.`;
+    expect(
+      await screen.findByText(message, {
+        ignore: '[role="status"], [role="alert"]',
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(announced()).toContain(message));
   });
 
   it("keeps the editor on screen when a refresh fails, and says so", async () => {
