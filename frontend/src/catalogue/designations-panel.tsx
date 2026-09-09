@@ -227,7 +227,8 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
 
       {editing !== null && (
         <AmendDialog
-          entry={entry}
+          businessKey={businessKey}
+          rowVersion={entry.row_version}
           row={editing}
           onClose={() => setEditing(null)}
           onSaved={(newWarnings) => {
@@ -409,12 +410,14 @@ function AddSynonymsForm({
 }
 
 function AmendDialog({
-  entry,
+  businessKey,
+  rowVersion,
   row,
   onClose,
   onSaved,
 }: {
-  entry: EntryDetail;
+  businessKey: string;
+  rowVersion: number;
   row: TermRow;
   onClose: () => void;
   onSaved: (warnings: CollisionWarning[]) => void;
@@ -422,7 +425,7 @@ function AmendDialog({
   const [newTerm, setNewTerm] = useState(row.term);
   const changelogNote = useChangelogNote("amend-note");
   const [errors, setErrors] = useState<FormError[]>([]);
-  const amend = useAmendDesignation(entry.business_key);
+  const amend = useAmendDesignation(businessKey);
 
   // See `AddSynonymsForm`'s identical note (issue #62 review): computed
   // outside `onSubmit` so a blocked submit can recompute and display it too.
@@ -483,7 +486,7 @@ function AmendDialog({
               // FR-38, sent on both branches: required when this addresses
               // the entry's own term, honoured (not discarded) when it does
               // not. One code path, and no save that skips the lock.
-              expected_row_version: entry.row_version,
+              expected_row_version: rowVersion,
               reason: changelogNote.note,
             },
             { onSuccess: (result) => onSaved(result.warnings) },

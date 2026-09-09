@@ -225,27 +225,25 @@ _RESPONSE_409_COLLISION: Final[dict[str, Any]] = {
 #: #300), so every one of them can also refuse with a stale-version 409 -
 #: `_RESPONSE_409` (acknowledgement only, which takes no lock token) is the
 #: one 409 here that cannot.
+#: Shared verbatim by `_RESPONSE_409_VERSION` and
+#: `_RESPONSE_409_COLLISION_AND_VERSION` below - a `Final[str]` rather than
+#: two copies of the same sentence, so the two OpenAPI descriptions cannot
+#: drift apart (issue #300 review, minor).
+_STALE_VERSION_DESCRIPTION: Final[str] = (
+    "A stale `expected_row_version` (FR-38) carries `business_key`, "
+    "`expected_row_version`, `current_row_version`, `conflicts[]` (each with "
+    "`field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the "
+    "caller can reconcile rather than retry blind."
+)
 _RESPONSE_409_VERSION: Final[dict[str, Any]] = {
     **_RESPONSE_409,
     "model": ErrorResponse | VersionConflictResponse,
-    "description": (
-        f"{_RESPONSE_409['description']} A stale `expected_row_version` "
-        "(FR-38) carries `business_key`, `expected_row_version`, "
-        "`current_row_version`, `conflicts[]` (each with `field`, `submitted` and "
-        "`current`) and `changed_by`/`changed_at`, so the caller can reconcile "
-        "rather than retry blind."
-    ),
+    "description": f"{_RESPONSE_409['description']} {_STALE_VERSION_DESCRIPTION}",
 }
 _RESPONSE_409_COLLISION_AND_VERSION: Final[dict[str, Any]] = {
     **_RESPONSE_409_COLLISION,
     "model": ErrorResponse | DesignationCollisionResponse | VersionConflictResponse,
-    "description": (
-        f"{_RESPONSE_409_COLLISION['description']} A stale `expected_row_version` "
-        "(FR-38) carries `business_key`, `expected_row_version`, "
-        "`current_row_version`, `conflicts[]` (each with `field`, `submitted` and "
-        "`current`) and `changed_by`/`changed_at`, so the caller can reconcile "
-        "rather than retry blind."
-    ),
+    "description": f"{_RESPONSE_409_COLLISION['description']} {_STALE_VERSION_DESCRIPTION}",
 }
 
 #: Shared by add/amend/retire: all three are gated on the same permission
@@ -577,10 +575,22 @@ def add_designations(
     # One `entry_child_write` around the whole batch, not one per term: a
     # multi-term add is one logical write, so a failure part-way rolls the
     # whole batch back and bumps `catalogue_entry.row_version` once, not once
-    # per term (FR-38, issue #300). `add_synonyms`' own per-term
-    # `pg_advisory_xact_lock` is re-entrant within a transaction, so nesting
-    # it inside the append lock `entry_child_write` already takes first is
-    # safe.
+    # per term (FR-38, issue #300; pinned by
+    # `test_a_batch_add_bumps_row_version_once_not_once_per_term`).
+    #
+    # This nests `add_synonyms`'/`add_designation`'s own collision-key
+    # `pg_advisory_xact_lock` (`assert_no_error_collisions`) *inside* the
+    # append lock `entry_child_write` takes first - the reverse of the order
+    # `nptc.catalogue.entries.save_entry`/`create_entry` use (collision lock,
+    # then later the append lock via `record_change`). Re-entrancy is not
+    # what makes this safe (they are two different advisory keys, not the
+    # same one taken twice) - see ADR-0035's "Lock ordering" addendum, which
+    # already accepts this same class of cross-lock inversion (there,
+    # append-lock-vs-row-lock) as a live-but-rare deadlock risk rather than a
+    # correctness one: Postgres's own detector aborts one side with a `500`,
+    # the caller retries, no partial write or corruption survives. This
+    # route adds a second instance of that accepted risk - collision-lock-
+    # vs-append-lock - tracked alongside it under issue #281.
     with entry_child_write(session, entry, body.expected_row_version):
         if body.use is DesignationUse.PREFERRED:
             # add_synonyms is synonym-only (it hardcodes use="synonym") and a
@@ -768,6 +778,12 @@ def amend_designation_route(
     # runs first, so a stale caller sees the version conflict rather than a
     # confusing 404 - the same choice `catalogue_bindings.py`'s
     # `retire_binding` documents for its own lookup.
+    #
+    # `amend_designation` below also takes the collision-key advisory lock
+    # (`assert_no_error_collisions`), nested inside the append lock
+    # `entry_child_write` already holds by then - the same accepted
+    # lock-ordering inversion `add_designations`' own comment above explains
+    # (ADR-0035, issue #281).
     with entry_child_write(session, entry, body.expected_row_version):
         if designation is None:
             # Raised here rather than by calling `load_active_designation`

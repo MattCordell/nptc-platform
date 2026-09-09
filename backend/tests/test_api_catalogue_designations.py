@@ -140,11 +140,18 @@ def _designation_id(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
 
 
 def _stored_row_version(api: ApiTestApp, business_key: str) -> int:
-    """`catalogue_entry.row_version` read directly from the ORM - used only
-    to auto-fill `expected_row_version` in the write helpers below, never in
-    an assertion (`_row_version` further down is the one that goes over the
-    wire, matching `test_api_catalogue_bindings.py`'s identical split
-    between its own `_row_version` and `_with_row_version`)."""
+    """`catalogue_entry.row_version` read directly from the ORM - the
+    pre-write baseline every write helper below auto-fills
+    `expected_row_version` from, and the baseline several tests assert a
+    write response's own `row_version` against (`== stored + 1`), matching
+    `test_api_catalogue_bindings.py`'s identical helper.
+
+    That comparison still proves the field reached the wire: the value on
+    the *right* of `==` is read here, straight from the ORM, but the value
+    on the *left* is always the write's own HTTP response body, never a
+    second ORM read. `_row_version` further down is for the one thing this
+    cannot prove - that `row_version` also reaches a `GET`, not just a
+    write response - which is what its own tests use it for."""
     return api.session.execute(
         select(CatalogueEntry.row_version).where(CatalogueEntry.business_key == business_key)
     ).scalar_one()
@@ -1480,6 +1487,26 @@ def test_amend_then_amend_two_different_designations_is_refused_on_the_stale_ver
 
     assert response.status_code == 409, response.text
     assert response.json()["current_row_version"] == stale + 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_a_batch_add_bumps_row_version_once_not_once_per_term(api: ApiTestApp) -> None:
+    """`add_designations`' own comment claims one `entry_child_write` around
+    the whole batch bumps the counter once, not once per term - the thing
+    that silently regresses if a future change moves the `with` inside the
+    per-term loop. Three terms in one batch must still only cost `+1`."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-batch-bump-once")
+    version = _stored_row_version(api, business_key)
+
+    response = _add(
+        api, business_key, token, terms=["FBC", "CBC", "UEC"], expected_row_version=version
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["row_version"] == version + 1
+    assert _stored_row_version(api, business_key) == version + 1
 
 
 @pytest.mark.req("FR-38")
