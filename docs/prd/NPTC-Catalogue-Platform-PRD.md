@@ -1033,7 +1033,7 @@ The UK NHS standards **DCB0129** and **DCB0160** are the mature reference for th
 
 ### 13.6 Accessibility, performance and operations
 
-**NFR-31 (MUST):** WCAG 2.2 Level AA. Australian Government digital services are held to WCAG at Level AA, and obligations under the *Disability Discrimination Act 1992* apply to a public-facing service regardless. Verified by automated testing in CI plus a manual keyboard and screen-reader pass in P5.
+**NFR-31 (SHOULD):** WCAG 2.2 Level AA. Not a public-facing government service - the user base is a small, known community (fewer than 25 users) of RCPA-QAP and NCTS curators, so the DDA 1992 public-facing obligation does not bind this platform the way it would a public service. Automated testing in CI (component baseline plus axe-core) is in place; the manual keyboard, screen-reader and colour-contrast pass is deferred until it becomes a genuine requirement (e.g. the user base broadens or a public-facing view is added).
 
 **NFR-32 (SHOULD):** Search returns in under 500 ms at the 95th percentile for a catalogue of 20,000 entries. Comfortably achievable in PostgreSQL at this scale with correct indexing.
 
