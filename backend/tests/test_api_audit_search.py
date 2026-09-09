@@ -229,6 +229,22 @@ def test_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> None:
     assert response.status_code == 422, response.text
 
 
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+def test_occurred_from_without_a_utc_offset_is_a_422(api: ApiTestApp) -> None:
+    """A naive datetime has no defined meaning against `occurred_at`
+    (`TIMESTAMP WITH TIME ZONE`) - refused rather than silently
+    interpreted by whatever timezone Postgres's own session happens to be
+    set to."""
+    token = _admin_token(api, subject="sub-audit-naive-datetime")
+
+    response = api.get(
+        "/audit/events", token=token, params={"occurred_from": "2026-01-01T00:00:00"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
 
 

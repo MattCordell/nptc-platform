@@ -35,7 +35,7 @@ from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_session, permission_dep
@@ -62,8 +62,9 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "A query parameter was unprocessable - a cursor this API did not issue, a "
-        "`limit` outside its range, `entity_id` given without `entity_type`, or "
-        "`occurred_from` after `occurred_to`."
+        "`limit` outside its range, `entity_id` given without `entity_type`, "
+        "`occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given "
+        "with no UTC offset."
     ),
 }
 _RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
@@ -117,13 +118,24 @@ ActionFilterQuery = Annotated[
     str | None,
     Query(description="Filter to one action name, e.g. `catalogue_entry.updated`."),
 ]
+#: `AwareDatetime`, not plain `datetime`: a naive value has no defined
+#: meaning against `occurred_at` (`TIMESTAMP WITH TIME ZONE`) - accepting
+#: one would leave Postgres to guess a timezone from its own session
+#: setting, silently, per deployment. Refused as a 422 instead, so a
+#: caller who forgot an offset learns that rather than getting a filter
+#: that happens to work today and drifts wrong the day the server's
+#: timezone setting ever changes.
 OccurredFromQuery = Annotated[
-    datetime | None,
-    Query(description="Filter to events at or after this instant (inclusive)."),
+    AwareDatetime | None,
+    Query(
+        description="Filter to events at or after this instant (inclusive). Must include a UTC offset."
+    ),
 ]
 OccurredToQuery = Annotated[
-    datetime | None,
-    Query(description="Filter to events before this instant (exclusive)."),
+    AwareDatetime | None,
+    Query(
+        description="Filter to events before this instant (exclusive). Must include a UTC offset."
+    ),
 ]
 
 

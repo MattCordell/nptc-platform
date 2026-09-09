@@ -182,6 +182,18 @@ def test_export_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> Non
     assert response.status_code == 422, response.text
 
 
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+def test_export_occurred_from_without_a_utc_offset_is_a_422(api: ApiTestApp) -> None:
+    token = _admin_token(api, subject="sub-audit-export-naive-datetime")
+
+    response = api.get(
+        "/audit/events/export", token=token, params={"occurred_from": "2026-01-01T00:00:00"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
 
 

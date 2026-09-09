@@ -4187,9 +4187,9 @@ export interface operations {
                 entity_id?: string | null;
                 /** @description Filter to one action name, e.g. `catalogue_entry.updated`. */
                 action?: string | null;
-                /** @description Filter to events at or after this instant (inclusive). */
+                /** @description Filter to events at or after this instant (inclusive). Must include a UTC offset. */
                 occurred_from?: string | null;
-                /** @description Filter to events before this instant (exclusive). */
+                /** @description Filter to events before this instant (exclusive). Must include a UTC offset. */
                 occurred_to?: string | null;
             };
             header?: never;
@@ -4225,7 +4225,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`. */
+            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4247,9 +4247,9 @@ export interface operations {
                 entity_id?: string | null;
                 /** @description Filter to one action name, e.g. `catalogue_entry.updated`. */
                 action?: string | null;
-                /** @description Filter to events at or after this instant (inclusive). */
+                /** @description Filter to events at or after this instant (inclusive). Must include a UTC offset. */
                 occurred_from?: string | null;
-                /** @description Filter to events before this instant (exclusive). */
+                /** @description Filter to events before this instant (exclusive). Must include a UTC offset. */
                 occurred_to?: string | null;
             };
             header?: never;
@@ -4285,7 +4285,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`. */
+            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. */
             422: {
                 headers: {
                     [name: string]: unknown;

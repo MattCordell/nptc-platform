@@ -3191,10 +3191,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to events at or after this instant (inclusive).",
+              "description": "Filter to events at or after this instant (inclusive). Must include a UTC offset.",
               "title": "Occurred From"
             },
-            "description": "Filter to events at or after this instant (inclusive)."
+            "description": "Filter to events at or after this instant (inclusive). Must include a UTC offset."
           },
           {
             "name": "occurred_to",
@@ -3210,10 +3210,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to events before this instant (exclusive).",
+              "description": "Filter to events before this instant (exclusive). Must include a UTC offset.",
               "title": "Occurred To"
             },
-            "description": "Filter to events before this instant (exclusive)."
+            "description": "Filter to events before this instant (exclusive). Must include a UTC offset."
           }
         ],
         "responses": {
@@ -3248,7 +3248,7 @@
             }
           },
           "422": {
-            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`.",
+            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3356,10 +3356,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to events at or after this instant (inclusive).",
+              "description": "Filter to events at or after this instant (inclusive). Must include a UTC offset.",
               "title": "Occurred From"
             },
-            "description": "Filter to events at or after this instant (inclusive)."
+            "description": "Filter to events at or after this instant (inclusive). Must include a UTC offset."
           },
           {
             "name": "occurred_to",
@@ -3375,10 +3375,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to events before this instant (exclusive).",
+              "description": "Filter to events before this instant (exclusive). Must include a UTC offset.",
               "title": "Occurred To"
             },
-            "description": "Filter to events before this instant (exclusive)."
+            "description": "Filter to events before this instant (exclusive). Must include a UTC offset."
           }
         ],
         "responses": {
@@ -3411,7 +3411,7 @@
             }
           },
           "422": {
-            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`.",
+            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset.",
             "content": {
               "application/json": {
                 "schema": {
