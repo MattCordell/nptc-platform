@@ -23,4 +23,10 @@ alternatives.
 The operator-facing CLI that wraps `verify_chain` with stable exit codes
 (`scripts/verify_audit_chain.py`, issue #38) lives outside this package - see
 `docs/operations/runbooks/verify-audit-chain.md`.
+
+`nptc.audit.queries` is the NFR-12 administrator read model
+(`search_audit_events`, issue #286): filter/page `audit_event` by actor,
+entity, action and date range, serving the stored `before`/`after`
+verbatim - safe because `diffing` already redacted it at write time.
+`nptc.api.routers.audit` is its one HTTP consumer.
 """
