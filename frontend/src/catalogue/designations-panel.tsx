@@ -483,9 +483,9 @@ function AmendDialog({
               // mis-address exactly the term `use` was added to reach
               // (review finding 1).
               use: designationUse(row.use),
-              // FR-38, sent on both branches: required when this addresses
-              // the entry's own term, honoured (not discarded) when it does
-              // not. One code path, and no save that skips the lock.
+              // FR-38 (issue #300): required on both branches, unconditionally
+              // - the backend rejects either without it. One code path, and
+              // no save that skips the lock.
               expected_row_version: rowVersion,
               reason: changelogNote.note,
             },

@@ -221,10 +221,6 @@ _RESPONSE_409_COLLISION: Final[dict[str, Any]] = {
         "`collisions[]` alongside `detail`, naming each colliding entry (FR-05)."
     ),
 }
-#: Every write route below now requires `expected_row_version` (FR-38, issue
-#: #300), so every one of them can also refuse with a stale-version 409 -
-#: `_RESPONSE_409` (acknowledgement only, which takes no lock token) is the
-#: one 409 here that cannot.
 #: Shared verbatim by `_RESPONSE_409_VERSION` and
 #: `_RESPONSE_409_COLLISION_AND_VERSION` below - a `Final[str]` rather than
 #: two copies of the same sentence, so the two OpenAPI descriptions cannot
@@ -235,6 +231,10 @@ _STALE_VERSION_DESCRIPTION: Final[str] = (
     "`field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the "
     "caller can reconcile rather than retry blind."
 )
+#: Every write route below now requires `expected_row_version` (FR-38, issue
+#: #300), so every one of them can also refuse with a stale-version 409 -
+#: `_RESPONSE_409` (acknowledgement only, which takes no lock token) is the
+#: one 409 here that cannot.
 _RESPONSE_409_VERSION: Final[dict[str, Any]] = {
     **_RESPONSE_409,
     "model": ErrorResponse | VersionConflictResponse,
