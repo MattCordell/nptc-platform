@@ -59,7 +59,8 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
@@ -72,7 +73,7 @@ from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.policy import policy_for
 from nptc.audit.recording import record_change
-from nptc.audit.writer import AuditContext
+from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.collisions import assert_no_error_collisions
 from nptc.catalogue.errors import (
@@ -433,6 +434,53 @@ def assert_entry_row_version(
             changed_at=changed_at,
         )
     )
+
+
+def bump_entry_row_version(entry: CatalogueEntry) -> None:
+    """Advances `entry.row_version` by one, so the next writer's
+    `expected_row_version` must be the value this write just produced.
+
+    `entry.row_version += 1`, never a Core `update()` - the ORM assignment
+    is what `version_id_col` actually enforces at flush, and
+    `test_sql_parameterisation.py`'s AST guard rejects a Core-style update
+    against `catalogue_entry` for the reason ADR-0012 already gives for
+    `property_definition`. Called directly by `save_property_values` (its
+    own bump is conditional on that function's no-op short-circuit, a
+    schedule `entry_child_write` below does not share) and from inside
+    `entry_child_write` on a clean exit."""
+    entry.row_version += 1
+
+
+@contextmanager
+def entry_child_write(
+    session: Session, entry: CatalogueEntry, expected_row_version: int
+) -> Iterator[None]:
+    """Wraps a write to a table that hangs off `entry` but keeps no
+    `row_version` of its own - `code_binding` is the first caller (issue
+    #60) - so it shares `catalogue_entry.row_version` as its one optimistic
+    lock, the same argument `save_property_values`'s own docstring already
+    makes for `property_value`.
+
+    Acquires the audit append lock, asserts `expected_row_version`, yields
+    for the caller's own writes, and bumps the version once, only on a
+    clean exit - a body that raises leaves the entry's version untouched,
+    because the exception propagates from the `yield` line itself and the
+    bump below never runs. That is what lets `replace_binding`'s three-step
+    body wrap all of them in a single `with`: the lock is taken once before
+    any of the three writes, and the version moves once after all of them,
+    with no way to get the ordering wrong by construction.
+
+    The append lock is acquired **before** the entry row lock (`assert_
+    entry_row_version` -> `load_entry_for_update`'s caller must already
+    hold `entry`), conforming to the ordering invariant issue #281 is
+    about - `save_property_values_for_entries` already establishes the
+    same order for its own multi-row case; this is that argument applied to
+    a single entry's child write.
+    """
+    acquire_append_lock(session)
+    assert_entry_row_version(session, entry, expected_row_version)
+    yield
+    bump_entry_row_version(entry)
 
 
 def save_entry(

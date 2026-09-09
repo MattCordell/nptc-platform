@@ -15,10 +15,13 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.recording import AuditNoOpError
 from nptc.audit.writer import AuditContext
+from nptc.catalogue import entries as entries_module
 from nptc.catalogue.entries import (
     EntryChanges,
     create_entry,
+    entry_child_write,
     format_business_key,
+    load_entry_for_update,
     save_entries,
     save_entry,
 )
@@ -387,6 +390,121 @@ def test_session_remains_usable_after_a_caught_conflict(app_session: Session) ->
         reason="third save",
     )
     assert recovered.row_version == 3
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_bumps_row_version_on_clean_exit(app_session: Session) -> None:
+    """The issue #60 helper: a write to a table hanging off `entry` (no
+    `row_version` of its own) shares `catalogue_entry.row_version` as its
+    lock, and a clean exit from the `with` block bumps it exactly once."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+    assert entry.row_version == 1
+
+    with entry_child_write(app_session, entry, 1):
+        pass
+
+    assert entry.row_version == 2
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_does_not_bump_when_the_body_raises(app_session: Session) -> None:
+    """A body that raises must leave `row_version` untouched - the whole
+    point of bumping *after* `yield` rather than in a `finally`, so a
+    failed child write cannot invalidate a concurrent editor's own
+    still-current token."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+
+    class _BoomError(RuntimeError):
+        pass
+
+    with pytest.raises(_BoomError), entry_child_write(app_session, entry, 1):
+        raise _BoomError("simulated failure inside the wrapped write")
+
+    assert entry.row_version == 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_refuses_a_stale_version_before_the_body_runs(
+    app_session: Session,
+) -> None:
+    """A stale `expected_row_version` raises `EntryVersionConflictError`
+    before the wrapped body ever executes, and leaves `row_version`
+    untouched - mirroring `assert_entry_row_version`'s own precondition-
+    before-mutation posture."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+    save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=1,
+        changes=EntryChanges(preferred_term="Moved on"),
+        reason="first save",
+    )
+    assert entry.row_version == 2
+
+    body_ran = False
+
+    with (
+        pytest.raises(EntryVersionConflictError) as exc_info,
+        entry_child_write(app_session, entry, 1),  # stale - now at version 2
+    ):
+        body_ran = True
+
+    assert not body_ran
+    assert exc_info.value.report.expected_row_version == 1
+    assert exc_info.value.report.current_row_version == 2
+
+    current = load_entry_for_update(app_session, entry.business_key)
+    assert current.row_version == 2
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_write(
+    app_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #281's ordering invariant: the audit append lock must be
+    acquired before the first row lock a caller's own write takes.
+    `entry_child_write` calls `acquire_append_lock` before `yield`, so it
+    always runs before anything the wrapped body does."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+
+    order: list[str] = []
+    original_acquire = entries_module.acquire_append_lock
+
+    def _spy_acquire(session: Session) -> None:
+        order.append("append_lock")
+        original_acquire(session)
+
+    monkeypatch.setattr(entries_module, "acquire_append_lock", _spy_acquire)
+
+    with entry_child_write(app_session, entry, 1):
+        order.append("wrapped_write")
+
+    assert order == ["append_lock", "wrapped_write"]
 
 
 @pytest.mark.req("FR-38")
