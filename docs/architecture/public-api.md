@@ -95,9 +95,9 @@ superseded it. Retired *designations* are not published on this surface: a retir
 synonym carries no forward pointer and no obligation, and is editorial history rather
 than a term the entry is known by.
 
-That reasoning is about *this*, the public surface, and stops at it: the admin route
-(`GET /catalogue/admin/entries/{business_key}`) serves retired designations too (issue
-#239), because its reader is an editor deciding against editorial history, not an
+That reasoning is about *this*, the public surface, and stops at it (issue #239): the
+admin route (`GET /catalogue/admin/entries/{business_key}`) serves retired designations
+too, because its reader is an editor deciding against editorial history, not an
 implementer with no use for it. See
 [catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228).
 
