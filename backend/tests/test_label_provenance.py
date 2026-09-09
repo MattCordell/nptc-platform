@@ -282,6 +282,11 @@ def test_label_field_name_set_is_not_stale() -> None:
         # never an internal id) - identity data, not a SNOMED/catalogue
         # label.
         "UserRef": frozenset({"display_name"}),
+        # Issue #286 (NFR-12/NFR-13/NFR-17): the same identity-data field as
+        # UserRef.display_name above - the audit log's own actor attribution,
+        # `null` for a closed (tombstoned) account, never a SNOMED/catalogue
+        # label.
+        "AuditActor": frozenset({"display_name"}),
         # A coded property's offerable value (issue #247) - `display` here
         # is a value-set *option's* label, sourced from whichever code
         # system defined it (SNOMED CT or a local code system, the model's
