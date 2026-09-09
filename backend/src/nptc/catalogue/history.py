@@ -19,7 +19,7 @@ that changes here.
 own* primary key (`nptc.audit.recording._default_entity_id`'s default),
 never the parent entry's - so this module resolves every child id
 attached to the entry first (`nptc.catalogue.queries.
-load_designations_for_write`/`load_bindings`, both already unfiltered by
+load_designations_any_status`/`load_bindings`, both already unfiltered by
 status: a retired child's history belongs in the entry's history too),
 then queries `audit_event` for the union of `catalogue_entry`,
 `designation`, `code_binding` and `property_value_set` rows naming one of
@@ -198,7 +198,7 @@ def load_history(
         raise MalformedHistoryCursorError(f"history cursor {before} exceeds bigint range")
 
     designation_ids: Sequence[str] = tuple(
-        str(row.id) for row in queries.load_designations_for_write(session, (entry.id,))
+        str(row.id) for row in queries.load_designations_any_status(session, (entry.id,))
     )
     binding_ids: Sequence[str] = tuple(
         str(row.id) for row in queries.load_bindings(session, (entry.id,))

@@ -454,9 +454,13 @@ def read_entry_any_status(
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
-    public `read_entry`: identical assembly, no status filter. An edit
-    screen (#149) calls this to load a `draft` entry's current state before
-    the #224 write routes save changes to it."""
+    public `read_entry`: no status filter on the entry itself, and - unlike
+    the public route - `designations` includes retired rows too (issue
+    #239). The other two sub-resources were already unfiltered here before
+    this issue: `bindings` publishes retired rows on both routes (FR-08),
+    and `properties` has no per-row status of its own. An edit screen (#149)
+    calls this to load a `draft` entry's current state before the #224
+    write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
     has_open_finding = queries.has_open_finding(session, entry.business_key)
@@ -472,7 +476,8 @@ def read_entry_any_status(
         ),
         row_version=entry.row_version,
         designations=[
-            designation_from_row(row) for row in queries.load_designations(session, entry_ids)
+            designation_from_row(row)
+            for row in queries.load_designations_any_status(session, entry_ids)
         ],
         bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
         properties=[

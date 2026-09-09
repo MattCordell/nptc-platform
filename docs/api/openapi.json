@@ -2182,7 +2182,7 @@
           "catalogue-admin"
         ],
         "summary": "One catalogue entry, any status, with everything attached to it",
-        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `read_entry`: identical assembly, no status filter. An edit\nscreen (#149) calls this to load a `draft` entry's current state before\nthe #224 write routes save changes to it.",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `read_entry`: no status filter on the entry itself, and - unlike\nthe public route - `designations` includes retired rows too (issue\n#239). The other two sub-resources were already unfiltered here before\nthis issue: `bindings` publishes retired rows on both routes (FR-08),\nand `properties` has no per-row status of its own. An edit screen (#149)\ncalls this to load a `draft` entry's current state before the #224\nwrite routes save changes to it.",
         "operationId": "read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get",
         "parameters": [
           {
@@ -4884,7 +4884,7 @@
           "properties"
         ],
         "title": "EntryDetail",
-        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status, issue #228) -\none shape, so an edit screen consuming the admin route today gets the\nexact same fields a public consumer of the same entry, once published,\nwould see."
+        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status, issue #228) -\none shape, so an edit screen consuming the admin route today gets the\nexact same fields a public consumer of the same entry, once published,\nwould see. One exception (issue #239): `designations` also carries\nretired rows on the admin route, because its reader is an editor\ndeciding against editorial history rather than an implementer who has\nno use for it - see `queries.load_designations`'s own docstring.\n`bindings` and `properties` were already identical on both routes\nbefore this issue and stay that way."
       },
       "EntryPage": {
         "properties": {

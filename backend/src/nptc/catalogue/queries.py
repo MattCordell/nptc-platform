@@ -86,7 +86,7 @@ __all__ = [
     "load_bindings",
     "load_designation_by_id",
     "load_designations",
-    "load_designations_for_write",
+    "load_designations_any_status",
     "load_property_values",
     "open_finding_business_keys",
 ]
@@ -343,6 +343,12 @@ def load_designations(
     obligation - it is editorial history, and `/catalogue/entries/{key}/
     designations` is a list of the terms an entry *is* known by.
 
+    That reasoning is about the *public* surface. The admin read
+    (`catalogue_admin.read_entry_any_status`, issue #239) calls
+    `load_designations_any_status` instead, precisely because its reader is
+    an editor for whom editorial history is the thing being decided about,
+    not implementation noise to hide.
+
     `(use, language, term)` rather than insertion order or `id`: an
     `ORDER BY` on a UUID primary key is a stable-looking accident, and an
     unordered response makes every whole-body comparison in a client's own
@@ -371,29 +377,31 @@ def load_designations(
     )
 
 
-def load_designations_for_write(
+def load_designations_any_status(
     session: Session, entry_ids: Iterable[uuid.UUID]
 ) -> tuple[DesignationRow, ...]:
-    """Every designation for the given entries, active *and* retired
-    (issue #224) - unlike `load_designations` above, which is the FR-20
-    public read surface and omits retired rows on purpose (see its own
-    docstring).
+    """Every designation for the given entries, active *and* retired -
+    unlike `load_designations` above, which is the FR-20 public read
+    surface and omits retired rows on purpose (see its own docstring).
+    Matches the `read_entry_any_status`/`list_entries_any_status` naming
+    convention this module already uses for the entry-level equivalent.
 
-    An admin write route needs the retired case too: re-reading the exact
-    row a retirement or amendment just wrote (by `id`, matching
-    `nptc.catalogue.bindings`'s own `_row_to_binding` precedent) has to
-    find it whether it ended up active or retired.
+    Three callers, all wanting the unfiltered set for a different reason:
 
-    Not exposed to the public API in the sense of ever *returning* a
-    retired designation to a caller - `nptc.api.routers.
-    catalogue_designations` is still the only route that puts one of these
-    rows on the wire. `nptc.catalogue.history.load_history` (issue #141,
-    FR-19) is a second, narrower caller: it consumes only `.id`, to resolve
-    which `audit_event` rows belong to this entry's designations, and a
-    retired designation's history is exactly what it wants to surface
-    alongside every other change to the entry - so pulling retired rows in
-    here is the intended behaviour for that caller too, not a leak this
-    docstring's "not exposed" claim was written to rule out."""
+    - `catalogue_admin.read_entry_any_status` (issue #239) puts these rows
+      on the wire for an editor, who is deciding *against* editorial
+      history rather than needing it hidden - the admin/public split
+      `load_designations`'s own docstring describes.
+    - `nptc.api.routers.catalogue_designations`'s write routes (issue #224)
+      re-read the exact row a retirement or amendment just wrote (by `id`,
+      matching `nptc.catalogue.bindings`'s own `_row_to_binding`
+      precedent), which has to find it whether it ended up active or
+      retired.
+    - `nptc.catalogue.history.load_history` (issue #141, FR-19) consumes
+      only `.id`, to resolve which `audit_event` rows belong to this
+      entry's designations - a retired designation's history belongs in
+      the entry's history too.
+    """
     ids = tuple(entry_ids)
     if not ids:
         return ()
@@ -420,7 +428,7 @@ def load_designation_by_id(session: Session, designation_id: uuid.UUID) -> Desig
     """The one designation with this primary key, active or retired, or
     `None` - a point lookup for a write route re-reading the exact row it
     just amended or retired (issue #224 review finding 3), rather than
-    `load_designations_for_write` reloading and filtering *every*
+    `load_designations_any_status` reloading and filtering *every*
     designation on the entry (unbounded for an entry with a long retired
     history) to find the one row by `id`."""
     row = session.get(Designation, designation_id)

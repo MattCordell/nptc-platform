@@ -319,8 +319,10 @@ Re-reading a just-written row (to build the response) is by the row's own `id`, 
 term, for the same reason `_row_to_binding` avoids a code-keyed re-read: `(entry_id,
 term_key, language)` is unique only among *active* rows, so a term retired and re-added
 would leave two retired rows sharing a `term_key`, and only `id` still tells them apart.
-`nptc.catalogue.queries.load_designations_for_write` is the retired-inclusive loader
-this needs - `load_designations` (the FR-20 public read path) stays active-only.
+`nptc.catalogue.queries.load_designations_any_status` is the retired-inclusive loader
+this needs - `load_designations` (the FR-20 public read path) stays active-only. The
+admin entry read (issue #239) also serves retired designations for the same reason:
+its reader is an editor, not an implementer.
 
 ### Editing in place, not retire-and-re-add
 
