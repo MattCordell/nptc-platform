@@ -351,10 +351,8 @@ describe("AdminCatalogueListPage", () => {
     // Issue #289 review: `codedActiveFacetKeys` dedups by facet key so two
     // selected values on the same coded facet share one value-options fetch
     // rather than one per value - this is the principal failure mode of that
-    // dedup (a regression to one fetch per value would still resolve the
-    // first value's chip but leave the second on whatever page a second,
-    // differently-timed fetch happened to return, or fail outright once
-    // `stubApi`'s fixed response queue was exhausted).
+    // dedup, and the `calls.filter(...).toBe(1)` assertion below is what
+    // actually catches a regression to one fetch per value.
     it("resolves both chips for two selected values on the same coded facet from one fetch", async () => {
       const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_MULTI_OK]);
 
