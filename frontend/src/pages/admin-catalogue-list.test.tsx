@@ -141,6 +141,19 @@ const DISCIPLINE_VALUES_OK: Route = {
   body: { items: [{ code: "chemistry", display: "Chemistry" }], total: 1 },
 };
 
+const DISCIPLINE_VALUES_MULTI_OK: Route = {
+  method: "GET",
+  path: "/registry/properties/discipline/values",
+  status: 200,
+  body: {
+    items: [
+      { code: "chemistry", display: "Chemistry" },
+      { code: "haematology", display: "Haematology" },
+    ],
+    total: 2,
+  },
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -333,6 +346,38 @@ describe("AdminCatalogueListPage", () => {
       expect(
         screen.getByRole("button", { name: "Remove filter Status: Active" }),
       ).toBeInTheDocument();
+    });
+
+    // Issue #289 review: `codedActiveFacetKeys` dedups by facet key so two
+    // selected values on the same coded facet share one value-options fetch
+    // rather than one per value - this is the principal failure mode of that
+    // dedup (a regression to one fetch per value would still resolve the
+    // first value's chip but leave the second on whatever page a second,
+    // differently-timed fetch happened to return, or fail outright once
+    // `stubApi`'s fixed response queue was exhausted).
+    it("resolves both chips for two selected values on the same coded facet from one fetch", async () => {
+      const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_MULTI_OK]);
+
+      await renderRoute(
+        `${LIST_URL}?filter.discipline=chemistry&filter.discipline=haematology`,
+        SIGNED_IN,
+      );
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        await screen.findByRole("button", { name: "Remove filter Discipline: Chemistry" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Remove filter Discipline: Haematology" }),
+      ).toBeInTheDocument();
+      // One fetch, not two - `PropertyFacetGroup`'s own value-options query
+      // (fired for the same unfiltered discipline facet, matching cache key)
+      // is the only other legitimate source of a call to this path, so more
+      // than one indicates the dedup did not hold.
+      expect(
+        calls.filter((call) => call.path.endsWith("/registry/properties/discipline/values"))
+          .length,
+      ).toBe(1);
     });
 
     it("clears every active filter at once via Clear all filters", async () => {

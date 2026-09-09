@@ -10,13 +10,11 @@ import {
   usePropertyValueOptionsQueries,
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
-import {
-  AdminCatalogueFilterPanel,
-  STATUS_OPTIONS,
-} from "../catalogue/admin-catalogue-filter-panel.tsx";
+import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
 import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
 import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
 import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
+import { STATUS_OPTIONS } from "../catalogue/status-options.ts";
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -106,11 +104,15 @@ function resolveFacetLabel(
  * A facet value's display string for the active-filter chip row (issue #289).
  * `status` resolves against `STATUS_OPTIONS`; a `concept_picker` property
  * resolves against its fetched value-options page, falling back to the raw
- * code when the selected value isn't on that page (filtered out, retired, or
- * the fetch is still pending/erroring) - mirroring `PropertyFacetGroup`'s own
- * `carriedOptions` fallback. Every other case (an unrecognised key, or a
- * registry property with no value-options source, e.g. `volume_ml`) has
- * nothing to resolve the value against, so it stays raw.
+ * code when the selected value isn't on that page - most commonly because the
+ * value set is larger than one page (`DEFAULT_PAGE_SIZE`,
+ * `nptc.catalogue.property_value_sources`) and the selected code simply isn't
+ * in the unfiltered first page fetched here, but also filtered out, retired,
+ * or the fetch still pending/erroring - mirroring `PropertyFacetGroup`'s own
+ * `carriedOptions` fallback. See follow-up issue #306 for a code->display
+ * lookup that isn't bounded by page size. Every other case (an unrecognised
+ * key, or a registry property with no value-options source, e.g.
+ * `volume_ml`) has nothing to resolve the value against, so it stays raw.
  */
 function resolveValueLabel(
   facetKey: string,

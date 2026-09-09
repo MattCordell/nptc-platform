@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { usePropertyDefinitions, usePropertyValueOptions } from "../api/queries.ts";
 import { Checkbox } from "../components/checkbox.tsx";
 import { Field } from "../components/field.tsx";
+import { STATUS_OPTIONS } from "./status-options.ts";
 import { useDebouncedValue } from "./use-debounced-value.ts";
 
 /**
@@ -28,22 +29,6 @@ import { useDebouncedValue } from "./use-debounced-value.ts";
  * facet for it would let an administrator filter by a state nothing being
  * edited can enter again.
  */
-
-//: The four `CatalogueEntryStatus` values, matching
-//: `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` (derived from the same
-//: enum server-side). Hardcoded, unlike every other facet here, because
-//: this set is a stable part of the domain model, not administrator-editable
-//: registry state - there is nowhere on the wire to discover it from in
-//: browse mode (facets, with counts, exist only on the search surface).
-//: Exported (issue #289) so the active-filter-chip label resolver on the
-//: list page can resolve `status`'s own facet values against the identical
-//: labels this panel renders, rather than a second, driftable copy.
-export const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: "draft", label: "Draft" },
-  { value: "active", label: "Active" },
-  { value: "deprecated", label: "Deprecated" },
-  { value: "withdrawn", label: "Withdrawn" },
-];
 
 interface FacetOption {
   value: string;
