@@ -36,12 +36,12 @@ cannot land inside an already-served page.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar, Final
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from nptc.audit.serialisation import JsonValue
@@ -56,6 +56,8 @@ __all__ = [
     "AuditFilterError",
     "MalformedAuditCursorError",
     "search_audit_events",
+    "stream_audit_events",
+    "validate_audit_filters",
 ]
 
 #: The largest value `AuditEvent.sequence` (`BigInteger`, signed 64-bit) can
@@ -157,9 +159,18 @@ class AuditEventPage:
     next_cursor: str | None
 
 
-def _validate(filters: AuditEventFilter, *, before: int | None) -> None:
-    if before is not None and before > _BIGINT_MAX:
-        raise MalformedAuditCursorError(f"audit cursor {before} exceeds bigint range")
+def validate_audit_filters(filters: AuditEventFilter) -> None:
+    """Raises `AuditFilterError` for a filter combination that cannot
+    produce a well-defined result - see that error's own docstring.
+
+    A free function, not folded into `AuditEventFilter.__post_init__`, so
+    a caller building one filter at a time (the API layer's per-query-
+    parameter shape) is not forced to construct in a specific order to
+    avoid a transient invalid state. Called eagerly by both
+    `search_audit_events` and, before it ever returns a lazy generator,
+    `stream_audit_events` - see that function's own docstring for why
+    eagerness matters there.
+    """
     if filters.entity_id is not None and filters.entity_type is None:
         raise AuditFilterError("entity_id filter requires entity_type")
     if (
@@ -168,6 +179,23 @@ def _validate(filters: AuditEventFilter, *, before: int | None) -> None:
         and filters.occurred_from > filters.occurred_to
     ):
         raise AuditFilterError("occurred_from must not be after occurred_to")
+
+
+def _predicates(filters: AuditEventFilter) -> list[ColumnElement[bool]]:
+    predicates: list[ColumnElement[bool]] = []
+    if filters.actor_user_id is not None:
+        predicates.append(AuditEvent.actor_user_id == filters.actor_user_id)
+    if filters.entity_type is not None:
+        predicates.append(AuditEvent.entity_type == filters.entity_type)
+    if filters.entity_id is not None:
+        predicates.append(AuditEvent.entity_id == filters.entity_id)
+    if filters.action is not None:
+        predicates.append(AuditEvent.action == filters.action)
+    if filters.occurred_from is not None:
+        predicates.append(AuditEvent.occurred_at >= filters.occurred_from)
+    if filters.occurred_to is not None:
+        predicates.append(AuditEvent.occurred_at < filters.occurred_to)
+    return predicates
 
 
 def search_audit_events(
@@ -184,27 +212,13 @@ def search_audit_events(
     (exclusive) - see `AuditEventPage.next_cursor`.
 
     Raises `MalformedAuditCursorError`/`AuditFilterError` before running
-    any query - see each error's own docstring. Both are checked here,
-    not left to `AuditEventFilter`'s own construction, so a caller building
-    one filter at a time (the API layer's per-query-parameter shape) is not
-    forced to construct in a specific order to avoid a transient invalid
-    state.
+    any query - see each error's own docstring.
     """
-    _validate(filters, before=before)
+    if before is not None and before > _BIGINT_MAX:
+        raise MalformedAuditCursorError(f"audit cursor {before} exceeds bigint range")
+    validate_audit_filters(filters)
 
-    predicates = []
-    if filters.actor_user_id is not None:
-        predicates.append(AuditEvent.actor_user_id == filters.actor_user_id)
-    if filters.entity_type is not None:
-        predicates.append(AuditEvent.entity_type == filters.entity_type)
-    if filters.entity_id is not None:
-        predicates.append(AuditEvent.entity_id == filters.entity_id)
-    if filters.action is not None:
-        predicates.append(AuditEvent.action == filters.action)
-    if filters.occurred_from is not None:
-        predicates.append(AuditEvent.occurred_at >= filters.occurred_from)
-    if filters.occurred_to is not None:
-        predicates.append(AuditEvent.occurred_at < filters.occurred_to)
+    predicates = _predicates(filters)
     if before is not None:
         predicates.append(AuditEvent.sequence < before)
 
@@ -259,3 +273,88 @@ def search_audit_events(
     )
     next_cursor = str(page_rows[-1].sequence) if len(rows) > limit else None
     return AuditEventPage(events=events, next_cursor=next_cursor)
+
+
+#: Rows fetched per round trip to the database for `stream_audit_events` -
+#: matching `nptc.audit.verification.verify_chain`'s own `_DEFAULT_BATCH_SIZE`
+#: exactly, for the identical reason: large enough to amortise the
+#: round-trip cost, small enough that a very large table is still streamed
+#: rather than loaded wholesale.
+_DEFAULT_EXPORT_BATCH_SIZE: Final = 500
+
+
+def stream_audit_events(
+    session: Session,
+    filters: AuditEventFilter,
+    *,
+    batch_size: int = _DEFAULT_EXPORT_BATCH_SIZE,
+) -> Iterator[AuditEventRow]:
+    """Every `audit_event` row matching `filters`, oldest first - the
+    export's own read path (NFR-12). No `limit`/cursor: an export is the
+    whole filtered set, not one page of it (see `docs/adr/0039-*.md` for
+    why that is fine at this catalogue's real size).
+
+    Oldest first, unlike `search_audit_events`'s most-recent-first keyset
+    pages: an export exists to stay independently verifiable against the
+    hash chain (NFR-10, `entry_hash`/`prev_hash` on every row), and
+    ascending `sequence` is the same direction
+    `nptc.audit.verification.verify_chain` itself walks the chain in.
+
+    **Validates eagerly, not lazily.** This function's body is not itself
+    a generator - it raises `AuditFilterError` immediately if `filters` is
+    invalid and only then returns the lazy, `yield_per`-driven generator
+    that does the actual streaming. A caller that raised the API's
+    `StreamingResponse` before validating would already have sent a `200`
+    and its headers by the time a generator-embedded validation ran,
+    making a clean 422 impossible - see `nptc.api.routers.audit.
+    export_audit_events`'s own call site.
+    """
+    validate_audit_filters(filters)
+    return _stream_audit_events(session, filters, batch_size)
+
+
+def _stream_audit_events(
+    session: Session, filters: AuditEventFilter, batch_size: int
+) -> Iterator[AuditEventRow]:
+    statement = (
+        select(
+            AuditEvent.sequence,
+            AuditEvent.occurred_at,
+            AuditEvent.actor_user_id,
+            User.display_name,
+            User.status,
+            AuditEvent.action,
+            AuditEvent.entity_type,
+            AuditEvent.entity_id,
+            AuditEvent.before,
+            AuditEvent.after,
+            AuditEvent.reason,
+            AuditEvent.prev_hash,
+            AuditEvent.entry_hash,
+        )
+        .select_from(AuditEvent)
+        .outerjoin(User, User.id == AuditEvent.actor_user_id)
+        .where(*_predicates(filters))
+        .order_by(AuditEvent.sequence.asc())
+        .execution_options(yield_per=batch_size)
+    )
+    for row in session.execute(statement):
+        yield AuditEventRow(
+            sequence=row.sequence,
+            occurred_at=row.occurred_at,
+            actor=ActorInfo(
+                id=row.actor_user_id,
+                display_name=row.display_name,
+                is_closed=row.status == UserStatus.CLOSED,
+            )
+            if row.actor_user_id is not None
+            else None,
+            action=row.action,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            before=row.before,
+            after=row.after,
+            reason=row.reason,
+            prev_hash=row.prev_hash,
+            entry_hash=row.entry_hash,
+        )

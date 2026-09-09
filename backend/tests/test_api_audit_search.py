@@ -22,16 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
-from nptc.audit.writer import AuditContext, append_audit_event
-from nptc.auth.grants import grant_role_unchecked
+from nptc.audit.writer import AuditContext
 from nptc.auth.identity import close_account
-from nptc.auth.permissions import Role
-from nptc.db.models.audit import AuditEvent
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -47,66 +41,15 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
+_audit_support = _load("audit_api_support")
+_admin_token = _audit_support.admin_token
+_create_active_user = _audit_support.create_active_user
+_seed = _audit_support.seed_event
+
 
 @pytest.fixture
 def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    """Signs `subject` in, grants `Role.ADMINISTRATOR`, and returns a
-    token - matching `test_api_catalogue_bindings.py`'s own helper."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
-def _create_active_user(api: ApiTestApp, username: str) -> User:
-    user = User(username=username, display_name=username.title(), organisation="RCPA-QAP")
-    api.session.add(user)
-    api.session.flush()
-    return user
-
-
-def _seed(
-    api: Any,
-    *,
-    actor_user_id: uuid.UUID | None,
-    entity_type: str,
-    entity_id: str = "1",
-    action: str = "test.action",
-    before: dict[str, object] | None = None,
-    after: dict[str, object] | None = None,
-) -> AuditEvent:
-    event = append_audit_event(
-        api.session,
-        AuditContext(
-            actor_user_id=actor_user_id, actor_ip=None, user_agent=None, correlation_id=uuid.uuid4()
-        )
-        if actor_user_id is not None
-        else AuditContext.system(),
-        action=action,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        before=before,
-        after=after,
-    )
-    api.session.flush()
-    return event
 
 
 # --- happy path -------------------------------------------------------

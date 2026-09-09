@@ -1,28 +1,40 @@
-"""`GET /audit/events` (issue #286, NFR-12): the administrator search/
-filter surface over `audit_event`, and its NDJSON export sibling
-(`GET /audit/events/export`, phase 4 of the same issue).
+"""`GET /audit/events` and `GET /audit/events/export` (issue #286,
+NFR-12): the administrator search/filter surface over `audit_event`, and
+its NDJSON export sibling.
 
 **Gated on `Permission.AUDIT_READ`**, Administrator-only and in
 `MFA_REQUIRED_PERMISSIONS` (NFR-06), matching `catalogue_bindings.py`'s
 own write routes - so the RFC 9470 step-up challenge comes free, with no
 extra code in this module.
 
-**Serves `nptc.audit.queries.search_audit_events`'s row shape close to
-verbatim.** `before`/`after` are the stored JSONB as-is, and `actor`
-resolves by internal id, `null` display name and all - see that module's
-own docstring for why both are safe here, on an Administrator-plus-MFA
-surface, in a way they are not on `nptc.catalogue.history`'s public FR-19
-one.
+**Serves `nptc.audit.queries`' row shape close to verbatim.** `before`/
+`after` are the stored JSONB as-is, and `actor` resolves by internal id,
+`null` display name and all - see that module's own docstring for why
+both are safe here, on an Administrator-plus-MFA surface, in a way they
+are not on `nptc.catalogue.history`'s public FR-19 one.
+
+**The export streams, and validates before it starts streaming.**
+`export_audit_events` calls `nptc.audit.queries.stream_audit_events`
+(which validates `filters` eagerly - see its own docstring) before ever
+constructing the `StreamingResponse` - a `StreamingResponse` sends its
+`200` and headers as soon as its body iterator is first pulled from, so a
+validation error raised lazily inside that iterator could not become a
+clean `422` any more. No `audit.exported` audit event: this route holds
+no write privilege at all (NFR-09), and NFR-08 scopes audit events to
+state-changing operations - a deliberate decision, not an oversight (see
+`docs/adr/0039-*.md`).
 """
 
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -219,4 +231,70 @@ def read_audit_events(
     return AuditEventPage(
         items=[_event_from_row(event) for event in page.events],
         next_cursor=page.next_cursor,
+    )
+
+
+#: Fixed, not derived from the filter or the current time - a filter value
+#: reflected into a response header is exactly the kind of caller-supplied-
+#: text-in-a-header surface this platform avoids elsewhere (NFR-26/NFR-35).
+_EXPORT_FILENAME = "audit-events.ndjson"
+
+
+def _export_payload(row: audit_queries.AuditEventRow) -> dict[str, Any]:
+    actor = _actor_from_row(row.actor)
+    return {
+        "sequence": row.sequence,
+        "occurred_at": row.occurred_at.isoformat(),
+        "actor": actor.model_dump(mode="json") if actor is not None else None,
+        "action": row.action,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "before": row.before,
+        "after": row.after,
+        "reason": row.reason,
+        "prev_hash": row.prev_hash,
+        "entry_hash": row.entry_hash,
+    }
+
+
+def _ndjson_lines(rows: Iterator[audit_queries.AuditEventRow]) -> Iterator[str]:
+    for row in rows:
+        yield json.dumps(_export_payload(row)) + "\n"
+
+
+@router.get(
+    "/events/export",
+    summary="Export the filtered audit log as NDJSON (NFR-12)",
+    responses=_RESPONSES,
+    dependencies=[_READ],
+)
+def export_audit_events(
+    session: SessionDep,
+    actor_user_id: ActorFilterQuery = None,
+    entity_type: EntityTypeFilterQuery = None,
+    entity_id: EntityIdFilterQuery = None,
+    action: ActionFilterQuery = None,
+    occurred_from: OccurredFromQuery = None,
+    occurred_to: OccurredToQuery = None,
+) -> StreamingResponse:
+    """One JSON object per line, oldest first, including `prev_hash`/
+    `entry_hash` so the extract stays independently verifiable (NFR-10) -
+    see `nptc.audit.queries.stream_audit_events`'s own docstring for why
+    the order differs from the read route above. The whole filtered set,
+    not one page: an export has no `limit`/cursor."""
+    rows = audit_queries.stream_audit_events(
+        session,
+        audit_queries.AuditEventFilter(
+            actor_user_id=actor_user_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+        ),
+    )
+    return StreamingResponse(
+        _ndjson_lines(rows),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{_EXPORT_FILENAME}"'},
     )

@@ -29,6 +29,7 @@ from nptc.audit.queries import (
     AuditFilterError,
     MalformedAuditCursorError,
     search_audit_events,
+    stream_audit_events,
 )
 from nptc.audit.writer import AuditContext, append_audit_event
 from nptc.auth.identity import close_account
@@ -60,6 +61,16 @@ def test_occurred_from_after_occurred_to_is_refused() -> None:
             AuditEventFilter(occurred_from=later, occurred_to=earlier),
             limit=50,
         )
+
+
+def test_stream_entity_id_without_entity_type_is_refused_before_iteration() -> None:
+    """`stream_audit_events` validates eagerly, not lazily inside the
+    generator it returns - see its own docstring for why. Proven here by
+    never calling `next()` on the result: if validation were deferred into
+    the generator body, this call would return a generator object with no
+    exception raised at all."""
+    with pytest.raises(AuditFilterError):
+        stream_audit_events(Session(), AuditEventFilter(entity_id="some-id"))
 
 
 # --- integration: real filtering, pagination, and attribution -------------
@@ -319,3 +330,27 @@ def test_before_after_are_served_exactly_as_stored(app_db: Connection) -> None:
     served = next(e for e in page.events if e.sequence == event.sequence)
     assert served.before == {"status": "active", "_redacted": ["display_name"]}
     assert served.after == {"status": "suspended", "_redacted": ["display_name"]}
+
+
+@pytest.mark.req("NFR-12")
+@pytest.mark.req("NFR-10")
+@pytest.mark.integration
+def test_stream_audit_events_yields_oldest_first_with_hash_chain_fields(
+    app_db: Connection,
+) -> None:
+    """The export's own ordering (oldest first, unlike `search_audit_
+    events`' most-recent-first pages) and the two hash-chain fields an
+    export needs to stay independently verifiable (NFR-10) - see
+    `stream_audit_events`'s own docstring for why."""
+    session = Session(bind=app_db)
+    user = _create_active_user(session, "kim-audit-search")
+    entity_type = f"test-stream-{uuid.uuid4()}"
+    first = _seed(session, actor_user_id=user.id, entity_type=entity_type)
+    second = _seed(session, actor_user_id=user.id, entity_type=entity_type)
+
+    rows = list(stream_audit_events(session, AuditEventFilter(entity_type=entity_type)))
+
+    assert [row.sequence for row in rows] == [first, second]
+    for row in rows:
+        assert len(row.prev_hash) == 64
+        assert len(row.entry_hash) == 64
