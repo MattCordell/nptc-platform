@@ -231,7 +231,7 @@ describe("RepeatableValues", () => {
     render(
       <ControlledRepeatable
         cardinality="0..*"
-        initial={[{ id: "slot-1", value: "HAEM", justification: null }]}
+        initial={[{ id: "fixture-1", value: "HAEM", justification: null }]}
       />,
     );
 
@@ -248,8 +248,8 @@ describe("RepeatableValues", () => {
       <ControlledRepeatable
         cardinality="1..*"
         initial={[
-          { id: "slot-1", value: "119361006", justification: null },
-          { id: "slot-2", value: "122554006", justification: null },
+          { id: "fixture-1", value: "119361006", justification: null },
+          { id: "fixture-2", value: "122554006", justification: null },
         ]}
       />,
     );
@@ -264,8 +264,8 @@ describe("RepeatableValues", () => {
     render(
       <ControlledRepeatableConceptPicker
         initial={[
-          { id: "slot-1", value: null, justification: null },
-          { id: "slot-2", value: null, justification: null },
+          { id: "fixture-1", value: null, justification: null },
+          { id: "fixture-2", value: null, justification: null },
         ]}
       />,
     );
@@ -288,7 +288,7 @@ describe("RepeatableValues", () => {
     render(
       <ControlledRepeatable
         cardinality="0..1"
-        initial={[{ id: "slot-1", value: "HAEM", justification: null }]}
+        initial={[{ id: "fixture-1", value: "HAEM", justification: null }]}
       />,
     );
     expect(screen.queryByLabelText("Justification")).not.toBeInTheDocument();
@@ -297,7 +297,7 @@ describe("RepeatableValues", () => {
   it("renders and reports a justification field per slot when the property allows one (FR-10)", async () => {
     const user = userEvent.setup();
     let latest: PropertyValueSlot[] = [
-      { id: "slot-1", value: "HAEM", justification: null },
+      { id: "fixture-1", value: "HAEM", justification: null },
     ];
     function Wrapper() {
       const [slots, setSlots] = useState(latest);

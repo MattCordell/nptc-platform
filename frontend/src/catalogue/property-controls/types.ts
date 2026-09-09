@@ -66,6 +66,10 @@ let nextSlotId = 0;
  * explicitly anticipates this app being deployed outside of (a plain-HTTP
  * on-prem host, per `NPTC_FRONTEND_BASE_URL`'s own note). A counter has no
  * such dependency.
+ *
+ * The `slot-` prefix is reserved for ids this function generates - test
+ * fixtures should use a different prefix (e.g. `fixture-`) so a fixture id
+ * can never collide with one minted at runtime.
  */
 export function newSlotId(): string {
   nextSlotId += 1;
