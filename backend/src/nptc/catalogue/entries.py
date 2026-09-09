@@ -444,10 +444,12 @@ def bump_entry_row_version(entry: CatalogueEntry) -> None:
     is what `version_id_col` actually enforces at flush, and
     `test_sql_parameterisation.py`'s AST guard rejects a Core-style update
     against `catalogue_entry` for the reason ADR-0012 already gives for
-    `property_definition`. Called directly by `save_property_values` (its
-    own bump is conditional on that function's no-op short-circuit, a
-    schedule `entry_child_write` below does not share) and from inside
-    `entry_child_write` on a clean exit."""
+    `property_definition`. Called from inside `entry_child_write` on a
+    clean exit. Deliberately **not** adopted by `save_property_values`,
+    whose own inline `entry.row_version += 1` is conditional on that
+    function's no-op short-circuit - a schedule `entry_child_write` below
+    does not share - so refactoring it onto this helper is out of scope
+    here (see `entry_child_write`'s own docstring)."""
     entry.row_version += 1
 
 
@@ -470,12 +472,18 @@ def entry_child_write(
     any of the three writes, and the version moves once after all of them,
     with no way to get the ordering wrong by construction.
 
-    The append lock is acquired **before** the entry row lock (`assert_
-    entry_row_version` -> `load_entry_for_update`'s caller must already
-    hold `entry`), conforming to the ordering invariant issue #281 is
-    about - `save_property_values_for_entries` already establishes the
-    same order for its own multi-row case; this is that argument applied to
-    a single entry's child write.
+    `acquire_append_lock` is the first statement below - before `assert_
+    entry_row_version` (a plain comparison, no lock of its own) and before
+    `bump_entry_row_version`, which is the one thing here that actually
+    takes a `catalogue_entry` row lock: setting `entry.row_version` does
+    not touch the database by itself, but the `UPDATE ... WHERE row_version
+    = ...` `version_id_col` issues once that change is flushed - by the
+    caller's own explicit `session.flush()` after the `with` block exits,
+    in every caller today - does. The append lock is therefore always
+    acquired before that row lock, conforming to the ordering invariant
+    issue #281 is about - `save_property_values_for_entries` already
+    establishes the same order for its own multi-row case; this is that
+    argument applied to a single entry's child write.
     """
     acquire_append_lock(session)
     assert_entry_row_version(session, entry, expected_row_version)
