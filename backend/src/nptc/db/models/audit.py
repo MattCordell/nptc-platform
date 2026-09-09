@@ -68,6 +68,15 @@ class AuditEvent(Base):
             "entity_id",
             "sequence",
         ),
+        # Added by migration 0019 (issue #286, NFR-12): the three other
+        # filters `nptc.audit.queries.search_audit_events` accepts, each
+        # paired with `sequence` for the same reason as the index above -
+        # plain ascending, scanned backwards for `ORDER BY sequence DESC`
+        # at no extra cost, and textually identical between this
+        # declaration and the migration's `op.create_index`.
+        Index("ix_audit_event_actor_user_id_sequence", "actor_user_id", "sequence"),
+        Index("ix_audit_event_action_sequence", "action", "sequence"),
+        Index("ix_audit_event_occurred_at_sequence", "occurred_at", "sequence"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
