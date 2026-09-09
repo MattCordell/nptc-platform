@@ -202,6 +202,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
 
       <AddSynonymsForm
         businessKey={businessKey}
+        rowVersion={entry.row_version}
         onSaved={(created, newWarnings) => {
           setWarnings(
             newWarnings.map((warning) => ({ ...warning, language: DEFAULT_LANGUAGE })),
@@ -242,6 +243,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
       {retiring !== null && (
         <RetireDialog
           businessKey={businessKey}
+          rowVersion={entry.row_version}
           row={retiring}
           onClose={() => setRetiring(null)}
           onSaved={() => {
@@ -283,9 +285,11 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
  */
 function AddSynonymsForm({
   businessKey,
+  rowVersion,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   onSaved: (created: number, warnings: CollisionWarning[]) => void;
 }) {
   const [cell, setCell] = useState("");
@@ -350,6 +354,9 @@ function AddSynonymsForm({
             terms,
             use: "synonym",
             reason: changelogNote.note,
+            // FR-38 (issue #300): required now that a batch add bumps the
+            // entry's counter as one write.
+            expected_row_version: rowVersion,
           },
           {
             onSuccess: (result) => {
@@ -510,11 +517,13 @@ function AmendDialog({
 
 function RetireDialog({
   businessKey,
+  rowVersion,
   row,
   onClose,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   row: TermRow;
   onClose: () => void;
   onSaved: () => void;
@@ -541,7 +550,14 @@ function RetireDialog({
         }
         onSubmit={() => {
           retire.mutate(
-            { language: row.language, term: row.term, reason: changelogNote.note },
+            {
+              language: row.language,
+              term: row.term,
+              reason: changelogNote.note,
+              // FR-38 (issue #300): required now that retiring a term bumps
+              // the entry's counter.
+              expected_row_version: rowVersion,
+            },
             { onSuccess: () => onSaved() },
           );
         }}

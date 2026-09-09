@@ -314,7 +314,7 @@ describe("useAdminSearch", () => {
 
 describe("useAddDesignations", () => {
   it("posts the split terms as a batch and invalidates the entry", async () => {
-    const fetchMock = stubFetch(201, { designations: [], warnings: [] });
+    const fetchMock = stubFetch(201, { designations: [], warnings: [], row_version: 2 });
     const { result } = renderHook(
       () => ({
         add: useAddDesignations("NPTC-000247"),
@@ -329,6 +329,7 @@ describe("useAddDesignations", () => {
       terms: ["Zovirax", "Cyclir"],
       use: "synonym",
       reason: "Split the pasted synonym cell",
+      expected_row_version: 1,
     });
     await waitFor(() => expect(result.current.add.isSuccess).toBe(true));
 
@@ -342,6 +343,7 @@ describe("useAddDesignations", () => {
       terms: ["Zovirax", "Cyclir"],
       use: "synonym",
       reason: "Split the pasted synonym cell",
+      expected_row_version: 1,
     });
     // The invalidation: a third call, re-reading the entry.
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(3));
@@ -368,12 +370,41 @@ describe("useAddDesignations", () => {
       terms: ["Adrenal Ab"],
       use: "synonym",
       reason: "Add a colliding synonym",
+      expected_row_version: 1,
     });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(asCollisionError(result.current.error)?.collisions[0]?.business_key).toBe(
       "NPTC-000111",
     );
+  });
+
+  // FR-38 (issue #300): the second axis this route can now refuse on. The
+  // cached entry must be refetched, matching useAmendDesignation/
+  // useSavePropertyValues - otherwise a retry from the same open form fails
+  // identically against the same stale row_version.
+  it("refetches the entry on a version conflict", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "NPTC-000247",
+      expected_row_version: 1,
+      current_row_version: 2,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-09-02T00:00:00Z",
+    });
+    const { result } = renderHook(() => useAddDesignations("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      language: "en-AU",
+      terms: ["Zovirax"],
+      use: "synonym",
+      reason: "Add under a stale version",
+      expected_row_version: 1,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(2);
   });
 });
 
@@ -438,13 +469,17 @@ describe("useAmendDesignation", () => {
 
 describe("useRetireDesignation", () => {
   it("posts the term and its mandatory reason to the retirement route", async () => {
-    const fetchMock = stubFetch(200, { term: "Cyclir", status: "retired" });
+    const fetchMock = stubFetch(200, {
+      designation: { term: "Cyclir", status: "retired" },
+      row_version: 2,
+    });
     const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
 
     result.current.mutate({
       language: "en-AU",
       term: "Cyclir",
       reason: "Withdrawn brand name",
+      expected_row_version: 1,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
@@ -456,7 +491,34 @@ describe("useRetireDesignation", () => {
       language: "en-AU",
       term: "Cyclir",
       reason: "Withdrawn brand name",
+      expected_row_version: 1,
     });
+  });
+
+  // FR-38 (issue #300): this route now takes a lock token and can refuse on
+  // it - see useAddDesignations' identical test for why the cache must be
+  // refetched, not left stale.
+  it("refetches the entry on a version conflict", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "NPTC-000247",
+      expected_row_version: 1,
+      current_row_version: 2,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-09-02T00:00:00Z",
+    });
+    const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      language: "en-AU",
+      term: "Cyclir",
+      reason: "Retire under a stale version",
+      expected_row_version: 1,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(2);
   });
 });
 
