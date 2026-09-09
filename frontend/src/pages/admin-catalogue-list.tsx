@@ -8,6 +8,7 @@ import {
   useAdminSearch,
   usePropertyDefinitions,
   usePropertyValueOptionsQueries,
+  usePropertyValueResolveQueries,
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
@@ -101,18 +102,18 @@ function resolveFacetLabel(
 }
 
 /**
- * A facet value's display string for the active-filter chip row (issue #289).
- * `status` resolves against `STATUS_OPTIONS`; a `concept_picker` property
- * resolves against its fetched value-options page, falling back to the raw
- * code when the selected value isn't on that page - most commonly because the
- * value set is larger than one page (`DEFAULT_PAGE_SIZE`,
- * `nptc.catalogue.property_value_sources`) and the selected code simply isn't
- * in the unfiltered first page fetched here, but also filtered out, retired,
- * or the fetch still pending/erroring - mirroring `PropertyFacetGroup`'s own
- * `carriedOptions` fallback. See follow-up issue #306 for a code->display
- * lookup that isn't bounded by page size. Every other case (an unrecognised
- * key, or a registry property with no value-options source, e.g.
- * `volume_ml`) has nothing to resolve the value against, so it stays raw.
+ * A facet value's display string for the active-filter chip row (issue #289,
+ * #306). `status` resolves against `STATUS_OPTIONS`; a `concept_picker`
+ * property resolves against `valueLabelByFacetKey`, which merges its
+ * unfiltered value-options page with the resolve-by-code lookup for whatever
+ * that page did not answer (issue #306, ADR-0038) - so a selected value
+ * beyond `DEFAULT_PAGE_SIZE`, or one the RCPA has since removed from the
+ * value set, still resolves. Only a code neither side can resolve at all
+ * (never existed, or the fetch is still pending/erroring) falls back to the
+ * raw code, mirroring `PropertyFacetGroup`'s own `carriedOptions` fallback.
+ * Every other case (an unrecognised key, or a registry property with no
+ * value-options source, e.g. `volume_ml`) has nothing to resolve the value
+ * against, so it stays raw.
  */
 function resolveValueLabel(
   facetKey: string,
@@ -181,7 +182,7 @@ export function AdminCatalogueListPage() {
   const valueOptionsQueries = usePropertyValueOptionsQueries(
     codedActiveFacetKeys.map((key) => ({ key, filter: "" })),
   );
-  const valueLabelByFacetKey = useMemo(() => {
+  const pagedValueLabelByFacetKey = useMemo(() => {
     const map = new Map<string, Map<string, string>>();
     codedActiveFacetKeys.forEach((key, index) => {
       const codeToDisplay = new Map<string, string>();
@@ -192,6 +193,72 @@ export function AdminCatalogueListPage() {
     });
     return map;
   }, [codedActiveFacetKeys, valueOptionsQueries]);
+  // Whether each facet's own unfiltered page (above) has settled - success
+  // or error, either way. Read below to hold off resolving by code until a
+  // facet's own page has actually had its chance to answer first: without
+  // this, every active value looks "not yet answered" on the render before
+  // the page query returns, firing a resolve request the page itself would
+  // have answered a moment later (a real, avoidable extra fetch, not just an
+  // extra cache read).
+  const pagedIsSettledByFacetKey = useMemo(() => {
+    const map = new Map<string, boolean>();
+    codedActiveFacetKeys.forEach((key, index) => {
+      map.set(key, !(valueOptionsQueries[index]?.isPending ?? true));
+    });
+    return map;
+  }, [codedActiveFacetKeys, valueOptionsQueries]);
+
+  // A selected value the unfiltered page above did not answer - beyond its
+  // `DEFAULT_PAGE_SIZE`, or since removed from the property's bound value
+  // set - resolved directly by code instead (issue #306, ADR-0038), rather
+  // than left to fall back to the raw code the way #289 originally left it.
+  const unresolvedCodesByFacetKey = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const { facetKey, value } of activeFilters) {
+      if (
+        definitionByKey.get(facetKey)?.form_control.control !== "concept_picker" ||
+        !pagedIsSettledByFacetKey.get(facetKey) ||
+        pagedValueLabelByFacetKey.get(facetKey)?.has(value)
+      ) {
+        continue;
+      }
+      const codes = map.get(facetKey) ?? [];
+      if (!codes.includes(value)) {
+        codes.push(value);
+      }
+      map.set(facetKey, codes);
+    }
+    return map;
+  }, [
+    activeFilters,
+    definitionByKey,
+    pagedIsSettledByFacetKey,
+    pagedValueLabelByFacetKey,
+  ]);
+  const unresolvedFacetKeys = useMemo(
+    () => Array.from(unresolvedCodesByFacetKey.keys()),
+    [unresolvedCodesByFacetKey],
+  );
+  const resolveQueries = usePropertyValueResolveQueries(
+    unresolvedFacetKeys.map((key) => ({
+      key,
+      codes: unresolvedCodesByFacetKey.get(key) ?? [],
+    })),
+  );
+  const valueLabelByFacetKey = useMemo(() => {
+    const map = new Map<string, Map<string, string>>();
+    for (const [key, codeToDisplay] of pagedValueLabelByFacetKey) {
+      map.set(key, new Map(codeToDisplay));
+    }
+    unresolvedFacetKeys.forEach((key, index) => {
+      const codeToDisplay = map.get(key) ?? new Map<string, string>();
+      for (const item of resolveQueries[index]?.data?.items ?? []) {
+        codeToDisplay.set(item.code, item.display ?? item.code);
+      }
+      map.set(key, codeToDisplay);
+    });
+    return map;
+  }, [pagedValueLabelByFacetKey, unresolvedFacetKeys, resolveQueries]);
 
   const listQuery = useAdminEntriesList({
     limit: 50,

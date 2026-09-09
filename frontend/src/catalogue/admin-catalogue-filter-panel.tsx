@@ -1,6 +1,10 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
-import { usePropertyDefinitions, usePropertyValueOptions } from "../api/queries.ts";
+import {
+  usePropertyDefinitions,
+  usePropertyValueOptions,
+  usePropertyValueResolve,
+} from "../api/queries.ts";
 import { Checkbox } from "../components/checkbox.tsx";
 import { Field } from "../components/field.tsx";
 import { STATUS_OPTIONS } from "./status-options.ts";
@@ -95,10 +99,42 @@ function PropertyFacetGroup({
   // retired code, or one the current filter text no longer matches) stays
   // offered - matching `ConceptPickerControl`'s own reasoning for a single
   // value - so unchecking it is still possible without first clearing the
-  // filter text back to nothing.
-  const carriedOptions: FacetOption[] = selected
-    .filter((value) => !fetchedOptions.some((option) => option.value === value))
-    .map((value) => ({ value, label: value }));
+  // filter text back to nothing. Its label is resolved directly by code
+  // (issue #306, ADR-0038), unbounded by this page's own `DEFAULT_PAGE_SIZE`
+  // and independent of the property's current bound value set, rather than
+  // shown as the raw code.
+  //
+  // Held to `[]` until `options` has actually settled (success or error):
+  // before that, `fetchedOptions` is always empty, so every selected value
+  // would otherwise look "carried" for one render and fire a resolve
+  // request the page itself was about to answer a moment later - a real
+  // extra fetch, not just an extra cache read.
+  const carriedCodes = useMemo(
+    () =>
+      options.isPending
+        ? []
+        : selected.filter(
+            (value) => !fetchedOptions.some((option) => option.value === value),
+          ),
+    // `fetchedOptions` is a new array identity every render (derived from
+    // `options.data`) - depending on `options.data`/`options.isPending`
+    // instead keeps this memo stable across renders where neither the page
+    // nor the selection actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, options.data, options.isPending],
+  );
+  const carriedLabels = usePropertyValueResolve(propertyKey, carriedCodes);
+  const carriedLabelByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of carriedLabels.data?.items ?? []) {
+      map.set(item.code, item.display ?? item.code);
+    }
+    return map;
+  }, [carriedLabels.data]);
+  const carriedOptions: FacetOption[] = carriedCodes.map((value) => ({
+    value,
+    label: carriedLabelByCode.get(value) ?? value,
+  }));
 
   return (
     <div className="flex flex-col gap-2">

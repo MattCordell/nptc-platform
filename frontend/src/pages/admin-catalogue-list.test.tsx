@@ -308,7 +308,7 @@ describe("AdminCatalogueListPage", () => {
     // the facet key and the selected value to the same labels the filter
     // panel shows for the identical selection.
     it("resolves a coded property's chip to its registry label and display value", async () => {
-      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+      const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?filter.discipline=chemistry`, SIGNED_IN);
       await screen.findByRole("link", { name: DRAFT_KEY });
@@ -318,12 +318,22 @@ describe("AdminCatalogueListPage", () => {
           name: "Remove filter Discipline: Chemistry",
         }),
       ).toBeInTheDocument();
+      // Issue #306 acceptance criterion: a value the unfiltered page already
+      // answers must not also trigger a resolve-by-code request - one call
+      // to this path total, from the shared paged fetch alone.
+      expect(
+        calls.filter((call) => call.path.endsWith("/registry/properties/discipline/values"))
+          .length,
+      ).toBe(1);
     });
 
     // Issue #289: a coded value not present in the fetched value-options page
     // (filtered out, a retired code, or the fetch erroring) falls back to the
     // raw code as its own label - mirroring `PropertyFacetGroup`'s
     // `carriedOptions` fallback - rather than showing blank or "undefined".
+    // Issue #306's own resolve-by-code lookup is exercised here too (both
+    // stub responses below omit `retired_code`), so this is also the
+    // "neither side can resolve" case for that lookup.
     it("falls back to the raw code for a coded value absent from the fetched page", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
@@ -335,6 +345,40 @@ describe("AdminCatalogueListPage", () => {
           name: "Remove filter Discipline: retired_code",
         }),
       ).toBeInTheDocument();
+    });
+
+    // Issue #306, ADR-0038: a selected value beyond the unfiltered page's own
+    // `DEFAULT_PAGE_SIZE` (or absent for any other reason) resolves directly
+    // by code instead of falling back to the raw code - both the chip
+    // (`admin-catalogue-list.tsx`) and the filter panel's own carried
+    // checkbox (`PropertyFacetGroup`) share this fix.
+    it("resolves a chip and a carried checkbox beyond the fetched page via the code query parameter", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/registry/properties/discipline/values")) {
+            return null;
+          }
+          if (call.searchParams.has("code")) {
+            return {
+              method: "GET",
+              path: "/registry/properties/discipline/values",
+              status: 200,
+              body: { items: [{ code: "endocrinology", display: "Endocrinology" }], total: 1 },
+            };
+          }
+          return DISCIPLINE_VALUES_OK;
+        },
+      });
+
+      await renderRoute(`${LIST_URL}?filter.discipline=endocrinology`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        await screen.findByRole("button", {
+          name: "Remove filter Discipline: Endocrinology",
+        }),
+      ).toBeInTheDocument();
+      expect(await screen.findByRole("checkbox", { name: "Endocrinology" })).toBeChecked();
     });
 
     // Issue #289: the `status` facet resolves against the same
