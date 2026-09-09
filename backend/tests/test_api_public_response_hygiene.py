@@ -353,6 +353,7 @@ def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
             "code": _seed.ACTIVE_CODE,
             "fsn": _seed.ACTIVE_FSN,
             "reason": "Bound for the write-hygiene test.",
+            "expected_row_version": 1,
         },
     )
     replace_response = api.post(
@@ -361,6 +362,7 @@ def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
         json={
             "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
             "reason": "Replaced for the write-hygiene test.",
+            "expected_row_version": 2,
         },
     )
 
@@ -586,6 +588,7 @@ def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTest
             "code": _seed.ACTIVE_CODE,
             "fsn": _seed.ACTIVE_FSN,
             "reason": "Bound for the admin-read hygiene test.",
+            "expected_row_version": 1,
         },
     )
     api.post(
@@ -594,6 +597,7 @@ def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTest
         json={
             "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
             "reason": "Replaced for the admin-read hygiene test.",
+            "expected_row_version": 2,
         },
     )
 
