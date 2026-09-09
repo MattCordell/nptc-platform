@@ -126,9 +126,9 @@ All under `/api/v1/catalogue`, same path space as the public read routes.
 
 | Path | Method | Body | Returns |
 |---|---|---|---|
-| `/entries/{business_key}/bindings` | `POST` | `{code, fsn, au_preferred_term?, edition_hint?, reason}` | `201 Binding` |
-| `/entries/{business_key}/bindings/{code}/retirement` | `POST` | `{reason}` | `200 Binding` |
-| `/entries/{business_key}/bindings/{code}/replacement` | `POST` | `{successor: {code, fsn, au_preferred_term?, edition_hint?}, reason}` | `200 BindingList` (both rows) |
+| `/entries/{business_key}/bindings` | `POST` | `{code, fsn, au_preferred_term?, edition_hint?, reason, expected_row_version}` | `201 BindingWriteResult {binding, row_version}` |
+| `/entries/{business_key}/bindings/{code}/retirement` | `POST` | `{reason, expected_row_version}` | `200 BindingWriteResult {binding, row_version}` |
+| `/entries/{business_key}/bindings/{code}/replacement` | `POST` | `{successor: {code, fsn, au_preferred_term?, edition_hint?}, reason, expected_row_version}` | `200 BindingReplacementResult {items, row_version}` (both rows) |
 
 `business_key` accepts any status, not only `active` - an editing surface has to reach a
 `draft` entry before it can ever become `active`. `nptc.catalogue.entries.
@@ -194,6 +194,31 @@ self-supersession check compares row *identity*, not code, so a same-code replac
 would otherwise retire and re-bind one code in a single request and leave the response
 unable to tell the two rows apart by code.
 
+### `expected_row_version` (code bindings) - issue #60
+
+`code_binding` carries no version of its own, so all three routes share `catalogue_entry.
+row_version` as their lock - the same argument `nptc.catalogue.property_values.
+save_property_values` already makes for `property_value`, via `nptc.catalogue.entries.
+entry_child_write`.
+
+**Required, not optional.** Contrast the designations route's `/amendment`, which added
+the field to an endpoint with shipped clients and so left it optional on one branch (see
+below). These three routes gained the field at the same moment their only client learned
+to send it, so there was no back-compat client to break - a missing field is a compile-
+time TypeScript error once the generated client is regenerated, not a runtime 422.
+
+**`replace_binding` takes the lock once, before any of its three writes**, wrapping the
+retire/create/link sequence in a single `entry_child_write` - so a stale version refuses
+before `retire_binding` even runs, leaving no partial replacement (the predecessor still
+active, no successor row, no audit event) and not merely a refused final step. The
+self-supersession check runs first, ahead of the lock, since it needs no entry state.
+
+**Admin-only result models, not the public `Binding`/`BindingList`.** `BindingWriteResult`
+and `BindingReplacementResult` are declared in `catalogue_bindings.py`, mirroring
+`catalogue_properties.PropertyValuesWriteResult` - widening the public models with an
+admin-only `row_version` field would break `test_api_public_response_hygiene.py`, which
+derives its assertions from `catalogue.py`'s own route table.
+
 ### Authorisation (code bindings)
 
 Every route requires `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44) - held only by
@@ -210,23 +235,43 @@ the same as any other MFA-gated permission - see
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry with this `business_key`, or no *active* code binding for this `code`. |
-| 409 | A second active binding on this entry (FR-08), this code already actively bound to a different entry (issue #49's blocking severity) - including two concurrent requests racing for the same entry or code, see below - or `/replacement`'s successor naming the same code it is meant to replace. |
-| 422 | A malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that fails FR-37's validation. |
+| 409 | A second active binding on this entry (FR-08), this code already actively bound to a different entry (issue #49's blocking severity) - including two concurrent requests racing for the same entry or code, see below - `/replacement`'s successor naming the same code it is meant to replace, or a stale `expected_row_version` (FR-38, issue #60; `VersionConflictResponse`, see below). |
+| 422 | A malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, a changelog note that fails FR-37's validation, or a missing `expected_row_version`. |
 | 500 | A platform-side invariant failed - not a caller mistake, and not produced by anything a well-formed request can trigger on its own. |
 
-**Concurrency.** `create_binding`'s active-binding checks are read-then-write, so two
-concurrent binds racing for the same entry or the same code both pass the pre-check and
-only one wins at insert - `ix_code_binding_one_active_per_entry`/
+**Concurrency (updated by issue #60).** `create_binding`'s active-binding checks are
+read-then-write, so two concurrent binds racing for the same entry or the same code both
+pass the pre-check and only one wins at insert - `ix_code_binding_one_active_per_entry`/
 `ix_code_binding_one_active_entry_per_code` are what actually decide. The loser's
 `IntegrityError` is translated to the same `409` domain error the pre-check would have
 raised, via `nptc.db.errors.unique_violation_constraint` - the same constraint-name unwrap
 `nptc.auth.identity._is_username_collision` already needed, pulled out to one shared
 helper rather than a second copy - so a lost race still reads as a normal conflict, not a
-500. `load_entry_for_update` takes no row lock, so this is optimistic, not pessimistic,
-concurrency control - acceptable here because the loser gets a clean, actionable 409
-rather than corrupting state. Forced deterministically (an `after_cursor_execute` hook
-supplying the ordering plain sequential test code cannot express) in
-`test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror`.
+500. Forced deterministically (an `after_cursor_execute` hook supplying the ordering plain
+sequential test code cannot express) in
+`test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_integrityerror` - this test
+still passes unchanged after #60, because it races two *distinct* codes/entries where
+`entry_child_write`'s version check never fires (neither caller's `expected_row_version`
+is stale relative to the other's write) and the race is still decided at the index.
+
+`load_entry_for_update` itself still takes no row lock - see its own docstring - but
+`entry_child_write` (FR-38, issue #60) introduces the *first* `catalogue_entry` row lock
+these three routes take, via the ordinary `UPDATE ... WHERE row_version = ...` `version_
+id_col` produces when its own internal flush bumps the count - inside a `session.
+begin_nested()` savepoint, with the `StaleDataError` that flush can raise translated into
+the same `409` version conflict rather than escaping uncaught as a 500 (issue #60 review;
+see `entry_child_write`'s own docstring for the two-layer shape this relies on). Two
+concurrent binding writes against the *same* entry that do **not** collide on either
+partial unique index - different codes, or a bind racing a retire - now serialise on that
+row: the loser's flush blocks until the winner commits, then sees a stale `expected_row_
+version` and gets a `409` version conflict, because there was no index collision to race
+on in the first place. Two writers racing for the *same* code are unchanged by this issue:
+`create_binding`'s own `append_audit_event` flushes its `INSERT` before `entry_child_write`
+ever bumps or re-flushes, so that race is still decided at the partial unique index exactly
+as before, and the loser still sees the translated `IntegrityError`-derived domain error
+above, not a version conflict. The index-level race is otherwise unchanged and still
+applies wherever `entry_child_write` cannot see it at all - two *different* entries, or two
+callers each holding a version that was still current when they read it.
 
 Every `CodeBinding*` exception from `nptc.catalogue.bindings` is mapped in
 `nptc.api.errors` by the same convention every other handler in that module follows:
@@ -706,14 +751,20 @@ resubmission (see above) is not a rejection - it is a `200`.
 
 - Entry creation over HTTP. `nptc.catalogue.entries.create_entry` is library-only -
   same FR-36 family as the writes above, different gap, not covered by any issue here.
-- FR-38 optimistic locking on the code-binding routes. Issue #227 put `row_version` on
-  the wire and `expected_row_version` on `/amendment` only; `catalogue_bindings.py`'s
-  three routes take no version at all. Two administrators editing one entry's bindings
-  concurrently therefore remains unguarded - the "Concurrency" notes above only prevent
-  *data corruption* (two active bindings, a duplicate term), not one admin's edit
-  silently overwriting context the other was working from. The same is true of two
-  administrators editing different *designations* on one entry, since a designation
-  write does not bump the entry's version.
+- **FR-38 optimistic locking on a *designation* amendment.** Issue #60 closed the
+  code-binding half of this gap (see "`expected_row_version` (code bindings)" above) by
+  making `expected_row_version` required on all three binding routes and having them
+  bump `catalogue_entry.row_version` through `entry_child_write`. The designation half
+  is still open: `assert_entry_row_version` on `/amendment`'s designation branch (see
+  "`expected_row_version`: required on one branch, honoured on both" above) *checks*
+  the version but never *bumps* it, so two administrators amending different
+  designations on the same entry still do not see one another - the second save
+  succeeds against a version the first save has already moved past, silently. Fixing
+  this honestly also requires making the field required on that branch (an optional
+  field that bumped the counter would let a caller who omits it invalidate every other
+  editor's still-current token while gaining no protection itself) - a second breaking
+  change with its own documentation, tracked as a follow-up (#300) rather than folded
+  into #60.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.

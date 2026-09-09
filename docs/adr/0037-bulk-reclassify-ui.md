@@ -96,6 +96,24 @@ version in view. The list clears `selected` unconditionally once `onComplete` fi
 `BulkOutcomeSummary` is the durable record of what to revisit, and re-selecting is an
 explicit act.
 
+### Bulk clearing is deliberately not offered — only bulk setting
+
+The server places no floor on `values.length` on the bulk write route: an empty set is a
+legitimate whole-set *clear*, the same as the singular `PUT
+/catalogue/entries/{business_key}/properties/{key}` route already allows for one entry.
+The dialog refuses this rather than passing it through: `noValuesEntered` blocks submit
+with "Add at least one value before reclassifying." whenever a property is chosen but
+every auto-rendered value slot is left blank, composed into the same `Form.
+submitBlocked` gate chain as the 100-entry cap and the changelog note.
+
+This is a genuine capability restriction, not input validation for its own sake — FR-39's
+own framing is "set one property to one value" across a selection, and a bulk write with
+a much larger blast radius than a single-entry edit is exactly the wrong place to also
+offer "clear this across everyone selected" for free. The singular route keeps that
+capability per entry; an operator who wants to clear a property across a selection does
+so one entry at a time through its own editing screen (#61), where the smaller blast
+radius matches the smaller, more deliberate action.
+
 ### The 100-entry cap is enforced inside the dialog, not the toolbar
 
 `BulkReclassifyToolbar`'s launch button is never disabled by the cap. `_MAX_BULK_ENTRIES`
@@ -115,3 +133,4 @@ way to see why short of backing out to the list and counting rows by hand.
 | A one-click "retry" on a conflicted outcome row | Last-write-wins with no field diff to justify it in the common case (`conflicts: []`) - exactly what FR-38 exists to prevent. An operator who wants to proceed uses the single-entry edit screen's own reconciliation flow. |
 | Refreshing the selection's captured `expected_row_version`s from the outcome list for a follow-up submit | Lets a second bulk write blind-overwrite a concurrent edit to one of those entries with no re-selection in between. |
 | Disabling the toolbar's launch button past the 100-entry cap | Tells the operator nothing about *why*, and they may want to deselect down to the cap from inside the dialog rather than back out to the list first. |
+| Passing an empty `values[]` through to the bulk route, matching what the singular per-entry route already allows | A much larger blast radius than a single-entry edit is the wrong place to also offer bulk clearing for free - #295 recorded this decision here after PR #290 review added the gate without documenting it. |

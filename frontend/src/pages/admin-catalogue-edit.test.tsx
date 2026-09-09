@@ -1660,7 +1660,12 @@ describe("code bindings", () => {
     const calls = stubApi([
       READ_OK,
       terminologyRoute(FSN_CODE),
-      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 201,
+        body: { binding: ACTIVE_BINDING, row_version: 4 },
+      },
     ]);
     await renderLoaded();
 
@@ -1686,6 +1691,7 @@ describe("code bindings", () => {
       au_preferred_term: AU_PT,
       edition_hint: "au",
       reason: "Add the primary code",
+      expected_row_version: ENTRY.row_version,
     });
     // The wire text itself, not the parsed value: `JSON.parse` cannot tell a
     // quoted SCTID from a bare number once parsed either way.
@@ -1699,7 +1705,12 @@ describe("code bindings", () => {
     const calls = stubApi([
       READ_OK,
       terminologyRoute(FSN_CODE, { active: false }),
-      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 201,
+        body: { binding: ACTIVE_BINDING, row_version: 4 },
+      },
     ]);
     await renderLoaded();
 
@@ -1791,7 +1802,12 @@ describe("code bindings", () => {
     const calls = stubApi([
       READ_OK,
       terminologyRoute(FSN_CODE, { edition: "gb" }),
-      { method: "POST", path: BIND_PATH, status: 201, body: ACTIVE_BINDING },
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 201,
+        body: { binding: ACTIVE_BINDING, row_version: 4 },
+      },
     ]);
     await renderLoaded();
 
@@ -1908,10 +1924,10 @@ describe("code bindings", () => {
   });
 
   it("shows the server's own sentence when a bind is refused, not a status code", async () => {
-    // The concurrent-editor case `catalogue-write-api.md` notes is
-    // unguarded: these routes take no `row_version`, so a second active
-    // binding can still reach the server as a 409 even though the form is
-    // never offered for it deliberately.
+    // A domain conflict (FR-08's "at most one active binding"), not a
+    // version conflict - the bare `{detail}` shape below is what a caller
+    // sees for that case even after issue #60 (see the two version-conflict
+    // tests below for the other 409 shape this route can now produce).
     const user = userEvent.setup();
     stubApi([
       READ_OK,
@@ -1943,6 +1959,86 @@ describe("code bindings", () => {
     expect(screen.queryByText(/\b409\b/)).not.toBeInTheDocument();
   });
 
+  it("explains a stale row_version on bind through the same conflict presentation as the terms panel (FR-38, issue #60)", async () => {
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE),
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 409,
+        body: {
+          detail: "This entry was changed by someone else since you loaded it.",
+          business_key: BUSINESS_KEY,
+          expected_row_version: ENTRY.row_version,
+          current_row_version: ENTRY.row_version + 1,
+          conflicts: [],
+          changed_by: "A Curator",
+          changed_at: "2026-09-02T01:00:00Z",
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    // `RefusalNotice` picks the `VersionConflictNotice` branch generically
+    // off the body shape (`asVersionConflict`), with no binding-specific
+    // component - the same presentation the terms panel's own 409 uses.
+    expect(await screen.findByText(/A Curator/)).toBeInTheDocument();
+    expect(screen.getByText(/The entry is reloading/)).toBeInTheDocument();
+  });
+
+  it("refetches the entry when a bind hits a stale row_version, so a retry can succeed", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      terminologyRoute(FSN_CODE),
+      {
+        method: "POST",
+        path: BIND_PATH,
+        status: 409,
+        body: {
+          detail: "This entry was changed by someone else since you loaded it.",
+          business_key: BUSINESS_KEY,
+          expected_row_version: ENTRY.row_version,
+          current_row_version: ENTRY.row_version + 1,
+          conflicts: [],
+          changed_by: "A Curator",
+          changed_at: "2026-09-02T01:00:00Z",
+        },
+      },
+    ]);
+    await renderLoaded();
+    const readsBefore = readsOf(calls).length;
+
+    await typeCodeAndWait(
+      user,
+      inBindingsPanel().getByLabelText("SNOMED CT code"),
+      FSN_CODE,
+      FSN,
+    );
+    await user.type(
+      inBindingsPanel().getByLabelText(/Changelog note/),
+      "Add the primary code",
+    );
+    await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
+
+    await screen.findByText(/The entry is reloading/);
+    await waitFor(() => expect(readsOf(calls).length).toBeGreaterThan(readsBefore));
+  });
+
   it("refuses to retire without a reason", async () => {
     const user = userEvent.setup();
     const calls = stubApi([
@@ -1970,7 +2066,14 @@ describe("code bindings", () => {
         method: "POST",
         path: `${BIND_PATH}/${FSN_CODE}/retirement`,
         status: 200,
-        body: { ...ACTIVE_BINDING, status: "retired", retirement_reason: "Superseded" },
+        body: {
+          binding: {
+            ...ACTIVE_BINDING,
+            status: "retired",
+            retirement_reason: "Superseded",
+          },
+          row_version: ENTRY.row_version + 1,
+        },
       },
     ]);
     await renderLoaded();
@@ -1984,6 +2087,7 @@ describe("code bindings", () => {
     );
     expect(callsTo(calls, `${BIND_PATH}/${FSN_CODE}/retirement`)[0]?.body).toEqual({
       reason: "Superseded",
+      expected_row_version: ENTRY.row_version,
     });
   });
 
@@ -2002,7 +2106,7 @@ describe("code bindings", () => {
         method: "POST",
         path: `${BIND_PATH}/${FSN_CODE}/replacement`,
         status: 200,
-        body: { items: [] },
+        body: { items: [], row_version: ENTRY.row_version + 1 },
       },
     ]);
     await renderLoaded();
@@ -2031,6 +2135,7 @@ describe("code bindings", () => {
         edition_hint: "au",
       },
       reason: "Superseded by the new method",
+      expected_row_version: ENTRY.row_version,
     });
   });
 
@@ -2191,6 +2296,8 @@ describe("cross-panel", () => {
     // carries the bumped version to the other two panels' own `entry.row_
     // version` prop - not anything either of them computes itself.
     let amended = false;
+    let propertySaved = false;
+    const RETIRE_PATH = `${BIND_PATH}/${FSN_CODE}/retirement`;
     const calls = stubApi(
       [
         POPULATED_READ_OK,
@@ -2220,6 +2327,19 @@ describe("cross-panel", () => {
             row_version: 5,
           },
         },
+        {
+          method: "POST",
+          path: RETIRE_PATH,
+          status: 200,
+          body: {
+            binding: {
+              ...ACTIVE_BINDING,
+              status: "retired",
+              retirement_reason: "Cross-panel",
+            },
+            row_version: 6,
+          },
+        },
       ],
       {
         vary: (call) => {
@@ -2227,15 +2347,31 @@ describe("cross-panel", () => {
             amended = true;
             return null;
           }
-          if (call.method === "GET" && call.path.endsWith(READ_OK.path) && amended) {
-            return {
-              ...POPULATED_READ_OK,
-              body: {
-                ...POPULATED_ENTRY,
-                row_version: 4,
-                preferred_term: "Ferritin, renamed",
-              },
-            };
+          if (call.method === "PUT" && call.path.endsWith(PROPERTIES_SAVE_PATH)) {
+            propertySaved = true;
+            return null;
+          }
+          if (call.method === "GET" && call.path.endsWith(READ_OK.path)) {
+            if (propertySaved) {
+              return {
+                ...POPULATED_READ_OK,
+                body: {
+                  ...POPULATED_ENTRY,
+                  row_version: 5,
+                  preferred_term: "Ferritin, renamed",
+                },
+              };
+            }
+            if (amended) {
+              return {
+                ...POPULATED_READ_OK,
+                body: {
+                  ...POPULATED_ENTRY,
+                  row_version: 4,
+                  preferred_term: "Ferritin, renamed",
+                },
+              };
+            }
           }
           return null;
         },
@@ -2307,6 +2443,26 @@ describe("cross-panel", () => {
     expect(propertySaveCalls()[0]?.body).toMatchObject({
       expected_row_version: 4,
     });
+
+    // The propagation this PR adds: the code bindings panel's own writes
+    // (issue #60) must thread the same refetched `row_version` the
+    // properties panel just proved it received - not the value the page
+    // first loaded with, and not the designation amend's own bump alone.
+    // The property save above bumped `row_version` to 5, so this retire
+    // must carry that, not the stale 3 or the intermediate 4.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Ferritin, renamed", level: 1 }),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
+    await user.type(inDialog().getByLabelText(/Changelog note/), "Cross-panel");
+    await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
+
+    const retireCalls = () =>
+      calls.filter((call) => call.method === "POST" && call.path.endsWith(RETIRE_PATH));
+    await waitFor(() => expect(retireCalls()).toHaveLength(1));
+    expect(retireCalls()[0]?.body).toMatchObject({ expected_row_version: 5 });
   });
 
   it("has no automated accessibility violations with all three panels populated", async () => {

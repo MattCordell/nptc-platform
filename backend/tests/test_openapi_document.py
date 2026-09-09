@@ -94,6 +94,9 @@ _CATALOGUE_SCHEMA_NAMES = (
     "RetireBindingRequest",
     "ReplaceBindingRequest",
     "ReplacementSuccessor",
+    # issue #60: the row-version lock on the same write surface.
+    "BindingWriteResult",
+    "BindingReplacementResult",
     # issue #224's write surface, same reasoning.
     "AddDesignationsRequest",
     "DesignationWriteResult",

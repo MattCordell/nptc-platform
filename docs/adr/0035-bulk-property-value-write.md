@@ -183,6 +183,15 @@ a lost transaction discards. A full fix — the same "advisory lock before any r
 ordering applied to every catalogue-entry writer — is a larger, higher-blast-radius
 change than this issue's own scope and is filed as a follow-up (issue #281).
 
+**Issue #60 adds the first singular writer conforming to this ordering.** The three
+code-binding routes' new `nptc.catalogue.entries.entry_child_write` acquires the append
+lock before its own version check (and so before any row lock the wrapped write takes) —
+the same order this addendum establishes, applied to a single-entry writer rather than
+the bulk seam. This narrows, but does not close, the residual case above: a binding write
+racing this bulk route no longer risks the ordering inversion, but `save_entry` and the
+singular property-value route still take their row lock first, so #281 remains open for
+the rest.
+
 ## Consequences
 
 - A generated client (or a future frontend) must read `outcomes[]`/`applied`/

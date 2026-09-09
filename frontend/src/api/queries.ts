@@ -400,6 +400,19 @@ export function useBindCode(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // Same FR-38 reasoning as `useAmendDesignation`/`useSavePropertyValues`:
+    // a stale `expected_row_version` means the entry moved under the editor,
+    // so the cached copy is refetched rather than left to fail identically
+    // on retry from an open dialog (issue #60 - the three binding mutations
+    // only ever invalidated on success before this, so a 409 here used to
+    // leave the panel retrying forever with the same stale token).
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 
@@ -424,6 +437,14 @@ export function useRetireBinding(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // See `useBindCode`'s identical note.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 
@@ -449,6 +470,14 @@ export function useReplaceBinding(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // See `useBindCode`'s identical note.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 

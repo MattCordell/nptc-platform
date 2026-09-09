@@ -338,12 +338,13 @@ def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
     api.session.flush()
     admin_token = api.token(subject="sub-write-hygiene", extra_claims={"acr": "2"})
 
-    business_key = create_entry(
+    entry = create_entry(
         api.session,
         AuditContext.system(),
         preferred_term="Write hygiene fixture",
         reason="Created for issue #219 hygiene test",
-    ).business_key
+    )
+    business_key = entry.business_key
     api.session.flush()
 
     bind_response = api.post(
@@ -353,14 +354,20 @@ def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
             "code": _seed.ACTIVE_CODE,
             "fsn": _seed.ACTIVE_FSN,
             "reason": "Bound for the write-hygiene test.",
+            "expected_row_version": entry.row_version,
         },
     )
+    # Read back from the bind response rather than hardcoding the next
+    # value (issue #60 review) - hardcoding couples this test to the seed's
+    # exact version history and silently depends on the request above
+    # having bumped it by exactly one.
     replace_response = api.post(
         f"/catalogue/entries/{business_key}/bindings/{_seed.ACTIVE_CODE}/replacement",
         token=admin_token,
         json={
             "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
             "reason": "Replaced for the write-hygiene test.",
+            "expected_row_version": bind_response.json()["row_version"],
         },
     )
 
@@ -571,29 +578,34 @@ def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTest
     api.session.flush()
     admin_token = api.token(subject="sub-admin-read-hygiene", extra_claims={"acr": "2"})
 
-    business_key = create_entry(
+    entry = create_entry(
         api.session,
         AuditContext.system(),
         preferred_term="Admin read hygiene fixture",
         reason="Created for issue #228 hygiene test",
-    ).business_key
+    )
+    business_key = entry.business_key
     api.session.flush()
 
-    api.post(
+    bind_response = api.post(
         f"/catalogue/entries/{business_key}/bindings",
         token=admin_token,
         json={
             "code": _seed.ACTIVE_CODE,
             "fsn": _seed.ACTIVE_FSN,
             "reason": "Bound for the admin-read hygiene test.",
+            "expected_row_version": entry.row_version,
         },
     )
+    # Read back from the bind response rather than hardcoding the next
+    # value (issue #60 review) - see the write-hygiene test's own comment.
     api.post(
         f"/catalogue/entries/{business_key}/bindings/{_seed.ACTIVE_CODE}/replacement",
         token=admin_token,
         json={
             "successor": {"code": _seed.RETIRED_CODE, "fsn": _seed.RETIRED_FSN},
             "reason": "Replaced for the admin-read hygiene test.",
+            "expected_row_version": bind_response.json()["row_version"],
         },
     )
 

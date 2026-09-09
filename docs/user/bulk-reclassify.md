@@ -31,9 +31,10 @@ dialog tells you so and does not let you save until you reduce your selection.
 
 Once the batch completes, the dialog closes and a results panel appears on the list
 screen showing how many entries were applied, left unchanged, conflicted, or were not
-found. If every selected entry was updated cleanly, that is all you see.
+found, plus a table of entries skipped from the batch. If every selected entry was
+updated cleanly, that table says so — "Nothing was skipped."
 
-If any entries were skipped, the panel lists each one and why:
+If any entries were skipped, the table lists each one and why:
 
 - **Someone else changed it first.** Another editor changed that entry after you
   selected it but before your batch reached it. That one entry keeps their change; every
@@ -61,6 +62,12 @@ note are kept exactly as you left them; adjust what you are setting and try agai
 **Save stays unavailable, with a message under the changelog note.** Same as
 [editing a property directly](editing-registry-properties.md#if-something-goes-wrong) —
 write a real sentence describing the change.
+
+**"Add at least one value before reclassifying."** You chose a property but left every
+value blank. This dialog only ever sets a property to one or more values — it does not
+offer bulk clearing, even though the server accepts an empty set as a whole-set clear on
+a single entry's own editing screen. Enter at least one value, or close the dialog if you
+meant to clear the property on entries one at a time instead.
 
 **"You cannot reclassify entries with your current sign-in."** See the note on
 multi-factor authentication in [Editing an entry](editing-an-entry.md) — the same

@@ -18,7 +18,9 @@ from nptc.audit.writer import AuditContext
 from nptc.catalogue.entries import (
     EntryChanges,
     create_entry,
+    entry_child_write,
     format_business_key,
+    load_entry_for_update,
     save_entries,
     save_entry,
 )
@@ -387,6 +389,291 @@ def test_session_remains_usable_after_a_caught_conflict(app_session: Session) ->
         reason="third save",
     )
     assert recovered.row_version == 3
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_bumps_row_version_on_clean_exit(app_session: Session) -> None:
+    """The issue #60 helper: a write to a table hanging off `entry` (no
+    `row_version` of its own) shares `catalogue_entry.row_version` as its
+    lock, and a clean exit from the `with` block bumps it exactly once -
+    checked against a reload of the row, not just the in-memory attribute
+    (issue #60 review: `version_id_col`'s guarded `UPDATE` is what actually
+    enforces this, and only a flush plus a reload proves it ran and
+    matched - `entry_child_write` now flushes internally, before the `with`
+    block ever returns, as part of its own `StaleDataError` backstop)."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+    assert entry.row_version == 1
+
+    with entry_child_write(app_session, entry, 1):
+        pass
+
+    assert entry.row_version == 2
+
+    app_session.expire(entry)
+    reloaded = load_entry_for_update(app_session, entry.business_key)
+    assert reloaded.row_version == 2
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_does_not_bump_when_the_body_raises(app_session: Session) -> None:
+    """A body that raises must leave `row_version` untouched - the whole
+    point of bumping *after* `yield` rather than in a `finally`, so a
+    failed child write cannot invalidate a concurrent editor's own
+    still-current token. Checked against a reload, not just the in-memory
+    attribute (issue #60 review round 3's own nit, matching the clean-exit
+    test's own reload check) - the `except BaseException` branch rolls the
+    savepoint back on any exception, so the row itself must agree."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+
+    class _BoomError(RuntimeError):
+        pass
+
+    with pytest.raises(_BoomError), entry_child_write(app_session, entry, 1):
+        raise _BoomError("simulated failure inside the wrapped write")
+
+    assert entry.row_version == 1
+
+    app_session.expire(entry)
+    reloaded = load_entry_for_update(app_session, entry.business_key)
+    assert reloaded.row_version == 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_refuses_a_stale_version_before_the_body_runs(
+    app_session: Session,
+) -> None:
+    """A stale `expected_row_version` raises `EntryVersionConflictError`
+    before the wrapped body ever executes, and leaves `row_version`
+    untouched - mirroring `assert_entry_row_version`'s own precondition-
+    before-mutation posture."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+    save_entry(
+        app_session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=1,
+        changes=EntryChanges(preferred_term="Moved on"),
+        reason="first save",
+    )
+    assert entry.row_version == 2
+
+    body_ran = False
+
+    with (
+        pytest.raises(EntryVersionConflictError) as exc_info,
+        entry_child_write(app_session, entry, 1),  # stale - now at version 2
+    ):
+        body_ran = True
+
+    assert not body_ran
+    assert exc_info.value.report.expected_row_version == 1
+    assert exc_info.value.report.current_row_version == 2
+
+    current = load_entry_for_update(app_session, entry.business_key)
+    assert current.row_version == 2
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_writes_own_sql(
+    app_session: Session, app_engine: Engine
+) -> None:
+    """Issue #281's ordering invariant, proven against the actual SQL
+    `entry_child_write` and its wrapped body issue - not merely the order
+    two Python statements happen to appear in source (issue #60 review: the
+    previous version of this test monkeypatched `acquire_append_lock` with
+    a spy and asserted against a plain Python list, which would pass for
+    any implementation with those same two lines in that order and never
+    touched the database at all).
+
+    The wrapped body flushes its own raw-SQL `UPDATE` inside the `with`
+    block, before `entry_child_write`'s own version-bump flush ever runs -
+    so this covers the row lock a caller's write takes for itself, not only
+    the one `bump_entry_row_version` takes at the very end."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term="Original term",
+        reason="Created for entry_child_write test",
+    )
+
+    statements: list[str] = []
+
+    def _record(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", _record)
+    try:
+        with entry_child_write(app_session, entry, 1):
+            app_session.execute(
+                text("UPDATE catalogue_entry SET preferred_term = :term WHERE id = :id"),
+                {"term": "Bumped by the wrapped write", "id": entry.id},
+            )
+            app_session.flush()
+    finally:
+        event.remove(app_engine, "before_cursor_execute", _record)
+
+    lock_index = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s)
+    write_index = next(
+        i for i, s in enumerate(statements) if "UPDATE catalogue_entry SET preferred_term" in s
+    )
+    assert lock_index < write_index
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_catches_a_genuine_concurrent_race(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """The second conflict-detection layer `entry_child_write` itself now
+    carries (issue #60 review) - the one `assert_entry_row_version`'s
+    precondition check can never reach, because both callers pass it.
+    Mirrors `test_version_id_col_backstop_catches_a_genuine_concurrent_
+    race`'s own `after_cursor_execute` injection exactly; see that test's
+    docstring for why the hook is needed to express this ordering at all.
+
+    Before this fix, the flush this triggers inside `entry_child_write`
+    raised an uncaught `StaleDataError` - a 500 at the API layer, not a
+    409. This proves it is translated into `EntryVersionConflictError`
+    instead, and - by inserting a real `code_binding` row in the wrapped
+    body and reading it back through `race_session` itself, while that
+    session's transaction is still open (issue #60 review round 3: reading
+    it back through a separate `owner_engine` connection, or after `race_
+    session.close()` had already rolled the whole transaction back, could
+    only ever see zero rows - passing identically whether or not the
+    savepoint rollback did anything) - that the savepoint rolls the
+    wrapped write back along with the version bump, the guarantee
+    `replace_binding`'s three-step body actually leans on."""
+    business_key = format_business_key(999_000_060)
+    with app_engine.connect() as setup_connection:
+        entry_id = setup_connection.execute(
+            text(
+                "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                "VALUES (:key, 'Original term') RETURNING id"
+            ),
+            {"key": business_key},
+        ).scalar_one()
+        setup_connection.commit()
+
+    fired = False
+
+    def _inject_concurrent_write(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if (
+            fired
+            or "catalogue_entry" not in statement
+            or not statement.strip().upper().startswith("SELECT")
+        ):
+            return
+        fired = True
+        with app_engine.connect() as other_connection:
+            other_connection.execute(
+                text(
+                    "UPDATE catalogue_entry SET row_version = row_version + 1, "
+                    "preferred_term = 'Raced ahead' WHERE business_key = :key"
+                ),
+                {"key": business_key},
+            )
+            other_connection.commit()
+
+    body_ran = False
+    remaining = -1
+    #: Verhoeff-valid (matches `test_catalogue_bindings.py`'s own
+    #: `_VALID_CODE`) - the wrapped write below inserts a real row with it,
+    #: not a stand-in, so a savepoint rollback has something genuine to undo.
+    wrapped_write_code = "391483001"
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_write)
+        race_session = Session(bind=app_engine)
+        try:
+            entry = load_entry_for_update(race_session, business_key)
+            with (
+                pytest.raises(EntryVersionConflictError) as exc_info,
+                entry_child_write(race_session, entry, 1),
+            ):
+                race_session.execute(
+                    text(
+                        "INSERT INTO code_binding (entry_id, code, fsn) "
+                        "VALUES (:entry_id, :code, 'Raced binding')"
+                    ),
+                    {"entry_id": entry_id, "code": wrapped_write_code},
+                )
+                body_ran = True
+            # Through `race_session` itself, while its transaction is still
+            # open - not `owner_engine` after `race_session.close()` below
+            # has rolled that transaction back, which would read `0`
+            # regardless of whether the savepoint itself did anything
+            # (issue #60 review round 3). This also exercises the session
+            # staying usable after a caught conflict, the same property
+            # `test_session_remains_usable_after_a_caught_conflict` holds.
+            remaining = race_session.execute(
+                text("SELECT count(*) FROM code_binding WHERE entry_id = :entry_id"),
+                {"entry_id": entry_id},
+            ).scalar_one()
+        finally:
+            race_session.close()
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
+
+        assert fired, "the injected concurrent write never ran - the test proves nothing"
+        assert body_ran, "the wrapped body never ran - the test proves nothing"
+        assert remaining == 0, (
+            "the wrapped write survived the conflict - the savepoint did not roll it back"
+        )
+
+        report = exc_info.value.report
+        assert report.expected_row_version == 1
+        assert report.current_row_version == 2
+
+        with owner_engine.connect() as check_connection:
+            preferred_term = check_connection.execute(
+                text("SELECT preferred_term FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            ).scalar_one()
+        assert preferred_term == "Raced ahead"
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM code_binding WHERE entry_id = :entry_id"),
+                {"entry_id": entry_id},
+            )
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            cleanup_connection.commit()
 
 
 @pytest.mark.req("FR-38")

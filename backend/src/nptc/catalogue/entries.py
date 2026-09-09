@@ -23,7 +23,10 @@ and flush. That second case surfaces as SQLAlchemy's own `StaleDataError`
 at `session.flush()` time, wrapped inside a `session.begin_nested()`
 savepoint so only this entry's attempted write rolls back - not the whole
 request, which matters for `save_entries`' multi-entry, one-savepoint-per-
-entry loop that #63's bulk reclassify is meant to call.
+entry loop that #63's bulk reclassify is meant to call. `entry_child_write`
+(issue #60) applies the same two layers to a write against a table that
+hangs off `entry` but keeps no `row_version` of its own - see its own
+docstring.
 
 **Why no audit event is ever written for a rejected save.** The first
 layer raises before `nptc.audit.recording.record_change` is ever called.
@@ -59,7 +62,8 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
@@ -72,7 +76,7 @@ from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.policy import policy_for
 from nptc.audit.recording import record_change
-from nptc.audit.writer import AuditContext
+from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.collisions import assert_no_error_collisions
 from nptc.catalogue.errors import (
@@ -417,9 +421,9 @@ def assert_entry_row_version(
     regardless, and still carrying `current_row_version`/`changed_by`/
     `changed_at` so the caller is never left with nothing to show.
 
-    This is layer *one* only. `save_entry` keeps its own `StaleDataError`
-    backstop for the genuine load-to-flush race, which no precondition
-    check can see - see the module docstring.
+    This is layer *one* only. `save_entry` and `entry_child_write` each
+    keep their own `StaleDataError` backstop for the genuine load-to-flush
+    race, which no precondition check can see - see the module docstring.
     """
     if entry.row_version == expected_row_version:
         return
@@ -433,6 +437,128 @@ def assert_entry_row_version(
             changed_at=changed_at,
         )
     )
+
+
+def bump_entry_row_version(entry: CatalogueEntry) -> None:
+    """Advances `entry.row_version` by one, so the next writer's
+    `expected_row_version` must be the value this write just produced.
+
+    `entry.row_version += 1`, never a Core `update()` - the ORM assignment
+    is what `version_id_col` actually enforces at flush, and
+    `test_sql_parameterisation.py`'s AST guard rejects a Core-style update
+    against `catalogue_entry` for the reason ADR-0012 already gives for
+    `property_definition`. Called from inside `entry_child_write` on a
+    clean exit. Deliberately **not** adopted by `save_property_values`,
+    whose own inline `entry.row_version += 1` is conditional on that
+    function's no-op short-circuit - a schedule `entry_child_write` below
+    does not share - so refactoring it onto this helper is out of scope
+    here (see `entry_child_write`'s own docstring)."""
+    entry.row_version += 1
+
+
+@contextmanager
+def entry_child_write(
+    session: Session, entry: CatalogueEntry, expected_row_version: int
+) -> Iterator[None]:
+    """Wraps a write to a table that hangs off `entry` but keeps no
+    `row_version` of its own - `code_binding` is the first caller (issue
+    #60) - so it shares `catalogue_entry.row_version` as its one optimistic
+    lock, the same argument `save_property_values`'s own docstring already
+    makes for `property_value`.
+
+    **Both of FR-38's layers, not just the first (issue #60 review).**
+    `assert_entry_row_version` below is layer one - a precondition check
+    against the row `entry` was already loaded with - and on its own it
+    cannot see two callers who both load the same version and interleave
+    between that check and the flush that actually enforces
+    `version_id_col`. So the caller's writes (yielded) and `bump_entry_
+    row_version` run inside one `session.begin_nested()` savepoint, flushed
+    before that savepoint commits: a `StaleDataError` at that flush is
+    caught here and translated into `EntryVersionConflictError`, the same
+    two-layer shape `save_entry`/`save_property_values_for_entries` already
+    use - applied here to a caller with no `EntryChanges` of its own to
+    report, so the translated `ConflictReport` carries `conflicts=()`,
+    exactly like `assert_entry_row_version`'s designation caller. Without
+    this, that race reached a caller as an uncaught `StaleDataError` - a
+    500, not a 409 - because before this issue no binding write touched
+    `catalogue_entry` at all, so `version_id_col` had nothing to collide on.
+
+    Wrapping the body's writes in the *same* savepoint as the version bump
+    is also what lets `replace_binding`'s three-step body share a single
+    `with`: a stale version caught only at the final flush still rolls back
+    all three writes together, leaving no partial replacement and no audit
+    event - the same guarantee a version already known stale up front gets
+    from the precondition check.
+
+    `acquire_append_lock` is the first statement below - before the
+    savepoint opens, and so before anything that could take a `catalogue_
+    entry` row lock. Setting `entry.row_version` does not touch the
+    database by itself; the `UPDATE ... WHERE row_version = ...` `version_
+    id_col` issues is what does, and that now happens at this context
+    manager's own flush, inside the savepoint, always after the append
+    lock. `save_property_values_for_entries` already establishes the same
+    order for its own multi-row case; this is that argument applied to a
+    single entry's child write.
+
+    A caller no longer needs its own `session.flush()` after the `with`
+    block: by the time control returns here, this context manager's own
+    flush has already run and any `StaleDataError` it raised has already
+    been translated.
+
+    **The `StaleDataError`/`ObjectDeletedError` handler re-loads by
+    `business_key`, never by refreshing `entry` in place (issue #60
+    review).** `session.refresh(entry)` on a row another transaction has
+    since hard-deleted raises `ObjectDeletedError` itself - inside the
+    handler *for* `ObjectDeletedError` - which would reach the caller as an
+    unmapped 500. `business_key` is captured before the savepoint opens, so
+    reading it never touches an expired attribute; `load_entry_for_update`
+    then either finds the current row or raises the *domain*
+    `EntryNotFoundError` - mapped centrally to a real 404, never caught
+    here - the same shape `save_entry`'s own identical handler already
+    relies on. `catalogue_entry` has no hard-delete path in this codebase
+    today, so this branch is not known to be reachable in practice; it
+    exists so that if one is ever added, this handler fails the same way
+    `save_entry`'s does rather than differently.
+
+    **Any exception the wrapped body raises that is not one of these two
+    still rolls the savepoint back (issue #60 review).** A domain error
+    from the body - `load_active_binding`'s 404, `create_binding`'s
+    translated `CodeBindingAlreadyActiveError` - is not a version conflict
+    and is re-raised unchanged, but leaving the savepoint open would make
+    the "no partial write" guarantee depend on the caller's own teardown
+    (today, `session_scope` rolling back the whole request on any
+    exception) rather than being local to this context manager - the same
+    posture `save_entry` takes, and one a future caller that catches a
+    per-entry domain error and keeps using the session (as `save_entries`
+    already does for #63's bulk shape) would need to be able to rely on.
+    """
+    acquire_append_lock(session)
+    assert_entry_row_version(session, entry, expected_row_version)
+    business_key = entry.business_key
+    savepoint = session.begin_nested()
+    try:
+        yield
+        bump_entry_row_version(entry)
+        session.flush()
+    except (StaleDataError, ObjectDeletedError):
+        savepoint.rollback()
+        session.expire(entry)
+        refreshed = load_entry_for_update(session, business_key)
+        changed_by, changed_at = _latest_change_attribution(session, refreshed.id)
+        raise EntryVersionConflictError(
+            _build_conflict_report(
+                refreshed,
+                expected_row_version=expected_row_version,
+                changes=EntryChanges(),
+                changed_by=changed_by,
+                changed_at=changed_at,
+            )
+        ) from None
+    except BaseException:
+        savepoint.rollback()
+        raise
+    else:
+        savepoint.commit()
 
 
 def save_entry(
