@@ -7,10 +7,11 @@ FR-52, FR-90). See `nptc.registry.handlers.BindingSpec` for the two
 `binding_target` proxy switch scattered through storage/export/search code
 as the datatype-dispatch violation the AST guard
 (`backend/tests/test_datatype_dispatch.py`) cannot catch syntactically -
-`list_property_values` below is the one function in the whole backend that
-reads `binding.binding_target`; the router and its response model never see
-it at all (issue #247's own acceptance criterion: "nothing in `frontend/src`
-branches on `binding_target`" - true a fortiori of the backend serving it).
+`list_property_values` and `resolve_property_values` below are the only
+functions in the whole backend that read `binding.binding_target`; the
+router and its response models never see it at all (issue #247's own
+acceptance criterion: "nothing in `frontend/src` branches on
+`binding_target`" - true a fortiori of the backend serving it).
 
 **Lives in `nptc.catalogue`, not `nptc.registry`**, for the same leaf-rule
 reason `nptc.catalogue.local_codes`/`property_values` already do (ADR-0013
@@ -27,29 +28,45 @@ query could support keyset paging in isolation, but forcing an artificial
 two-shape inconsistency onto what must be identical wire behaviour would
 defeat the whole point of one shared route.
 
-**Active-only on both sides.** A deprecated local code, or one belonging to
-a deprecated local code system, is excluded by `list_local_codes` itself;
-the SNOMED side passes `active_only=True` to `expand` for the same reason.
-Either way, a value already recorded against a since-deprecated code (or
-system) still renders, unchanged, through the existing resolution paths
-(`DatabaseLocalCodeLookup.resolve` / `CodeHandler.serialise`) - this module
-is additive, a new read path, not a replacement for either.
+**Active-only on both sides, for the picker page.** A deprecated local
+code, or one belonging to a deprecated local code system, is excluded by
+`list_local_codes` itself; the SNOMED side passes `active_only=True` to
+`expand` for the same reason. Either way, a value already recorded against
+a since-deprecated code (or system) still renders, unchanged, through the
+existing resolution paths (`DatabaseLocalCodeLookup.resolve` /
+`CodeHandler.serialise`) - this module is additive, a new read path, not a
+replacement for either.
+
+**`resolve_property_values` (issue #306) is deliberately not active-only,
+and not intersected with the property's own bound value set.** It answers
+a different question from `list_property_values`: not "what may a picker
+currently offer", but "what is the display value of this code the
+catalogue already recorded", for a chip or a carried filter value that
+`list_property_values`'s own `DEFAULT_PAGE_SIZE` page may not include. A
+code the RCPA has since narrowed out of the bound ECL, or marked inactive,
+must still resolve to its label - the same trade `DatabaseLocalCodeLookup.
+resolve` already makes for the local side. A code neither side can resolve
+at all is omitted from the result, never invented (the caller falls back
+to the raw code, as it already does today for a page miss).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
 from sqlalchemy.orm import Session
 
-from nptc.catalogue.local_codes import list_local_codes
+from nptc.catalogue.local_codes import find_local_code_with_system_status, list_local_codes
 from nptc.db.definitions import load_definition
 from nptc.db.property_specs import spec_for
 from nptc.terminology.concepts import classify_terminology_error
+from nptc_shared.sctid import has_valid_format
 from nptc_shared.terminology import TerminologyClient, TerminologyConfigError, TerminologyError
 from nptc_shared.terminology.snomed import (
     ecl_from_implicit_value_set_url,
+    ecl_set_of,
     edition_from_implicit_value_set_url,
 )
 
@@ -59,6 +76,7 @@ __all__ = [
     "ValueItem",
     "ValuePage",
     "list_property_values",
+    "resolve_property_values",
 ]
 
 #: FHIR `$expand`/`list_local_codes` both take a page size, not a "give me
@@ -247,4 +265,112 @@ def list_property_values(
         filter=filter,
         offset=offset,
         count=count,
+    )
+
+
+def _resolve_local_code_system_values(
+    session: Session, *, system_key: str, codes: Sequence[str]
+) -> ValuePage:
+    # One `SELECT` per code, mirroring `DatabaseLocalCodeLookup.resolve` -
+    # FR-52's "one call, not N" is about the terminology server
+    # (`_resolve_value_set_values` below), not this in-process DB read.
+    items = tuple(
+        ValueItem(code=found[0].code, display=found[0].display)
+        for code in codes
+        if (found := find_local_code_with_system_status(session, system_key=system_key, code=code))
+        is not None
+    )
+    return ValuePage(items=items, total=len(items))
+
+
+def _resolve_value_set_values(
+    client: TerminologyClient,
+    *,
+    key: str,
+    value_set_uri: str,
+    edition_label: str,
+    codes: Sequence[str],
+) -> ValuePage:
+    # Only the edition is needed here, not the bound ECL itself
+    # (`ecl_from_implicit_value_set_url`) - the module docstring's whole
+    # point is that this resolution is deliberately *not* scoped to the
+    # property's current value set.
+    try:
+        edition = edition_from_implicit_value_set_url(value_set_uri, label=edition_label)
+    except ValueError as exc:
+        raise PropertyValueSourceMisconfiguredError(
+            f"property {key!r}'s stored value_set_uri/edition could not be interpreted as a "
+            "SNOMED implicit ECL value set URI naming a recognised edition"
+        ) from exc
+
+    # A code that isn't even SCTID-shaped can't be looked up and can't be
+    # concatenated into `ecl_set_of`'s query either - dropped here rather
+    # than failing the whole batch over one malformed value, matching
+    # "unresolvable is omitted, not an error" for every other kind of miss.
+    valid_codes = tuple(code for code in codes if has_valid_format(code))
+    if not valid_codes:
+        return ValuePage(items=(), total=0)
+
+    try:
+        expansion = client.expand(
+            ecl_set_of(valid_codes),
+            edition=edition,
+            count=len(valid_codes),
+            # Not `active_only=True`: an inactive code must still resolve
+            # to its label (module docstring) - this is a lookup, not the
+            # picker page `_value_set_page` serves.
+            active_only=False,
+            display_language=edition.display_language,
+        )
+    except TerminologyConfigError:
+        raise
+    except TerminologyError as exc:
+        raise classify_terminology_error(exc) from exc
+
+    items = tuple(
+        ValueItem(code=concept.code, display=concept.display) for concept in expansion.concepts
+    )
+    return ValuePage(items=items, total=len(items))
+
+
+def resolve_property_values(
+    session: Session,
+    client: TerminologyClient,
+    *,
+    key: str,
+    codes: Sequence[str],
+) -> ValuePage:
+    """Issue #306's chip/carried-value data source: the display value for
+    each of `codes`, whatever its position in (or absence from)
+    `list_property_values`'s own `DEFAULT_PAGE_SIZE` page - see the module
+    docstring for why this is neither active-only nor scoped to the
+    property's bound value set.
+
+    `items` omits a code neither side can resolve rather than inventing a
+    placeholder; `total` is always `len(items)`, so the two can never
+    disagree (issue #306 plan). Raises the same `PropertyDefinitionNotFoundError`
+    / `PropertyNotCodeTypeError` as `list_property_values` for the same
+    reasons.
+    """
+    definition = load_definition(session, key)
+    spec = spec_for(definition)
+    if spec.binding is None:
+        raise PropertyNotCodeTypeError(
+            f"property {key!r} is not a coded property; it has no bound value source"
+        )
+
+    binding = spec.binding
+    if binding.binding_target == "local_code_system":
+        assert binding.local_code_system_key is not None  # DB CHECK-enforced pairing
+        return _resolve_local_code_system_values(
+            session, system_key=binding.local_code_system_key, codes=codes
+        )
+
+    assert binding.value_set_uri is not None  # DB CHECK-enforced pairing
+    return _resolve_value_set_values(
+        client,
+        key=key,
+        value_set_uri=binding.value_set_uri,
+        edition_label=binding.edition,
+        codes=codes,
     )
