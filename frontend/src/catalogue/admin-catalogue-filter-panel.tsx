@@ -35,7 +35,10 @@ import { useDebouncedValue } from "./use-debounced-value.ts";
 //: this set is a stable part of the domain model, not administrator-editable
 //: registry state - there is nowhere on the wire to discover it from in
 //: browse mode (facets, with counts, exist only on the search surface).
-const STATUS_OPTIONS: { value: string; label: string }[] = [
+//: Exported (issue #289) so the active-filter-chip label resolver on the
+//: list page can resolve `status`'s own facet values against the identical
+//: labels this panel renders, rather than a second, driftable copy.
+export const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "deprecated", label: "Deprecated" },
