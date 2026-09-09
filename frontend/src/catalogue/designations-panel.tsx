@@ -146,8 +146,8 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
       <p>
         Every term this entry has ever held, one row each, active terms first. The
         preferred term is the catalogue&rsquo;s own; the rest are synonyms. A retired term
-        stays listed, marked Retired, as history rather than something the entry currently
-        publishes.
+        stays listed, marked retired in the Status column, as history rather than
+        something the entry currently publishes.
       </p>
 
       <LiveRegion message={message} politeness={politeness} />
@@ -270,7 +270,10 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           onSaved={() => {
             // A warning about the term just retired is moot, and leaving its
             // Acknowledge button in place would record an acknowledgement for
-            // a term the entry no longer has (review finding 4).
+            // a term the entry no longer actively publishes - it stays on
+            // the entry as a retired row (issue #239), but a warning about a
+            // possible duplicate makes sense only for a term still live
+            // (review finding 4).
             setWarnings((current) =>
               current.filter((warning) => warning.term !== retiring.term),
             );
@@ -586,12 +589,13 @@ function RetireDialog({
         }}
       >
         {/* Issue #239: the admin read route now serves retired designations,
-            so the row stays in the table, marked Retired, rather than
-            vanishing - what the editor sees here has to match that. */}
+            so the row stays in the table, marked retired in the Status
+            column, rather than vanishing - what the editor sees here has to
+            match that. */}
         <p>
-          This stops the term being published. The row stays in the table, marked Retired:
-          nothing is deleted, and the catalogue keeps the term, and the change, in the
-          entry&rsquo;s history.
+          This stops the term being published. The row stays in the table, marked retired
+          in the Status column: nothing is deleted, and the catalogue keeps the term, and
+          the change, in the entry&rsquo;s history.
         </p>
         <ChangelogNoteField id="retire-note" changelogNote={changelogNote} />
       </Form>

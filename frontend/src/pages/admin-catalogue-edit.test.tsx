@@ -657,12 +657,17 @@ describe("the terms table", () => {
     ).toBeInTheDocument();
 
     // Active-first sort: the fixture's retired row sorts last regardless of
-    // its position in `ENTRY.designations`.
-    const rows = within(table).getAllByRole("row");
-    expect(within(rows[4] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
-      "Obsolete ferritin note",
-    );
-    expect(within(rows[4] as HTMLElement).getByText("retired")).toBeInTheDocument();
+    // its position in `ENTRY.designations`. By rowheader text, not row
+    // index, so this survives the fixture gaining a row.
+    const terms = within(table)
+      .getAllByRole("rowheader")
+      .map((rowheader) => rowheader.textContent);
+    expect(terms.at(-1)).toBe("Obsolete ferritin note");
+
+    const retiredRow = within(table)
+      .getByRole("rowheader", { name: "Obsolete ferritin note" })
+      .closest("tr") as HTMLElement;
+    expect(within(retiredRow).getByText("retired")).toBeInTheDocument();
   });
 
   it("offers no Edit or Retire action on a retired term", async () => {

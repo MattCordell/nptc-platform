@@ -401,6 +401,23 @@ def load_designations_any_status(
       only `.id`, to resolve which `audit_event` rows belong to this
       entry's designations - a retired designation's history belongs in
       the entry's history too.
+
+    `(status, use, language, term, id)` order - not `load_designations`'s
+    `(use, language, term)` alone, which relies on that triple being unique
+    *among active* rows (`ix_designation_no_duplicate_active_term`) for a
+    total order. Retired rows break that uniqueness: a term added, retired,
+    re-added and retired again leaves two rows with an identical `(use,
+    language, term)`, so without a further tiebreaker Postgres could return
+    them in either order between calls - the exact flapping `load_
+    designations`'s own docstring cites as the reason for an explicit
+    `ORDER BY` in the first place. `status` first, matching `load_bindings`'s
+    own `(status, code)` convention (`"active" < "retired"` sorts active
+    rows first, matching `sortedTermRows` in `designations-panel.tsx` so the
+    client-side sort is a safeguard rather than the only thing enforcing the
+    order), then `id` last as the tiebreaker nothing else can supply -
+    `load_bindings` carries the same latent gap (two retired bindings can
+    share a `code`) and is not fixed here, being outside this change's own
+    blast radius (issue #239 review).
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -408,7 +425,13 @@ def load_designations_any_status(
     rows = session.execute(
         select(Designation)
         .where(Designation.entry_id.in_(ids))
-        .order_by(Designation.use, Designation.language, Designation.term)
+        .order_by(
+            Designation.status,
+            Designation.use,
+            Designation.language,
+            Designation.term,
+            Designation.id,
+        )
     ).scalars()
     return tuple(
         DesignationRow(
@@ -462,9 +485,15 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     inner join would silently drop exactly those rows.
 
     `(status, code)` order puts `active` before `retired` (alphabetically,
-    which happens to be the order a reader wants) and is total within an
-    entry, since at most one binding per entry is active and `code` is
-    unique among the rest.
+    which happens to be the order a reader wants), and is total among an
+    entry's *active* bindings, since at most one is active per entry. It is
+    **not** total among retired ones: nothing stops the same code being
+    bound, retired, bound again and retired again (`designations-panel.tsx`'s
+    `getRowKey` comment names the identical case for `Binding`), so two
+    retired rows can share `code` and this query does not order between
+    them - the same latent gap `load_designations_any_status` closes with an
+    `id` tiebreaker (issue #239 review), left open here as out of that
+    change's blast radius.
     """
     ids = tuple(entry_ids)
     if not ids:

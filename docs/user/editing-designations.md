@@ -66,9 +66,9 @@ starts reloading their change for you, so check yours is still needed and save i
 
 Choose **Retire** on the row, give a changelog note, and confirm.
 
-The term stops being published. It stays in the Terms table, marked **Retired**, at the
-bottom of the list — the catalogue keeps it, and records who retired it and why, in the
-entry's history.
+The term stops being published. It stays in the Terms table, marked **retired** in the
+Status column, at the bottom of the list — the catalogue keeps it, and records who
+retired it and why, in the entry's history.
 
 **The preferred term cannot be retired**, so no Retire button appears on that row. Every
 entry must have a preferred term at all times. To change what the entry is called, edit
@@ -108,7 +108,7 @@ editors still see the overlap until they acknowledge it themselves.
 
 Acknowledgements cannot be withdrawn. If you acknowledge one by mistake, change or retire
 the term instead — retiring stops it being published, though the row stays in the Terms
-table, marked **Retired**, rather than disappearing.
+table, marked **retired** in the Status column, rather than disappearing.
 
 ## If something goes wrong
 
