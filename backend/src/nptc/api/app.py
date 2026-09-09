@@ -18,6 +18,7 @@ from nptc.api.dependencies import get_auth_settings, get_terminology_client
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers import (
+    audit,
     auth,
     catalogue,
     catalogue_admin,
@@ -131,4 +132,7 @@ def create_app(
     # own prefix and tag, not under /catalogue (see the router's own module
     # docstring for why).
     app.include_router(terminology.router, prefix=API_PREFIX)
+    # issue #286, NFR-12: administrator search/filter/export over the audit
+    # log - its own prefix and tag, gated on Permission.AUDIT_READ.
+    app.include_router(audit.router, prefix=API_PREFIX)
     return app

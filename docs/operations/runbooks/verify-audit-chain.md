@@ -90,5 +90,7 @@ flag - the common case today - leaves tail truncation exactly as undetectable as
 
 - No automated off-box anchor store: today an operator must record and supply
   `--expected-head-hash`/`--expected-record-count` themselves.
-- No search/filter/export over the audit log (NFR-12) - this command only verifies chain
-  integrity, it does not browse audit content.
+- Search, filter and export over the audit log (NFR-12) is a separate surface -
+  `GET /api/v1/audit/events` and `GET /api/v1/audit/events/export` (issue #286) - not this
+  command. This command verifies chain integrity only; it does not browse audit content. See
+  [audit-log.md](../../architecture/audit-log.md).

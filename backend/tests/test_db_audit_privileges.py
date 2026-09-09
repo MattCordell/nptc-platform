@@ -21,6 +21,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session
+
+from nptc.audit.queries import AuditEventFilter, search_audit_events
 
 _support_spec = importlib.util.spec_from_file_location(
     "_test_db_audit_privileges_support", Path(__file__).parent / "audit_privilege_support.py"
@@ -67,3 +70,24 @@ def test_app_role_is_refused_truncate(app_db: Connection) -> None:
     insert_one_row(app_db)
 
     assert_refused(app_db, "TRUNCATE audit_event")
+
+
+@pytest.mark.req("NFR-09")
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+def test_app_role_can_search_audit_events_but_remains_refused_update(
+    app_db: Connection,
+) -> None:
+    """Issue #286: `nptc.audit.queries.search_audit_events` reaches
+    `audit_event` through the same `nptc_app_login` role every other query
+    in this file exercises - the NFR-12 read surface adds no new grant,
+    and this role is still refused a write afterwards. `assert_refused`
+    must be the last statement on this connection (see its own
+    docstring), so the read runs first."""
+    insert_one_row(app_db)
+    session = Session(bind=app_db)
+
+    page = search_audit_events(session, AuditEventFilter(), limit=50)
+
+    assert len(page.events) >= 1
+    assert_refused(app_db, "UPDATE audit_event SET reason = 'edited'")

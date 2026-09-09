@@ -618,6 +618,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search and filter the audit log (NFR-12)
+         * @description Every filter narrows independently and in combination, AND-ed
+         *     together; none is required, so an unfiltered call pages through the
+         *     whole log. Never empty-errors: no matching events is a `200` with an
+         *     empty `items` list, not a 404.
+         */
+        get: operations["read_audit_events_api_v1_audit_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the filtered audit log as NDJSON (NFR-12)
+         * @description One JSON object per line, oldest first, including `prev_hash`/
+         *     `entry_hash` for cross-referencing a line against its stored row - see
+         *     `nptc.audit.queries.AuditEventRow`'s own docstring for why that is a
+         *     narrower guarantee than standalone recomputation, and `stream_audit_
+         *     events`'s own docstring for why the order differs from the read route
+         *     above. The whole filtered set, not one page: an export has no
+         *     `limit`/cursor.
+         */
+        get: operations["export_audit_events_api_v1_audit_events_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -871,6 +920,73 @@ export interface components {
             expected_row_version: number;
             /** Reason */
             reason: string;
+        };
+        /**
+         * AuditActor
+         * @description The acting user, resolved by internal id (NFR-13, NFR-17) - see
+         *     `nptc.audit.queries`'s own module docstring for why a bare display
+         *     name is not enough on this Administrator-only surface.
+         *
+         *     `display_name` is `null` for a closed (tombstoned) account -
+         *     `is_closed` is what tells that apart from an account that simply never
+         *     set one.
+         */
+        AuditActor: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Display Name */
+            display_name: string | null;
+            /** Is Closed */
+            is_closed: boolean;
+        };
+        /**
+         * AuditEventItem
+         * @description One `audit_event` row, served close to verbatim (NFR-12) - see
+         *     `nptc.audit.queries`'s own module docstring for why `before`/`after`
+         *     are raw here rather than the field-names-only projection FR-19's
+         *     public history surface uses. `actor` is `null` for a system-initiated
+         *     event, never a name-only fallback.
+         */
+        AuditEventItem: {
+            /** Sequence */
+            sequence: number;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            actor: components["schemas"]["AuditActor"] | null;
+            /** Action */
+            action: string;
+            /** Entity Type */
+            entity_type: string;
+            /** Entity Id */
+            entity_id: string;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
+            /** After */
+            after: {
+                [key: string]: unknown;
+            } | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * AuditEventPage
+         * @description One keyset page, most recent first. `next_cursor` is `null` exactly
+         *     when this is the last page - matching every other paged surface in
+         *     this API.
+         */
+        AuditEventPage: {
+            /** Items */
+            items: components["schemas"]["AuditEventItem"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /**
          * BindCodeRequest
@@ -4049,6 +4165,130 @@ export interface operations {
             };
             /** @description The terminology server could not be reached, or a rate limit persisted through retries - the code field's live assist degrades; nothing else about the entry is affected (FR-54). May carry a `Retry-After` header. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_audit_events_api_v1_audit_events_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum events in this page. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
+                before?: string | null;
+                /** @description Filter to one actor, by internal id. */
+                actor_user_id?: string | null;
+                /** @description Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`. */
+                entity_type?: string | null;
+                /** @description Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422. */
+                entity_id?: string | null;
+                /** @description Filter to one action name, e.g. `catalogue_entry.updated`. */
+                action?: string | null;
+                /** @description Filter to events at or after this instant (inclusive). Must include a UTC offset. */
+                occurred_from?: string | null;
+                /** @description Filter to events before this instant (exclusive). Must include a UTC offset. */
+                occurred_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEventPage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `audit.read`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` at or after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    export_audit_events_api_v1_audit_events_export_get: {
+        parameters: {
+            query?: {
+                /** @description Filter to one actor, by internal id. */
+                actor_user_id?: string | null;
+                /** @description Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`. */
+                entity_type?: string | null;
+                /** @description Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422. */
+                entity_id?: string | null;
+                /** @description Filter to one action name, e.g. `catalogue_entry.updated`. */
+                action?: string | null;
+                /** @description Filter to events at or after this instant (inclusive). Must include a UTC offset. */
+                occurred_from?: string | null;
+                /** @description Filter to events before this instant (exclusive). Must include a UTC offset. */
+                occurred_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The filtered audit log, one JSON object per line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `audit.read`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A query parameter was unprocessable - `entity_id` given without `entity_type`, `occurred_from` at or after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. This route has no `limit`/cursor of its own to be unprocessable. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -705,13 +705,13 @@
   phase: p1
   title: "Authentication events (login, failure, lockout, MFA enrolment) are logged by Keycloak in its own event store"
   status: in-progress
-  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) sets eventsEnabled/adminEventsEnabled/adminEventsDetailsEnabled: true with a 7-day eventsExpiration, plus bruteForceProtected (failureFactor 10) so lockouts are events to log in the first place. Stays in-progress: this is the Keycloak-side configuration only - the application half (NFR-12's search/filter/export over these events) lands with #34-#38."
+  notes: "deploy/keycloak/realm/nptc-realm.json (issue #40, ADR-0014) sets eventsEnabled/adminEventsEnabled/adminEventsDetailsEnabled: true with a 7-day eventsExpiration, plus bruteForceProtected (failureFactor 10) so lockouts are events to log in the first place. Stays in-progress: this is the Keycloak-side configuration only. NFR-12's audit_event search/filter/export landed with #286, but reaching Keycloak's own event store from this platform is a separate, structurally different store (ADR-0039) - tracked as #310, not #34-#38."
 - id: "NFR-12"
   priority: MUST
   phase: p1
   title: "Administrators can search and filter the audit log by actor, entity, action, and date range, and export a filtered view"
-  status: planned
-  notes: "Issue #38 cited this ID but delivers chain-integrity verification (scripts/verify_audit_chain.py, NFR-10/NFR-38 test 5), not admin search/filter/export - that remains planned."
+  status: implemented
+  notes: "Issue #38 cited this ID but delivered chain-integrity verification only (scripts/verify_audit_chain.py, NFR-10/NFR-38 test 5). #286 (ADR-0039) delivers the read model: nptc.audit.queries.search_audit_events/stream_audit_events, GET /api/v1/audit/events and GET /api/v1/audit/events/export (NDJSON), gated on Permission.AUDIT_READ. backend/tests/test_audit_search.py is offline (cursor/filter validation) plus integration (the four filters independently/combined, keyset pagination stable under a concurrent append per issue #190, closed-account attribution NFR-13/NFR-17, redaction passthrough NFR-26/NFR-35); backend/tests/test_api_audit_search.py and test_api_audit_export.py cover the HTTP adapter and the FR-44/NFR-06 authorisation triple. docs/architecture/audit-log.md documents the surface."
 - id: "NFR-13"
   priority: MUST
   phase: p1

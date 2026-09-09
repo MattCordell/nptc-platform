@@ -34,6 +34,11 @@
   five components screens are expected to compose, the automated `axe-core` check and its
   known limits (`color-contrast` under jsdom), and the Tailwind styling strategy
   ([ADR-0025](../adr/0025-frontend-styling.md)).
+- [audit-log.md](audit-log.md) — the NFR-12 audit log query surface (issue #286): the read
+  and export endpoints, `sequence`-keyset paging (most recent first for the read route,
+  unpaged oldest-first for the export), why the raw `before`/`after` diff is served here
+  unlike the public FR-19 history surface, closed-account attribution, and what the
+  surface cannot do (no write path, no Keycloak proxy).
 
 Still owed: the deployment topology (PRD §14.3 is the starting point).
 

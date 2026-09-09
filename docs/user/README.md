@@ -12,6 +12,8 @@
 - [Bulk reclassify](bulk-reclassify.md) — issue #63.
 - [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, API-only
   until the public entry pages land.
+- [Searching the audit log](searching-the-audit-log.md) — issue #286, API-only until the
+  audit log screen lands.
 
 [Roles](roles.md) covers Administrator and Reviewer — Member and Provisional have no
 screen of their own yet, and Anonymous/Observer use is self-explanatory from the public
