@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.recording import AuditNoOpError
 from nptc.audit.writer import AuditContext
-from nptc.catalogue import entries as entries_module
 from nptc.catalogue.entries import (
     EntryChanges,
     create_entry,
@@ -397,7 +396,12 @@ def test_session_remains_usable_after_a_caught_conflict(app_session: Session) ->
 def test_entry_child_write_bumps_row_version_on_clean_exit(app_session: Session) -> None:
     """The issue #60 helper: a write to a table hanging off `entry` (no
     `row_version` of its own) shares `catalogue_entry.row_version` as its
-    lock, and a clean exit from the `with` block bumps it exactly once."""
+    lock, and a clean exit from the `with` block bumps it exactly once -
+    checked against a reload of the row, not just the in-memory attribute
+    (issue #60 review: `version_id_col`'s guarded `UPDATE` is what actually
+    enforces this, and only a flush plus a reload proves it ran and
+    matched - `entry_child_write` now flushes internally, before the `with`
+    block ever returns, as part of its own `StaleDataError` backstop)."""
     entry = create_entry(
         app_session,
         AuditContext.system(),
@@ -410,6 +414,10 @@ def test_entry_child_write_bumps_row_version_on_clean_exit(app_session: Session)
         pass
 
     assert entry.row_version == 2
+
+    app_session.expire(entry)
+    reloaded = load_entry_for_update(app_session, entry.business_key)
+    assert reloaded.row_version == 2
 
 
 @pytest.mark.req("FR-38")
@@ -478,13 +486,21 @@ def test_entry_child_write_refuses_a_stale_version_before_the_body_runs(
 
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
-def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_write(
-    app_session: Session, monkeypatch: pytest.MonkeyPatch
+def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_writes_own_sql(
+    app_session: Session, app_engine: Engine
 ) -> None:
-    """Issue #281's ordering invariant: the audit append lock must be
-    acquired before the first row lock a caller's own write takes.
-    `entry_child_write` calls `acquire_append_lock` before `yield`, so it
-    always runs before anything the wrapped body does."""
+    """Issue #281's ordering invariant, proven against the actual SQL
+    `entry_child_write` and its wrapped body issue - not merely the order
+    two Python statements happen to appear in source (issue #60 review: the
+    previous version of this test monkeypatched `acquire_append_lock` with
+    a spy and asserted against a plain Python list, which would pass for
+    any implementation with those same two lines in that order and never
+    touched the database at all).
+
+    The wrapped body flushes its own raw-SQL `UPDATE` inside the `with`
+    block, before `entry_child_write`'s own version-bump flush ever runs -
+    so this covers the row lock a caller's write takes for itself, not only
+    the one `bump_entry_row_version` takes at the very end."""
     entry = create_entry(
         app_session,
         AuditContext.system(),
@@ -492,19 +508,128 @@ def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_write(
         reason="Created for entry_child_write test",
     )
 
-    order: list[str] = []
-    original_acquire = entries_module.acquire_append_lock
+    statements: list[str] = []
 
-    def _spy_acquire(session: Session) -> None:
-        order.append("append_lock")
-        original_acquire(session)
+    def _record(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
 
-    monkeypatch.setattr(entries_module, "acquire_append_lock", _spy_acquire)
+    event.listen(app_engine, "before_cursor_execute", _record)
+    try:
+        with entry_child_write(app_session, entry, 1):
+            app_session.execute(
+                text("UPDATE catalogue_entry SET preferred_term = :term WHERE id = :id"),
+                {"term": "Bumped by the wrapped write", "id": entry.id},
+            )
+            app_session.flush()
+    finally:
+        event.remove(app_engine, "before_cursor_execute", _record)
 
-    with entry_child_write(app_session, entry, 1):
-        order.append("wrapped_write")
+    lock_index = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s)
+    write_index = next(
+        i for i, s in enumerate(statements) if "UPDATE catalogue_entry SET preferred_term" in s
+    )
+    assert lock_index < write_index
 
-    assert order == ["append_lock", "wrapped_write"]
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_entry_child_write_catches_a_genuine_concurrent_race(
+    app_engine: Engine, owner_engine: Engine
+) -> None:
+    """The second conflict-detection layer `entry_child_write` itself now
+    carries (issue #60 review) - the one `assert_entry_row_version`'s
+    precondition check can never reach, because both callers pass it.
+    Mirrors `test_version_id_col_backstop_catches_a_genuine_concurrent_
+    race`'s own `after_cursor_execute` injection exactly; see that test's
+    docstring for why the hook is needed to express this ordering at all.
+
+    Before this fix, the flush this triggers inside `entry_child_write`
+    raised an uncaught `StaleDataError` - a 500 at the API layer, not a
+    409. This proves it is translated into `EntryVersionConflictError`
+    instead, and that the savepoint discards the wrapped write along with
+    the version bump."""
+    business_key = format_business_key(999_000_060)
+    with app_engine.connect() as setup_connection:
+        setup_connection.execute(
+            text(
+                "INSERT INTO catalogue_entry (business_key, preferred_term) "
+                "VALUES (:key, 'Original term')"
+            ),
+            {"key": business_key},
+        )
+        setup_connection.commit()
+
+    fired = False
+
+    def _inject_concurrent_write(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        nonlocal fired
+        if (
+            fired
+            or "catalogue_entry" not in statement
+            or not statement.strip().upper().startswith("SELECT")
+        ):
+            return
+        fired = True
+        with app_engine.connect() as other_connection:
+            other_connection.execute(
+                text(
+                    "UPDATE catalogue_entry SET row_version = row_version + 1, "
+                    "preferred_term = 'Raced ahead' WHERE business_key = :key"
+                ),
+                {"key": business_key},
+            )
+            other_connection.commit()
+
+    body_ran = False
+
+    try:
+        event.listen(app_engine, "after_cursor_execute", _inject_concurrent_write)
+        race_session = Session(bind=app_engine)
+        try:
+            entry = load_entry_for_update(race_session, business_key)
+            with (
+                pytest.raises(EntryVersionConflictError) as exc_info,
+                entry_child_write(race_session, entry, 1),
+            ):
+                body_ran = True
+        finally:
+            race_session.close()
+            event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
+
+        assert fired, "the injected concurrent write never ran - the test proves nothing"
+        assert body_ran, "the wrapped body never ran - the test proves nothing"
+
+        report = exc_info.value.report
+        assert report.expected_row_version == 1
+        assert report.current_row_version == 2
+
+        with owner_engine.connect() as check_connection:
+            preferred_term = check_connection.execute(
+                text("SELECT preferred_term FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            ).scalar_one()
+        assert preferred_term == "Raced ahead"
+    finally:
+        with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM catalogue_entry WHERE business_key = :key"),
+                {"key": business_key},
+            )
+            cleanup_connection.commit()
 
 
 @pytest.mark.req("FR-38")

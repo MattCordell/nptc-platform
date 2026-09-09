@@ -736,6 +736,26 @@ def test_bind_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
 
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
+def test_bind_non_positive_expected_row_version_is_422(api: ApiTestApp) -> None:
+    """`expected_row_version` is bounded (`Field(ge=1)`, issue #60 review),
+    matching `catalogue_designations.py`'s own `expected_row_version` field
+    - a real `catalogue_entry.row_version` never reaches 0 or below, so
+    `0`/`-1` is a malformed request (422), not a well-formed one that would
+    otherwise produce a nonsense `ConflictReport.expected_row_version`."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-bind-non-positive-version")
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/bindings",
+        token=token,
+        json={"code": CODE_A, "fsn": FSN_A, "reason": _REASON, "expected_row_version": 0},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
 def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-retire-missing-version")

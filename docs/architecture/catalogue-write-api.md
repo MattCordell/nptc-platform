@@ -257,14 +257,21 @@ is stale relative to the other's write) and the race is still decided at the ind
 `load_entry_for_update` itself still takes no row lock - see its own docstring - but
 `entry_child_write` (FR-38, issue #60) introduces the *first* `catalogue_entry` row lock
 these three routes take, via the ordinary `UPDATE ... WHERE row_version = ...` `version_
-id_col` produces when it bumps the count. Two concurrent binding writes against the
-*same* entry now serialise on that row: the loser's flush blocks until the winner
-commits, then sees a stale `expected_row_version` and gets a `409` version conflict
-rather than racing to the partial unique index above. That race (same entry, same code or
-a different one) is now decided by the version check; the index-level race described
-above is unchanged and still applies to the case `entry_child_write` cannot see - two
-*different* entries, or two callers each holding a version that was still current when
-they read it.
+id_col` produces when its own internal flush bumps the count - inside a `session.
+begin_nested()` savepoint, with the `StaleDataError` that flush can raise translated into
+the same `409` version conflict rather than escaping uncaught as a 500 (issue #60 review;
+see `entry_child_write`'s own docstring for the two-layer shape this relies on). Two
+concurrent binding writes against the *same* entry that do **not** collide on either
+partial unique index - different codes, or a bind racing a retire - now serialise on that
+row: the loser's flush blocks until the winner commits, then sees a stale `expected_row_
+version` and gets a `409` version conflict, because there was no index collision to race
+on in the first place. Two writers racing for the *same* code are unchanged by this issue:
+`create_binding`'s own `append_audit_event` flushes its `INSERT` before `entry_child_write`
+ever bumps or re-flushes, so that race is still decided at the partial unique index exactly
+as before, and the loser still sees the translated `IntegrityError`-derived domain error
+above, not a version conflict. The index-level race is otherwise unchanged and still
+applies wherever `entry_child_write` cannot see it at all - two *different* entries, or two
+callers each holding a version that was still current when they read it.
 
 Every `CodeBinding*` exception from `nptc.catalogue.bindings` is mapped in
 `nptc.api.errors` by the same convention every other handler in that module follows:

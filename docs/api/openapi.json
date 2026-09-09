@@ -3477,6 +3477,7 @@
           },
           "expected_row_version": {
             "type": "integer",
+            "minimum": 1.0,
             "title": "Expected Row Version"
           }
         },
@@ -5109,6 +5110,7 @@
           },
           "expected_row_version": {
             "type": "integer",
+            "minimum": 1.0,
             "title": "Expected Row Version"
           }
         },
@@ -5164,6 +5166,7 @@
           },
           "expected_row_version": {
             "type": "integer",
+            "minimum": 1.0,
             "title": "Expected Row Version"
           }
         },

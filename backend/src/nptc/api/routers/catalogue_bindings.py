@@ -60,10 +60,21 @@ to re-fetch the entry just to learn its next lock token.
 own docstring), so before this change two concurrent binding writes on one
 entry raced straight to the database's own partial unique indexes and the
 loser saw a translated `IntegrityError`-derived domain error. `entry_child_
-write` introduces the first `catalogue_entry` row lock these routes take:
-the two writers now serialise on that row, and the loser gets a 409
-version conflict instead of racing to the index. See `catalogue-write-
-api.md`'s own note on this for the full before/after.
+write` now covers two distinct races, not one, and they resolve
+differently. Two writers who do not collide on an index - different codes,
+or a bind racing a retire - now serialise on the audit *advisory* lock
+first (`pg_advisory_xact_lock`, `entry_child_write`'s first statement, not
+a `catalogue_entry` row lock), and the loser's own version bump then finds
+`catalogue_entry.row_version` has moved when `entry_child_write` flushes -
+translated into a 409 version conflict rather than an uncaught
+`StaleDataError` (issue #60 review; see `entry_child_write`'s own
+docstring for the two-layer shape this relies on). Two writers who target
+the *same* code are unchanged by this issue: `create_binding`'s own
+`append_audit_event` flushes that `INSERT` before `entry_child_write` ever
+bumps or re-flushes, so that race still hits the partial unique index
+first and still surfaces as the pre-existing `IntegrityError`-derived
+domain error. See `catalogue-write-api.md`'s own note on this for the full
+before/after.
 """
 
 from __future__ import annotations
@@ -220,7 +231,7 @@ class BindCodeRequest(BaseModel):
     au_preferred_term: str | None = Field(default=None, min_length=1)
     edition_hint: CodeBindingEditionHint = CodeBindingEditionHint.UNKNOWN
     reason: str
-    expected_row_version: int
+    expected_row_version: int = Field(ge=1)
 
     _reject_blank_fsn = field_validator("fsn")(_reject_blank)
     _reject_blank_au_preferred_term = field_validator("au_preferred_term")(_reject_blank)
@@ -230,7 +241,7 @@ class RetireBindingRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     reason: str
-    expected_row_version: int
+    expected_row_version: int = Field(ge=1)
 
 
 class ReplacementSuccessor(BaseModel):
@@ -256,7 +267,7 @@ class ReplaceBindingRequest(BaseModel):
 
     successor: ReplacementSuccessor
     reason: str
-    expected_row_version: int
+    expected_row_version: int = Field(ge=1)
 
 
 class BindingWriteResult(BaseModel):
@@ -317,7 +328,6 @@ def bind_code(
             edition_hint=body.edition_hint,
             reason=body.reason,
         )
-    session.flush()
     # Not `.../bindings/{code}`: nothing serves a `GET` there (the two
     # routes below `bindings/{code}` are both `POST`s), so that path is one
     # a client could not follow. The entry detail route does exist, does
@@ -353,7 +363,6 @@ def retire_binding(
     with entry_child_write(session, entry, body.expected_row_version):
         binding = load_active_binding(session, entry_id=entry.id, code=code)
         _retire_binding(session, ctx, binding=binding, reason=body.reason)
-    session.flush()
     return BindingWriteResult(
         binding=_row_to_binding(session, entry_id=entry.id, binding_id=binding.id),
         row_version=entry.row_version,
@@ -412,7 +421,6 @@ def replace_binding(
         link_replacement(
             session, ctx, superseded=superseded, successor=successor, reason=body.reason
         )
-    session.flush()
     return BindingReplacementResult(
         items=[
             _row_to_binding(session, entry_id=entry.id, binding_id=superseded.id),
