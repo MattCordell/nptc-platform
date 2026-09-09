@@ -66,6 +66,7 @@ from pydantic import BaseModel, ConfigDict
 
 from nptc.api.dependencies import CredentialRequiredError, MalformedAuthorizationError
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance
+from nptc.audit.queries import AuditFilterError, MalformedAuditCursorError
 from nptc.auth.errors import TokenError
 from nptc.auth.errors_authorisation import (
     AuthorisationError,
@@ -345,6 +346,14 @@ _DETAIL_HISTORY_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
     "unmodified, or start again from the first page."
 )
+_DETAIL_AUDIT_CURSOR = (
+    "This page cursor is not one this API issued. Pass a `next_cursor` value back "
+    "unmodified, or start again from the first page."
+)
+_DETAIL_AUDIT_FILTER = (
+    "This filter combination cannot produce a result: `entity_id` requires "
+    "`entity_type`, and `occurred_from` must not be after `occurred_to`."
+)
 #: FR-16. Names no property key and no value: the parameter is caller-supplied
 #: text on a public, unauthenticated endpoint (NFR-26/NFR-35), and which
 #: properties exist but are not offered as filters is editorial state this
@@ -580,6 +589,26 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=MalformedHistoryCursorError.http_status,
             content={"detail": _DETAIL_HISTORY_CURSOR},
+        )
+
+    @app.exception_handler(MalformedAuditCursorError)
+    async def _handle_malformed_audit_cursor(
+        _request: Request, exc: MalformedAuditCursorError
+    ) -> JSONResponse:
+        # The class only, never `str(exc)` - matching
+        # `_handle_malformed_history_cursor`'s own reasoning.
+        _logger.info("audit cursor refused: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=MalformedAuditCursorError.http_status,
+            content={"detail": _DETAIL_AUDIT_CURSOR},
+        )
+
+    @app.exception_handler(AuditFilterError)
+    async def _handle_audit_filter_error(_request: Request, exc: AuditFilterError) -> JSONResponse:
+        _logger.info("audit filter refused: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=AuditFilterError.http_status,
+            content={"detail": _DETAIL_AUDIT_FILTER},
         )
 
     @app.exception_handler(FilterRefusedError)
