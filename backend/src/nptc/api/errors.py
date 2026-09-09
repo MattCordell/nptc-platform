@@ -346,15 +346,15 @@ _DETAIL_SEARCH_CURSOR = (
     "search. Pass a `next_cursor` value back unmodified alongside the same query and "
     "filters, or start again from the first page."
 )
+#: Also served for `MalformedAuditCursorError` (`_handle_malformed_audit_
+#: cursor` below), not a byte-identical second constant - `nptc.api.
+#: routers.audit.AuditCursorQuery` copies `nptc.catalogue.history`'s own
+#: cursor shape verbatim (see that type's own docstring), so the refusal
+#: reads the same way too (PR #309 review).
 _DETAIL_HISTORY_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
     "unmodified, or start again from the first page."
 )
-#: Byte-identical to `_DETAIL_HISTORY_CURSOR` above by construction, not
-#: coincidence - `nptc.api.routers.audit.AuditCursorQuery` copies
-#: `nptc.catalogue.history`'s own cursor shape verbatim (see that type's
-#: own docstring), so the refusal reads the same way too. Reused directly
-#: rather than kept as a second constant (PR #309 review).
 _DETAIL_ENTITY_ID_REQUIRES_ENTITY_TYPE = "The `entity_id` filter requires `entity_type` as well."
 _DETAIL_OCCURRED_RANGE_INVALID = "`occurred_from` must be strictly before `occurred_to`."
 #: FR-16. Names no property key and no value: the parameter is caller-supplied

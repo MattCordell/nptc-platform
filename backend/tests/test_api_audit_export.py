@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from nptc.audit import hashing as audit_hashing
@@ -155,6 +156,33 @@ def test_export_entry_hash_cannot_be_recomputed_from_the_exported_line_alone(
     digest_fields = audit_hashing.digest_field_names(AuditEvent.__table__)
     omitted_from_export = digest_fields - frozenset(row)
     assert {"id", "correlation_id", "actor_ip", "user_agent"} <= omitted_from_export
+
+
+@pytest.mark.req("NFR-10")
+@pytest.mark.integration
+def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
+    api: ApiTestApp,
+) -> None:
+    """The positive half of the corrected NFR-10 claim (PR #309 review
+    round 2) - what ADR-0039/`docs/architecture/audit-log.md`/the user doc
+    now promise, not what the sibling test above proves the export cannot
+    do on its own: a reader with database access can cross-reference an
+    exported line's `prev_hash`/`entry_hash` against the stored row.
+    Looked up by `sequence`, not `id` - the export payload carries the
+    former, not the latter (see the sibling test)."""
+    entity_type = f"test-export-hash-match-{uuid.uuid4()}"
+    actor = _create_active_user(api, "vera-api-audit-export")
+    _seed(api, actor_user_id=actor.id, entity_type=entity_type)
+    token = _admin_token(api, subject="sub-audit-export-hash-match")
+
+    response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
+
+    row = _ndjson_rows(response)[0]
+    stored = api.session.execute(
+        select(AuditEvent).where(AuditEvent.sequence == row["sequence"])
+    ).scalar_one()
+    assert stored.prev_hash == row["prev_hash"]
+    assert stored.entry_hash == row["entry_hash"]
 
 
 @pytest.mark.req("NFR-26")

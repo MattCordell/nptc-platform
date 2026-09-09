@@ -71,15 +71,15 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
         "A query parameter was unprocessable - a cursor this API did not issue, a "
         "`limit` outside its range, `entity_id` given without `entity_type`, "
-        "`occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given "
-        "with no UTC offset."
+        "`occurred_from` at or after `occurred_to`, or `occurred_from`/`occurred_to` "
+        "given with no UTC offset."
     ),
 }
 _EXPORT_RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "A query parameter was unprocessable - `entity_id` given without "
-        "`entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/"
+        "`entity_type`, `occurred_from` at or after `occurred_to`, or `occurred_from`/"
         "`occurred_to` given with no UTC offset. This route has no `limit`/cursor "
         "of its own to be unprocessable."
     ),
