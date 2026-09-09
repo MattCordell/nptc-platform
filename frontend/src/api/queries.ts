@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
 import { filterQueryParams } from "./filter-params.ts";
 import type { components, paths } from "./schema.ts";
@@ -530,6 +531,31 @@ export function usePropertyDefinitions() {
 }
 
 /**
+ * The query key/query-fn pair behind `usePropertyValueOptions`, factored out
+ * (issue #289) so a caller needing a dynamic, per-render *set* of these
+ * queries (`usePropertyValueOptionsQueries` below) can build each one as a
+ * plain object for `useQueries` - a `.map()` of the hook itself would violate
+ * the rules of hooks, since the set of active coded facet keys varies between
+ * renders. Both callers share this one query-key builder, so a page reading
+ * the same property's values renders from cache rather than a second, subtly
+ * different request.
+ */
+function propertyValueOptionsQuery(client: ApiClient, key: string, filter: string) {
+  return {
+    queryKey: ["api", "/api/v1/registry/properties/{key}/values", key, filter],
+    queryFn: async ({ signal }: { signal: AbortSignal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties/{key}/values", {
+          params: { path: { key }, query: filter.length > 0 ? { filter } : {} },
+          signal,
+        }),
+      ),
+    enabled: key.length > 0,
+    staleTime: 5 * 60 * 1000,
+  };
+}
+
+/**
  * A coded property's offerable values (issue #247) - the concept picker's
  * data source, resolved server-side against whichever binding (SNOMED value
  * set or local code system) the property's own definition carries, so this
@@ -542,17 +568,24 @@ export function usePropertyDefinitions() {
  */
 export function usePropertyValueOptions(key: string, filter: string) {
   const client = useApiClient();
-  return useQuery({
-    queryKey: ["api", "/api/v1/registry/properties/{key}/values", key, filter],
-    queryFn: async ({ signal }) =>
-      unwrap(
-        await client.GET("/api/v1/registry/properties/{key}/values", {
-          params: { path: { key }, query: filter.length > 0 ? { filter } : {} },
-          signal,
-        }),
-      ),
-    enabled: key.length > 0,
-    staleTime: 5 * 60 * 1000,
+  return useQuery(propertyValueOptionsQuery(client, key, filter));
+}
+
+/**
+ * The same fetch as `usePropertyValueOptions`, for a dynamic list of
+ * `(key, filter)` pairs in one render (issue #289) - the active-filter-chip
+ * label resolver's data source, since the set of coded facets with an active
+ * selection varies with the URL and can't be known ahead of a fixed number of
+ * `usePropertyValueOptions` calls. Shares `propertyValueOptionsQuery`'s query
+ * key, so a pair already fetched by `PropertyFacetGroup` for the filter panel
+ * is read from cache rather than fetched a second time.
+ */
+export function usePropertyValueOptionsQueries(
+  entries: { key: string; filter: string }[],
+) {
+  const client = useApiClient();
+  return useQueries({
+    queries: entries.map((entry) => propertyValueOptionsQuery(client, entry.key, entry.filter)),
   });
 }
 
