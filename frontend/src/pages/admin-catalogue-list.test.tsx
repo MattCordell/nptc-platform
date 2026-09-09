@@ -314,7 +314,9 @@ describe("AdminCatalogueListPage", () => {
       await screen.findByRole("link", { name: DRAFT_KEY });
 
       expect(
-        await screen.findByRole("button", { name: "Remove filter Discipline: Chemistry" }),
+        await screen.findByRole("button", {
+          name: "Remove filter Discipline: Chemistry",
+        }),
       ).toBeInTheDocument();
     });
 
@@ -363,7 +365,9 @@ describe("AdminCatalogueListPage", () => {
       await screen.findByRole("link", { name: DRAFT_KEY });
 
       expect(
-        await screen.findByRole("button", { name: "Remove filter Discipline: Chemistry" }),
+        await screen.findByRole("button", {
+          name: "Remove filter Discipline: Chemistry",
+        }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Remove filter Discipline: Haematology" }),
@@ -373,8 +377,9 @@ describe("AdminCatalogueListPage", () => {
       // is the only other legitimate source of a call to this path, so more
       // than one indicates the dedup did not hold.
       expect(
-        calls.filter((call) => call.path.endsWith("/registry/properties/discipline/values"))
-          .length,
+        calls.filter((call) =>
+          call.path.endsWith("/registry/properties/discipline/values"),
+        ).length,
       ).toBe(1);
     });
 

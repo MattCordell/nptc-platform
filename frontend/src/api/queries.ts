@@ -585,7 +585,9 @@ export function usePropertyValueOptionsQueries(
 ) {
   const client = useApiClient();
   return useQueries({
-    queries: entries.map((entry) => propertyValueOptionsQuery(client, entry.key, entry.filter)),
+    queries: entries.map((entry) =>
+      propertyValueOptionsQuery(client, entry.key, entry.filter),
+    ),
   });
 }
 
