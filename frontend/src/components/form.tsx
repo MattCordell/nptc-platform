@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 import { Button } from "./button.tsx";
@@ -147,23 +147,21 @@ export function Form({
   // silently drop whichever `??` picked last (issue #62 review).
   const unlinkedBlockedReason =
     showBlockedReason && !blockedFieldId ? announcedBlockedReason : undefined;
-  // Memoised: the effect below depends on this, and the combined-message
-  // branch below would otherwise build a new element every render, forcing
-  // that effect to re-run - and re-focus the summary - on every keystroke
-  // in an unrelated field, not just when the message itself changes.
-  const effectiveFormError = useMemo(
-    () =>
-      formError && unlinkedBlockedReason ? (
-        <>
-          {formError}
-          <br />
-          {unlinkedBlockedReason}
-        </>
-      ) : (
-        (formError ?? unlinkedBlockedReason)
-      ),
-    [formError, unlinkedBlockedReason],
-  );
+  // Rebuilt every render - every caller passes `formError` as a freshly
+  // constructed element, so memoising this would never hit. The focus-move
+  // effect below still only re-focuses on a genuine new error, because it is
+  // guarded by `awaitingResultRef.current`, not by this value being stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+  const effectiveFormError =
+    formError && unlinkedBlockedReason ? (
+      <>
+        {formError}
+        <br />
+        {unlinkedBlockedReason}
+      </>
+    ) : (
+      (formError ?? unlinkedBlockedReason)
+    );
   const fieldErrors = [...(errors ?? []), ...blockedFieldErrors];
   const hasErrors = fieldErrors.length > 0 || Boolean(effectiveFormError);
 
