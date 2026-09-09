@@ -144,8 +144,10 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
     <section aria-labelledby="designations-heading">
       <h2 id="designations-heading">Terms</h2>
       <p>
-        Every term this entry publishes, one row each. The preferred term is the
-        catalogue&rsquo;s own; the rest are synonyms.
+        Every term this entry has ever held, one row each, active terms first. The
+        preferred term is the catalogue&rsquo;s own; the rest are synonyms. A retired term
+        stays listed, marked Retired, as history rather than something the entry currently
+        publishes.
       </p>
 
       <LiveRegion message={message} politeness={politeness} />
@@ -583,15 +585,13 @@ function RetireDialog({
           );
         }}
       >
-        {/* What the editor will actually see: the row goes. Retiring is a
-            status change, not a delete - the row and its audit history stay in
-            the database - but the read route omits retired designations
-            (`queries.load_designations`), so promising a visible retired state
-            would be promising something this screen cannot show (review
-            finding 2). Whether it should is issue #239. */}
+        {/* Issue #239: the admin read route now serves retired designations,
+            so the row stays in the table, marked Retired, rather than
+            vanishing - what the editor sees here has to match that. */}
         <p>
-          This stops the term being published and removes it from the list. It is not
-          deleted: the catalogue keeps it, and the change, in the entry&rsquo;s history.
+          This stops the term being published. The row stays in the table, marked Retired:
+          nothing is deleted, and the catalogue keeps the term, and the change, in the
+          entry&rsquo;s history.
         </p>
         <ChangelogNoteField id="retire-note" changelogNote={changelogNote} />
       </Form>

@@ -13,13 +13,16 @@ published yet can be edited the same way as published ones.
 
 ## What you see
 
-The **Terms** table lists everything the entry publishes, one row per term:
+The **Terms** table lists every term the entry has ever held, one row per term, active
+terms first:
 
 - The **preferred term** first. This is the catalogue's own name for the test.
 - Every **synonym** after it.
+- Every **retired term** last, marked with its status.
 
-Retired terms are not listed. They are kept, with their history, but the table shows what
-the entry publishes today.
+A retired term is history, not something the entry currently publishes — the **Status**
+column tells the two apart. There is no action on a retired row: it cannot be edited,
+retired again, or brought back.
 
 **Length** is the character count of the preferred term. It is worked out by the
 catalogue, not stored and not typed, so it always matches the term it describes. There is
@@ -63,8 +66,9 @@ starts reloading their change for you, so check yours is still needed and save i
 
 Choose **Retire** on the row, give a changelog note, and confirm.
 
-The term stops being published and disappears from the Terms table. Nothing is deleted:
-the catalogue keeps the term and records who retired it and why, in the entry's history.
+The term stops being published. It stays in the Terms table, marked **Retired**, at the
+bottom of the list — the catalogue keeps it, and records who retired it and why, in the
+entry's history.
 
 **The preferred term cannot be retired**, so no Retire button appears on that row. Every
 entry must have a preferred term at all times. To change what the entry is called, edit
@@ -103,7 +107,8 @@ Acknowledging applies to this entry only. The other entry is untouched, and its 
 editors still see the overlap until they acknowledge it themselves.
 
 Acknowledgements cannot be withdrawn. If you acknowledge one by mistake, change or retire
-the term instead.
+the term instead — retiring stops it being published, though the row stays in the Terms
+table, marked **Retired**, rather than disappearing.
 
 ## If something goes wrong
 

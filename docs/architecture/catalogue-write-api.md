@@ -38,11 +38,14 @@ can permission-audit each route independently of who is asking.
 Gated on `Permission.CATALOGUE_EDIT_PUBLISHED` - the same permission the write routes
 below require, on the reasoning that the audience for "load an entry to edit it" and
 "save an edit to it" is the same audience, so it needs one credential posture, not two.
-Serves the identical `EntryDetail` shape `catalogue.py`'s own detail route does,
-assembled by the same three loaders (`queries.load_designations`, `queries.
-load_bindings`, `queries.load_property_values`); `EntryDetail` and its assembly helpers
-live in `catalogue_shared.py` so both routers stay byte-for-byte in agreement on the
-shape.
+Serves the same `EntryDetail` shape `catalogue.py`'s own detail route does, assembled by
+the same two loaders for `bindings`/`properties` (`queries.load_bindings`, `queries.
+load_property_values`); `EntryDetail` and its assembly helpers live in
+`catalogue_shared.py` so both routers stay byte-for-byte in agreement on the shape,
+except for `designations` (issue #239): this route calls `queries.
+load_designations_any_status` rather than `queries.load_designations`, so it also
+carries retired rows - the admin route's reader is an editor deciding against editorial
+history, not an implementer with no use for it. See [public-api.md](public-api.md#what-is-published-and-what-is-not).
 
 This is also where an edit screen reads FR-38's `EntryDetail.row_version` (issue #227) -
 the token `/amendment` requires before it will save the entry's own preferred term. See
