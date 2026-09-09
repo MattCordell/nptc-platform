@@ -402,19 +402,29 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
     api.session.flush()
     admin_token = api.token(subject="sub-designation-write-hygiene", extra_claims={"acr": "2"})
 
-    business_key = create_entry(
+    entry = create_entry(
         api.session,
         AuditContext.system(),
         preferred_term="Designation write hygiene fixture",
         reason="Created for issue #224 hygiene test",
-    ).business_key
+    )
+    business_key = entry.business_key
     api.session.flush()
 
     add_response = api.post(
         f"/catalogue/entries/{business_key}/designations",
         token=admin_token,
-        json={"terms": ["FBC"], "reason": "Added for the designation write-hygiene test."},
+        json={
+            "terms": ["FBC"],
+            "reason": "Added for the designation write-hygiene test.",
+            "expected_row_version": entry.row_version,
+        },
     )
+    # Read back from the prior write's own response rather than hardcoding
+    # the next value (FR-38, issue #300; matching the binding hygiene
+    # test's own idiom above) - hardcoding would couple this test to the
+    # exact version history and silently depend on each write above having
+    # bumped it by exactly one.
     amend_response = api.post(
         f"/catalogue/entries/{business_key}/designations/amendment",
         token=admin_token,
@@ -422,6 +432,7 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
             "term": "FBC",
             "new_term": "Full Blood Count",
             "reason": "Amended for the designation write-hygiene test.",
+            "expected_row_version": add_response.json()["row_version"],
         },
     )
     retire_response = api.post(
@@ -430,6 +441,7 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
         json={
             "term": "Full Blood Count",
             "reason": "Retired for the designation write-hygiene test.",
+            "expected_row_version": amend_response.json()["row_version"],
         },
     )
     ack_response = api.post(
