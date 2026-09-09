@@ -426,7 +426,10 @@ def test_entry_child_write_does_not_bump_when_the_body_raises(app_session: Sessi
     """A body that raises must leave `row_version` untouched - the whole
     point of bumping *after* `yield` rather than in a `finally`, so a
     failed child write cannot invalidate a concurrent editor's own
-    still-current token."""
+    still-current token. Checked against a reload, not just the in-memory
+    attribute (issue #60 review round 3's own nit, matching the clean-exit
+    test's own reload check) - the `except BaseException` branch rolls the
+    savepoint back on any exception, so the row itself must agree."""
     entry = create_entry(
         app_session,
         AuditContext.system(),
@@ -441,6 +444,10 @@ def test_entry_child_write_does_not_bump_when_the_body_raises(app_session: Sessi
         raise _BoomError("simulated failure inside the wrapped write")
 
     assert entry.row_version == 1
+
+    app_session.expire(entry)
+    reloaded = load_entry_for_update(app_session, entry.business_key)
+    assert reloaded.row_version == 1
 
 
 @pytest.mark.req("FR-38")
@@ -554,11 +561,14 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
     raised an uncaught `StaleDataError` - a 500 at the API layer, not a
     409. This proves it is translated into `EntryVersionConflictError`
     instead, and - by inserting a real `code_binding` row in the wrapped
-    body and asserting it is gone afterwards (issue #60 review round 2:
-    the previous version of this test only set a flag, so it proved
-    nothing about a wrapped write actually being discarded) - that the
-    savepoint rolls the wrapped write back along with the version bump,
-    the guarantee `replace_binding`'s three-step body actually leans on."""
+    body and reading it back through `race_session` itself, while that
+    session's transaction is still open (issue #60 review round 3: reading
+    it back through a separate `owner_engine` connection, or after `race_
+    session.close()` had already rolled the whole transaction back, could
+    only ever see zero rows - passing identically whether or not the
+    savepoint rollback did anything) - that the savepoint rolls the
+    wrapped write back along with the version bump, the guarantee
+    `replace_binding`'s three-step body actually leans on."""
     business_key = format_business_key(999_000_060)
     with app_engine.connect() as setup_connection:
         entry_id = setup_connection.execute(
@@ -599,6 +609,7 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
             other_connection.commit()
 
     body_ran = False
+    remaining = -1
     #: Verhoeff-valid (matches `test_catalogue_bindings.py`'s own
     #: `_VALID_CODE`) - the wrapped write below inserts a real row with it,
     #: not a stand-in, so a savepoint rollback has something genuine to undo.
@@ -621,12 +632,26 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
                     {"entry_id": entry_id, "code": wrapped_write_code},
                 )
                 body_ran = True
+            # Through `race_session` itself, while its transaction is still
+            # open - not `owner_engine` after `race_session.close()` below
+            # has rolled that transaction back, which would read `0`
+            # regardless of whether the savepoint itself did anything
+            # (issue #60 review round 3). This also exercises the session
+            # staying usable after a caught conflict, the same property
+            # `test_session_remains_usable_after_a_caught_conflict` holds.
+            remaining = race_session.execute(
+                text("SELECT count(*) FROM code_binding WHERE entry_id = :entry_id"),
+                {"entry_id": entry_id},
+            ).scalar_one()
         finally:
             race_session.close()
             event.remove(app_engine, "after_cursor_execute", _inject_concurrent_write)
 
         assert fired, "the injected concurrent write never ran - the test proves nothing"
         assert body_ran, "the wrapped body never ran - the test proves nothing"
+        assert remaining == 0, (
+            "the wrapped write survived the conflict - the savepoint did not roll it back"
+        )
 
         report = exc_info.value.report
         assert report.expected_row_version == 1
@@ -637,14 +662,7 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
                 text("SELECT preferred_term FROM catalogue_entry WHERE business_key = :key"),
                 {"key": business_key},
             ).scalar_one()
-            assert preferred_term == "Raced ahead"
-            binding_count = check_connection.execute(
-                text("SELECT count(*) FROM code_binding WHERE entry_id = :entry_id"),
-                {"entry_id": entry_id},
-            ).scalar_one()
-        assert binding_count == 0, (
-            "the wrapped write survived the conflict - the savepoint did not roll it back"
-        )
+        assert preferred_term == "Raced ahead"
     finally:
         with owner_engine.connect() as cleanup_connection:
             cleanup_connection.execute(
