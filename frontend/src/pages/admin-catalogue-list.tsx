@@ -3,12 +3,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
-import { useAdminEntriesList, useAdminSearch } from "../api/queries.ts";
+import {
+  useAdminEntriesList,
+  useAdminSearch,
+  usePropertyDefinitions,
+  usePropertyValueOptionsQueries,
+} from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
 import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
 import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
 import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
+import { STATUS_OPTIONS } from "../catalogue/status-options.ts";
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -73,6 +79,56 @@ function selectionAnnouncement(count: number): string {
   return `${count} row${count === 1 ? "" : "s"} selected.`;
 }
 
+type PropertyDefinition = components["schemas"]["PropertyDefinitionResponse"];
+
+/**
+ * A facet's display name for the active-filter chip row (issue #289). `status`
+ * is special-cased the same way `AdminCatalogueFilterPanel` special-cases it
+ * (a core column, not a registry property); every other key resolves against
+ * the registry's own label when one exists, keyed on the **unfiltered**
+ * definitions map so a deprecated or non-`concept_picker` property still
+ * resolves - only a key genuinely absent from the registry (the true escape
+ * hatch, PR #285 review finding 1) falls back to the raw key.
+ */
+function resolveFacetLabel(
+  facetKey: string,
+  definitionByKey: Map<string, PropertyDefinition>,
+): string {
+  if (facetKey === "status") {
+    return "Status";
+  }
+  return definitionByKey.get(facetKey)?.label ?? facetKey;
+}
+
+/**
+ * A facet value's display string for the active-filter chip row (issue #289).
+ * `status` resolves against `STATUS_OPTIONS`; a `concept_picker` property
+ * resolves against its fetched value-options page, falling back to the raw
+ * code when the selected value isn't on that page - most commonly because the
+ * value set is larger than one page (`DEFAULT_PAGE_SIZE`,
+ * `nptc.catalogue.property_value_sources`) and the selected code simply isn't
+ * in the unfiltered first page fetched here, but also filtered out, retired,
+ * or the fetch still pending/erroring - mirroring `PropertyFacetGroup`'s own
+ * `carriedOptions` fallback. See follow-up issue #306 for a code->display
+ * lookup that isn't bounded by page size. Every other case (an unrecognised
+ * key, or a registry property with no value-options source, e.g.
+ * `volume_ml`) has nothing to resolve the value against, so it stays raw.
+ */
+function resolveValueLabel(
+  facetKey: string,
+  value: string,
+  definitionByKey: Map<string, PropertyDefinition>,
+  valueLabelByFacetKey: Map<string, Map<string, string>>,
+): string {
+  if (facetKey === "status") {
+    return STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value;
+  }
+  if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
+    return valueLabelByFacetKey.get(facetKey)?.get(value) ?? value;
+  }
+  return value;
+}
+
 /** Matching `admin-catalogue-edit.tsx`'s own `staleWarning` - one string,
  * both shown and announced, so the two cannot drift apart. */
 const STALE_DATA_WARNING =
@@ -92,6 +148,50 @@ export function AdminCatalogueListPage() {
   // from the registry since the link was shared) still needs a way to be
   // seen and cleared (PR #285 review finding 1).
   const activeFilters = useMemo(() => activeFilterEntries(search), [search]);
+
+  // A second `usePropertyDefinitions()` call (issue #289) - same query key as
+  // `AdminCatalogueFilterPanel`'s own, so this is a cache read, not a second
+  // network request. Keyed by the **unfiltered** `.data.items`, unlike the
+  // panel's own `codedFilterableProperties`: a chip must still resolve a
+  // label for a deprecated or non-`concept_picker` property, since neither of
+  // those reasons for the panel omitting a control makes the property's own
+  // name unknown.
+  const definitions = usePropertyDefinitions();
+  const definitionByKey = useMemo(() => {
+    const map = new Map<string, PropertyDefinition>();
+    for (const definition of definitions.data?.items ?? []) {
+      map.set(definition.key, definition);
+    }
+    return map;
+  }, [definitions.data]);
+
+  // The active facets worth a value-options fetch - a `concept_picker`
+  // property's stored value is a code, uninterpretable without the page
+  // `PropertyFacetGroup` itself fetches (issue #289). Deduplicated by facet
+  // key: several selected values on the same coded facet share one fetch.
+  const codedActiveFacetKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const { facetKey } of activeFilters) {
+      if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
+        keys.add(facetKey);
+      }
+    }
+    return Array.from(keys);
+  }, [activeFilters, definitionByKey]);
+  const valueOptionsQueries = usePropertyValueOptionsQueries(
+    codedActiveFacetKeys.map((key) => ({ key, filter: "" })),
+  );
+  const valueLabelByFacetKey = useMemo(() => {
+    const map = new Map<string, Map<string, string>>();
+    codedActiveFacetKeys.forEach((key, index) => {
+      const codeToDisplay = new Map<string, string>();
+      for (const item of valueOptionsQueries[index]?.data?.items ?? []) {
+        codeToDisplay.set(item.code, item.display ?? item.code);
+      }
+      map.set(key, codeToDisplay);
+    });
+    return map;
+  }, [codedActiveFacetKeys, valueOptionsQueries]);
 
   const listQuery = useAdminEntriesList({
     limit: 50,
@@ -273,17 +373,26 @@ export function AdminCatalogueListPage() {
           aria-label="Active filters"
           className="flex flex-wrap items-center gap-2"
         >
-          {activeFilters.map(({ facetKey, value }) => (
-            <button
-              key={`${facetKey}:${value}`}
-              type="button"
-              aria-label={`Remove filter ${facetKey}: ${value}`}
-              onClick={() => handleFilterToggle(facetKey, value)}
-            >
-              {facetKey}: {value}
-              <span aria-hidden="true"> ✕</span>
-            </button>
-          ))}
+          {activeFilters.map(({ facetKey, value }) => {
+            const facetLabel = resolveFacetLabel(facetKey, definitionByKey);
+            const valueLabel = resolveValueLabel(
+              facetKey,
+              value,
+              definitionByKey,
+              valueLabelByFacetKey,
+            );
+            return (
+              <button
+                key={`${facetKey}:${value}`}
+                type="button"
+                aria-label={`Remove filter ${facetLabel}: ${valueLabel}`}
+                onClick={() => handleFilterToggle(facetKey, value)}
+              >
+                {facetLabel}: {valueLabel}
+                <span aria-hidden="true"> ✕</span>
+              </button>
+            );
+          })}
           <button type="button" onClick={handleClearAllFilters}>
             Clear all filters
           </button>
