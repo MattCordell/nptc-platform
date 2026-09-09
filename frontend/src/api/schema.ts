@@ -297,6 +297,14 @@ export interface paths {
          *     that order, inside this request's one transaction (see the module
          *     docstring) - `code`/`fsn`/etc. of the successor are the caller's own,
          *     exactly like `bind_code` above.
+         *
+         *     The self-supersession refusal below runs first and needs no state - it
+         *     is checked before `entry_child_write` even takes the lock, unlike the
+         *     three writes it guards against. Those three then share **one**
+         *     `entry_child_write`, taken once before any of them: a stale
+         *     `expected_row_version` refuses before `retire_binding` ever runs, so a
+         *     stale caller can never strand this entry mid-replacement (FR-38, issue
+         *     #60).
          */
         post: operations["replace_binding_api_v1_catalogue_entries__business_key__bindings__code__replacement_post"];
         delete?: never;
@@ -875,6 +883,8 @@ export interface components {
             edition_hint: components["schemas"]["CodeBindingEditionHint"];
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /**
          * Binding
@@ -918,6 +928,19 @@ export interface components {
             items: components["schemas"]["Binding"][];
         };
         /**
+         * BindingReplacementResult
+         * @description `replace_binding`'s response: both affected bindings (the retired
+         *     predecessor and its successor), plus the entry's new `row_version` -
+         *     see `BindingWriteResult`'s own docstring for why this is declared here
+         *     rather than reusing the public `BindingList`.
+         */
+        BindingReplacementResult: {
+            /** Items */
+            items: components["schemas"]["Binding"][];
+            /** Row Version */
+            row_version: number;
+        };
+        /**
          * BindingStrength
          * @enum {string}
          */
@@ -927,6 +950,22 @@ export interface components {
          * @enum {string}
          */
         BindingTarget: "value_set" | "local_code_system";
+        /**
+         * BindingWriteResult
+         * @description `bind_code`/`retire_binding`'s response: the affected binding, plus
+         *     the entry's new `row_version` - mirroring `catalogue_properties.
+         *     PropertyValuesWriteResult`, so a client never has to re-fetch the entry
+         *     just to learn its next lock token. Declared here, not in
+         *     `catalogue_shared.py`: that module's `Binding`/`BindingList` are shared
+         *     with the *public* read route (`catalogue.py`), and widening them with
+         *     an admin-only `row_version` field would break
+         *     `test_api_public_response_hygiene.py`.
+         */
+        BindingWriteResult: {
+            binding: components["schemas"]["Binding"];
+            /** Row Version */
+            row_version: number;
+        };
         /**
          * BulkPropertyEntryTarget
          * @description One `(business_key, expected_row_version)` selection for the bulk
@@ -1757,12 +1796,16 @@ export interface components {
          * ReplaceBindingRequest
          * @description One `reason` covers all three steps of the replacement (retire,
          *     create, link) - a caller explaining *why* a code is being replaced is
-         *     explaining one editorial decision, not three.
+         *     explaining one editorial decision, not three. `expected_row_version`
+         *     likewise guards all three as one lock, taken once - see the module
+         *     docstring's FR-38 note.
          */
         ReplaceBindingRequest: {
             successor: components["schemas"]["ReplacementSuccessor"];
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /** ReplacementSuccessor */
         ReplacementSuccessor: {
@@ -1779,6 +1822,8 @@ export interface components {
         RetireBindingRequest: {
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /** RetireDesignationRequest */
         RetireDesignationRequest: {
@@ -2533,7 +2578,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Binding"];
+                    "application/json": components["schemas"]["BindingWriteResult"];
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -2563,13 +2608,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), `/replacement`'s successor naming the same code it is meant to replace, or a stale `expected_row_version` (FR-38) because someone else changed this entry since it was loaded - that variant carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
@@ -2720,7 +2765,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Binding"];
+                    "application/json": components["schemas"]["BindingWriteResult"];
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -2750,13 +2795,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), `/replacement`'s successor naming the same code it is meant to replace, or a stale `expected_row_version` (FR-38) because someone else changed this entry since it was loaded - that variant carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */
@@ -2802,7 +2847,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BindingList"];
+                    "application/json": components["schemas"]["BindingReplacementResult"];
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -2832,13 +2877,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), or `/replacement`'s successor naming the same code it is meant to replace. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - a second active binding on this entry, a successor code already actively bound elsewhere (including two concurrent requests racing for the same entry or code), `/replacement`'s successor naming the same code it is meant to replace, or a stale `expected_row_version` (FR-38) because someone else changed this entry since it was loaded - that variant carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. A code already retired, or with no binding at all, is a 404 here rather than a 409: every route below addresses a binding by its currently-*active* code, so a retired one is simply not addressable this way any more, not a conflicting state. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - a malformed or Verhoeff-failing SCTID, an unrecognised edition hint, a blank `fsn`/`au_preferred_term`, or a changelog note that does not meet FR-37. */

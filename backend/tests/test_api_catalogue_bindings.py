@@ -29,7 +29,7 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue import queries
-from nptc.catalogue.entries import create_entry
+from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import CodeBinding
@@ -138,10 +138,84 @@ def _binding_id(api: ApiTestApp, *, entry_id: Any, code: str, status: str = "act
     ).scalar_one()
 
 
-def _bind(api: ApiTestApp, business_key: str, token: str, **overrides: object) -> Any:
-    body = {"code": CODE_A, "fsn": FSN_A, "au_preferred_term": AU_PREFERRED_A, "reason": _REASON}
+def _row_version(api: ApiTestApp, business_key: str) -> int:
+    return api.session.execute(
+        select(CatalogueEntry.row_version).where(CatalogueEntry.business_key == business_key)
+    ).scalar_one()
+
+
+def _bump_row_version(api: ApiTestApp, business_key: str) -> None:
+    """Moves `business_key`'s `row_version` on by one via a real, unrelated
+    entry write (`save_entry`) - not a second bind, which would instead hit
+    `CodeBindingAlreadyActiveError` (FR-08) and leave the version untouched,
+    the wrong shape of "someone else changed this entry" for these tests."""
+    save_entry(
+        api.session,
+        AuditContext.system(),
+        business_key=business_key,
+        expected_row_version=_row_version(api, business_key),
+        changes=EntryChanges(preferred_term="Renamed to move the lock for an FR-38 test"),
+        reason="Bumping row_version for an FR-38 test.",
+    )
+    api.session.flush()
+
+
+def _with_row_version(
+    api: ApiTestApp, business_key: str, body: dict[str, object]
+) -> dict[str, object]:
+    """Fills in `expected_row_version` from the entry's *current* stored
+    value unless the caller already supplied one - every helper below goes
+    through this, since #60 made the field required on all three routes."""
+    if "expected_row_version" not in body:
+        body["expected_row_version"] = _row_version(api, business_key)
+    return body
+
+
+def _bind(api: ApiTestApp, business_key: str, token: str | None, **overrides: object) -> Any:
+    body: dict[str, object] = {
+        "code": CODE_A,
+        "fsn": FSN_A,
+        "au_preferred_term": AU_PREFERRED_A,
+        "reason": _REASON,
+    }
     body.update(overrides)
+    body = _with_row_version(api, business_key, body)
     return api.post(f"/catalogue/entries/{business_key}/bindings", token=token, json=body)
+
+
+def _retire(
+    api: ApiTestApp,
+    business_key: str,
+    code: str,
+    token: str | None,
+    **overrides: object,
+) -> Any:
+    body: dict[str, object] = {"reason": "Superseded during SPIA edition update."}
+    body.update(overrides)
+    body = _with_row_version(api, business_key, body)
+    return api.post(
+        f"/catalogue/entries/{business_key}/bindings/{code}/retirement", token=token, json=body
+    )
+
+
+def _replace(
+    api: ApiTestApp,
+    business_key: str,
+    code: str,
+    token: str | None,
+    *,
+    successor: dict[str, object] | None = None,
+    **overrides: object,
+) -> Any:
+    body: dict[str, object] = {
+        "successor": successor if successor is not None else {"code": CODE_B, "fsn": FSN_B},
+        "reason": _REASON,
+    }
+    body.update(overrides)
+    body = _with_row_version(api, business_key, body)
+    return api.post(
+        f"/catalogue/entries/{business_key}/bindings/{code}/replacement", token=token, json=body
+    )
 
 
 # --- happy paths -------------------------------------------------------
@@ -159,13 +233,15 @@ def test_bind_code_returns_201_with_the_binding_as_served(api: ApiTestApp) -> No
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["code"] == CODE_A
-    assert isinstance(body["code"], str)
-    assert body["fsn"] == FSN_A
-    assert body["au_preferred_term"] == AU_PREFERRED_A
-    assert body["status"] == "active"
-    assert body["retirement_reason"] is None
-    assert body["replaced_by_code"] is None
+    binding = body["binding"]
+    assert binding["code"] == CODE_A
+    assert isinstance(binding["code"], str)
+    assert binding["fsn"] == FSN_A
+    assert binding["au_preferred_term"] == AU_PREFERRED_A
+    assert binding["status"] == "active"
+    assert binding["retirement_reason"] is None
+    assert binding["replaced_by_code"] is None
+    assert body["row_version"] == _row_version(api, business_key)
     assert _audit_event_count(api) == before + 1
 
 
@@ -237,16 +313,14 @@ def test_retire_binding_requires_and_records_a_reason(api: ApiTestApp) -> None:
     _bind(api, business_key, token)
     before = _audit_event_count(api)
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "Superseded during SPIA edition update."},
-    )
+    response = _retire(api, business_key, CODE_A, token)
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["status"] == "retired"
-    assert body["retirement_reason"] == "Superseded during SPIA edition update."
+    binding = body["binding"]
+    assert binding["status"] == "retired"
+    assert binding["retirement_reason"] == "Superseded during SPIA edition update."
+    assert body["row_version"] == _row_version(api, business_key)
     assert _audit_event_count(api) == before + 1
 
 
@@ -262,11 +336,7 @@ def test_retire_binding_audits_the_status_change_with_reason(api: ApiTestApp) ->
     binding_id = _binding_id(api, entry_id=entry_id, code=CODE_A)
     reason = "Superseded during SPIA edition update - retirement audit test."
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": reason},
-    )
+    response = _retire(api, business_key, CODE_A, token, reason=reason)
 
     assert response.status_code == 200, response.text
     event = latest_audit_event(api.session, entity_type="code_binding", entity_id=binding_id)
@@ -285,20 +355,21 @@ def test_replace_binding_retires_creates_and_links_in_one_request(api: ApiTestAp
     _bind(api, business_key, token)
     before = _audit_event_count(api)
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={
-            "successor": {"code": CODE_B, "fsn": FSN_B},
-            "reason": "Replaced with the successor concept for this SPIA edition.",
-        },
+    response = _replace(
+        api,
+        business_key,
+        CODE_A,
+        token,
+        reason="Replaced with the successor concept for this SPIA edition.",
     )
 
     assert response.status_code == 200, response.text
-    items = {item["code"]: item for item in response.json()["items"]}
+    body = response.json()
+    items = {item["code"]: item for item in body["items"]}
     assert items[CODE_A]["status"] == "retired"
     assert items[CODE_A]["replaced_by_code"] == CODE_B
     assert items[CODE_B]["status"] == "active"
+    assert body["row_version"] == _row_version(api, business_key)
     # Three audit events: retired, created, replacement_linked - all in the
     # one request's transaction (the module docstring's whole point).
     assert _audit_event_count(api) == before + 3
@@ -329,11 +400,7 @@ def test_replace_binding_audits_all_three_steps_with_before_after_and_reason(
     sequence_floor = api.session.execute(select(func.max(AuditEvent.sequence))).scalar_one()
     reason = "Replaced with the successor concept for this SPIA edition - audit test."
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={"successor": {"code": CODE_B, "fsn": FSN_B}, "reason": reason},
-    )
+    response = _replace(api, business_key, CODE_A, token, reason=reason)
 
     assert response.status_code == 200, response.text
     successor_id = _binding_id(api, entry_id=entry_id, code=CODE_B)
@@ -441,11 +508,7 @@ def test_retire_without_a_reason_is_422(api: ApiTestApp) -> None:
     token = _admin_token(api, subject="sub-retire-no-reason")
     _bind(api, business_key, token)
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": ""},
-    )
+    response = _retire(api, business_key, CODE_A, token, reason="")
 
     assert response.status_code == 422, response.text
 
@@ -466,17 +529,9 @@ def test_retiring_an_already_retired_binding_is_404_not_409(api: ApiTestApp) -> 
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-double-retire")
     _bind(api, business_key, token)
-    api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "First retirement."},
-    )
+    _retire(api, business_key, CODE_A, token, reason="First retirement.")
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "Second retirement attempt."},
-    )
+    response = _retire(api, business_key, CODE_A, token, reason="Second retirement attempt.")
 
     assert response.status_code == 404, response.text
 
@@ -486,11 +541,7 @@ def test_retire_a_code_with_no_active_binding_is_404(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-retire-missing")
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "Nothing to retire."},
-    )
+    response = _retire(api, business_key, CODE_A, token, reason="Nothing to retire.")
 
     assert response.status_code == 404, response.text
 
@@ -517,7 +568,9 @@ def test_bind_code_works_against_an_entry_in_any_status(api: ApiTestApp, status:
 def test_bind_unknown_business_key_is_404(api: ApiTestApp) -> None:
     token = _admin_token(api, subject="sub-unknown-entry")
 
-    response = _bind(api, "NPTC-999999", token)
+    # No entry exists to read a current row_version from - overridden
+    # explicitly so `_bind` never tries to resolve one.
+    response = _bind(api, "NPTC-999999", token, expected_row_version=1)
 
     assert response.status_code == 404, response.text
 
@@ -527,11 +580,7 @@ def test_replace_against_a_never_bound_code_is_404(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-replace-missing")
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={"successor": {"code": CODE_B, "fsn": FSN_B}, "reason": _REASON},
-    )
+    response = _replace(api, business_key, CODE_A, token)
 
     assert response.status_code == 404, response.text
 
@@ -541,17 +590,9 @@ def test_replace_against_an_already_retired_code_is_404(api: ApiTestApp) -> None
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-replace-retired")
     _bind(api, business_key, token)
-    api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "Retired ahead of the replacement attempt."},
-    )
+    _retire(api, business_key, CODE_A, token, reason="Retired ahead of the replacement attempt.")
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={"successor": {"code": CODE_B, "fsn": FSN_B}, "reason": _REASON},
-    )
+    response = _replace(api, business_key, CODE_A, token)
 
     assert response.status_code == 404, response.text
 
@@ -602,11 +643,7 @@ def test_replace_with_the_same_code_as_successor_is_409(api: ApiTestApp) -> None
     token = _admin_token(api, subject="sub-self-replace")
     _bind(api, business_key, token)
 
-    response = api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={"successor": {"code": CODE_A, "fsn": FSN_A}, "reason": _REASON},
-    )
+    response = _replace(api, business_key, CODE_A, token, successor={"code": CODE_A, "fsn": FSN_A})
 
     assert response.status_code == 409, response.text
 
@@ -629,11 +666,7 @@ def test_replace_whose_successor_code_is_bound_elsewhere_rolls_back_the_whole_re
     _bind(api, second_entry, token, code=CODE_B, fsn=FSN_B)
     before = _audit_event_count(api)
 
-    response = api.post(
-        f"/catalogue/entries/{first_entry}/bindings/{CODE_A}/replacement",
-        token=token,
-        json={"successor": {"code": CODE_B, "fsn": FSN_B}, "reason": _REASON},
-    )
+    response = _replace(api, first_entry, CODE_A, token)
 
     assert response.status_code == 409, response.text
     assert _audit_event_count(api) == before
@@ -665,21 +698,240 @@ def test_rebinding_a_retired_code_then_retiring_it_again_reads_back_the_right_ro
     business_key = _seed_entry(api)
     token = _admin_token(api, subject="sub-rebind-retire")
     _bind(api, business_key, token)
-    api.post(
-        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
-        token=token,
-        json={"reason": "First retirement."},
+    _retire(api, business_key, CODE_A, token, reason="First retirement.")
+    _bind(api, business_key, token)
+
+    response = _retire(
+        api, business_key, CODE_A, token, reason="Second retirement, must be what comes back."
     )
+
+    assert response.status_code == 200, response.text
+    assert (
+        response.json()["binding"]["retirement_reason"]
+        == "Second retirement, must be what comes back."
+    )
+
+
+# --- FR-38 row-version lock (issue #60) -----------------------------------
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_bind_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
+    """Pins the required-ness decision (module docstring's FR-38 note): the
+    field's very first release has no back-compat client to break, so a
+    request that omits it is rejected outright rather than silently
+    defaulting to "no lock"."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-bind-missing-version")
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/bindings",
+        token=token,
+        json={"code": CODE_A, "fsn": FSN_A, "reason": _REASON},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-retire-missing-version")
     _bind(api, business_key, token)
 
     response = api.post(
         f"/catalogue/entries/{business_key}/bindings/{CODE_A}/retirement",
         token=token,
-        json={"reason": "Second retirement, must be what comes back."},
+        json={"reason": _REASON},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["retirement_reason"] == "Second retirement, must be what comes back."
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_replace_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-replace-missing-version")
+    _bind(api, business_key, token)
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/bindings/{CODE_A}/replacement",
+        token=token,
+        json={"successor": {"code": CODE_B, "fsn": FSN_B}, "reason": _REASON},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_stale_row_version_on_bind_is_409_with_conflict_body(api: ApiTestApp) -> None:
+    """The hole this closes: two editors both loaded the entry at the same
+    `row_version`. The first bind succeeds and bumps it; the second, still
+    holding the version it originally loaded, is refused - not silently
+    applied on top of the first (FR-38's whole point) - and the body is the
+    full `VersionConflictResponse`, not a bare `{detail}`."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-bind-stale")
+    stale_version = _row_version(api, business_key)
+
+    first = _bind(api, business_key, token, expected_row_version=stale_version)
+    assert first.status_code == 201, first.text
+
+    response = _bind(
+        api, business_key, token, code=CODE_C, fsn=FSN_C, expected_row_version=stale_version
+    )
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["business_key"] == business_key
+    assert body["expected_row_version"] == stale_version
+    assert body["current_row_version"] == stale_version + 1
+    assert body["conflicts"] == []
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_stale_row_version_on_retire_is_409(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-retire-stale")
+    _bind(api, business_key, token)
+    stale_version = _row_version(api, business_key)
+    _bump_row_version(api, business_key)
+
+    response = _retire(api, business_key, CODE_A, token, expected_row_version=stale_version)
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["expected_row_version"] == stale_version
+    assert body["current_row_version"] == stale_version + 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_stale_row_version_on_replace_is_409(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-replace-stale")
+    _bind(api, business_key, token)
+    stale_version = _row_version(api, business_key)
+    _bump_row_version(api, business_key)
+
+    response = _replace(api, business_key, CODE_A, token, expected_row_version=stale_version)
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["expected_row_version"] == stale_version
+    assert body["current_row_version"] == stale_version + 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_replace_with_a_stale_version_leaves_no_partial_replacement(api: ApiTestApp) -> None:
+    """`entry_child_write` takes its lock once, before any of `replace_
+    binding`'s three writes - a stale version must refuse before
+    `retire_binding` even runs, so the superseded binding is still active,
+    no successor row exists, and no audit event lands from this request."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-replace-stale-partial")
+    _bind(api, business_key, token)
+    stale_version = _row_version(api, business_key)
+    _bump_row_version(api, business_key)
+    before = _audit_event_count(api)
+
+    response = _replace(api, business_key, CODE_A, token, expected_row_version=stale_version)
+
+    assert response.status_code == 409, response.text
+    assert _audit_event_count(api) == before
+
+    entry_id = _entry_id(api, business_key)
+    predecessor = api.session.execute(
+        select(CodeBinding).where(CodeBinding.entry_id == entry_id, CodeBinding.code == CODE_A)
+    ).scalar_one()
+    assert predecessor.status == "active"
+    assert predecessor.replaced_by_binding_id is None
+    successor_rows = (
+        api.session.execute(
+            select(CodeBinding).where(CodeBinding.entry_id == entry_id, CodeBinding.code == CODE_B)
+        )
+        .scalars()
+        .all()
+    )
+    assert successor_rows == []
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_replace_self_supersession_is_checked_before_stale_version(api: ApiTestApp) -> None:
+    """Self-supersession is refused before `entry_child_write` even takes
+    the lock (the module's own note: "needs no state") - so a stale
+    version behind a same-code replacement still surfaces as the
+    self-supersession 409, not a version conflict, pinning the order the
+    router body actually checks them in."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-replace-precedence")
+    _bind(api, business_key, token)
+    stale_version = _row_version(api, business_key) - 1  # already stale too
+
+    response = _replace(
+        api,
+        business_key,
+        CODE_A,
+        token,
+        successor={"code": CODE_A, "fsn": FSN_A},
+        expected_row_version=stale_version,
+    )
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    # The self-supersession body is a bare ErrorResponse (`detail` only) -
+    # a VersionConflictResponse would carry `business_key` instead.
+    assert "business_key" not in body
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_a_refused_binding_write_emits_no_audit_event(api: ApiTestApp) -> None:
+    """Mirrors `test_a_rejected_preferred_term_save_leaves_no_audit_event`
+    (`test_catalogue_optimistic_locking.py`) for the binding write surface:
+    `entry_child_write` raises before its wrapped body ever runs, so a
+    stale bind leaves neither a new binding row nor an audit event."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-bind-no-audit")
+    stale_version = _row_version(api, business_key)
+    _bind(api, business_key, token, expected_row_version=stale_version)
+    before = _audit_event_count(api)
+
+    response = _bind(
+        api, business_key, token, code=CODE_C, fsn=FSN_C, expected_row_version=stale_version
+    )
+
+    assert response.status_code == 409, response.text
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_bind_without_permission_is_403_even_with_missing_row_version(api: ApiTestApp) -> None:
+    """FR-44's negative case must precede the new 422: a caller with no
+    `catalogue.edit_published` is refused for lack of permission, not
+    because they also omitted the newly-required field."""
+    business_key = _seed_entry(api)
+    token = api.token(subject="sub-no-permission-no-version")
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/bindings",
+        token=token,
+        json={"code": CODE_A, "fsn": FSN_A, "reason": _REASON},
+    )
+
+    assert response.status_code == 403, response.text
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
