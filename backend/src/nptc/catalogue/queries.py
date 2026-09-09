@@ -417,7 +417,7 @@ def load_designations_any_status(
     order), then `id` last as the tiebreaker nothing else can supply -
     `load_bindings` carries the same latent gap (two retired bindings can
     share a `code`) and is not fixed here, being outside this change's own
-    blast radius (issue #239 review).
+    blast radius (issue #239 review) - tracked as issue #314.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -492,8 +492,8 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     `getRowKey` comment names the identical case for `Binding`), so two
     retired rows can share `code` and this query does not order between
     them - the same latent gap `load_designations_any_status` closes with an
-    `id` tiebreaker (issue #239 review), left open here as out of that
-    change's blast radius.
+    `id` tiebreaker (issue #239 review). Left open here as out of that
+    change's blast radius; tracked as issue #314.
     """
     ids = tuple(entry_ids)
     if not ids:

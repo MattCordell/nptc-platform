@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
+from nptc.catalogue import queries
 from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import (
@@ -391,6 +392,71 @@ def test_retiring_an_already_retired_designation_is_refused(app_session: Session
         )
 
     assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.integration
+def test_load_designations_any_status_orders_repeated_retired_terms_deterministically(
+    app_session: Session,
+) -> None:
+    """Issue #239 review: `(use, language, term)` is unique only among
+    *active* designations (`ix_designation_no_duplicate_active_term`), so a
+    term added, retired, re-added and retired again leaves two rows sharing
+    all three - the exact case that left `load_designations_any_status`'s
+    original `ORDER BY use, language, term` with no total order, and the
+    reason it now adds `status` (active before retired) and `id` as
+    tiebreakers.
+
+    Asserted against a Python-side sort by `id`, not a fixed expected order:
+    `Designation.id` is a UUID (issue #224/FR-06's precedent - never an
+    integer a test could predict), so the guarantee under test is that the
+    query's own order is deterministic and matches ascending `id` among
+    otherwise-identical rows, not that it matches insertion order."""
+    entry = _new_entry(app_session)
+    active = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Active synonym",
+        reason="Adding an active synonym for contrast",
+    )
+    app_session.flush()
+
+    first_retirement = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session,
+        AuditContext.system(),
+        designation=first_retirement,
+        reason="Retiring FBC synonym",
+    )
+    app_session.flush()
+
+    second_retirement = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="FBC",
+        reason="Re-adding FBC synonym",
+    )
+    app_session.flush()
+    retire_designation(
+        app_session,
+        AuditContext.system(),
+        designation=second_retirement,
+        reason="Retiring FBC synonym again",
+    )
+    app_session.flush()
+
+    rows = queries.load_designations_any_status(app_session, (entry.id,))
+
+    assert [row.status for row in rows] == ["active", "retired", "retired"]
+    assert rows[0].id == active.id
+
+    retired_ids = [row.id for row in rows[1:]]
+    assert retired_ids == sorted(retired_ids), "retired rows must be in ascending id order"
+    assert set(retired_ids) == {first_retirement.id, second_retirement.id}
 
 
 # --- Decision 1: the catalogue's en-AU preferred term lives in one place ----
