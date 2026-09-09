@@ -253,6 +253,22 @@ def test_every_snomed_code_field_is_declared_a_json_string() -> None:
     assert not offenders, f"SNOMED code field(s) not typed as a JSON string (FR-06): {offenders}"
 
 
+@pytest.mark.req("NFR-12")
+def test_the_audit_export_routes_200_is_declared_ndjson_not_json() -> None:
+    """PR #309 review: `export_audit_events` returns a `StreamingResponse`
+    whose body is NDJSON, but FastAPI cannot infer that from the return
+    annotation alone - without `response_class=StreamingResponse` plus an
+    explicit `responses={200: ...}` override, the generated document (and
+    #147's generated client) would see `application/json` with an empty
+    schema for a body that is actually `application/x-ndjson`."""
+    spec = _current_spec()
+    responses = spec["paths"]["/api/v1/audit/events/export"]["get"]["responses"]  # type: ignore[index]
+    content: dict[str, Any] = responses["200"]["content"]
+
+    assert "application/x-ndjson" in content
+    assert "application/json" not in content
+
+
 @pytest.mark.req("FR-20")
 def test_served_document_matches_the_committed_document() -> None:
     """The served copy and the committed copy must be the same build - not

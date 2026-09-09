@@ -26,11 +26,33 @@ at all, given `nptc.catalogue.history`'s public FR-19 surface deliberately never
 One JSON object per line (`GET /api/v1/audit/events/export`, `application/x-ndjson`). NDJSON
 round-trips the `before`/`after` JSONB - and the `_redacted` marker inside it - without
 inventing a flattening rule, and carries `entry_hash`/`prev_hash` on every line so an
-exported extract stays independently verifiable against the chain (NFR-10) without a second
+exported line can be cross-referenced against the stored row (NFR-10), without a second
 file format for those two fields. CSV was considered and rejected: `before`/`after` are
 JSONB objects of varying shape (see `nptc.audit.diffing`'s own per-model column policy), and
 a CSV cell holding embedded, re-escaped JSON is exactly the ambiguous, hand-rolled shape
 NDJSON avoids.
+
+**`entry_hash`/`prev_hash` are for cross-reference, not standalone recomputation** (PR #309
+review). `nptc.audit.hashing.digest_field_names` covers every `audit_event` column except
+`entry_hash`/`sequence`, which includes `id`, `correlation_id`, `actor_ip` and `user_agent` -
+none of which this export payload carries, deliberately: putting an actor's IP address and
+user agent into a downloadable file is a real NFR-26/NFR-35 decision this issue does not
+need to make, not an oversight. A reader with database access can confirm an exported line
+still matches the stored row (the same check `scripts/verify_audit_chain.py` performs), but
+cannot recompute `entry_hash` from the exported line alone. A *filtered* export compounds
+this: its rows are not contiguous in the real chain, so `prev_hash` linkage cannot be walked
+across the extract itself either way, filtered or not - only each row individually confirmed
+against its stored counterpart. `backend/tests/test_api_audit_export.py::test_export_entry_
+hash_cannot_be_recomputed_from_the_exported_line_alone` pins the omitted fields so this claim
+and the payload cannot silently drift apart again.
+
+**A mid-stream failure is not signalled.** `stream_audit_events` streams via `yield_per`, and
+`StreamingResponse` has already sent its `200` and headers by the time the first row is
+written - if the query or the connection fails partway through, the client is left holding a
+truncated file with nothing in the HTTP response to say so (PR #309 review). Not addressed
+here: NDJSON has no natural trailer to carry a completion marker, and this platform's real
+scale (below) makes the failure window small. Worth revisiting if export size grows enough
+to make a partial failure a real operational concern.
 
 ### No `audit.exported` event
 

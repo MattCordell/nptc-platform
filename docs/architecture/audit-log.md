@@ -46,9 +46,15 @@ is a 422 (`MalformedAuditCursorError`), not silently reinterpreted.
 ## Export: the whole filtered set, oldest first, with the hash chain attached
 
 `GET /audit/events/export` streams NDJSON - one JSON object per line, each carrying
-`entry_hash`/`prev_hash` alongside the event fields, so an exported extract can be
-independently re-verified against the chain (NFR-10) without a second round trip to this
-API. Ordered oldest first - the opposite of the read route - matching
+`entry_hash`/`prev_hash` alongside the event fields, so an exported line can be
+cross-referenced against the stored row (NFR-10). This is narrower than standalone
+recomputation: `nptc.audit.hashing.digest_field_names` also covers `id`, `correlation_id`,
+`actor_ip` and `user_agent`, none of which this payload carries (a deliberate NFR-26/NFR-35
+choice, not an oversight - see ADR-0039), so confirming a line needs a database round trip
+against the source row, the same check `scripts/verify_audit_chain.py` performs. A filtered
+export's rows are also not contiguous in the real chain, so `prev_hash` linkage cannot be
+walked across the extract itself either. Ordered oldest first - the opposite of the read
+route - matching
 `nptc.audit.verification.verify_chain`'s own walk direction, and unpaged: an export is the
 whole filtered set, not a page of it, which is practical at this platform's real catalogue
 size (see ADR-0039's own note on that trade).

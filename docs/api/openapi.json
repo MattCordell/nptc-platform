@@ -3078,11 +3078,11 @@
               "type": "integer",
               "maximum": 200,
               "minimum": 1,
-              "description": "Maximum entries in this page.",
+              "description": "Maximum events in this page.",
               "default": 50,
               "title": "Limit"
             },
-            "description": "Maximum entries in this page."
+            "description": "Maximum events in this page."
           },
           {
             "name": "before",
@@ -3130,7 +3130,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3148,7 +3149,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3166,7 +3168,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3266,7 +3269,7 @@
           "audit"
         ],
         "summary": "Export the filtered audit log as NDJSON (NFR-12)",
-        "description": "One JSON object per line, oldest first, including `prev_hash`/\n`entry_hash` so the extract stays independently verifiable (NFR-10) -\nsee `nptc.audit.queries.stream_audit_events`'s own docstring for why\nthe order differs from the read route above. The whole filtered set,\nnot one page: an export has no `limit`/cursor.",
+        "description": "One JSON object per line, oldest first, including `prev_hash`/\n`entry_hash` for cross-referencing a line against its stored row - see\n`nptc.audit.queries.AuditEventRow`'s own docstring for why that is a\nnarrower guarantee than standalone recomputation, and `stream_audit_\nevents`'s own docstring for why the order differs from the read route\nabove. The whole filtered set, not one page: an export has no\n`limit`/cursor.",
         "operationId": "export_audit_events_api_v1_audit_events_export_get",
         "parameters": [
           {
@@ -3295,7 +3298,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3313,7 +3317,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3331,7 +3336,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 {
                   "type": "null"
@@ -3383,10 +3389,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The filtered audit log, one JSON object per line.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -3411,7 +3419,7 @@
             }
           },
           "422": {
-            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset.",
+            "description": "A query parameter was unprocessable - `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. This route has no `limit`/cursor of its own to be unprocessable.",
             "content": {
               "application/json": {
                 "schema": {

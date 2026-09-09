@@ -231,6 +231,25 @@ def test_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> None:
 
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
+def test_occurred_from_equal_to_occurred_to_is_a_422(api: ApiTestApp) -> None:
+    """A zero-width `[from, to)` window can never match a row regardless
+    of the data - refused for the same reason `occurred_from` after
+    `occurred_to` is, not merely returned as an empty page (PR #309
+    review)."""
+    token = _admin_token(api, subject="sub-audit-equal-range")
+    instant = "2026-01-01T00:00:00Z"
+
+    response = api.get(
+        "/audit/events",
+        token=token,
+        params={"occurred_from": instant, "occurred_to": instant},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
 def test_occurred_from_without_a_utc_offset_is_a_422(api: ApiTestApp) -> None:
     """A naive datetime has no defined meaning against `occurred_at`
     (`TIMESTAMP WITH TIME ZONE`) - refused rather than silently

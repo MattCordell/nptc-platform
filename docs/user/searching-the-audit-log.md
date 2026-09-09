@@ -37,9 +37,11 @@ it, is unaffected.
 
 An export downloads everything your current search would return, as one line of detail per
 change - not just the current page, the whole result set. Each line also carries two
-technical fields (a "hash") that let you or anyone else independently confirm the exported
-lines have not been altered since they were recorded, without needing to trust the platform's
-word for it.
+technical fields (a "hash") that a technically able reader with direct access to the
+platform's database can use to confirm one exported line still matches what the platform
+itself has recorded for that change. These fields are not a substitute for that database
+access: they let someone check an exported line against the platform's own record of it, not
+recompute the check from the exported file alone.
 
 An export is not itself recorded as a change in the log: reading and exporting are the only
 two things this part of the platform can do, and neither writes anything.

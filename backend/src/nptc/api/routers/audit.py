@@ -23,6 +23,10 @@ clean `422` any more. No `audit.exported` audit event: this route holds
 no write privilege at all (NFR-09), and NFR-08 scopes audit events to
 state-changing operations - a deliberate decision, not an oversight (see
 `docs/adr/0039-*.md`).
+
+**`prev_hash`/`entry_hash` are for cross-reference, not standalone
+recomputation** - see `nptc.audit.queries.AuditEventRow`'s own docstring
+for why, and ADR-0039 for the full reasoning (PR #309 review).
 """
 
 from __future__ import annotations
@@ -40,7 +44,6 @@ from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue_shared import LimitQuery
 from nptc.audit import queries as audit_queries
 from nptc.auth.permissions import Permission
 
@@ -58,6 +61,11 @@ _RESPONSE_403: Final[dict[str, Any]] = {
         "response then also carries a `WWW-Authenticate` step-up challenge)."
     ),
 }
+#: The read route's own 422 causes - a cursor, a `limit`, or a filter
+#: combination. `_EXPORT_RESPONSE_422` below is a separate constant, not
+#: this one reused, because the export route accepts neither `before` nor
+#: `limit` and a shared description naming both was misleading on that
+#: route (PR #309 review).
 _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -67,14 +75,50 @@ _RESPONSE_422: Final[dict[str, Any]] = {
         "with no UTC offset."
     ),
 }
+_EXPORT_RESPONSE_422: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "A query parameter was unprocessable - `entity_id` given without "
+        "`entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/"
+        "`occurred_to` given with no UTC offset. This route has no `limit`/cursor "
+        "of its own to be unprocessable."
+    ),
+}
 _RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
     422: _RESPONSE_422,
 }
+#: The export's own response map: the 401/403 causes are identical to the
+#: read route's, the 422 is export-specific (above), and the 200 is
+#: declared explicitly - FastAPI cannot infer a `StreamingResponse`'s
+#: content type from its return annotation, so without this override the
+#: generated document (and #147's client) would see `application/json`
+#: with an empty schema for a body that is actually NDJSON (PR #309
+#: review).
+_EXPORT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    200: {
+        "description": "The filtered audit log, one JSON object per line.",
+        "content": {"application/x-ndjson": {"schema": {"type": "string"}}},
+    },
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    422: _EXPORT_RESPONSE_422,
+}
 
 SessionDep = Annotated[Session, Depends(get_session)]
 _READ = Depends(permission_dep(Permission.AUDIT_READ))
+
+#: Not `catalogue_shared.LimitQuery` reused: that type's own fixed
+#: description reads "Maximum entries in this page", and "entries" is
+#: catalogue vocabulary elsewhere in this API - an audit event is not an
+#: entry (PR #309 review). Same numeric bounds, audit-appropriate wording;
+#: not worth generalising `LimitQuery` itself to take a configurable noun
+#: for its one other caller.
+AuditLimitQuery = Annotated[
+    int,
+    Query(ge=1, le=200, description="Maximum events in this page."),
+]
 
 #: Matches `nptc.catalogue.history.HistoryCursorQuery` exactly - the same
 #: cursor shape (a digit string bounded by `AuditEvent.sequence`'s own
@@ -94,29 +138,42 @@ AuditCursorQuery = Annotated[
     ),
 ]
 
+#: Not derived from a column width, unlike `AuditCursorQuery.max_length`
+#: above: `entity_type`/`entity_id`/`action` are `Text` in the database,
+#: genuinely unbounded. 200 is a generous cap against a pathological query
+#: string, not a business rule - every value this platform itself writes
+#: (an entity type token, an internal id, an action name) is far short of
+#: it (PR #309 review).
+_FILTER_VALUE_MAX_LENGTH: Final = 200
+
 ActorFilterQuery = Annotated[
     uuid.UUID | None, Query(description="Filter to one actor, by internal id.")
 ]
 EntityTypeFilterQuery = Annotated[
     str | None,
     Query(
+        max_length=_FILTER_VALUE_MAX_LENGTH,
         description=(
             "Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`."
-        )
+        ),
     ),
 ]
 EntityIdFilterQuery = Annotated[
     str | None,
     Query(
+        max_length=_FILTER_VALUE_MAX_LENGTH,
         description=(
             "Filter to one entity, alongside `entity_type` - the two are required "
             "together, and `entity_id` alone is a 422."
-        )
+        ),
     ),
 ]
 ActionFilterQuery = Annotated[
     str | None,
-    Query(description="Filter to one action name, e.g. `catalogue_entry.updated`."),
+    Query(
+        max_length=_FILTER_VALUE_MAX_LENGTH,
+        description="Filter to one action name, e.g. `catalogue_entry.updated`.",
+    ),
 ]
 #: `AwareDatetime`, not plain `datetime`: a naive value has no defined
 #: meaning against `occurred_at` (`TIMESTAMP WITH TIME ZONE`) - accepting
@@ -214,7 +271,7 @@ def _event_from_row(row: audit_queries.AuditEventRow) -> AuditEventItem:
 )
 def read_audit_events(
     session: SessionDep,
-    limit: LimitQuery = 50,
+    limit: AuditLimitQuery = 50,
     before: AuditCursorQuery = None,
     actor_user_id: ActorFilterQuery = None,
     entity_type: EntityTypeFilterQuery = None,
@@ -277,7 +334,15 @@ def _ndjson_lines(rows: Iterator[audit_queries.AuditEventRow]) -> Iterator[str]:
 @router.get(
     "/events/export",
     summary="Export the filtered audit log as NDJSON (NFR-12)",
-    responses=_RESPONSES,
+    # `response_class=StreamingResponse`, not just the return annotation:
+    # FastAPI cannot infer a streamed body's content type from a
+    # `StreamingResponse` return annotation alone, and without this the
+    # generated document declared this route's `200` as `application/json`
+    # with an empty schema - `_EXPORT_RESPONSES`' own explicit `200` entry
+    # is what actually fixes the schema; this tells FastAPI not to also
+    # guess a JSON one alongside it (PR #309 review).
+    response_class=StreamingResponse,
+    responses=_EXPORT_RESPONSES,
     dependencies=[_READ],
 )
 def export_audit_events(
@@ -290,10 +355,12 @@ def export_audit_events(
     occurred_to: OccurredToQuery = None,
 ) -> StreamingResponse:
     """One JSON object per line, oldest first, including `prev_hash`/
-    `entry_hash` so the extract stays independently verifiable (NFR-10) -
-    see `nptc.audit.queries.stream_audit_events`'s own docstring for why
-    the order differs from the read route above. The whole filtered set,
-    not one page: an export has no `limit`/cursor."""
+    `entry_hash` for cross-referencing a line against its stored row - see
+    `nptc.audit.queries.AuditEventRow`'s own docstring for why that is a
+    narrower guarantee than standalone recomputation, and `stream_audit_
+    events`'s own docstring for why the order differs from the read route
+    above. The whole filtered set, not one page: an export has no
+    `limit`/cursor."""
     rows = audit_queries.stream_audit_events(
         session,
         audit_queries.AuditEventFilter(

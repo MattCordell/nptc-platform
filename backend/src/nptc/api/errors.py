@@ -66,7 +66,11 @@ from pydantic import BaseModel, ConfigDict
 
 from nptc.api.dependencies import CredentialRequiredError, MalformedAuthorizationError
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance
-from nptc.audit.queries import AuditFilterError, MalformedAuditCursorError
+from nptc.audit.queries import (
+    AuditFilterError,
+    EntityIdRequiresEntityTypeError,
+    MalformedAuditCursorError,
+)
 from nptc.auth.errors import TokenError
 from nptc.auth.errors_authorisation import (
     AuthorisationError,
@@ -346,14 +350,13 @@ _DETAIL_HISTORY_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
     "unmodified, or start again from the first page."
 )
-_DETAIL_AUDIT_CURSOR = (
-    "This page cursor is not one this API issued. Pass a `next_cursor` value back "
-    "unmodified, or start again from the first page."
-)
-_DETAIL_AUDIT_FILTER = (
-    "This filter combination cannot produce a result: `entity_id` requires "
-    "`entity_type`, and `occurred_from` must not be after `occurred_to`."
-)
+#: Byte-identical to `_DETAIL_HISTORY_CURSOR` above by construction, not
+#: coincidence - `nptc.api.routers.audit.AuditCursorQuery` copies
+#: `nptc.catalogue.history`'s own cursor shape verbatim (see that type's
+#: own docstring), so the refusal reads the same way too. Reused directly
+#: rather than kept as a second constant (PR #309 review).
+_DETAIL_ENTITY_ID_REQUIRES_ENTITY_TYPE = "The `entity_id` filter requires `entity_type` as well."
+_DETAIL_OCCURRED_RANGE_INVALID = "`occurred_from` must be strictly before `occurred_to`."
 #: FR-16. Names no property key and no value: the parameter is caller-supplied
 #: text on a public, unauthenticated endpoint (NFR-26/NFR-35), and which
 #: properties exist but are not offered as filters is editorial state this
@@ -600,16 +603,24 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         _logger.info("audit cursor refused: %s", type(exc).__name__)
         return JSONResponse(
             status_code=MalformedAuditCursorError.http_status,
-            content={"detail": _DETAIL_AUDIT_CURSOR},
+            content={"detail": _DETAIL_HISTORY_CURSOR},
         )
 
     @app.exception_handler(AuditFilterError)
     async def _handle_audit_filter_error(_request: Request, exc: AuditFilterError) -> JSONResponse:
+        # Discriminated by subclass, unlike most handlers in this module,
+        # because - unusually - it is safe here: `AuditFilterError`'s two
+        # subclasses each carry a fixed, static message with no caller
+        # input folded in (PR #309 review), so serving the specific reason
+        # carries none of the NFR-26/NFR-35 risk a cursor or search-term
+        # exception's message would.
         _logger.info("audit filter refused: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=AuditFilterError.http_status,
-            content={"detail": _DETAIL_AUDIT_FILTER},
+        detail = (
+            _DETAIL_ENTITY_ID_REQUIRES_ENTITY_TYPE
+            if isinstance(exc, EntityIdRequiresEntityTypeError)
+            else _DETAIL_OCCURRED_RANGE_INVALID
         )
+        return JSONResponse(status_code=AuditFilterError.http_status, content={"detail": detail})
 
     @app.exception_handler(FilterRefusedError)
     async def _handle_filter_refused(_request: Request, exc: FilterRefusedError) -> JSONResponse:

@@ -63,6 +63,20 @@ def test_occurred_from_after_occurred_to_is_refused() -> None:
         )
 
 
+def test_occurred_from_equal_to_occurred_to_is_refused() -> None:
+    """A zero-width `[from, to)` window can never match a row regardless
+    of what the table holds - refused for the identical reason the
+    backwards case above is, not merely a data-dependent "no matches"
+    (PR #309 review) - see `OccurredRangeInvalidError`'s own docstring."""
+    instant = datetime.now(UTC)
+    with pytest.raises(AuditFilterError):
+        search_audit_events(
+            Session(),
+            AuditEventFilter(occurred_from=instant, occurred_to=instant),
+            limit=50,
+        )
+
+
 def test_stream_entity_id_without_entity_type_is_refused_before_iteration() -> None:
     """`stream_audit_events` validates eagerly, not lazily inside the
     generator it returns - see its own docstring for why. Proven here by

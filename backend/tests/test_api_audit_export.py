@@ -21,8 +21,10 @@ from typing import Any
 import pytest
 from sqlalchemy.engine import Connection
 
+from nptc.audit import hashing as audit_hashing
 from nptc.audit.writer import AuditContext
 from nptc.auth.identity import close_account
+from nptc.db.models.audit import AuditEvent
 
 
 def _load(name: str) -> Any:
@@ -129,6 +131,32 @@ def test_export_closed_accounts_actor_is_not_blank(api: ApiTestApp) -> None:
     assert row["actor"]["is_closed"] is True
 
 
+@pytest.mark.req("NFR-10")
+@pytest.mark.integration
+def test_export_entry_hash_cannot_be_recomputed_from_the_exported_line_alone(
+    api: ApiTestApp,
+) -> None:
+    """`prev_hash`/`entry_hash` let a reader with database access
+    cross-reference an exported line against the stored row - they do not
+    make the line, on its own, independently re-hashable (PR #309
+    review): `nptc.audit.hashing.digest_field_names` also covers `id`,
+    `correlation_id`, `actor_ip` and `user_agent`, none of which this
+    payload carries. Pinned here so the payload and the documented claim
+    (`nptc.audit.queries.AuditEventRow`, ADR-0039, `docs/user/searching-
+    the-audit-log.md`) cannot silently drift apart again."""
+    entity_type = f"test-export-hash-scope-{uuid.uuid4()}"
+    actor = _create_active_user(api, "uma-api-audit-export")
+    _seed(api, actor_user_id=actor.id, entity_type=entity_type)
+    token = _admin_token(api, subject="sub-audit-export-hash-scope")
+
+    response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
+
+    row = _ndjson_rows(response)[0]
+    digest_fields = audit_hashing.digest_field_names(AuditEvent.__table__)
+    omitted_from_export = digest_fields - frozenset(row)
+    assert {"id", "correlation_id", "actor_ip", "user_agent"} <= omitted_from_export
+
+
 @pytest.mark.req("NFR-26")
 @pytest.mark.req("NFR-35")
 @pytest.mark.integration
@@ -177,6 +205,24 @@ def test_export_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> Non
             "occurred_from": "2026-01-02T00:00:00Z",
             "occurred_to": "2026-01-01T00:00:00Z",
         },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+def test_export_occurred_from_equal_to_occurred_to_is_a_422(api: ApiTestApp) -> None:
+    """A zero-width `[from, to)` window can never match a row regardless
+    of the data - refused for the same reason the backwards case above is
+    (PR #309 review)."""
+    token = _admin_token(api, subject="sub-audit-export-equal-range")
+    instant = "2026-01-01T00:00:00Z"
+
+    response = api.get(
+        "/audit/events/export",
+        token=token,
+        params={"occurred_from": instant, "occurred_to": instant},
     )
 
     assert response.status_code == 422, response.text

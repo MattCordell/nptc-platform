@@ -651,10 +651,12 @@ export interface paths {
         /**
          * Export the filtered audit log as NDJSON (NFR-12)
          * @description One JSON object per line, oldest first, including `prev_hash`/
-         *     `entry_hash` so the extract stays independently verifiable (NFR-10) -
-         *     see `nptc.audit.queries.stream_audit_events`'s own docstring for why
-         *     the order differs from the read route above. The whole filtered set,
-         *     not one page: an export has no `limit`/cursor.
+         *     `entry_hash` for cross-referencing a line against its stored row - see
+         *     `nptc.audit.queries.AuditEventRow`'s own docstring for why that is a
+         *     narrower guarantee than standalone recomputation, and `stream_audit_
+         *     events`'s own docstring for why the order differs from the read route
+         *     above. The whole filtered set, not one page: an export has no
+         *     `limit`/cursor.
          */
         get: operations["export_audit_events_api_v1_audit_events_export_get"];
         put?: never;
@@ -4175,7 +4177,7 @@ export interface operations {
     read_audit_events_api_v1_audit_events_get: {
         parameters: {
             query?: {
-                /** @description Maximum entries in this page. */
+                /** @description Maximum events in this page. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
                 before?: string | null;
@@ -4258,13 +4260,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description The filtered audit log, one JSON object per line. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/x-ndjson": string;
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -4285,7 +4287,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. */
+            /** @description A query parameter was unprocessable - `entity_id` given without `entity_type`, `occurred_from` after `occurred_to`, or `occurred_from`/`occurred_to` given with no UTC offset. This route has no `limit`/cursor of its own to be unprocessable. */
             422: {
                 headers: {
                     [name: string]: unknown;

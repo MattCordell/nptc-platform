@@ -39,9 +39,9 @@ import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar, Final
+from typing import Any, ClassVar, Final
 
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import ColumnElement, Row, Select, select
 from sqlalchemy.orm import Session
 
 from nptc.audit.serialisation import JsonValue
@@ -54,7 +54,9 @@ __all__ = [
     "AuditEventPage",
     "AuditEventRow",
     "AuditFilterError",
+    "EntityIdRequiresEntityTypeError",
     "MalformedAuditCursorError",
+    "OccurredRangeInvalidError",
     "search_audit_events",
     "stream_audit_events",
     "validate_audit_filters",
@@ -83,14 +85,44 @@ class MalformedAuditCursorError(ValueError):
 
 
 class AuditFilterError(ValueError):
-    """Raised for a filter combination that cannot produce a well-defined
-    result set: `entity_id` given without `entity_type`, or an
-    `occurred_from` after `occurred_to`. Refused rather than silently
-    returning an empty page, which would look like a genuine "no matching
-    events" answer rather than a mistake in the request.
+    """Base class for a filter combination that cannot produce a matching
+    result: `entity_id` given without `entity_type`
+    (`EntityIdRequiresEntityTypeError`), or an `occurred_from` at or after
+    `occurred_to` (`OccurredRangeInvalidError`). Refused rather than
+    silently returning an empty page, which would look like a genuine "no
+    matching events" answer rather than a mistake in the request - see
+    each subclass's own docstring for why its particular combination can
+    *never* match, independent of what the table holds.
+
+    Two subclasses, not one flat error carrying a message string: each has
+    its own fixed, client-facing detail (`nptc.api.errors`), matching this
+    module's `MalformedAuditCursorError` sibling and this whole codebase's
+    "never `str(exc)` in a response body" rule (NFR-26/NFR-35) - a plain
+    message string on one shared class would tempt a handler to serve it
+    verbatim instead.
     """
 
     http_status: ClassVar[int] = 422
+
+
+class EntityIdRequiresEntityTypeError(AuditFilterError):
+    """`entity_id` was given without `entity_type`. `entity_id` alone is
+    not unique across entity types and cannot use
+    `ix_audit_event_entity_type_entity_id_sequence` - see
+    `nptc.catalogue.history`'s own `property_value_set` composite-key
+    precedent for the identical reasoning."""
+
+
+class OccurredRangeInvalidError(AuditFilterError):
+    """`occurred_from` is not strictly before `occurred_to`. The range is
+    half-open `[from, to)` (`AuditEventFilter`'s own docstring): an
+    `occurred_from` *after* `occurred_to` is backwards, and one *equal to*
+    `occurred_to` is a zero-width window - both can never match a row
+    regardless of what the table holds, unlike a filter (e.g.
+    `entity_type`) that legitimately matches nothing depending on the
+    data. Refusing both, not just the backwards case, is what keeps this
+    class's own docstring - "cannot produce a matching result", not merely
+    "usually returns nothing" - true."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +137,9 @@ class AuditEventFilter:
     filtering by calendar day passes that day's start as `occurred_from`
     and the next day's start as `occurred_to`, with no risk of a
     midnight-boundary event counted in neither day or both.
+    `occurred_from` must be strictly before `occurred_to` - a range with
+    zero or negative width is refused (`OccurredRangeInvalidError`)
+    rather than silently accepted as an always-empty query.
     """
 
     actor_user_id: uuid.UUID | None = None
@@ -132,8 +167,20 @@ class ActorInfo:
 class AuditEventRow:
     """One `audit_event` row, projected for NFR-12 - the raw stored
     `before`/`after` (see the module docstring for why that is safe here),
-    plus the hash-chain fields an export needs to stay independently
-    verifiable (NFR-10)."""
+    plus the two hash-chain fields (NFR-10).
+
+    **`prev_hash`/`entry_hash` let a reader with database access
+    cross-reference this row against the stored one - they do not make
+    this row, on its own, independently re-hashable.** `nptc.audit.
+    hashing.digest_field_names` covers every `audit_event` column except
+    `entry_hash`/`sequence`, which includes `id`, `correlation_id`,
+    `actor_ip` and `user_agent` - none of which this projection carries
+    (NFR-26/NFR-35: this is an Administrator-plus-MFA surface, but still
+    not one that puts an actor's IP address and user agent into a
+    downloadable file). Recomputing `entry_hash` from scratch needs the
+    full row, which is what `nptc.audit.verification.verify_chain` (and
+    the `scripts/verify_audit_chain.py` CLI wrapping it) reads directly
+    from the table - not this projection."""
 
     sequence: int
     occurred_at: datetime
@@ -172,13 +219,63 @@ def validate_audit_filters(filters: AuditEventFilter) -> None:
     eagerness matters there.
     """
     if filters.entity_id is not None and filters.entity_type is None:
-        raise AuditFilterError("entity_id filter requires entity_type")
+        raise EntityIdRequiresEntityTypeError("entity_id filter requires entity_type")
     if (
         filters.occurred_from is not None
         and filters.occurred_to is not None
-        and filters.occurred_from > filters.occurred_to
+        and filters.occurred_from >= filters.occurred_to
     ):
-        raise AuditFilterError("occurred_from must not be after occurred_to")
+        raise OccurredRangeInvalidError("occurred_from must be strictly before occurred_to")
+
+
+def _select_events() -> Select[Any]:
+    """The 13-column projection both `search_audit_events` and
+    `_stream_audit_events` read - one statement builder rather than two
+    copies, so a column added to one path cannot silently miss the other
+    (PR #309 review)."""
+    return (
+        select(
+            AuditEvent.sequence,
+            AuditEvent.occurred_at,
+            AuditEvent.actor_user_id,
+            User.display_name,
+            User.status,
+            AuditEvent.action,
+            AuditEvent.entity_type,
+            AuditEvent.entity_id,
+            AuditEvent.before,
+            AuditEvent.after,
+            AuditEvent.reason,
+            AuditEvent.prev_hash,
+            AuditEvent.entry_hash,
+        )
+        .select_from(AuditEvent)
+        .outerjoin(User, User.id == AuditEvent.actor_user_id)
+    )
+
+
+def _row_to_event(row: Row[Any]) -> AuditEventRow:
+    """Builds one `AuditEventRow` from a row `_select_events()` produced -
+    the other half of the de-duplication above."""
+    return AuditEventRow(
+        sequence=row.sequence,
+        occurred_at=row.occurred_at,
+        actor=ActorInfo(
+            id=row.actor_user_id,
+            display_name=row.display_name,
+            is_closed=row.status == UserStatus.CLOSED,
+        )
+        if row.actor_user_id is not None
+        else None,
+        action=row.action,
+        entity_type=row.entity_type,
+        entity_id=row.entity_id,
+        before=row.before,
+        after=row.after,
+        reason=row.reason,
+        prev_hash=row.prev_hash,
+        entry_hash=row.entry_hash,
+    )
 
 
 def _predicates(filters: AuditEventFilter) -> list[ColumnElement[bool]]:
@@ -223,23 +320,7 @@ def search_audit_events(
         predicates.append(AuditEvent.sequence < before)
 
     statement = (
-        select(
-            AuditEvent.sequence,
-            AuditEvent.occurred_at,
-            AuditEvent.actor_user_id,
-            User.display_name,
-            User.status,
-            AuditEvent.action,
-            AuditEvent.entity_type,
-            AuditEvent.entity_id,
-            AuditEvent.before,
-            AuditEvent.after,
-            AuditEvent.reason,
-            AuditEvent.prev_hash,
-            AuditEvent.entry_hash,
-        )
-        .select_from(AuditEvent)
-        .outerjoin(User, User.id == AuditEvent.actor_user_id)
+        _select_events()
         .where(*predicates)
         .order_by(AuditEvent.sequence.desc())
         # One more row than asked for: its existence *is* the answer to
@@ -249,28 +330,7 @@ def search_audit_events(
 
     rows = session.execute(statement).all()
     page_rows = rows[:limit]
-    events = tuple(
-        AuditEventRow(
-            sequence=row.sequence,
-            occurred_at=row.occurred_at,
-            actor=ActorInfo(
-                id=row.actor_user_id,
-                display_name=row.display_name,
-                is_closed=row.status == UserStatus.CLOSED,
-            )
-            if row.actor_user_id is not None
-            else None,
-            action=row.action,
-            entity_type=row.entity_type,
-            entity_id=row.entity_id,
-            before=row.before,
-            after=row.after,
-            reason=row.reason,
-            prev_hash=row.prev_hash,
-            entry_hash=row.entry_hash,
-        )
-        for row in page_rows
-    )
+    events = tuple(_row_to_event(row) for row in page_rows)
     next_cursor = str(page_rows[-1].sequence) if len(rows) > limit else None
     return AuditEventPage(events=events, next_cursor=next_cursor)
 
@@ -295,10 +355,15 @@ def stream_audit_events(
     why that is fine at this catalogue's real size).
 
     Oldest first, unlike `search_audit_events`'s most-recent-first keyset
-    pages: an export exists to stay independently verifiable against the
-    hash chain (NFR-10, `entry_hash`/`prev_hash` on every row), and
-    ascending `sequence` is the same direction
+    pages: every row carries `entry_hash`/`prev_hash` (NFR-10) so it can
+    be cross-referenced against the stored row - see `AuditEventRow`'s own
+    docstring for why that is a narrower guarantee than standalone
+    recomputation - and ascending `sequence` is the same direction
     `nptc.audit.verification.verify_chain` itself walks the chain in.
+    **A filtered export's rows are not contiguous in the real chain**, so
+    even an operator with database access cannot walk `prev_hash` linkage
+    across the extract itself - only confirm each row individually against
+    its stored counterpart.
 
     **Validates eagerly, not lazily.** This function's body is not itself
     a generator - it raises `AuditFilterError` immediately if `filters` is
@@ -317,44 +382,10 @@ def _stream_audit_events(
     session: Session, filters: AuditEventFilter, batch_size: int
 ) -> Iterator[AuditEventRow]:
     statement = (
-        select(
-            AuditEvent.sequence,
-            AuditEvent.occurred_at,
-            AuditEvent.actor_user_id,
-            User.display_name,
-            User.status,
-            AuditEvent.action,
-            AuditEvent.entity_type,
-            AuditEvent.entity_id,
-            AuditEvent.before,
-            AuditEvent.after,
-            AuditEvent.reason,
-            AuditEvent.prev_hash,
-            AuditEvent.entry_hash,
-        )
-        .select_from(AuditEvent)
-        .outerjoin(User, User.id == AuditEvent.actor_user_id)
+        _select_events()
         .where(*_predicates(filters))
         .order_by(AuditEvent.sequence.asc())
         .execution_options(yield_per=batch_size)
     )
     for row in session.execute(statement):
-        yield AuditEventRow(
-            sequence=row.sequence,
-            occurred_at=row.occurred_at,
-            actor=ActorInfo(
-                id=row.actor_user_id,
-                display_name=row.display_name,
-                is_closed=row.status == UserStatus.CLOSED,
-            )
-            if row.actor_user_id is not None
-            else None,
-            action=row.action,
-            entity_type=row.entity_type,
-            entity_id=row.entity_id,
-            before=row.before,
-            after=row.after,
-            reason=row.reason,
-            prev_hash=row.prev_hash,
-            entry_hash=row.entry_hash,
-        )
+        yield _row_to_event(row)
