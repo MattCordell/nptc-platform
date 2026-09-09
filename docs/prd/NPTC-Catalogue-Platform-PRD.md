@@ -215,7 +215,7 @@ Six phases. Each is independently demonstrable, which matters for a project seek
 | **P2** | Submissions, workflow states, interest signals, internal comments, user administration and the full role model | The community-facing value. The Reviewer and Observer roles land here because the permission matrix at 4.7 is what the workflow states are enforced against. |
 | **P3** | Terminology validation against Ontoserver | Depends on P1 content existing. Independent of P2. |
 | **P4** | Releases, exports, export configuration versioning | Depends on P1 and P3. Cannot publish what has not been validated. |
-| **P5** | Hardening: accessibility audit, security review, performance, operational documentation | Not optional if adoption is a realistic outcome. |
+| **P5** | Hardening: automated accessibility testing, security review, performance, operational documentation | Not optional if adoption is a realistic outcome. |
 
 P0 can be built in parallel with P1 by a different developer.
 
@@ -1450,7 +1450,7 @@ Each phase is accepted against demonstrable criteria, not against a percentage.
 
 **P5: Hardening**
 
-- Automated accessibility testing passes; manual keyboard and screen-reader pass completed.
+- Automated accessibility testing passes. Manual keyboard and screen-reader pass is out of scope (deferred per §13.6 until NFR-31's re-entry condition is met).
 - Dependency and container scans clean of high and critical findings.
 - Backup taken and **restore actually performed** into a clean environment.
 - Operational documentation validated by someone other than the author performing a deployment from scratch.
