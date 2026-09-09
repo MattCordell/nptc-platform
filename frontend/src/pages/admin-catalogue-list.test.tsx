@@ -258,9 +258,13 @@ describe("AdminCatalogueListPage", () => {
 
       // `volume_ml` is filterable but not `concept_picker` - the panel
       // renders no checkbox or text box for it (see the test above), so the
-      // chip is the only control that names it at all.
+      // chip is the only control that names it at all. The facet key still
+      // resolves to its registry label ("Volume"), since `volume_ml` is a
+      // known property - only the value stays raw, as there is no
+      // value-options source to resolve a `number` datatype against (issue
+      // #289's own acceptance criterion).
       expect(screen.queryByRole("checkbox", { name: /volume/i })).not.toBeInTheDocument();
-      const chip = screen.getByRole("button", { name: "Remove filter volume_ml: 5" });
+      const chip = screen.getByRole("button", { name: "Remove filter Volume: 5" });
       expect(chip).toBeInTheDocument();
 
       await user.click(chip);
@@ -269,8 +273,66 @@ describe("AdminCatalogueListPage", () => {
         expect(router.state.location.href).not.toContain("filter.volume_ml"),
       );
       expect(
-        screen.queryByRole("button", { name: "Remove filter volume_ml: 5" }),
+        screen.queryByRole("button", { name: "Remove filter Volume: 5" }),
       ).not.toBeInTheDocument();
+    });
+
+    // The true escape hatch (issue #289): a `filter.*` key with no
+    // `PropertyDefinition` at all - not merely one the panel offers no
+    // control for - stays fully raw on both key and value.
+    it("keeps a chip fully raw for a facet key absent from the registry entirely", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?filter.mystery_facet=raw_value`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        screen.getByRole("button", { name: "Remove filter mystery_facet: raw_value" }),
+      ).toBeInTheDocument();
+    });
+
+    // Issue #289: a coded (`concept_picker`) property's chip resolves both
+    // the facet key and the selected value to the same labels the filter
+    // panel shows for the identical selection.
+    it("resolves a coded property's chip to its registry label and display value", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?filter.discipline=chemistry`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        await screen.findByRole("button", { name: "Remove filter Discipline: Chemistry" }),
+      ).toBeInTheDocument();
+    });
+
+    // Issue #289: a coded value not present in the fetched value-options page
+    // (filtered out, a retired code, or the fetch erroring) falls back to the
+    // raw code as its own label - mirroring `PropertyFacetGroup`'s
+    // `carriedOptions` fallback - rather than showing blank or "undefined".
+    it("falls back to the raw code for a coded value absent from the fetched page", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?filter.discipline=retired_code`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        await screen.findByRole("button", {
+          name: "Remove filter Discipline: retired_code",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    // Issue #289: the `status` facet resolves against the same
+    // `STATUS_OPTIONS` labels the filter panel itself renders.
+    it("resolves the status facet's chip via STATUS_OPTIONS", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?filter.status=active`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(
+        screen.getByRole("button", { name: "Remove filter Status: Active" }),
+      ).toBeInTheDocument();
     });
 
     it("clears every active filter at once via Clear all filters", async () => {
@@ -317,7 +379,7 @@ describe("AdminCatalogueListPage", () => {
         await screen.findByText("Filter is not available: volume_ml"),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Remove filter volume_ml: 5" }),
+        screen.getByRole("button", { name: "Remove filter Volume: 5" }),
       ).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Clear all filters" }),
