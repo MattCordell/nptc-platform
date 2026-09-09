@@ -36,13 +36,11 @@ until you write one that passes, rather than only reporting it after you try to 
 applies section by section: the note you write for a term has no bearing on a code binding
 or a property value, even when you are changing more than one in the same visit.
 
-**Most saves are checked against what is already there.** For terms and registry
-properties, if someone else changed the entry while you had it open, your save is refused,
-you are told who changed it and what moved, and the screen reloads their change for you.
-Nothing of yours is saved — check it is still needed, then save it again. **Code bindings
-are the current exception**: binding, retiring or replacing a code does not check this yet,
-so two administrators editing a code binding on the same entry at the same time can still
-overwrite one another silently. See each section's own guide for what it covers today.
+**Every save is checked against what is already there.** If someone else changed the
+entry while you had it open, your save is refused, you are told who changed it and what
+moved, and the screen reloads their change for you. Nothing of yours is saved — check it
+is still needed, then save it again. This applies to terms, code bindings and registry
+properties alike.
 
 **Nothing is ever silently deleted.** Retiring a term or a code binding keeps it, with its
 history, and stops it from being published. The catalogue's history for the entry — Who,

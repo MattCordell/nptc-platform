@@ -79,6 +79,9 @@ successor's code against the retired row — visible from that row in the table 
 on. One changelog note covers both steps, since replacing is one editorial decision, not
 two.
 
+If someone else changes the entry while you have Replace open, none of the three steps
+run — the predecessor stays active, no successor is created, and nothing is recorded.
+
 ## If something goes wrong
 
 **"This code must resolve against the terminology server before it can be bound."** See
@@ -98,6 +101,11 @@ button becomes available as soon as the note passes.
 **"This entry already has an active code binding."** Someone else bound a code to this
 entry while you had the screen open, or a second Bind attempt reached the server anyway.
 Reload the entry and use Retire or Replace on the binding that is there now.
+
+**"Someone else changed this entry while you had it open."** Another editor saved a
+change to this entry — a term, a code binding, or a property value — before your Bind,
+Retire or Replace request reached the server. Nothing of yours was saved. The screen
+starts reloading their change for you; check yours is still needed, then try again.
 
 **"You cannot edit this entry with your current sign-in."** See the note on multi-factor
 authentication at the top of this page.

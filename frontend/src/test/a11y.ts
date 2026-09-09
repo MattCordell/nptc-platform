@@ -9,8 +9,9 @@ import { expect } from "vitest";
  * `color-contrast` is disabled: axe evaluates it against computed layout,
  * which jsdom does not render, so the rule would either report nothing
  * useful or false-fail on every element. Contrast is instead carried by the
- * `--color-*` tokens in `src/styles/app.css` and confirmed in the P5 manual
- * keyboard/screen-reader pass (NFR-31) - see docs/architecture/components.md.
+ * `--color-*` tokens in `src/styles/app.css` - unverified, not confirmed,
+ * now that #211's manual keyboard/screen-reader pass (NFR-31) is cancelled
+ * rather than merely deferred - see docs/architecture/components.md.
  */
 export async function expectNoA11yViolations(container: Element): Promise<void> {
   const results = await axe.run(container, {

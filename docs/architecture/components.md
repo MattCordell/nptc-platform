@@ -6,13 +6,25 @@ itself.
 
 ## Scope
 
-NFR-31 requires WCAG 2.2 Level AA, "verified by automated testing in CI plus a manual
-keyboard and screen-reader pass in P5." Issue #148 landed the automated half and five
-components later screens are expected to compose: a form field, a button, a modal dialog,
-a data table, and a live region for async announcements. Issue #210 completes the set the
-entry-edit screens need — a select, the choice controls, a form wrapper and an error
-summary. The manual keyboard and screen-reader audit itself is later P5 work, not either
-issue.
+NFR-31 (WCAG 2.2 Level AA) is now SHOULD, not MUST: issue #211 was closed as deferred
+(2026-09-09) rather than delivered, since the platform's user base is a small, known
+community and the DDA 1992 public-facing obligation the PRD originally cited does not
+bind it the way it would a public service. Automated testing in CI (this baseline plus
+axe-core) is what verifies NFR-31 today; the manual keyboard, screen-reader and
+colour-contrast pass #211 would have added is deferred indefinitely, not merely delayed
+to a later phase — see PRD §13.6 for the current wording. Issue #148 landed the automated
+half and five components later screens are expected to compose: a form field, a button, a
+modal dialog, a data table, and a live region for async announcements. Issue #210
+completes the set the entry-edit screens need — a select, the choice controls, a form
+wrapper and an error summary.
+
+Three properties below were written expecting that manual pass to confirm them: colour
+contrast, a repeated-hint pattern for option groups, and whole-screen defects (heading
+order, focus order across combined components) that no per-component check can see. With
+#211 cancelled, they are simply **unverified** — not confirmed, and not known to be
+wrong — and each note below says so explicitly rather than pointing at a pass that will
+not happen. Do not read the absence of a documented problem as evidence one of these is
+fine; #60 closing #211 verified nothing about them either.
 
 (The issue body cites NFR-19, the data-breach-response procedure — unrelated. The
 requirement this baseline implements is NFR-31.)
@@ -152,16 +164,17 @@ Validate on submit; issue #214 tracks removing the restriction.
   and computed rendering, which jsdom does not provide. It is disabled explicitly in
   `frontend/src/test/a11y.ts`, with a comment there rather than silently skipped. Contrast
   is instead carried by the `--color-*` tokens declared in `frontend/src/styles/app.css`'s
-  `@theme` block, and is confirmed in the P5 manual pass — CI passing does not mean
-  contrast has been verified, and this document is where that limit is written down rather
-  than implied by a green check.
+  `@theme` block. **Unverified, not confirmed**, now that #211's manual pass is cancelled
+  (see "Scope" above) — CI passing has never meant contrast was verified, and there is no
+  remaining plan to verify it against a real browser's rendering.
 - **A group's hint and error are announced once per option.** Wiring them to each
   `<input>` is what makes them announced at all — a `group` role's description is
   inconsistently supported — but the consequence is that a user tabbing through a
-  six-option group hears the full hint and error six times. If that grates in the P5
-  manual pass, the usual refinement is to describe only the *first* option by the hint
-  while keeping the error on all of them. That is a change to make with a real screen
-  reader in front of you, not on this reasoning alone.
+  six-option group hears the full hint and error six times. Whether that grates in
+  practice is **unverified**: the refinement this would call for (describe only the
+  *first* option by the hint while keeping the error on all of them) needs a real screen
+  reader in front of you to judge, not this reasoning alone, and #211's cancellation
+  leaves no plan to do that judging.
 - **jsdom does not implement native radio behaviour** — neither the roving tabindex nor
   arrow-key traversal. `RadioGroup` therefore implements both itself and calls
   `preventDefault()` on the keys it handles, so a real browser's identical native
@@ -171,4 +184,5 @@ Validate on submit; issue #214 tracks removing the restriction.
 - The automated check runs component-by-component, in isolation. It catches what is wrong
   with a component's own markup; it cannot catch a whole-screen defect (heading order
   across several components, a focus order that only breaks once components are combined).
-  That is exactly the kind of defect the P5 manual pass exists to find.
+  That class of defect is now **unverified** rather than deferred to a later pass — #211,
+  the pass that would have found it, is cancelled, not postponed.

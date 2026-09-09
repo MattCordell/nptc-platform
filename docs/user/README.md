@@ -1,6 +1,8 @@
 # User guides
 
 - [Signing in, registering, and signing out](signing-in.md) — issue #41.
+- [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
+  the screens shipped so far.
 - [Finding and filtering entries for editing](finding-entries.md) — issue #267.
 - [Editing an entry](editing-an-entry.md) — issue #61, an orienting overview of the three
   guides below.
@@ -11,10 +13,9 @@
 - [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, API-only
   until the public entry pages land.
 
-Otherwise not yet populated. Will hold a short role guide per authenticated role — Member,
-Reviewer, Administrator (PRD §4) — covering what that role can do and the parts of the
-workflow specific to it. Anonymous and Observer use is largely self-explanatory from the
-UI and does not need a guide of its own.
+[Roles](roles.md) covers Administrator and Reviewer — Member and Provisional have no
+screen of their own yet, and Anonymous/Observer use is self-explanatory from the public
+catalogue itself.
 
 Populated as the corresponding UI lands — see the documentation-impact table in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
