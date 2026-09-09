@@ -322,8 +322,9 @@ describe("AdminCatalogueListPage", () => {
       // answers must not also trigger a resolve-by-code request - one call
       // to this path total, from the shared paged fetch alone.
       expect(
-        calls.filter((call) => call.path.endsWith("/registry/properties/discipline/values"))
-          .length,
+        calls.filter((call) =>
+          call.path.endsWith("/registry/properties/discipline/values"),
+        ).length,
       ).toBe(1);
     });
 
@@ -363,7 +364,10 @@ describe("AdminCatalogueListPage", () => {
               method: "GET",
               path: "/registry/properties/discipline/values",
               status: 200,
-              body: { items: [{ code: "endocrinology", display: "Endocrinology" }], total: 1 },
+              body: {
+                items: [{ code: "endocrinology", display: "Endocrinology" }],
+                total: 1,
+              },
             };
           }
           return DISCIPLINE_VALUES_OK;
@@ -378,7 +382,9 @@ describe("AdminCatalogueListPage", () => {
           name: "Remove filter Discipline: Endocrinology",
         }),
       ).toBeInTheDocument();
-      expect(await screen.findByRole("checkbox", { name: "Endocrinology" })).toBeChecked();
+      expect(
+        await screen.findByRole("checkbox", { name: "Endocrinology" }),
+      ).toBeChecked();
     });
 
     // Issue #289: the `status` facet resolves against the same
