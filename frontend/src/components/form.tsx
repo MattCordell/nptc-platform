@@ -189,6 +189,12 @@ export function Form({
   // assume validate-on-submit: a screen validating on *change* would pull
   // focus out of the input on every keystroke that produced an error. Issue
   // #214 tracks disarming on a settled `onSubmit` promise instead.
+  //
+  // The dependency array below is not what gates this effect: `effectiveFormError`
+  // has a new identity every render (see its own comment above), so in practice
+  // this runs on every render regardless of whether any of the four listed
+  // dependencies actually changed. `awaitingResultRef.current` above is the only
+  // real gate - treat the array as "what to re-check", not "when this runs".
   useEffect(() => {
     if (!awaitingResultRef.current || !hasErrors) {
       return;
