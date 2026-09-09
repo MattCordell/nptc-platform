@@ -214,6 +214,91 @@ def test_specimen_offset_query_param_is_forwarded_to_expand(api: ApiTestApp) -> 
     assert api.terminology.requests[-1].offset == 5
 
 
+# --- resolve by code (issue #306) -----------------------------------------
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-52")
+@pytest.mark.integration
+def test_code_query_param_resolves_snomed_codes_via_one_expand_call(api: ApiTestApp) -> None:
+    """The batch acceptance criterion at the HTTP layer: resolving N
+    selected codes for one property costs one request, not N."""
+    _seed(api)
+    api.terminology.seed_expansion(
+        "122192001 OR 71388002",
+        _expansion([("122192001", "Acanthamoeba culture"), ("71388002", "Procedure")]),
+        edition=SNOMED_CT_AU,
+    )
+    token = _role_token(api, subject="sub-values-code-specimen", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, code=["122192001", "71388002"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {item["code"] for item in body["items"]} == {"122192001", "71388002"}
+    assert body["total"] == 2
+    assert [r.operation for r in api.terminology.requests] == [Operation.EXPAND]
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
+@pytest.mark.integration
+def test_code_query_param_resolves_local_codes_with_no_terminology_call(api: ApiTestApp) -> None:
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-discipline", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "discipline", token, code=["chemical_pathology"])
+
+    assert response.status_code == 200, response.text
+    assert [item["code"] for item in response.json()["items"]] == ["chemical_pathology"]
+    assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-filter-conflict", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, code=["122192001"], filter="acantha")
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None:
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-offset-conflict", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, code=["122192001"], offset=5)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_code_combined_with_a_non_default_count_is_422(api: ApiTestApp) -> None:
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-count-conflict", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, code=["122192001"], count=10)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_more_than_200_codes_is_422(api: ApiTestApp) -> None:
+    """`code` accepts at most 200 values, matching `count`'s own ceiling."""
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-too-many", role=Role.PROVISIONAL)
+
+    response = _get_values(api, "specimen", token, code=[str(i) for i in range(201)])
+
+    assert response.status_code == 422, response.text
+
+
 # --- errors --------------------------------------------------------------
 
 
@@ -333,5 +418,20 @@ def test_authenticated_without_registry_read_is_403(api: ApiTestApp) -> None:
     token = _role_token(api, subject="sub-values-observer", role=Role.OBSERVER)
 
     response = _get_values(api, "specimen", token)
+
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_code_query_param_without_registry_read_is_403(api: ApiTestApp) -> None:
+    """The negative case for the `code` selection mode specifically (issue
+    #306 plan), not just the pre-existing `filter`/`offset`/`count` path
+    the test above already covers - `code` is refused by the same
+    `Permission.REGISTRY_READ` gate, not a second, unguarded branch."""
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-observer", role=Role.OBSERVER)
+
+    response = _get_values(api, "specimen", token, code=["122192001"])
 
     assert response.status_code == 403, response.text

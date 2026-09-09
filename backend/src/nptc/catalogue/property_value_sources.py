@@ -72,6 +72,7 @@ from nptc_shared.terminology.snomed import (
 
 __all__ = [
     "PropertyNotCodeTypeError",
+    "PropertyValueSelectionConflictError",
     "PropertyValueSourceMisconfiguredError",
     "ValueItem",
     "ValuePage",
@@ -91,6 +92,19 @@ class PropertyNotCodeTypeError(ValueError):
     `datatype == "code"` - it has no bound value source at all, so
     `/values` is a client mistake naming the wrong kind of property, not an
     absence (`PropertyDefinitionNotFoundError` below covers that case)."""
+
+    http_status: ClassVar[int] = 422
+
+
+class PropertyValueSelectionConflictError(ValueError):
+    """Raised by the `/values` route (issue #306) when `code` is combined
+    with `filter`, `offset`, or `count` - the picker page and the resolve-
+    by-code lookup are two selection modes on one route, and mixing them
+    has no coherent meaning (does `filter` narrow before or after `code`
+    resolves?). Never raised by `resolve_property_values` itself, which
+    takes no such parameters - this is pure request-shape validation, so
+    it belongs beside `PropertyNotCodeTypeError` in this module's error
+    family rather than in a router (issue #306 plan)."""
 
     http_status: ClassVar[int] = 422
 

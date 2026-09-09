@@ -62,7 +62,12 @@ from nptc.api.dependencies import (
 )
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
-from nptc.catalogue.property_value_sources import DEFAULT_PAGE_SIZE, list_property_values
+from nptc.catalogue.property_value_sources import (
+    DEFAULT_PAGE_SIZE,
+    PropertyValueSelectionConflictError,
+    list_property_values,
+    resolve_property_values,
+)
 from nptc.db.definitions import (
     amend_definition,
     create_definition,
@@ -212,7 +217,10 @@ _RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
 _RESPONSE_422_VALUES: Final[dict[str, Any]] = {
     "description": (
         "The property named by `key` is not a coded property (it has no bound value "
-        "source), or the `offset`/`count` query parameters failed validation."
+        "source); the `offset`/`count`/`code` query parameters failed validation (`code` "
+        "accepts at most 200 values, matching `count`'s own ceiling); or `code` was "
+        "combined with `filter`, `offset`, or `count`, which this route refuses rather "
+        "than defining an order between the two selection modes."
     ),
     "content": {
         "application/json": {
@@ -621,13 +629,32 @@ def list_property_value_options(
     filter: str | None = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     count: Annotated[int, Query(ge=1, le=200)] = DEFAULT_PAGE_SIZE,
+    code: Annotated[list[str] | None, Query(max_length=200)] = None,
 ) -> PropertyValuePage:
-    """FR-10's concept-picker data source (issue #247). Resolves `key`'s own
-    binding and answers from Ontoserver or the `LocalCode` table - see
-    `nptc.catalogue.property_value_sources.list_property_values` for the
-    one place that branches on `binding_target`; this route and
-    `PropertyValuePage` never see it."""
-    page = list_property_values(session, client, key=key, filter=filter, offset=offset, count=count)
+    """FR-10's concept-picker data source (issue #247), plus issue #306's
+    resolve-by-code lookup for a value beyond the picker page's own
+    `DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers
+    from Ontoserver or the `LocalCode` table - see
+    `nptc.catalogue.property_value_sources.list_property_values`/
+    `resolve_property_values` for the only places that branch on
+    `binding_target`; this route and `PropertyValuePage` never see it.
+
+    `code` is a second, mutually exclusive selection mode, never combined
+    with `filter`/`offset`/`count` (issue #306 plan) - `offset`/`count`
+    default to values a caller resolving by `code` would not need to
+    change, so a genuine attempt to combine them is what this refuses,
+    not every request that happens to also carry those defaults.
+    """
+    if code is not None:
+        if filter is not None or offset != 0 or count != DEFAULT_PAGE_SIZE:
+            raise PropertyValueSelectionConflictError(
+                "`code` cannot be combined with `filter`, `offset`, or `count`"
+            )
+        page = resolve_property_values(session, client, key=key, codes=code)
+    else:
+        page = list_property_values(
+            session, client, key=key, filter=filter, offset=offset, count=count
+        )
     return PropertyValuePage(
         items=[PropertyValueItem(code=item.code, display=item.display) for item in page.items],
         total=page.total,

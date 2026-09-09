@@ -105,6 +105,7 @@ from nptc.catalogue.facets import FilterRefusedError
 from nptc.catalogue.history import MalformedHistoryCursorError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
+    PropertyValueSelectionConflictError,
     PropertyValueSourceMisconfiguredError,
 )
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
@@ -385,6 +386,11 @@ _DETAIL_PROPERTY_VALIDATION = (
 _DETAIL_PROPERTY_DEFINITION_NOT_FOUND = "No property definition was found for the given key."
 _DETAIL_PROPERTY_NOT_CODE_TYPE = (
     "This property does not have a coded datatype, so it has no bound value source to list."
+)
+_DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT = (
+    "`code` cannot be combined with `filter`, `offset`, or `count`. Resolve specific "
+    "codes with `code` alone, or page through the offerable values with the other "
+    "parameters."
 )
 _DETAIL_INVALID_SCTID = (
     "This is not a valid SNOMED CT identifier. It must be 6 to 18 digits and pass the "
@@ -783,6 +789,18 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=PropertyNotCodeTypeError.http_status,
             content={"detail": _DETAIL_PROPERTY_NOT_CODE_TYPE},
+        )
+
+    @app.exception_handler(PropertyValueSelectionConflictError)
+    async def _handle_property_value_selection_conflict(
+        _request: Request, exc: PropertyValueSelectionConflictError
+    ) -> JSONResponse:
+        # issue #306: a routine, expected refusal - the caller mixed the
+        # two selection modes `/values` offers, not an anomaly.
+        _logger.info("property values refused, conflicting selection: %s", exc)
+        return JSONResponse(
+            status_code=PropertyValueSelectionConflictError.http_status,
+            content={"detail": _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT},
         )
 
     @app.exception_handler(PropertyValueSourceMisconfiguredError)
