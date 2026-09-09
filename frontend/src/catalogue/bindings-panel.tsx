@@ -155,9 +155,11 @@ function isStillChecking(
 
 function BindCodeForm({
   businessKey,
+  rowVersion,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   onSaved: () => void;
 }) {
   const [code, setCode] = useState("");
@@ -224,6 +226,7 @@ function BindCodeForm({
             au_preferred_term: lookup.data.au_preferred_term,
             edition_hint: toEditionHint(lookup.data.edition),
             reason: changelogNote.note,
+            expected_row_version: rowVersion,
           },
           {
             onSuccess: () => {
@@ -259,11 +262,13 @@ function BindCodeForm({
 
 function RetireBindingDialog({
   businessKey,
+  rowVersion,
   binding,
   onClose,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   binding: Binding;
   onClose: () => void;
   onSaved: () => void;
@@ -290,7 +295,10 @@ function RetireBindingDialog({
         }
         onSubmit={() => {
           retire.mutate(
-            { code: binding.code, body: { reason: changelogNote.note } },
+            {
+              code: binding.code,
+              body: { reason: changelogNote.note, expected_row_version: rowVersion },
+            },
             { onSuccess: () => onSaved() },
           );
         }}
@@ -307,11 +315,13 @@ function RetireBindingDialog({
 
 function ReplaceBindingDialog({
   businessKey,
+  rowVersion,
   binding,
   onClose,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   binding: Binding;
   onClose: () => void;
   onSaved: () => void;
@@ -394,6 +404,7 @@ function ReplaceBindingDialog({
                   edition_hint: toEditionHint(lookup.data.edition),
                 },
                 reason: changelogNote.note,
+                expected_row_version: rowVersion,
               },
             },
             { onSuccess: () => onSaved() },
@@ -529,12 +540,17 @@ export function BindingsPanel({ entry }: { entry: EntryDetail }) {
           mistake the designations panel avoids by not offering Retire on the
           preferred term. */}
       {!hasActiveBinding && (
-        <BindCodeForm businessKey={businessKey} onSaved={() => announce("Code bound.")} />
+        <BindCodeForm
+          businessKey={businessKey}
+          rowVersion={entry.row_version}
+          onSaved={() => announce("Code bound.")}
+        />
       )}
 
       {retiring !== null && (
         <RetireBindingDialog
           businessKey={businessKey}
+          rowVersion={entry.row_version}
           binding={retiring}
           onClose={() => setRetiring(null)}
           onSaved={() => {
@@ -547,6 +563,7 @@ export function BindingsPanel({ entry }: { entry: EntryDetail }) {
       {replacing !== null && (
         <ReplaceBindingDialog
           businessKey={businessKey}
+          rowVersion={entry.row_version}
           binding={replacing}
           onClose={() => setReplacing(null)}
           onSaved={() => {
