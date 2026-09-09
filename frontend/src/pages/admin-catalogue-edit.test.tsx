@@ -318,9 +318,13 @@ describe("the entry it loads", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     // Still on the same screen, with the refusal's own text visible - not a
-    // blank page and not bounced anywhere.
+    // blank page and not bounced anywhere. Scoped to the rendered paragraph,
+    // not the live region: #288 now announces this same hard failure too, so
+    // an unscoped query matches both.
     expect(
-      screen.getByText("This action requires multi-factor authentication."),
+      screen.getByText("This action requires multi-factor authentication.", {
+        selector: "p",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -462,8 +466,13 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
 
+    // Scoped to the rendered paragraph, not the live region: #288 also
+    // announces this hard failure, so an unscoped query can match both once
+    // the announcement's own setTimeout(0) has fired.
     expect(
-      await screen.findByText("You do not have permission to do this."),
+      await screen.findByText("You do not have permission to do this.", {
+        selector: "p",
+      }),
     ).toBeInTheDocument();
     expect(stepUp).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -479,9 +488,30 @@ describe("the entry it loads", () => {
     expect(
       await screen.findByText(
         new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
+        { selector: "p" },
       ),
     ).toBeInTheDocument();
+    // #288: the initial-load failure was rendered but never announced -
+    // silence for a screen-reader user whose first load 404s.
+    await waitFor(() =>
+      expect(announced()).toMatch(
+        new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
+      ),
+    );
   });
+
+  it("shows and announces a refusal message when the initial load fails for any other reason", async () => {
+    // #288, mirroring PR #285 review finding 3 on the list screen: a
+    // non-404 initial-load failure (no prior data to fall back on) must be
+    // both rendered and announced.
+    stubApi([{ ...READ_OK, status: 500, body: { detail: "boom" } }]);
+
+    await renderRoute(EDIT_URL, SIGNED_IN);
+
+    expect(await screen.findByText("boom", { selector: "p" })).toBeInTheDocument();
+    await waitFor(() => expect(announced()).toContain("boom"));
+  });
+
   it("keeps the editor on screen when a refresh fails, and says so", async () => {
     // `isError` and `data` are not exclusive states. Before this, an entry
     // that loaded and then failed a refetch rendered "You cannot edit this

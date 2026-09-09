@@ -33,6 +33,22 @@ function staleWarning(businessKey: string): string {
   );
 }
 
+/**
+ * An initial load that failed with no prior data to fall back on. One
+ * string, shown and announced, for the same reason as `staleWarning` (#288 -
+ * mirrors the list screen's `hardFailureMessage`, PR #285 review finding 3).
+ */
+function loadFailureMessage(businessKey: string, error: unknown): string {
+  const status = error instanceof ApiError ? error.status : null;
+  if (status === 404) {
+    return `No catalogue entry was found for ${businessKey}. Check the identifier.`;
+  }
+  return (
+    refusalDetail(error) ??
+    `${businessKey} could not be loaded. Try again, or contact an administrator if the problem persists.`
+  );
+}
+
 export function AdminCatalogueEditPage() {
   const { businessKey } = useParams({
     from: "/authenticated/admin/catalogue/$businessKey/edit",
@@ -54,6 +70,16 @@ export function AdminCatalogueEditPage() {
       announce(staleWarning(businessKey));
     }
   }, [staleData, businessKey, announce]);
+
+  // The initial-load failure (no prior data) was rendered but never
+  // announced (#288, mirroring PR #285 review finding 3 on the list screen)
+  // - silence for a screen-reader user whose first load 404s or 4xxs.
+  const hardFailure = entry.isError && entry.data === undefined;
+  useEffect(() => {
+    if (hardFailure) {
+      announce(loadFailureMessage(businessKey, entry.error));
+    }
+  }, [hardFailure, businessKey, entry.error, announce]);
 
   return (
     <section aria-labelledby="edit-entry-heading">
@@ -121,15 +147,5 @@ export function AdminCatalogueEditPage() {
  * other.
  */
 function LoadFailure({ businessKey, error }: { businessKey: string; error: unknown }) {
-  const status = error instanceof ApiError ? error.status : null;
-
-  if (status === 404) {
-    return <p>No catalogue entry was found for {businessKey}. Check the identifier.</p>;
-  }
-  return (
-    <p>
-      {refusalDetail(error) ??
-        `${businessKey} could not be loaded. Try again, or contact an administrator if the problem persists.`}
-    </p>
-  );
+  return <p>{loadFailureMessage(businessKey, error)}</p>;
 }
