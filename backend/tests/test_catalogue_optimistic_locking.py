@@ -553,17 +553,21 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
     Before this fix, the flush this triggers inside `entry_child_write`
     raised an uncaught `StaleDataError` - a 500 at the API layer, not a
     409. This proves it is translated into `EntryVersionConflictError`
-    instead, and that the savepoint discards the wrapped write along with
-    the version bump."""
+    instead, and - by inserting a real `code_binding` row in the wrapped
+    body and asserting it is gone afterwards (issue #60 review round 2:
+    the previous version of this test only set a flag, so it proved
+    nothing about a wrapped write actually being discarded) - that the
+    savepoint rolls the wrapped write back along with the version bump,
+    the guarantee `replace_binding`'s three-step body actually leans on."""
     business_key = format_business_key(999_000_060)
     with app_engine.connect() as setup_connection:
-        setup_connection.execute(
+        entry_id = setup_connection.execute(
             text(
                 "INSERT INTO catalogue_entry (business_key, preferred_term) "
-                "VALUES (:key, 'Original term')"
+                "VALUES (:key, 'Original term') RETURNING id"
             ),
             {"key": business_key},
-        )
+        ).scalar_one()
         setup_connection.commit()
 
     fired = False
@@ -595,6 +599,10 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
             other_connection.commit()
 
     body_ran = False
+    #: Verhoeff-valid (matches `test_catalogue_bindings.py`'s own
+    #: `_VALID_CODE`) - the wrapped write below inserts a real row with it,
+    #: not a stand-in, so a savepoint rollback has something genuine to undo.
+    wrapped_write_code = "391483001"
 
     try:
         event.listen(app_engine, "after_cursor_execute", _inject_concurrent_write)
@@ -605,6 +613,13 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
                 pytest.raises(EntryVersionConflictError) as exc_info,
                 entry_child_write(race_session, entry, 1),
             ):
+                race_session.execute(
+                    text(
+                        "INSERT INTO code_binding (entry_id, code, fsn) "
+                        "VALUES (:entry_id, :code, 'Raced binding')"
+                    ),
+                    {"entry_id": entry_id, "code": wrapped_write_code},
+                )
                 body_ran = True
         finally:
             race_session.close()
@@ -622,9 +637,20 @@ def test_entry_child_write_catches_a_genuine_concurrent_race(
                 text("SELECT preferred_term FROM catalogue_entry WHERE business_key = :key"),
                 {"key": business_key},
             ).scalar_one()
-        assert preferred_term == "Raced ahead"
+            assert preferred_term == "Raced ahead"
+            binding_count = check_connection.execute(
+                text("SELECT count(*) FROM code_binding WHERE entry_id = :entry_id"),
+                {"entry_id": entry_id},
+            ).scalar_one()
+        assert binding_count == 0, (
+            "the wrapped write survived the conflict - the savepoint did not roll it back"
+        )
     finally:
         with owner_engine.connect() as cleanup_connection:
+            cleanup_connection.execute(
+                text("DELETE FROM code_binding WHERE entry_id = :entry_id"),
+                {"entry_id": entry_id},
+            )
             cleanup_connection.execute(
                 text("DELETE FROM catalogue_entry WHERE business_key = :key"),
                 {"key": business_key},

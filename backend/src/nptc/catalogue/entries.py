@@ -504,9 +504,37 @@ def entry_child_write(
     block: by the time control returns here, this context manager's own
     flush has already run and any `StaleDataError` it raised has already
     been translated.
+
+    **The `StaleDataError`/`ObjectDeletedError` handler re-loads by
+    `business_key`, never by refreshing `entry` in place (issue #60
+    review).** `session.refresh(entry)` on a row another transaction has
+    since hard-deleted raises `ObjectDeletedError` itself - inside the
+    handler *for* `ObjectDeletedError` - which would reach the caller as an
+    unmapped 500. `business_key` is captured before the savepoint opens, so
+    reading it never touches an expired attribute; `load_entry_for_update`
+    then either finds the current row or raises the *domain*
+    `EntryNotFoundError` - mapped centrally to a real 404, never caught
+    here - the same shape `save_entry`'s own identical handler already
+    relies on. `catalogue_entry` has no hard-delete path in this codebase
+    today, so this branch is not known to be reachable in practice; it
+    exists so that if one is ever added, this handler fails the same way
+    `save_entry`'s does rather than differently.
+
+    **Any exception the wrapped body raises that is not one of these two
+    still rolls the savepoint back (issue #60 review).** A domain error
+    from the body - `load_active_binding`'s 404, `create_binding`'s
+    translated `CodeBindingAlreadyActiveError` - is not a version conflict
+    and is re-raised unchanged, but leaving the savepoint open would make
+    the "no partial write" guarantee depend on the caller's own teardown
+    (today, `session_scope` rolling back the whole request on any
+    exception) rather than being local to this context manager - the same
+    posture `save_entry` takes, and one a future caller that catches a
+    per-entry domain error and keeps using the session (as `save_entries`
+    already does for #63's bulk shape) would need to be able to rely on.
     """
     acquire_append_lock(session)
     assert_entry_row_version(session, entry, expected_row_version)
+    business_key = entry.business_key
     savepoint = session.begin_nested()
     try:
         yield
@@ -515,17 +543,20 @@ def entry_child_write(
     except (StaleDataError, ObjectDeletedError):
         savepoint.rollback()
         session.expire(entry)
-        session.refresh(entry)
-        changed_by, changed_at = _latest_change_attribution(session, entry.id)
+        refreshed = load_entry_for_update(session, business_key)
+        changed_by, changed_at = _latest_change_attribution(session, refreshed.id)
         raise EntryVersionConflictError(
             _build_conflict_report(
-                entry,
+                refreshed,
                 expected_row_version=expected_row_version,
                 changes=EntryChanges(),
                 changed_by=changed_by,
                 changed_at=changed_at,
             )
         ) from None
+    except BaseException:
+        savepoint.rollback()
+        raise
     else:
         savepoint.commit()
 
