@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
+from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
@@ -262,8 +263,6 @@ def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
     a bare `422` would stay green even if this fell through to FastAPI's
     own request-validation handler instead of the one this route actually
     means to raise."""
-    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
-
     _seed(api)
     token = _role_token(api, subject="sub-values-code-filter-conflict", role=Role.PROVISIONAL)
 
@@ -276,8 +275,6 @@ def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None:
-    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
-
     _seed(api)
     token = _role_token(api, subject="sub-values-code-offset-conflict", role=Role.PROVISIONAL)
 
@@ -290,8 +287,6 @@ def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_count_is_422(api: ApiTestApp) -> None:
-    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
-
     _seed(api)
     token = _role_token(api, subject="sub-values-code-count-conflict", role=Role.PROVISIONAL)
 

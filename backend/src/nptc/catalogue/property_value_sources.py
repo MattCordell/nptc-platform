@@ -56,13 +56,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nptc.catalogue.local_codes import list_local_codes
+from nptc.catalogue.local_codes import find_local_codes, list_local_codes
 from nptc.db.definitions import load_definition
-from nptc.db.models.local_code import LocalCode
-from nptc.db.models.local_code_system import LocalCodeSystem
 from nptc.db.property_specs import spec_for
 from nptc.terminology.concepts import classify_terminology_error
 from nptc_shared.sctid import has_valid_format
@@ -288,28 +285,17 @@ def list_property_values(
 def _resolve_local_code_system_values(
     session: Session, *, system_key: str, codes: Sequence[str]
 ) -> ValuePage:
-    # One `SELECT ... code IN (...)` for the whole batch (review round 1,
-    # PR #307), not one round trip per code as `find_local_code_with_
-    # system_status` does for its own single-code callers - that shape is
-    # right for `DatabaseLocalCodeLookup.resolve`'s per-request read, but
-    # here it turned into up to 200 round trips for one HTTP request.
-    # FR-52's "one call, not N" is about the terminology server
-    # (`_resolve_value_set_values` below); this is the same discipline
-    # applied to an in-process DB read for the same reason - N round trips
-    # for one request is still worth avoiding on a hot path.
-    #
-    # No `status` filter on either side, matching `find_local_code_with_
-    # system_status`'s own unconditional read: a deprecated code, or one in
-    # a deprecated system, still resolves here (module docstring).
-    rows = (
-        session.execute(
-            select(LocalCode)
-            .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
-            .where(LocalCodeSystem.key == system_key, LocalCode.code.in_(codes))
-        )
-        .scalars()
-        .all()
-    )
+    # `find_local_codes` (review round 2, PR #307) owns the actual
+    # `local_code`/`local_code_system` join - it lives beside
+    # `find_local_code_with_system_status` in `nptc.catalogue.local_codes`,
+    # not here, so that join stays in one module rather than two. This
+    # function's own job is the batch-vs-per-request shape (one `IN (...)`
+    # call, not N - FR-52's "one call, not N" discipline, applied to an
+    # in-process DB read for the same reason `_resolve_value_set_values`
+    # applies it to the terminology server below) and reassembling the
+    # unordered result back into `codes`' own order, dropping whatever
+    # neither side resolved.
+    rows = find_local_codes(session, system_key=system_key, codes=codes)
     by_code = {row.code: row for row in rows}
     items = tuple(
         ValueItem(code=by_code[code].code, display=by_code[code].display)

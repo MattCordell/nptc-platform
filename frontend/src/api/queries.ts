@@ -592,6 +592,22 @@ export function usePropertyValueOptionsQueries(
 }
 
 /**
+ * The route's own `code` ceiling (`Query(max_length=200)`,
+ * `nptc.api.routers.registry.list_property_value_options`) - exported so
+ * every caller that batches codes for a resolve-by-code request caps at
+ * the same number (review round 2, PR #307). Past this, the request 422s
+ * and every value in the batch falls back to its raw code, including the
+ * ones a smaller batch would have resolved - a graceful `.slice(0,
+ * MAX_RESOLVE_CODES)` avoids that. One shared constant, not a `200`
+ * repeated at each call site: `admin-catalogue-list.tsx`'s chip resolver
+ * and `admin-catalogue-filter-panel.tsx`'s carried-checkbox resolver both
+ * need to cap at *the same* number to keep sharing one cache entry
+ * (`propertyValueResolveQuery`'s sorted key) for a facet at or under the
+ * ceiling.
+ */
+export const MAX_RESOLVE_CODES = 200;
+
+/**
  * The query key/query-fn pair behind the resolve-by-code hooks below (issue
  * #306) - a sibling of `propertyValueOptionsQuery` above, using the route's
  * `code` parameter instead of `filter` to resolve exactly `codes`, unbounded

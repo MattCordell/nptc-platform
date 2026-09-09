@@ -31,6 +31,7 @@ from nptc.catalogue.local_codes import (
     deprecate_local_code_system,
     find_local_code,
     find_local_code_with_system_status,
+    find_local_codes,
     list_local_codes,
 )
 from nptc.db.models.audit import AuditEvent
@@ -901,6 +902,96 @@ def test_lookup_surfaces_system_deprecation_independently_of_the_code(
     assert resolved is not None
     assert resolved.status == str(LocalCodeStatus.ACTIVE)
     assert resolved.system_status == str(LocalCodeSystemStatus.DEPRECATED)
+
+
+# --- find_local_codes (issue #306, review round 2, PR #307) ----------------
+
+
+def _create_system_and_codes(session: Session, *, key: str, codes: list[str]) -> LocalCodeSystem:
+    system = create_local_code_system(
+        session,
+        AuditContext.system(),
+        actor=_administrator(),
+        key=key,
+        uri=f"https://nptc.example.org/CodeSystem/{key}",
+        title=key,
+        description="test",
+        owner="RCPA-QAP",
+        reason="creating a test fixture code system",
+    )
+    session.flush()
+    for code in codes:
+        create_local_code(
+            session,
+            AuditContext.system(),
+            actor=_administrator(),
+            system=system,
+            code=code,
+            display=code.replace("_", " ").title(),
+            reason="creating a test fixture code",
+        )
+    session.flush()
+    return system
+
+
+def test_find_local_codes_resolves_a_batch_in_one_query(app_session: Session) -> None:
+    """The batch sibling of `find_local_code_with_system_status` -
+    `_resolve_local_code_system_values`'s own caller-side reasoning (issue
+    #306) needs a set of codes resolved together, not one at a time."""
+    _create_system_and_codes(
+        app_session,
+        key="find_local_codes_batch_test",
+        codes=["alpha", "beta", "gamma"],
+    )
+
+    found = find_local_codes(
+        app_session, system_key="find_local_codes_batch_test", codes=["alpha", "gamma"]
+    )
+
+    assert {code.code for code in found} == {"alpha", "gamma"}
+
+
+def test_find_local_codes_omits_an_unknown_code(app_session: Session) -> None:
+    _create_system_and_codes(app_session, key="find_local_codes_unknown_test", codes=["real_code"])
+
+    found = find_local_codes(
+        app_session,
+        system_key="find_local_codes_unknown_test",
+        codes=["real_code", "not_a_real_code"],
+    )
+
+    assert {code.code for code in found} == {"real_code"}
+
+
+def test_find_local_codes_returns_empty_for_an_unknown_system(app_session: Session) -> None:
+    assert list(find_local_codes(app_session, system_key="not_a_real_system", codes=["x"])) == []
+
+
+@pytest.mark.req("FR-90")
+def test_find_local_codes_resolves_a_code_in_a_deprecated_system(app_session: Session) -> None:
+    """No `status` filter on either side, matching `find_local_code_with_
+    system_status`'s own unconditional read (see the identical assertion
+    above for the single-code lookup) - a deprecated system's own codes
+    must still resolve here."""
+    system = _create_system_and_codes(
+        app_session,
+        key="find_local_codes_deprecated_test",
+        codes=["still_resolves"],
+    )
+    deprecate_local_code_system(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        reason="deprecating this system",
+    )
+    app_session.flush()
+
+    found = find_local_codes(
+        app_session, system_key="find_local_codes_deprecated_test", codes=["still_resolves"]
+    )
+
+    assert {code.code for code in found} == {"still_resolves"}
 
 
 # --- Acceptance criterion: the advisory map is never treated as a

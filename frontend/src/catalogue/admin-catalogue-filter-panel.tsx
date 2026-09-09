@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from "react";
 
 import {
+  MAX_RESOLVE_CODES,
   usePropertyDefinitions,
   usePropertyValueOptions,
   usePropertyValueResolve,
@@ -135,27 +136,36 @@ function PropertyFacetGroup({
   // Its label is resolved directly by code (issue #306, ADR-0038), unbounded
   // by `DEFAULT_PAGE_SIZE` and independent of the property's current bound
   // value set, for whichever carried values the unfiltered page above did
-  // not already answer. Held to `[]` until `options` has actually settled
-  // (success or error): before that, `fetchedOptions` is always empty, so
-  // every selected value would otherwise look "carried" for one render and
-  // fire a resolve request the page itself was about to answer a moment
-  // later - a real extra fetch, not just an extra cache read.
-  // `.slice(0, 200)` matches the route's own `code` ceiling and
-  // `admin-catalogue-list.tsx`'s identical cap on its chip resolver (review
-  // round 1, PR #307) - past 200, the request would 422 and every carried
-  // checkbox in this facet would fall back to its raw code, including the
-  // ones within the ceiling. The two caps also need to agree: both surfaces
-  // resolve the same property's codes through one shared query-cache entry
-  // (`propertyValueResolveQuery`'s sorted key), so a facet at or under 200
-  // unresolved values still shares one fetch between the chip and the panel.
+  // not already answer. Held to `[]` until *both* `options` and
+  // `unfilteredOptions` have settled (success or error) - not `options`
+  // alone (review round 2, PR #307): with a blank filter box the two are
+  // the same cache entry, so that gate alone is invisible in the common
+  // case, but typing inside the 400ms debounce before the unfiltered page
+  // has settled leaves them as two in-flight queries under different keys,
+  // and the filtered one settling first would otherwise compute this
+  // against an empty `unfilteredLabelByCode` - firing exactly the redundant
+  // resolve request the unfiltered-page merge above exists to avoid.
+  // `.slice(0, MAX_RESOLVE_CODES)` matches the route's own `code` ceiling
+  // and `admin-catalogue-list.tsx`'s identical cap on its chip resolver -
+  // past it, the request would 422 and every carried checkbox in this facet
+  // would fall back to its raw code, including the ones within the
+  // ceiling. The two caps also need to agree: both surfaces resolve the
+  // same property's codes through one shared query-cache entry
+  // (`propertyValueResolveQuery`'s sorted key), so a facet at or under the
+  // ceiling still shares one fetch between the chip and the panel.
   const carriedCodes = useMemo(
     () =>
-      options.isPending
+      options.isPending || unfilteredOptions.isPending
         ? []
         : carriedValues
             .filter((value) => !unfilteredLabelByCode.has(value))
-            .slice(0, 200),
-    [carriedValues, options.isPending, unfilteredLabelByCode],
+            .slice(0, MAX_RESOLVE_CODES),
+    [
+      carriedValues,
+      options.isPending,
+      unfilteredOptions.isPending,
+      unfilteredLabelByCode,
+    ],
   );
   const carriedLabels = usePropertyValueResolve(propertyKey, carriedCodes);
   const carriedLabelByCode = useMemo(() => {

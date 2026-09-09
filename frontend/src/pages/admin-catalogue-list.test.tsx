@@ -423,6 +423,13 @@ describe("AdminCatalogueListPage", () => {
       await screen.findByRole("link", { name: DRAFT_KEY });
 
       await waitFor(() => expect(resolvedBatches.length).toBeGreaterThan(0));
+      // One batch, not two: the chip resolver and the panel's carried
+      // checkboxes derive their own capped code list from the same
+      // `filterSelections`-derived order, so both land on the identical
+      // first-200 subset and share one cache entry (review round 2, PR
+      // #307) - the same claim `resolves both chips...from one fetch`
+      // above pins for the two-value case.
+      expect(resolvedBatches).toHaveLength(1);
       expect(resolvedBatches[0]).toHaveLength(200);
     });
 

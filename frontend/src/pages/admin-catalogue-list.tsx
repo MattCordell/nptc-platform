@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import {
+  MAX_RESOLVE_CODES,
   useAdminEntriesList,
   useAdminSearch,
   usePropertyDefinitions,
@@ -223,12 +224,12 @@ export function AdminCatalogueListPage() {
         continue;
       }
       const codes = map.get(facetKey) ?? [];
-      // Capped at 200, matching the route's own `code` ceiling (review
-      // round 1, PR #307): past that, the request itself would 422 and
-      // every chip for this facet would fall back to its raw code,
-      // including the ones already within the ceiling - a graceful
-      // truncation here is strictly better than that all-or-nothing loss.
-      if (!codes.includes(value) && codes.length < 200) {
+      // Capped at MAX_RESOLVE_CODES (review round 1/2, PR #307): past that,
+      // the request itself would 422 and every chip for this facet would
+      // fall back to its raw code, including the ones already within the
+      // ceiling - a graceful truncation here is strictly better than that
+      // all-or-nothing loss.
+      if (!codes.includes(value) && codes.length < MAX_RESOLVE_CODES) {
         codes.push(value);
       }
       map.set(facetKey, codes);

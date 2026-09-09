@@ -64,8 +64,11 @@ code's format before concatenating it into the query (the injection guard
 this path needs), and turns N codes into one request the same way `expand`
 already does for the picker page.
 
-The local-code-system side resolves through one `SELECT ... code IN (...)`
-against `local_code`/`local_code_system` - a batched query, not
+The local-code-system side resolves through `find_local_codes`
+(`nptc.catalogue.local_codes`, review round 2, PR #307) - a batch sibling
+of `find_local_code_with_system_status` living beside it, so the
+`local_code`/`local_code_system` join stays in the one module that already
+owns it. It runs one `SELECT ... code IN (...)` for the whole batch, not
 `find_local_code_with_system_status`'s own per-code shape
 (`DatabaseLocalCodeLookup.resolve`'s read path, right for a single-code
 lookup but not for up to 200 of them in one request). FR-52's "one call,
