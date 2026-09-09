@@ -721,6 +721,7 @@ describe("adding synonyms", () => {
       terms: ["Zovirax", "Cyclir"],
       use: "synonym",
       reason: "Add the two brand names",
+      expected_row_version: ENTRY.row_version,
     });
   });
 
@@ -1413,11 +1414,14 @@ describe("retiring a term", () => {
         path: RETIRE_PATH,
         status: 200,
         body: {
-          term: "Serum ferritin",
-          use: "synonym",
-          language: "en-AU",
-          status: "retired",
-          length: 14,
+          designation: {
+            term: "Serum ferritin",
+            use: "synonym",
+            language: "en-AU",
+            status: "retired",
+            length: 14,
+          },
+          row_version: 4,
         },
       },
     ]);
@@ -1437,6 +1441,7 @@ describe("retiring a term", () => {
       language: "en-AU",
       term: "Serum ferritin",
       reason: "Superseded by the new wording",
+      expected_row_version: ENTRY.row_version,
     });
   });
 
@@ -1474,11 +1479,14 @@ describe("retiring a term", () => {
         path: RETIRE_PATH,
         status: 200,
         body: {
-          term: "Serum ferritin",
-          use: "synonym",
-          language: "en-AU",
-          status: "retired",
-          length: 14,
+          designation: {
+            term: "Serum ferritin",
+            use: "synonym",
+            language: "en-AU",
+            status: "retired",
+            length: 14,
+          },
+          row_version: 4,
         },
       },
     ]);

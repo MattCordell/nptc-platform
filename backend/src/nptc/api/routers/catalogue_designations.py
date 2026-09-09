@@ -47,21 +47,24 @@ therefore make an existing synonym unreachable for editing, silently
 changing what a shipped route does. Taking the designation first means the
 new branch only ever claims what this route already 404s on today.
 
-**The preferred-term branch requires `expected_row_version`; the designation
-branch merely honours it.** `catalogue_entry` is a row with FR-38 optimistic
-locking (`nptc.catalogue.entries.save_entry`), so a write to it cannot be
-accepted without the caller's version - a 422 without one
-(`PreferredTermVersionRequiredError`, which cannot be a pydantic validator:
-which storage home a term lives in is a database question). A `designation`
-row has no version of its own, so the field stays optional there rather than
-breaking every client this route has shipped with since #224 - but it is
-checked against `catalogue_entry.row_version` whenever it is supplied
-(`assert_entry_row_version`), because silently discarding a caller's lock
-token is worse than either honouring it or refusing it. That is a partial
-answer to the concurrency gap `docs/architecture/catalogue-write-api.md`
-names: it is opt-in, and amending a designation does not itself bump the
-entry's version, so two administrators editing different designations still
-do not conflict.
+**FR-38 (issue #300): every write here requires `expected_row_version`.**
+`designation` has no version column of its own (ADR-0022's other storage
+home besides `catalogue_entry.preferred_term`), so all three routes -
+`add_designations`, `amend_designation_route`'s designation branch, and
+`retire_designation_route` - share `catalogue_entry.row_version` as their
+lock, via `nptc.catalogue.entries.entry_child_write` - the same argument
+`catalogue_bindings.py` already makes for `code_binding` (issue #60).
+`amend_designation_route`'s preferred-term branch writes `catalogue_entry`
+directly and keeps using `save_entry`, which already required and bumped
+the version before this issue; only the designation branch's lock was ever
+missing. Required outright rather than left optional, unlike issue #227's
+first cut here: bumping the version on a write that let the field stay
+optional would silently invalidate every other editor's still-current token
+the moment a caller that omits it saves, which is worse than the gap it
+would close. This closes the concurrency gap `docs/architecture/
+catalogue-write-api.md` used to describe as opt-in: two administrators
+editing different terms on one entry, by any combination of add, amend and
+retire, now conflict.
 
 **Warning-severity collisions ride back on a write response, never a
 separate `GET`.** `nptc.catalogue.collisions.warning_collisions` never
@@ -88,11 +91,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
-from nptc.api.errors import (
-    DesignationCollisionResponse,
-    PreferredTermVersionRequiredError,
-    VersionConflictResponse,
-)
+from nptc.api.errors import DesignationCollisionResponse, VersionConflictResponse
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, SYNONYM_PROVENANCE, LabelProvenance
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
@@ -112,7 +111,7 @@ from nptc.catalogue.designations import (
 from nptc.catalogue.designations import retire_designation as _retire_designation
 from nptc.catalogue.entries import (
     EntryChanges,
-    assert_entry_row_version,
+    entry_child_write,
     load_entry_for_update,
     save_entry,
 )
@@ -222,25 +221,29 @@ _RESPONSE_409_COLLISION: Final[dict[str, Any]] = {
         "`collisions[]` alongside `detail`, naming each colliding entry (FR-05)."
     ),
 }
-_RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
+#: Shared verbatim by `_RESPONSE_409_VERSION` and
+#: `_RESPONSE_409_COLLISION_AND_VERSION` below - a `Final[str]` rather than
+#: two copies of the same sentence, so the two OpenAPI descriptions cannot
+#: drift apart (issue #300 review, minor).
+_STALE_VERSION_DESCRIPTION: Final[str] = (
+    "A stale `expected_row_version` (FR-38) carries `business_key`, "
+    "`expected_row_version`, `current_row_version`, `conflicts[]` (each with "
+    "`field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the "
+    "caller can reconcile rather than retry blind."
+)
+#: Every write route below now requires `expected_row_version` (FR-38, issue
+#: #300), so every one of them can also refuse with a stale-version 409 -
+#: `_RESPONSE_409` (acknowledgement only, which takes no lock token) is the
+#: one 409 here that cannot.
+_RESPONSE_409_VERSION: Final[dict[str, Any]] = {
+    **_RESPONSE_409,
+    "model": ErrorResponse | VersionConflictResponse,
+    "description": f"{_RESPONSE_409['description']} {_STALE_VERSION_DESCRIPTION}",
+}
+_RESPONSE_409_COLLISION_AND_VERSION: Final[dict[str, Any]] = {
     **_RESPONSE_409_COLLISION,
     "model": ErrorResponse | DesignationCollisionResponse | VersionConflictResponse,
-    "description": (
-        f"{_RESPONSE_409_COLLISION['description']} A stale `expected_row_version` "
-        "(FR-38) carries `business_key`, `expected_row_version`, "
-        "`current_row_version`, `conflicts[]` (each with `field`, `submitted` and "
-        "`current`) and `changed_by`/`changed_at`, so the caller can reconcile "
-        "rather than retry blind."
-    ),
-}
-_RESPONSE_422_AMENDMENT: Final[dict[str, Any]] = {
-    **_RESPONSE_422,
-    "description": (
-        f"{_RESPONSE_422['description']} Also a `term` naming the entry's own "
-        "preferred term with no `expected_row_version` to save it under (FR-38): "
-        "the field is optional in the schema because it is required on only that "
-        "one branch, which a schema cannot express."
-    ),
+    "description": f"{_RESPONSE_409_COLLISION['description']} {_STALE_VERSION_DESCRIPTION}",
 }
 
 #: Shared by add/amend/retire: all three are gated on the same permission
@@ -251,19 +254,19 @@ _RESPONSES_WRITE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_EDIT,
     404: _RESPONSE_404,
-    409: _RESPONSE_409,
+    409: _RESPONSE_409_VERSION,
     422: _RESPONSE_422,
 }
-#: Add: can collide (FR-05), cannot version-conflict.
+#: Add: can collide (FR-05) as well as version-conflict.
 _RESPONSES_ADD: Final[dict[int | str, dict[str, Any]]] = {
     **_RESPONSES_WRITE,
-    409: _RESPONSE_409_COLLISION,
+    409: _RESPONSE_409_COLLISION_AND_VERSION,
 }
-#: Amend: can do both, and is the only route here that writes an entry.
+#: Amend: can do both, and is the only route here that writes an entry
+#: directly on its preferred-term branch.
 _RESPONSES_AMEND: Final[dict[int | str, dict[str, Any]]] = {
     **_RESPONSES_WRITE,
-    409: _RESPONSE_409_AMENDMENT,
-    422: _RESPONSE_422_AMENDMENT,
+    409: _RESPONSE_409_COLLISION_AND_VERSION,
 }
 _RESPONSES_ACKNOWLEDGE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
@@ -368,6 +371,12 @@ class AddDesignationsRequest(_WithLanguage):
     terms: list[str] = Field(min_length=1, max_length=_MAX_TERMS_PER_BATCH)
     use: DesignationUse = DesignationUse.SYNONYM
     reason: str
+    #: FR-38 (issue #300): the entry's `row_version` as the caller last read
+    #: it, so the whole batch bumps the entry's counter as one write
+    #: (`nptc.catalogue.entries.entry_child_write`) and a concurrent editor
+    #: of a different term on this entry is refused rather than silently
+    #: unnoticed.
+    expected_row_version: int = Field(ge=1)
 
     @model_validator(mode="after")
     def _reject_en_au_preferred(self) -> AddDesignationsRequest:
@@ -398,10 +407,16 @@ class AddDesignationsRequest(_WithLanguage):
 
 
 class DesignationWriteResult(BaseModel):
+    """`add_designations`'s response: the created row(s), any warning-severity
+    collisions, and the entry's new `row_version` (FR-38, issue #300) - so a
+    client never has to re-fetch the entry just to learn its next lock
+    token."""
+
     model_config = ConfigDict(frozen=True)
 
     designations: list[Designation]
     warnings: list[CollisionWarning]
+    row_version: int
 
 
 class AmendDesignationRequest(_WithLanguage):
@@ -435,19 +450,14 @@ class AmendDesignationRequest(_WithLanguage):
     #: language, and `synonym` in any language, address a `designation` row
     #: and never fall back to the entry.
     use: DesignationUse | None = None
-    #: (issue #227). Optional in the schema and conditionally required in
-    #: fact: mandatory when `term` addresses the entry's own preferred term
-    #: (a 422 without it - `nptc.api.errors.
-    #: PreferredTermVersionRequiredError`, which explains why this cannot be
-    #: a `model_validator`), optional when it addresses a designation row.
-    #:
-    #: Optional rather than required outright because making it required
-    #: would break every client of the designation branch this route has
-    #: shipped with since #224. Enforced whenever supplied rather than
-    #: ignored on the branch that does not demand it, because silently
-    #: discarding a caller's lock token is worse than either honouring it or
-    #: refusing it - a client that sent one believes it is protected.
-    expected_row_version: int | None = Field(default=None, ge=1)
+    #: FR-38 (issue #300): required on both branches. The preferred-term
+    #: branch always required it (`save_entry`); the designation branch now
+    #: does too, so a caller who omits it can no longer silently bump the
+    #: entry's version out from under another editor mid-write, and both
+    #: branches refuse a stale version the same way (issue #227's original
+    #: cut left this branch optional - see the module docstring for why that
+    #: could not simply start bumping while still optional).
+    expected_row_version: int = Field(ge=1)
 
 
 class AmendDesignationResult(BaseModel):
@@ -463,11 +473,11 @@ class AmendDesignationResult(BaseModel):
 
     `row_version` is the entry's, on both branches, and is what a client
     sends back as `expected_row_version` on its next write - so a save
-    never has to be followed by a re-fetch just to learn the new token. On
-    the designation branch it is unchanged by the write: a `designation`
-    row has no version of its own, and amending one does not bump the
-    entry's (see the module docstring on what taking the entry's lock here
-    does and does not buy).
+    never has to be followed by a re-fetch just to learn the new token. It
+    now advances on both branches (FR-38, issue #300): a `designation` row
+    has no version of its own, but amending one bumps the entry's counter
+    via `nptc.catalogue.entries.entry_child_write`, the same way the
+    preferred-term branch's `save_entry` always has.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -482,6 +492,24 @@ class RetireDesignationRequest(_WithLanguage):
 
     term: str
     reason: str
+    #: FR-38 (issue #300): see `AddDesignationsRequest`'s own field for why
+    #: this is required rather than optional.
+    expected_row_version: int = Field(ge=1)
+
+
+class RetireDesignationResult(BaseModel):
+    """`retire_designation_route`'s response: the retired row, plus the
+    entry's new `row_version` (FR-38, issue #300).
+
+    Declared here rather than returning a bare `Designation`, which has
+    nowhere to carry `row_version` - `Designation` is the shared public read
+    model (`catalogue_shared.py`) and must not grow an admin-only field,
+    matching `catalogue_bindings.py`'s own `BindingWriteResult` precedent."""
+
+    model_config = ConfigDict(frozen=True)
+
+    designation: Designation
+    row_version: int
 
 
 class AcknowledgeCollisionRequest(_WithLanguage):
@@ -544,32 +572,51 @@ def add_designations(
     body: Annotated[AddDesignationsRequest, Body()],
 ) -> DesignationWriteResult:
     entry = load_entry_for_update(session, business_key)
-    if body.use is DesignationUse.PREFERRED:
-        # add_synonyms is synonym-only (it hardcodes use="synonym") and a
-        # preferred variant is always a single term - `add_designation`
-        # directly, matching the batch-of-one case add_synonyms would
-        # otherwise reduce to.
-        created = [
-            add_designation(
+    # One `entry_child_write` around the whole batch, not one per term: a
+    # multi-term add is one logical write, so a failure part-way rolls the
+    # whole batch back and bumps `catalogue_entry.row_version` once, not once
+    # per term (FR-38, issue #300; pinned by
+    # `test_a_batch_add_bumps_row_version_once_not_once_per_term`).
+    #
+    # This nests `add_synonyms`'/`add_designation`'s own collision-key
+    # `pg_advisory_xact_lock` (`assert_no_error_collisions`) *inside* the
+    # append lock `entry_child_write` takes first - the reverse of the order
+    # `nptc.catalogue.entries.save_entry`/`create_entry` use (collision lock,
+    # then later the append lock via `record_change`). Re-entrancy is not
+    # what makes this safe (they are two different advisory keys, not the
+    # same one taken twice) - see ADR-0035's "Lock ordering" addendum, which
+    # already accepts this same class of cross-lock inversion (there,
+    # append-lock-vs-row-lock) as a live-but-rare deadlock risk rather than a
+    # correctness one: Postgres's own detector aborts one side with a `500`,
+    # the caller retries, no partial write or corruption survives. This
+    # route adds a second instance of that accepted risk - collision-lock-
+    # vs-append-lock - tracked alongside it under issue #281.
+    with entry_child_write(session, entry, body.expected_row_version):
+        if body.use is DesignationUse.PREFERRED:
+            # add_synonyms is synonym-only (it hardcodes use="synonym") and a
+            # preferred variant is always a single term - `add_designation`
+            # directly, matching the batch-of-one case add_synonyms would
+            # otherwise reduce to.
+            created = [
+                add_designation(
+                    session,
+                    ctx,
+                    entry=entry,
+                    term=body.terms[0],
+                    use=body.use,
+                    language=body.language,
+                    reason=body.reason,
+                )
+            ]
+        else:
+            created = add_synonyms(
                 session,
                 ctx,
                 entry=entry,
-                term=body.terms[0],
-                use=body.use,
+                terms=body.terms,
                 language=body.language,
                 reason=body.reason,
             )
-        ]
-    else:
-        created = add_synonyms(
-            session,
-            ctx,
-            entry=entry,
-            terms=body.terms,
-            language=body.language,
-            reason=body.reason,
-        )
-    session.flush()
     response.headers["Location"] = f"{API_PREFIX}{router.prefix}/entries/{business_key}"
     created_ids = {designation.id for designation in created}
     rows = [
@@ -595,6 +642,7 @@ def add_designations(
     return DesignationWriteResult(
         designations=[designation_from_row(row) for row in rows],
         warnings=[_collision_warning(warning) for warning in warnings],
+        row_version=entry.row_version,
     )
 
 
@@ -706,10 +754,6 @@ def amend_designation_route(
     )
 
     if designation is None and _targets_preferred_term(entry, body):
-        if body.expected_row_version is None:
-            raise PreferredTermVersionRequiredError(
-                f"amending {business_key}'s own preferred term requires expected_row_version"
-            )
         save_entry(
             session,
             ctx,
@@ -729,30 +773,37 @@ def amend_designation_route(
             row_version=entry.row_version,
         )
 
-    if designation is None:
-        # The 404 this route has always given an unresolvable term. Raised
-        # here rather than by calling `load_active_designation` for its
-        # refusal, which would re-run the identical `SELECT` purely to fail
-        # (issue #227 review). The message is for the log only - the handler
-        # never echoes `str(exc)` - so it says what this route actually
-        # checked, which is more than that function would know.
-        raise DesignationNotFoundError(
-            f"entry {entry.id} has no active designation for term {body.term!r} in "
-            f"language {body.language!r}, and it is not the entry's own preferred term"
+    # The 404 this route has always given an unresolvable term sits inside
+    # the lock (FR-38, issue #300): `entry_child_write`'s own version check
+    # runs first, so a stale caller sees the version conflict rather than a
+    # confusing 404 - the same choice `catalogue_bindings.py`'s
+    # `retire_binding` documents for its own lookup.
+    #
+    # `amend_designation` below also takes the collision-key advisory lock
+    # (`assert_no_error_collisions`), nested inside the append lock
+    # `entry_child_write` already holds by then - the same accepted
+    # lock-ordering inversion `add_designations`' own comment above explains
+    # (ADR-0035, issue #281).
+    with entry_child_write(session, entry, body.expected_row_version):
+        if designation is None:
+            # Raised here rather than by calling `load_active_designation`
+            # for its refusal, which would re-run the identical `SELECT`
+            # purely to fail (issue #227 review). The message is for the
+            # log only - the handler never echoes `str(exc)` - so it says
+            # what this route actually checked, which is more than that
+            # function would know.
+            raise DesignationNotFoundError(
+                f"entry {entry.id} has no active designation for term {body.term!r} in "
+                f"language {body.language!r}, and it is not the entry's own preferred term"
+            )
+        amended = amend_designation(
+            session,
+            ctx,
+            entry=entry,
+            designation=designation,
+            new_term=body.new_term,
+            reason=body.reason,
         )
-
-    if body.expected_row_version is not None:
-        assert_entry_row_version(session, entry, body.expected_row_version)
-
-    amended = amend_designation(
-        session,
-        ctx,
-        entry=entry,
-        designation=designation,
-        new_term=body.new_term,
-        reason=body.reason,
-    )
-    session.flush()
     amended_id = amended.id
     row = queries.load_designation_by_id(session, amended_id)
     if row is None:
@@ -767,10 +818,9 @@ def amend_designation_route(
     return AmendDesignationResult(
         designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
-        # The entry's, unchanged by this write - a `designation` row has no
-        # version of its own. Returned anyway so both branches hand a client
-        # the same token, rather than making it know which storage home it
-        # just wrote to in order to know whether to re-read.
+        # The entry's, bumped by `entry_child_write` above - a `designation`
+        # row has no version of its own, so this write takes the entry's
+        # lock instead (FR-38, issue #300).
         row_version=entry.row_version,
     )
 
@@ -786,18 +836,24 @@ def retire_designation_route(
     ctx: AuditContextDep,
     business_key: BusinessKeyPath,
     body: Annotated[RetireDesignationRequest, Body()],
-) -> Designation:
+) -> RetireDesignationResult:
     entry = load_entry_for_update(session, business_key)
-    designation = load_active_designation(
-        session, entry_id=entry.id, term=body.term, language=body.language
-    )
-    _retire_designation(session, ctx, designation=designation, reason=body.reason)
-    session.flush()
+    # `load_active_designation` (a 404 for a missing/retired term) runs
+    # inside the lock, after `entry_child_write`'s own version check - a
+    # stale caller sees the version conflict, not an unrelated 404, matching
+    # `catalogue_bindings.py`'s `retire_binding` precedent (FR-38, issue #300).
+    with entry_child_write(session, entry, body.expected_row_version):
+        designation = load_active_designation(
+            session, entry_id=entry.id, term=body.term, language=body.language
+        )
+        _retire_designation(session, ctx, designation=designation, reason=body.reason)
     designation_id = designation.id
     row = queries.load_designation_by_id(session, designation_id)
     if row is None:
         raise RuntimeError(f"designation {designation_id} not found immediately after retirement")
-    return designation_from_row(row)
+    return RetireDesignationResult(
+        designation=designation_from_row(row), row_version=entry.row_version
+    )
 
 
 @router.post(

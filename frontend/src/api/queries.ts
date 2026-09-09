@@ -245,6 +245,17 @@ export function useAddDesignations(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // FR-38 (issue #300): this route now takes `expected_row_version` and
+    // can refuse with a version conflict, same as `useAmendDesignation`/
+    // `useBindCode` - refetch so a retry from the open form does not fail
+    // identically on the same stale token.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 
@@ -313,6 +324,17 @@ export function useRetireDesignation(businessKey: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // FR-38 (issue #300): this route now takes `expected_row_version` and
+    // can refuse with a version conflict, same as `useAmendDesignation`/
+    // `useRetireBinding` - refetch so a retry from the open dialog does not
+    // fail identically on the same stale token.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
   });
 }
 

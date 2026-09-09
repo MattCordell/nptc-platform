@@ -202,6 +202,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
 
       <AddSynonymsForm
         businessKey={businessKey}
+        rowVersion={entry.row_version}
         onSaved={(created, newWarnings) => {
           setWarnings(
             newWarnings.map((warning) => ({ ...warning, language: DEFAULT_LANGUAGE })),
@@ -226,7 +227,8 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
 
       {editing !== null && (
         <AmendDialog
-          entry={entry}
+          businessKey={businessKey}
+          rowVersion={entry.row_version}
           row={editing}
           onClose={() => setEditing(null)}
           onSaved={(newWarnings) => {
@@ -242,6 +244,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
       {retiring !== null && (
         <RetireDialog
           businessKey={businessKey}
+          rowVersion={entry.row_version}
           row={retiring}
           onClose={() => setRetiring(null)}
           onSaved={() => {
@@ -283,9 +286,11 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
  */
 function AddSynonymsForm({
   businessKey,
+  rowVersion,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   onSaved: (created: number, warnings: CollisionWarning[]) => void;
 }) {
   const [cell, setCell] = useState("");
@@ -350,6 +355,9 @@ function AddSynonymsForm({
             terms,
             use: "synonym",
             reason: changelogNote.note,
+            // FR-38 (issue #300): required now that a batch add bumps the
+            // entry's counter as one write.
+            expected_row_version: rowVersion,
           },
           {
             onSuccess: (result) => {
@@ -402,12 +410,14 @@ function AddSynonymsForm({
 }
 
 function AmendDialog({
-  entry,
+  businessKey,
+  rowVersion,
   row,
   onClose,
   onSaved,
 }: {
-  entry: EntryDetail;
+  businessKey: string;
+  rowVersion: number;
   row: TermRow;
   onClose: () => void;
   onSaved: (warnings: CollisionWarning[]) => void;
@@ -415,7 +425,7 @@ function AmendDialog({
   const [newTerm, setNewTerm] = useState(row.term);
   const changelogNote = useChangelogNote("amend-note");
   const [errors, setErrors] = useState<FormError[]>([]);
-  const amend = useAmendDesignation(entry.business_key);
+  const amend = useAmendDesignation(businessKey);
 
   // See `AddSynonymsForm`'s identical note (issue #62 review): computed
   // outside `onSubmit` so a blocked submit can recompute and display it too.
@@ -473,10 +483,10 @@ function AmendDialog({
               // mis-address exactly the term `use` was added to reach
               // (review finding 1).
               use: designationUse(row.use),
-              // FR-38, sent on both branches: required when this addresses
-              // the entry's own term, honoured (not discarded) when it does
-              // not. One code path, and no save that skips the lock.
-              expected_row_version: entry.row_version,
+              // FR-38 (issue #300): required on both branches, unconditionally
+              // - the backend rejects either without it. One code path, and
+              // no save that skips the lock.
+              expected_row_version: rowVersion,
               reason: changelogNote.note,
             },
             { onSuccess: (result) => onSaved(result.warnings) },
@@ -510,11 +520,13 @@ function AmendDialog({
 
 function RetireDialog({
   businessKey,
+  rowVersion,
   row,
   onClose,
   onSaved,
 }: {
   businessKey: string;
+  rowVersion: number;
   row: TermRow;
   onClose: () => void;
   onSaved: () => void;
@@ -541,7 +553,14 @@ function RetireDialog({
         }
         onSubmit={() => {
           retire.mutate(
-            { language: row.language, term: row.term, reason: changelogNote.note },
+            {
+              language: row.language,
+              term: row.term,
+              reason: changelogNote.note,
+              // FR-38 (issue #300): required now that retiring a term bumps
+              // the entry's counter.
+              expected_row_version: rowVersion,
+            },
             { onSuccess: () => onSaved() },
           );
         }}

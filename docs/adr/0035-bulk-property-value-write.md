@@ -192,6 +192,30 @@ racing this bulk route no longer risks the ordering inversion, but `save_entry` 
 singular property-value route still take their row lock first, so #281 remains open for
 the rest.
 
+**Issue #300 introduces a second global advisory lock into the same cycle** (round-2
+review). `nptc.catalogue.collisions.assert_no_error_collisions` takes its own
+`pg_advisory_xact_lock(hashtext(collision_key))` — a lock keyed per comparison-key, not
+per entry — and every existing writer that can take it (`save_entry`, `create_entry`)
+does so *before* it can ever reach `record_change`'s append lock. Issue #300's designation
+routes wrap their write in `entry_child_write`, which takes the append lock first (by this
+addendum's own design) and only then calls into `add_designation`/`amend_designation`,
+which take the collision lock — the reverse order from every collision-checking writer
+that predates it. Concretely: a `PATCH` renaming a preferred term holds the collision lock
+for that key and blocks on the append lock, while a concurrent designation add/amend
+targeting the *same* collision key holds the append lock and blocks on the collision lock
+— Postgres `40P01`, surfaced as an unhandled `500` (this codebase has no `40P01` handler),
+exactly the residual risk this addendum already accepts for the row-lock case above, now
+also reachable via the collision lock. **Accepted for the same reason**: the affected
+window requires two concurrent writers racing on the same collision key, Postgres's own
+deadlock detector aborts one side cleanly (no partial write, no corruption, a `500` the
+caller retries), and a targeted fix here would mean either reordering `entry_child_write`
+itself (regressing the row-lock guarantee issue #60 just established) or pre-acquiring
+collision locks ahead of `entry_child_write` for every affected route (a new locking
+protocol, not a one-route change). Folded into issue #281's scope rather than opened as
+its own follow-up: the complete fix is the same one this addendum already calls for — a
+single, consistent lock-acquisition order across every catalogue-entry writer, covering
+both lock pairs (append-vs-row and append-vs-collision) at once.
+
 ## Consequences
 
 - A generated client (or a future frontend) must read `outcomes[]`/`applied`/
