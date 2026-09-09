@@ -143,7 +143,7 @@ class AuditActor(BaseModel):
     is_closed: bool
 
 
-class AuditEvent(BaseModel):
+class AuditEventItem(BaseModel):
     """One `audit_event` row, served close to verbatim (NFR-12) - see
     `nptc.audit.queries`'s own module docstring for why `before`/`after`
     are raw here rather than the field-names-only projection FR-19's
@@ -170,7 +170,7 @@ class AuditEventPage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    items: list[AuditEvent]
+    items: list[AuditEventItem]
     next_cursor: str | None
 
 
@@ -180,8 +180,8 @@ def _actor_from_row(actor: audit_queries.ActorInfo | None) -> AuditActor | None:
     return AuditActor(id=actor.id, display_name=actor.display_name, is_closed=actor.is_closed)
 
 
-def _event_from_row(row: audit_queries.AuditEventRow) -> AuditEvent:
-    return AuditEvent(
+def _event_from_row(row: audit_queries.AuditEventRow) -> AuditEventItem:
+    return AuditEventItem(
         sequence=row.sequence,
         occurred_at=row.occurred_at,
         actor=_actor_from_row(row.actor),
