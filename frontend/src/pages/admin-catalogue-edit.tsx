@@ -33,6 +33,30 @@ function staleWarning(businessKey: string): string {
   );
 }
 
+/**
+ * An initial load that failed with no prior data to fall back on. One
+ * string, shown and announced, for the same reason as `staleWarning` (#288 -
+ * mirrors the list screen's `hardFailureMessage`, PR #285 review finding 3).
+ *
+ * No 401/403 special case any more (issue #184): `catalogue.edit_published`
+ * requiring multi-factor authentication is now answered by `RootLayout`'s
+ * `StepUpController`, which reacts to `WWW-Authenticate`'s RFC 9470
+ * challenge before this component's own `entry.isError` ever has a chance to
+ * render - a silent step-up retries the read in place, and an interactive
+ * one navigates away entirely. What lands here for a 403 is a step-up the
+ * user abandoned, which is an ordinary refusal like any other.
+ */
+function loadFailureMessage(businessKey: string, error: unknown): string {
+  const status = error instanceof ApiError ? error.status : null;
+  if (status === 404) {
+    return `No catalogue entry was found for ${businessKey}. Check the identifier.`;
+  }
+  return (
+    refusalDetail(error) ??
+    `${businessKey} could not be loaded. Try again, or contact an administrator if the problem persists.`
+  );
+}
+
 export function AdminCatalogueEditPage() {
   const { businessKey } = useParams({
     from: "/authenticated/admin/catalogue/$businessKey/edit",
@@ -55,6 +79,26 @@ export function AdminCatalogueEditPage() {
     }
   }, [staleData, businessKey, announce]);
 
+  // The initial-load failure (no prior data) was rendered but never
+  // announced (#288, mirroring PR #285 review finding 3 on the list screen)
+  // - silence for a screen-reader user whose first load 404s or 4xxs.
+  //
+  // The message, not `entry.error`, is the effect's dependency (matching
+  // `admin-catalogue-list.tsx`'s own `hardFailureMessage`): `retry` is off
+  // but `refetchOnWindowFocus` is on, so a hard failure that refetches on
+  // focus and fails again the same way yields a *new* `ApiError` instance
+  // with identical wording - keying on the instance would re-announce an
+  // unchanged sentence (review finding 1).
+  const hardFailure = entry.isError && entry.data === undefined;
+  const hardFailureMessage = hardFailure
+    ? loadFailureMessage(businessKey, entry.error)
+    : null;
+  useEffect(() => {
+    if (hardFailureMessage !== null) {
+      announce(hardFailureMessage);
+    }
+  }, [hardFailureMessage, announce]);
+
   return (
     <section aria-labelledby="edit-entry-heading">
       <LiveRegion message={message} politeness={politeness} />
@@ -73,9 +117,7 @@ export function AdminCatalogueEditPage() {
           path, since a long-open session is exactly when one expires (PR #238
           review). A first load that fails blocks; a failed refresh is a
           banner over the terms the screen already has. */}
-      {entry.isError && entry.data === undefined && (
-        <LoadFailure businessKey={businessKey} error={entry.error} />
-      )}
+      {hardFailureMessage !== null && <p>{hardFailureMessage}</p>}
 
       {staleData && <p>{staleWarning(businessKey)}</p>}
 
@@ -105,31 +147,5 @@ export function AdminCatalogueEditPage() {
         </>
       )}
     </section>
-  );
-}
-
-/**
- * A failed load, in the terms the reader can act on.
- *
- * No 401/403 special case any more (issue #184): `catalogue.edit_published`
- * requiring multi-factor authentication is now answered by
- * `RootLayout`'s `StepUpController`, which reacts to `WWW-Authenticate`'s
- * RFC 9470 challenge before this component's own `entry.isError` ever has a
- * chance to render - a silent step-up retries the read in place, and an
- * interactive one navigates away entirely. What lands here for a 403 is a
- * step-up that the user abandoned, which is an ordinary refusal like any
- * other.
- */
-function LoadFailure({ businessKey, error }: { businessKey: string; error: unknown }) {
-  const status = error instanceof ApiError ? error.status : null;
-
-  if (status === 404) {
-    return <p>No catalogue entry was found for {businessKey}. Check the identifier.</p>;
-  }
-  return (
-    <p>
-      {refusalDetail(error) ??
-        `${businessKey} could not be loaded. Try again, or contact an administrator if the problem persists.`}
-    </p>
   );
 }

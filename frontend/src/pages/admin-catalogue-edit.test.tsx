@@ -163,6 +163,18 @@ function announced(): string {
 }
 
 /**
+ * `getByText`/`findByText`'s `ignore` option for excluding the page's own
+ * live region(s) - #288 announces the same wording it renders for a hard
+ * load failure, so an unscoped query can match both the rendered element and
+ * the announcement. Extends Testing Library's own default (`script, style`)
+ * rather than replacing it, and is coupled to `LiveRegion` putting its
+ * message text directly on the role-bearing element (review nit): it would
+ * stop excluding the announcement if `LiveRegion` ever wrapped its message in
+ * an inner element instead.
+ */
+const NOT_LIVE_REGION = { ignore: 'script, style, [role="status"], [role="alert"]' };
+
+/**
  * Queries scoped to the open dialog. The page's own "Add synonyms" form stays
  * mounted behind a dialog, so an unscoped `getByLabelText(/Changelog note/)`
  * legitimately matches two fields - which is the layout working, not a bug.
@@ -318,9 +330,13 @@ describe("the entry it loads", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     // Still on the same screen, with the refusal's own text visible - not a
-    // blank page and not bounced anywhere.
+    // blank page and not bounced anywhere. `NOT_LIVE_REGION` excludes the
+    // announcement (#288 now announces this same hard failure too).
     expect(
-      screen.getByText("This action requires multi-factor authentication."),
+      screen.getByText(
+        "This action requires multi-factor authentication.",
+        NOT_LIVE_REGION,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -462,8 +478,11 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
 
+    // `NOT_LIVE_REGION`: #288 also announces this hard failure, so an
+    // unscoped query can match both once the announcement's own
+    // setTimeout(0) has fired.
     expect(
-      await screen.findByText("You do not have permission to do this."),
+      await screen.findByText("You do not have permission to do this.", NOT_LIVE_REGION),
     ).toBeInTheDocument();
     expect(stepUp).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -479,9 +498,53 @@ describe("the entry it loads", () => {
     expect(
       await screen.findByText(
         new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
+        NOT_LIVE_REGION,
       ),
     ).toBeInTheDocument();
+    // #288: the initial-load failure was rendered but never announced -
+    // silence for a screen-reader user whose first load 404s.
+    await waitFor(() =>
+      expect(announced()).toMatch(
+        new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
+      ),
+    );
   });
+
+  it("shows and announces a refusal message when the initial load fails for any other reason", async () => {
+    // #288, mirroring PR #285 review finding 3 on the list screen: a
+    // non-404 initial-load failure (no prior data to fall back on) must be
+    // both rendered and announced.
+    stubApi([{ ...READ_OK, status: 500, body: { detail: "boom" } }]);
+
+    await renderRoute(EDIT_URL, SIGNED_IN);
+
+    expect(await screen.findByText("boom", NOT_LIVE_REGION)).toBeInTheDocument();
+    await waitFor(() => expect(announced()).toContain("boom"));
+  });
+
+  it("falls back to a generic message when the initial-load refusal carries no detail sentence", async () => {
+    // Review finding 2: `loadFailureMessage`'s `??` fallback arm was not
+    // exercised by any test - the 404 case takes the first branch, and the
+    // 500 case above supplies a string `detail`, so `refusalDetail` wins
+    // there too. `refusalDetail` refuses a non-string `detail`, which is
+    // exactly what FastAPI's own validation error sends (`HTTPValidationError`
+    // - an array of issues, not a sentence) - the principal failure mode of
+    // this branch, per CLAUDE.md's testing conventions.
+    stubApi([
+      {
+        ...READ_OK,
+        status: 422,
+        body: { detail: [{ msg: "bad request", loc: ["query"], type: "value_error" }] },
+      },
+    ]);
+
+    await renderRoute(EDIT_URL, SIGNED_IN);
+
+    const message = `${BUSINESS_KEY} could not be loaded. Try again, or contact an administrator if the problem persists.`;
+    expect(await screen.findByText(message, NOT_LIVE_REGION)).toBeInTheDocument();
+    await waitFor(() => expect(announced()).toContain(message));
+  });
+
   it("keeps the editor on screen when a refresh fails, and says so", async () => {
     // `isError` and `data` are not exclusive states. Before this, an entry
     // that loaded and then failed a refetch rendered "You cannot edit this
