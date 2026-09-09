@@ -3060,6 +3060,368 @@
           }
         }
       }
+    },
+    "/api/v1/audit/events": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Search and filter the audit log (NFR-12)",
+        "description": "Every filter narrows independently and in combination, AND-ed\ntogether; none is required, so an unfiltered call pages through the\nwhole log. Never empty-errors: no matching events is a `200` with an\nempty `items` list, not a 404.",
+        "operationId": "read_audit_events_api_v1_audit_events_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Maximum entries in this page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum entries in this page."
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 19,
+                  "pattern": "^[0-9]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one.",
+              "title": "Before"
+            },
+            "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+          },
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one actor, by internal id.",
+              "title": "Actor User Id"
+            },
+            "description": "Filter to one actor, by internal id."
+          },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`.",
+              "title": "Entity Type"
+            },
+            "description": "Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`."
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422.",
+              "title": "Entity Id"
+            },
+            "description": "Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422."
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one action name, e.g. `catalogue_entry.updated`.",
+              "title": "Action"
+            },
+            "description": "Filter to one action name, e.g. `catalogue_entry.updated`."
+          },
+          {
+            "name": "occurred_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to events at or after this instant (inclusive).",
+              "title": "Occurred From"
+            },
+            "description": "Filter to events at or after this instant (inclusive)."
+          },
+          {
+            "name": "occurred_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to events before this instant (exclusive).",
+              "title": "Occurred To"
+            },
+            "description": "Filter to events before this instant (exclusive)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `audit.read`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit/events/export": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Export the filtered audit log as NDJSON (NFR-12)",
+        "description": "One JSON object per line, oldest first, including `prev_hash`/\n`entry_hash` so the extract stays independently verifiable (NFR-10) -\nsee `nptc.audit.queries.stream_audit_events`'s own docstring for why\nthe order differs from the read route above. The whole filtered set,\nnot one page: an export has no `limit`/cursor.",
+        "operationId": "export_audit_events_api_v1_audit_events_export_get",
+        "parameters": [
+          {
+            "name": "actor_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one actor, by internal id.",
+              "title": "Actor User Id"
+            },
+            "description": "Filter to one actor, by internal id."
+          },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`.",
+              "title": "Entity Type"
+            },
+            "description": "Filter to one entity type, e.g. `catalogue_entry`. Required alongside `entity_id`."
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422.",
+              "title": "Entity Id"
+            },
+            "description": "Filter to one entity, alongside `entity_type` - the two are required together, and `entity_id` alone is a 422."
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one action name, e.g. `catalogue_entry.updated`.",
+              "title": "Action"
+            },
+            "description": "Filter to one action name, e.g. `catalogue_entry.updated`."
+          },
+          {
+            "name": "occurred_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to events at or after this instant (inclusive).",
+              "title": "Occurred From"
+            },
+            "description": "Filter to events at or after this instant (inclusive)."
+          },
+          {
+            "name": "occurred_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to events before this instant (exclusive).",
+              "title": "Occurred To"
+            },
+            "description": "Filter to events before this instant (exclusive)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `audit.read`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, `entity_id` given without `entity_type`, or `occurred_from` after `occurred_to`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3474,6 +3836,151 @@
         ],
         "title": "AmendPropertyDefinitionRequest",
         "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`.\n\n**An explicit `null` on a known field is refused, not a silent no-op**\n(issue #223 review finding 9). None of these fields is a nullable\ndomain value, so a client sending `{\"label\": null, ...}` almost\ncertainly meant to omit the field, not clear it - `_reject_explicit_null`\nbelow distinguishes \"omitted\" from \"provided as null\" via\n`model_fields_set`, which `changes()` cannot do once every field has\ncollapsed to `None`."
+      },
+      "AuditActor": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "is_closed": {
+            "type": "boolean",
+            "title": "Is Closed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "is_closed"
+        ],
+        "title": "AuditActor",
+        "description": "The acting user, resolved by internal id (NFR-13, NFR-17) - see\n`nptc.audit.queries`'s own module docstring for why a bare display\nname is not enough on this Administrator-only surface.\n\n`display_name` is `null` for a closed (tombstoned) account -\n`is_closed` is what tells that apart from an account that simply never\nset one."
+      },
+      "AuditEventItem": {
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditActor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sequence",
+          "occurred_at",
+          "actor",
+          "action",
+          "entity_type",
+          "entity_id",
+          "before",
+          "after",
+          "reason"
+        ],
+        "title": "AuditEventItem",
+        "description": "One `audit_event` row, served close to verbatim (NFR-12) - see\n`nptc.audit.queries`'s own module docstring for why `before`/`after`\nare raw here rather than the field-names-only projection FR-19's\npublic history surface uses. `actor` is `null` for a system-initiated\nevent, never a name-only fallback."
+      },
+      "AuditEventPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AuditEventPage",
+        "description": "One keyset page, most recent first. `next_cursor` is `null` exactly\nwhen this is the last page - matching every other paged surface in\nthis API."
       },
       "BindCodeRequest": {
         "properties": {
