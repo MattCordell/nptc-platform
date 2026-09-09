@@ -64,11 +64,14 @@ code's format before concatenating it into the query (the injection guard
 this path needs), and turns N codes into one request the same way `expand`
 already does for the picker page.
 
-The local-code-system side resolves through
-`find_local_code_with_system_status`, already per-code (`DatabaseLocalCodeLookup.resolve`'s
-own read path) - looped over the requested codes rather than a new batched
-query, since FR-52's "one call, not N" is about the terminology server, not
-an in-process Postgres read.
+The local-code-system side resolves through one `SELECT ... code IN (...)`
+against `local_code`/`local_code_system` - a batched query, not
+`find_local_code_with_system_status`'s own per-code shape
+(`DatabaseLocalCodeLookup.resolve`'s read path, right for a single-code
+lookup but not for up to 200 of them in one request). FR-52's "one call,
+not N" is about the terminology server, not an in-process Postgres read,
+but N round trips against Postgres for one HTTP request was still worth
+collapsing to one (review round 1, PR #307).
 
 ### Not intersected with the property's own bound value set, and not active-only
 

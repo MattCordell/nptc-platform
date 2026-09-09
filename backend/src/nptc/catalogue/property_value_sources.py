@@ -56,10 +56,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nptc.catalogue.local_codes import find_local_code_with_system_status, list_local_codes
+from nptc.catalogue.local_codes import list_local_codes
 from nptc.db.definitions import load_definition
+from nptc.db.models.local_code import LocalCode
+from nptc.db.models.local_code_system import LocalCodeSystem
 from nptc.db.property_specs import spec_for
 from nptc.terminology.concepts import classify_terminology_error
 from nptc_shared.sctid import has_valid_format
@@ -285,14 +288,33 @@ def list_property_values(
 def _resolve_local_code_system_values(
     session: Session, *, system_key: str, codes: Sequence[str]
 ) -> ValuePage:
-    # One `SELECT` per code, mirroring `DatabaseLocalCodeLookup.resolve` -
+    # One `SELECT ... code IN (...)` for the whole batch (review round 1,
+    # PR #307), not one round trip per code as `find_local_code_with_
+    # system_status` does for its own single-code callers - that shape is
+    # right for `DatabaseLocalCodeLookup.resolve`'s per-request read, but
+    # here it turned into up to 200 round trips for one HTTP request.
     # FR-52's "one call, not N" is about the terminology server
-    # (`_resolve_value_set_values` below), not this in-process DB read.
+    # (`_resolve_value_set_values` below); this is the same discipline
+    # applied to an in-process DB read for the same reason - N round trips
+    # for one request is still worth avoiding on a hot path.
+    #
+    # No `status` filter on either side, matching `find_local_code_with_
+    # system_status`'s own unconditional read: a deprecated code, or one in
+    # a deprecated system, still resolves here (module docstring).
+    rows = (
+        session.execute(
+            select(LocalCode)
+            .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
+            .where(LocalCodeSystem.key == system_key, LocalCode.code.in_(codes))
+        )
+        .scalars()
+        .all()
+    )
+    by_code = {row.code: row for row in rows}
     items = tuple(
-        ValueItem(code=found[0].code, display=found[0].display)
+        ValueItem(code=by_code[code].code, display=by_code[code].display)
         for code in codes
-        if (found := find_local_code_with_system_status(session, system_key=system_key, code=code))
-        is not None
+        if code in by_code
     )
     return ValuePage(items=items, total=len(items))
 
@@ -363,10 +385,10 @@ def resolve_property_values(
     `items` omits a code neither side can resolve rather than inventing a
     placeholder; `total` is always `len(items)`, so the two can never
     disagree (issue #306 plan). A duplicate in `codes` resolves once, not
-    twice - `_resolve_local_code_system_values` below queries once per
-    element of `codes` with no deduplication of its own, so a repeated code
-    would otherwise double up in `items` and inflate `total` past the number
-    of *distinct* codes actually resolved. Raises the same
+    twice - neither branch below dedupes `codes` itself (each looks a
+    repeated code up once per occurrence), so a repeated code would
+    otherwise double up in `items` and inflate `total` past the number of
+    *distinct* codes actually resolved. Raises the same
     `PropertyDefinitionNotFoundError` / `PropertyNotCodeTypeError` as
     `list_property_values` for the same reasons.
     """

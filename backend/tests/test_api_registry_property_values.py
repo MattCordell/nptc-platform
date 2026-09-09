@@ -257,34 +257,68 @@ def test_code_query_param_resolves_local_codes_with_no_terminology_call(api: Api
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
+    """Asserts `detail` against `PropertyValueSelectionConflictError`'s own
+    handler constant (review round 1, PR #307), not just the status code -
+    a bare `422` would stay green even if this fell through to FastAPI's
+    own request-validation handler instead of the one this route actually
+    means to raise."""
+    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
+
     _seed(api)
     token = _role_token(api, subject="sub-values-code-filter-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], filter="acantha")
 
     assert response.status_code == 422, response.text
+    assert response.json()["detail"] == _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
 
 
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None:
+    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
+
     _seed(api)
     token = _role_token(api, subject="sub-values-code-offset-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], offset=5)
 
     assert response.status_code == 422, response.text
+    assert response.json()["detail"] == _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
 
 
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_count_is_422(api: ApiTestApp) -> None:
+    from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
+
     _seed(api)
     token = _role_token(api, subject="sub-values-code-count-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], count=10)
 
     assert response.status_code == 422, response.text
+    assert response.json()["detail"] == _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.integration
+def test_code_combined_with_explicit_defaults_is_accepted(api: ApiTestApp) -> None:
+    """The route docstring's own promise: `code` alongside `offset=0` and
+    `count=50` (the picker's own defaults, sent explicitly rather than
+    omitted) is accepted, not refused - those exact values carry no
+    ambiguity to reject (review round 1, PR #307 - this promise had no
+    test, and it is exactly the assertion a stricter, sentinel-based
+    conflict check would break)."""
+    _seed(api)
+    token = _role_token(api, subject="sub-values-code-explicit-defaults", role=Role.PROVISIONAL)
+
+    response = _get_values(
+        api, "discipline", token, code=["chemical_pathology"], offset=0, count=50
+    )
+
+    assert response.status_code == 200, response.text
+    assert [item["code"] for item in response.json()["items"]] == ["chemical_pathology"]
 
 
 @pytest.mark.req("FR-10")

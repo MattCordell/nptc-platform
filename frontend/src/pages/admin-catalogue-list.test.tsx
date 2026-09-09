@@ -387,6 +387,96 @@ describe("AdminCatalogueListPage", () => {
       ).toBeChecked();
     });
 
+    // Review round 1, PR #307: a facet with more unresolved values than the
+    // route's own 200-code ceiling still resolves its first 200 rather than
+    // 422ing the whole batch and losing every chip in the facet to the raw
+    // code fallback. The chip resolver (`admin-catalogue-list.tsx`) and the
+    // panel's carried checkboxes (`admin-catalogue-filter-panel.tsx`) share
+    // the identical cap, so both still read from one shared fetch.
+    it("caps a facet's resolve-by-code batch at the route's 200-code ceiling", async () => {
+      const codes = Array.from({ length: 201 }, (_, i) => `code_${i}`);
+      const resolvedBatches: string[][] = [];
+      stubApi([ENTRIES_OK, PROPERTIES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/registry/properties/discipline/values")) {
+            return null;
+          }
+          if (call.searchParams.has("code")) {
+            const batch = call.searchParams.getAll("code");
+            resolvedBatches.push(batch);
+            return {
+              method: "GET",
+              path: "/registry/properties/discipline/values",
+              status: 200,
+              body: {
+                items: batch.map((code) => ({ code, display: code })),
+                total: batch.length,
+              },
+            };
+          }
+          return DISCIPLINE_VALUES_OK;
+        },
+      });
+
+      const query = codes.map((code) => `filter.discipline=${code}`).join("&");
+      await renderRoute(`${LIST_URL}?${query}`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await waitFor(() => expect(resolvedBatches.length).toBeGreaterThan(0));
+      expect(resolvedBatches[0]).toHaveLength(200);
+    });
+
+    // Review round 1, PR #307: before this fix, `PropertyFacetGroup` decided
+    // "carried" against its own *filtered* page, so typing a filter that no
+    // longer matches a selected value made it look unresolved even though
+    // the unfiltered page (already fetched, and cached under the same
+    // `filter: ""` key the chip resolver reads) already knows its label -
+    // firing a redundant resolve-by-code request the cache could have
+    // answered for free.
+    it("keeps a carried checkbox's known label without a resolve-by-code call while filtering", async () => {
+      const user = userEvent.setup();
+      const codeCalls: string[] = [];
+      stubApi([ENTRIES_OK, PROPERTIES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/registry/properties/discipline/values")) {
+            return null;
+          }
+          if (call.searchParams.has("code")) {
+            codeCalls.push(...call.searchParams.getAll("code"));
+            return {
+              method: "GET",
+              path: "/registry/properties/discipline/values",
+              status: 200,
+              body: { items: [], total: 0 },
+            };
+          }
+          if (call.searchParams.has("filter")) {
+            return {
+              method: "GET",
+              path: "/registry/properties/discipline/values",
+              status: 200,
+              body: {
+                items: [{ code: "haematology", display: "Haematology" }],
+                total: 1,
+              },
+            };
+          }
+          return DISCIPLINE_VALUES_OK;
+        },
+      });
+
+      await renderRoute(`${LIST_URL}?filter.discipline=chemistry`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.type(screen.getByLabelText("Filter Discipline"), "haema");
+
+      expect(
+        await screen.findByRole("checkbox", { name: "Haematology" }, { timeout: 2000 }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Chemistry" })).toBeChecked();
+      expect(codeCalls).toHaveLength(0);
+    });
+
     // Issue #289: the `status` facet resolves against the same
     // `STATUS_OPTIONS` labels the filter panel itself renders.
     it("resolves the status facet's chip via STATUS_OPTIONS", async () => {
