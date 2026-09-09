@@ -20,11 +20,11 @@ wrapper and an error summary.
 
 Three properties below were written expecting that manual pass to confirm them: colour
 contrast, a repeated-hint pattern for option groups, and whole-screen defects (heading
-order, focus order across combined components) that no per-component check can see. With
-#211 cancelled, they are simply **unverified** — not confirmed, and not known to be
-wrong — and each note below says so explicitly rather than pointing at a pass that will
-not happen. Do not read the absence of a documented problem as evidence one of these is
-fine; #60 closing #211 verified nothing about them either.
+order, focus order across combined components) that no per-component check can see. Now
+that issue #211 is cancelled, they are simply **unverified** — not confirmed, and not
+known to be wrong — and each note below says so explicitly rather than pointing at a pass
+that will not happen. Do not read the absence of a documented problem as evidence one of
+these is fine; issue #60 closing #211 verified nothing about them either.
 
 (The issue body cites NFR-19, the data-breach-response procedure — unrelated. The
 requirement this baseline implements is NFR-31.)
