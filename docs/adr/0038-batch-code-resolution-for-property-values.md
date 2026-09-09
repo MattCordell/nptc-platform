@@ -7,8 +7,8 @@
 
 [ADR-0031](0031-coded-property-values-addressed-by-property-key.md) gave
 `GET /api/v1/registry/properties/{key}/values` one shape for both binding
-targets, paged `offset`/`count`, capped at `DEFAULT_PAGE_SIZE` (50) per call. PR
-#305 (issue #289) used that same route to resolve an active-filter chip's
+targets, paged `offset`/`count`, capped at `DEFAULT_PAGE_SIZE` (50) per call.
+PR #305 (issue #289) used that same route to resolve an active-filter chip's
 label: fetch the unfiltered first page and look the selected code up in it
 (`resolveValueLabel`, `frontend/src/pages/admin-catalogue-list.tsx`).
 
@@ -16,7 +16,7 @@ That works only while the selected code sits in the first page. Issue #306
 is the case it does not cover: a `snomed_value_set`-bound property with a
 large expansion, where a selected code is often not among the first 50
 results, and the chip silently falls back to the raw code - the exact defect
-#289 fixed, for a narrower but realistic case. `PropertyFacetGroup`'s
+issue #289 fixed, for a narrower but realistic case. `PropertyFacetGroup`'s
 `carriedOptions` (`admin-catalogue-filter-panel.tsx`) has the identical
 ceiling, so both surfaces need the same fix to stay consistent with each
 other.
@@ -91,10 +91,10 @@ layer deeper.
 
 A code neither side can resolve at all (never existed, or the terminology
 server has genuinely never heard of it) is omitted from `items`, never
-invented; the existing caller-side fallback to the raw code (#289's own
-resolution path) covers that case unchanged. `total` is always `len(items)`
-- the number resolved, not the number asked for - so a caller can never see
-`items` and `total` disagree.
+invented; the existing caller-side fallback to the raw code (issue #289's
+own resolution path) covers that case unchanged. `total` is always the
+number resolved (`len(items)`), never the number asked for, so a caller can
+never see `items` and `total` disagree.
 
 ## Rejected alternatives
 
