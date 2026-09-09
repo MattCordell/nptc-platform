@@ -54,7 +54,7 @@ specific figures.
 ## If something goes wrong
 
 Each guide has its own "If something goes wrong" section covering the refusals specific to
-that part of the entry. Three apply across all three sections:
+that part of the entry. These apply across all three sections:
 
 **"You cannot edit this entry with your current sign-in."** See the note on multi-factor
 authentication at the top of this page.
@@ -62,6 +62,10 @@ authentication at the top of this page.
 **"No catalogue entry was found for ... Check the identifier."** The entry could not be
 opened at all — check the identifier in the address bar, or return to
 [Administration → Catalogue](finding-entries.md) and find it from there.
+
+**"... could not be loaded. Try again, or contact an administrator if the problem persists."**
+The entry could not be opened, for a reason other than a wrong identifier. Try again; if it
+keeps happening, contact an administrator.
 
 **"... could not be refreshed just now, so what follows may be out of date."** The entry
 loaded, but a later refresh was refused — usually a sign-in that has expired while the

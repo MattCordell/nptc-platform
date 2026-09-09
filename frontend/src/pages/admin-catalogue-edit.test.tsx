@@ -163,6 +163,18 @@ function announced(): string {
 }
 
 /**
+ * `getByText`/`findByText`'s `ignore` option for excluding the page's own
+ * live region(s) - #288 announces the same wording it renders for a hard
+ * load failure, so an unscoped query can match both the rendered element and
+ * the announcement. Extends Testing Library's own default (`script, style`)
+ * rather than replacing it, and is coupled to `LiveRegion` putting its
+ * message text directly on the role-bearing element (review nit): it would
+ * stop excluding the announcement if `LiveRegion` ever wrapped its message in
+ * an inner element instead.
+ */
+const NOT_LIVE_REGION = { ignore: 'script, style, [role="status"], [role="alert"]' };
+
+/**
  * Queries scoped to the open dialog. The page's own "Add synonyms" form stays
  * mounted behind a dialog, so an unscoped `getByLabelText(/Changelog note/)`
  * legitimately matches two fields - which is the layout working, not a bug.
@@ -318,14 +330,13 @@ describe("the entry it loads", () => {
     expect(signIn).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     // Still on the same screen, with the refusal's own text visible - not a
-    // blank page and not bounced anywhere. Excludes the live region (#288
-    // now announces this same hard failure too, so an unscoped query would
-    // match both) rather than pinning to a `<p>`, so this stays correct if
-    // the rendered element ever changes tag.
+    // blank page and not bounced anywhere. `NOT_LIVE_REGION` excludes the
+    // announcement (#288 now announces this same hard failure too).
     expect(
-      screen.getByText("This action requires multi-factor authentication.", {
-        ignore: '[role="status"], [role="alert"]',
-      }),
+      screen.getByText(
+        "This action requires multi-factor authentication.",
+        NOT_LIVE_REGION,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -467,13 +478,11 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
 
-    // Excludes the live region: #288 also announces this hard failure, so an
+    // `NOT_LIVE_REGION`: #288 also announces this hard failure, so an
     // unscoped query can match both once the announcement's own
     // setTimeout(0) has fired.
     expect(
-      await screen.findByText("You do not have permission to do this.", {
-        ignore: '[role="status"], [role="alert"]',
-      }),
+      await screen.findByText("You do not have permission to do this.", NOT_LIVE_REGION),
     ).toBeInTheDocument();
     expect(stepUp).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -489,7 +498,7 @@ describe("the entry it loads", () => {
     expect(
       await screen.findByText(
         new RegExp(`No catalogue entry was found for ${BUSINESS_KEY}`),
-        { ignore: '[role="status"], [role="alert"]' },
+        NOT_LIVE_REGION,
       ),
     ).toBeInTheDocument();
     // #288: the initial-load failure was rendered but never announced -
@@ -509,9 +518,7 @@ describe("the entry it loads", () => {
 
     await renderRoute(EDIT_URL, SIGNED_IN);
 
-    expect(
-      await screen.findByText("boom", { ignore: '[role="status"], [role="alert"]' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("boom", NOT_LIVE_REGION)).toBeInTheDocument();
     await waitFor(() => expect(announced()).toContain("boom"));
   });
 
@@ -534,11 +541,7 @@ describe("the entry it loads", () => {
     await renderRoute(EDIT_URL, SIGNED_IN);
 
     const message = `${BUSINESS_KEY} could not be loaded. Try again, or contact an administrator if the problem persists.`;
-    expect(
-      await screen.findByText(message, {
-        ignore: '[role="status"], [role="alert"]',
-      }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(message, NOT_LIVE_REGION)).toBeInTheDocument();
     await waitFor(() => expect(announced()).toContain(message));
   });
 
