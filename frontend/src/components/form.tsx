@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 import { Button } from "./button.tsx";
@@ -147,23 +147,21 @@ export function Form({
   // silently drop whichever `??` picked last (issue #62 review).
   const unlinkedBlockedReason =
     showBlockedReason && !blockedFieldId ? announcedBlockedReason : undefined;
-  // Memoised: the effect below depends on this, and the combined-message
-  // branch below would otherwise build a new element every render, forcing
-  // that effect to re-run - and re-focus the summary - on every keystroke
-  // in an unrelated field, not just when the message itself changes.
-  const effectiveFormError = useMemo(
-    () =>
-      formError && unlinkedBlockedReason ? (
-        <>
-          {formError}
-          <br />
-          {unlinkedBlockedReason}
-        </>
-      ) : (
-        (formError ?? unlinkedBlockedReason)
-      ),
-    [formError, unlinkedBlockedReason],
-  );
+  // Rebuilt every render - every caller passes `formError` as a freshly
+  // constructed element, so memoising this would never hit. The focus-move
+  // effect below still only re-focuses on a genuine new error, because it is
+  // guarded by `awaitingResultRef.current`, not by this value being stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+  const effectiveFormError =
+    formError && unlinkedBlockedReason ? (
+      <>
+        {formError}
+        <br />
+        {unlinkedBlockedReason}
+      </>
+    ) : (
+      (formError ?? unlinkedBlockedReason)
+    );
   const fieldErrors = [...(errors ?? []), ...blockedFieldErrors];
   const hasErrors = fieldErrors.length > 0 || Boolean(effectiveFormError);
 
@@ -191,6 +189,12 @@ export function Form({
   // assume validate-on-submit: a screen validating on *change* would pull
   // focus out of the input on every keystroke that produced an error. Issue
   // #214 tracks disarming on a settled `onSubmit` promise instead.
+  //
+  // The dependency array below is not what gates this effect: `effectiveFormError`
+  // has a new identity every render (see its own comment above), so in practice
+  // this runs on every render regardless of whether any of the four listed
+  // dependencies actually changed. `awaitingResultRef.current` above is the only
+  // real gate - treat the array as "what to re-check", not "when this runs".
   useEffect(() => {
     if (!awaitingResultRef.current || !hasErrors) {
       return;
