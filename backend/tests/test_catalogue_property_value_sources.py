@@ -34,6 +34,7 @@ from nptc.catalogue.property_value_sources import (
     ValueItem,
     ValuePage,
     list_property_values,
+    resolve_property_values,
 )
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError
 from nptc.db.bootstrap import seed_system_properties
@@ -53,6 +54,7 @@ from nptc_shared.terminology import (
     ExpandedConcept,
     Expansion,
     Operation,
+    StubConcept,
     StubTerminologyClient,
     TerminologyOutcomeError,
     TerminologyTransportError,
@@ -486,3 +488,298 @@ def test_response_shape_is_identical_for_both_binding_targets(app_session: Sessi
     assert type(specimen_page) is ValuePage
     assert type(discipline_page) is ValuePage
     assert all(isinstance(item, ValueItem) for item in discipline_page.items)
+
+
+# --- resolve_property_values (issue #306) ------------------------------------
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-52")
+def test_resolve_property_values_resolves_specimen_codes_with_one_expand_call(
+    app_session: Session,
+) -> None:
+    """The batch acceptance criterion, verbatim: resolving N selected codes
+    for one property costs one request, not N."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.add_concept(StubConcept(code="122192001", fsn="Acanthamoeba culture (specimen)"))
+    client.add_concept(StubConcept(code="386661006", fsn="Fever (finding)"))
+
+    page = resolve_property_values(
+        app_session, client, key="specimen", codes=["122192001", "386661006"]
+    )
+
+    assert {item.code for item in page.items} == {"122192001", "386661006"}
+    assert page.total == 2
+    assert [r.operation for r in client.requests] == [Operation.EXPAND]
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_omits_a_code_neither_side_can_resolve(
+    app_session: Session,
+) -> None:
+    """A code the terminology server has never heard of is dropped from
+    `items`, never invented as a placeholder (the caller falls back to the
+    raw code, as it already does for a page miss). Seeded via
+    `seed_expansion` rather than `add_concept`: the stub's own literal-
+    disjunction ECL evaluator treats an unseeded code as visible (module
+    docstring, "unknown means visible"), so only an exact seeded response -
+    the real `$expand`'s actual behaviour for a code it does not recognise -
+    can model a server that resolved fewer codes than it was asked for."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_expansion(
+        "122192001 OR 999999999",
+        _expansion([("122192001", "Acanthamoeba culture")]),
+        edition=SNOMED_CT_AU,
+    )
+
+    page = resolve_property_values(
+        app_session, client, key="specimen", codes=["122192001", "999999999"]
+    )
+
+    assert [item.code for item in page.items] == ["122192001"]
+    assert page.total == 1
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_resolves_a_code_the_stored_binding_would_exclude(
+    app_session: Session,
+) -> None:
+    """Not intersected with the property's own bound ECL (module docstring):
+    `specimen`'s real binding is `<123038009` (descendants of Specimen), but
+    a code outside that hierarchy - already recorded on an entry before the
+    RCPA narrowed the value set - still resolves here, unlike
+    `list_property_values`."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.add_concept(StubConcept(code="386661006", fsn="Fever (finding)"))
+
+    page = resolve_property_values(app_session, client, key="specimen", codes=["386661006"])
+
+    assert [item.code for item in page.items] == ["386661006"]
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_resolves_an_inactive_snomed_code(app_session: Session) -> None:
+    """Not active-only (module docstring): `list_property_values` would
+    exclude an inactive concept from its picker page, but a value already
+    recorded against a since-retired code must still show its label."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.add_concept(
+        StubConcept(code="122192001", fsn="Acanthamoeba culture (specimen)", active=False)
+    )
+
+    page = resolve_property_values(app_session, client, key="specimen", codes=["122192001"])
+
+    assert [item.code for item in page.items] == ["122192001"]
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_drops_a_malformed_code_without_failing_the_batch(
+    app_session: Session,
+) -> None:
+    """A code that isn't even SCTID-shaped can't be concatenated into
+    `ecl_set_of`'s query - it is dropped, not a `ValueError` that fails
+    every other code in the same request."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.add_concept(StubConcept(code="122192001", fsn="Acanthamoeba culture (specimen)"))
+
+    page = resolve_property_values(
+        app_session, client, key="specimen", codes=["122192001", "not-a-code"]
+    )
+
+    assert [item.code for item in page.items] == ["122192001"]
+
+
+def test_resolve_property_values_returns_empty_when_every_code_is_malformed(
+    app_session: Session,
+) -> None:
+    """No `expand` call at all when nothing survives format validation -
+    `ecl_set_of` cannot build an ECL from zero codes."""
+    _seed(app_session)
+    client = StubTerminologyClient()
+
+    page = resolve_property_values(app_session, client, key="specimen", codes=["not-a-code"])
+
+    assert page == ValuePage(items=(), total=0)
+    assert client.requests == ()
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
+def test_resolve_property_values_serves_discipline_with_no_terminology_call(
+    app_session: Session,
+) -> None:
+    _seed(app_session)
+    client = StubTerminologyClient()
+
+    page = resolve_property_values(
+        app_session, client, key="discipline", codes=["chemical_pathology"]
+    )
+
+    assert [item.code for item in page.items] == ["chemical_pathology"]
+    assert client.requests == ()
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
+def test_resolve_property_values_dedupes_a_repeated_local_code(app_session: Session) -> None:
+    """A duplicate in `codes` resolves once, not twice - `total` must count
+    distinct codes, since `find_local_code_with_system_status` (unlike the
+    SNOMED side's `ecl_set_of`) has no dedup of its own and would otherwise
+    return the same `ValueItem` once per repetition."""
+    _seed(app_session)
+
+    page = resolve_property_values(
+        app_session,
+        StubTerminologyClient(),
+        key="discipline",
+        codes=["chemical_pathology", "chemical_pathology"],
+    )
+
+    assert [item.code for item in page.items] == ["chemical_pathology"]
+    assert page.total == 1
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_dedupes_a_repeated_snomed_code(app_session: Session) -> None:
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_expansion(
+        "122192001",
+        _expansion([("122192001", "Acanthamoeba culture")]),
+        edition=SNOMED_CT_AU,
+    )
+
+    page = resolve_property_values(
+        app_session, client, key="specimen", codes=["122192001", "122192001"]
+    )
+
+    assert [item.code for item in page.items] == ["122192001"]
+    assert page.total == 1
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
+def test_resolve_property_values_resolves_a_deprecated_local_code(app_session: Session) -> None:
+    """A deprecated code is excluded from `list_property_values`'s picker
+    page but must still resolve here, mirroring `DatabaseLocalCodeLookup.
+    resolve`'s own long-standing behaviour."""
+    _seed(app_session)
+    system = app_session.execute(
+        select(LocalCodeSystem).where(LocalCodeSystem.key == "discipline")
+    ).scalar_one()
+    deprecated = create_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        system=system,
+        code="deprecated_resolve_values_test",
+        display="Deprecated resolve values test",
+        reason="test fixture",
+    )
+    app_session.flush()
+    deprecate_local_code(
+        app_session,
+        AuditContext.system(),
+        actor=_administrator(),
+        code=deprecated,
+        reason="superseded",
+    )
+    app_session.flush()
+
+    page = resolve_property_values(
+        app_session,
+        StubTerminologyClient(),
+        key="discipline",
+        codes=["deprecated_resolve_values_test"],
+    )
+
+    assert [item.code for item in page.items] == ["deprecated_resolve_values_test"]
+
+
+def test_resolve_property_values_omits_an_unknown_local_code(app_session: Session) -> None:
+    _seed(app_session)
+
+    page = resolve_property_values(
+        app_session, StubTerminologyClient(), key="discipline", codes=["not_a_real_local_code"]
+    )
+
+    assert page == ValuePage(items=(), total=0)
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_rejects_an_unknown_key(app_session: Session) -> None:
+    with pytest.raises(PropertyDefinitionNotFoundError):
+        resolve_property_values(
+            app_session, StubTerminologyClient(), key="not_a_real_property", codes=["1"]
+        )
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_rejects_a_non_code_property(app_session: Session) -> None:
+    definition = PropertyDefinition(
+        key="a_free_text_resolve_test",
+        label="A free text resolve test",
+        datatype="string",
+        cardinality=PropertyCardinality.ZERO_OR_MANY,
+        scope=PropertyScope.MAINTENANCE,
+        required_for_submission=False,
+        required_for_publication=False,
+        filterable=False,
+        origin=PropertyOrigin.ADMIN,
+        display_order=0,
+        constraints={},
+    )
+    app_session.add(definition)
+    app_session.flush()
+
+    with pytest.raises(PropertyNotCodeTypeError):
+        resolve_property_values(
+            app_session, StubTerminologyClient(), key="a_free_text_resolve_test", codes=["1"]
+        )
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_rejects_a_malformed_stored_value_set_uri(
+    app_session: Session,
+) -> None:
+    definition = PropertyDefinition(
+        key="misconfigured_resolve_test",
+        label="Misconfigured resolve test",
+        datatype="code",
+        cardinality=PropertyCardinality.ZERO_OR_MANY,
+        scope=PropertyScope.MAINTENANCE,
+        required_for_submission=False,
+        required_for_publication=False,
+        filterable=False,
+        origin=PropertyOrigin.ADMIN,
+        display_order=0,
+        binding_target=BindingTarget.VALUE_SET,
+        value_set_uri="http://example.org/not-an-implicit-value-set",
+        strength=BindingStrength.REQUIRED,
+        edition="au",
+        constraints={},
+    )
+    app_session.add(definition)
+    app_session.flush()
+
+    with pytest.raises(PropertyValueSourceMisconfiguredError):
+        resolve_property_values(
+            app_session, StubTerminologyClient(), key="misconfigured_resolve_test", codes=["1"]
+        )
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_raises_unavailable_when_expand_cannot_be_reached(
+    app_session: Session,
+) -> None:
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_error(Operation.EXPAND, TerminologyTransportError("connection refused"))
+
+    with pytest.raises(TerminologyUnavailableError):
+        resolve_property_values(app_session, client, key="specimen", codes=["122192001"])

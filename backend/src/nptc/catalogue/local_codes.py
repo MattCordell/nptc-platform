@@ -72,6 +72,7 @@ __all__ = [
     "deprecate_local_code_system",
     "find_local_code",
     "find_local_code_with_system_status",
+    "find_local_codes",
     "list_local_codes",
 ]
 
@@ -343,6 +344,37 @@ def find_local_code_with_system_status(
         .where(LocalCodeSystem.key == system_key, LocalCode.code == code)
     ).one_or_none()
     return None if row is None else (row[0], row[1])
+
+
+def find_local_codes(
+    session: Session, *, system_key: str, codes: Sequence[str]
+) -> Sequence[LocalCode]:
+    """Batch sibling of `find_local_code_with_system_status` above (issue
+    #306, review round 2, PR #307): the identical `local_code`/
+    `local_code_system` join, one `SELECT ... code IN (...)` for a whole
+    set of codes rather than a round trip per code -
+    `nptc.catalogue.property_value_sources._resolve_local_code_system_values`
+    is the caller this exists for. No `status` filter on either side,
+    matching `find_local_code_with_system_status`'s own unconditional read:
+    a deprecated code, or one in a deprecated system, still resolves.
+
+    Returns whatever rows matched, in whatever order Postgres returns
+    them - not necessarily `codes`' own order, and not one row per element
+    of `codes` (a code with no match contributes nothing). A caller that
+    needs `codes`' own order, or to know which of `codes` went unmatched,
+    builds a `{row.code: row}` map from the result and looks each one up
+    itself, the same way `find_local_code_with_system_status`'s own callers
+    already handle a `None` miss.
+    """
+    return (
+        session.execute(
+            select(LocalCode)
+            .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
+            .where(LocalCodeSystem.key == system_key, LocalCode.code.in_(codes))
+        )
+        .scalars()
+        .all()
+    )
 
 
 def _escape_like(text: str) -> str:

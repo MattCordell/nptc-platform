@@ -592,6 +592,83 @@ export function usePropertyValueOptionsQueries(
 }
 
 /**
+ * The route's own `code` ceiling (`Query(max_length=200)`,
+ * `nptc.api.routers.registry.list_property_value_options`) - exported so
+ * every caller that batches codes for a resolve-by-code request caps at
+ * the same number (review round 2, PR #307). Past this, the request 422s
+ * and every value in the batch falls back to its raw code, including the
+ * ones a smaller batch would have resolved - a graceful `.slice(0,
+ * MAX_RESOLVE_CODES)` avoids that. One shared constant, not a `200`
+ * repeated at each call site: `admin-catalogue-list.tsx`'s chip resolver
+ * and `admin-catalogue-filter-panel.tsx`'s carried-checkbox resolver both
+ * need to cap at *the same* number to keep sharing one cache entry
+ * (`propertyValueResolveQuery`'s sorted key) for a facet at or under the
+ * ceiling.
+ */
+export const MAX_RESOLVE_CODES = 200;
+
+/**
+ * The query key/query-fn pair behind the resolve-by-code hooks below (issue
+ * #306) - a sibling of `propertyValueOptionsQuery` above, using the route's
+ * `code` parameter instead of `filter` to resolve exactly `codes`, unbounded
+ * by `DEFAULT_PAGE_SIZE` and independent of the property's current bound
+ * value set (`nptc.catalogue.property_value_sources.resolve_property_values`,
+ * ADR-0038). `codes` is sorted before it reaches the query key so two
+ * callers asking for the same set in a different order share one cache
+ * entry.
+ */
+function propertyValueResolveQuery(client: ApiClient, key: string, codes: string[]) {
+  const sortedCodes = [...codes].sort();
+  return {
+    queryKey: [
+      "api",
+      "/api/v1/registry/properties/{key}/values",
+      key,
+      "resolve",
+      sortedCodes,
+    ],
+    queryFn: async ({ signal }: { signal: AbortSignal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties/{key}/values", {
+          params: { path: { key }, query: { code: sortedCodes } },
+          signal,
+        }),
+      ),
+    enabled: key.length > 0 && sortedCodes.length > 0,
+    staleTime: 5 * 60 * 1000,
+  };
+}
+
+/**
+ * Resolve a coded property's already-selected values to their display
+ * labels, unbounded by `usePropertyValueOptions`'s own `DEFAULT_PAGE_SIZE`
+ * page (issue #306) - `PropertyFacetGroup`'s second data source, for a
+ * carried value its own unfiltered page did not answer.
+ */
+export function usePropertyValueResolve(key: string, codes: string[]) {
+  const client = useApiClient();
+  return useQuery(propertyValueResolveQuery(client, key, codes));
+}
+
+/**
+ * The same resolve-by-code fetch as `usePropertyValueResolve`, for a dynamic
+ * list of `(key, codes)` pairs in one render (issue #306) - the
+ * active-filter-chip label resolver's second data source, alongside
+ * `usePropertyValueOptionsQueries`'s own unfiltered page, for a selected
+ * value that page did not answer.
+ */
+export function usePropertyValueResolveQueries(
+  entries: { key: string; codes: string[] }[],
+) {
+  const client = useApiClient();
+  return useQueries({
+    queries: entries.map((entry) =>
+      propertyValueResolveQuery(client, entry.key, entry.codes),
+    ),
+  });
+}
+
+/**
  * Replace one property's recorded values on an entry (FR-09, FR-10, FR-11,
  * FR-36, FR-88, FR-89; issue #248) - a whole-set replace, matching
  * `save_property_values`' own signature: there is no route for a single

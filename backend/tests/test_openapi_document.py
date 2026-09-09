@@ -171,21 +171,33 @@ def test_meta_schema_validation_actually_rejects_an_invalid_document() -> None:
 _CODE_PROPERTY_PATTERN = re.compile(r"(?:^code$)|(?:_code$)")
 
 
-def _is_string_or_nullable_string(schema: dict[str, Any]) -> bool:
+def _leaf_types(schema: dict[str, Any]) -> set[str | None]:
+    """Every JSON Schema `type` reachable from `schema` through an `anyOf`
+    branch or, for an array, its `items` - so a scalar code field
+    (`Binding.code`) and a batch `code` query parameter (`list[str] | None`,
+    issue #306's `GET .../values?code=X&code=Y`) are checked by the same
+    rule: every leaf must be a string, never a number, regardless of how
+    many of them one field carries."""
     declared_type = schema.get("type")
-    if declared_type == "string":
-        return True
+    if declared_type == "array":
+        return _leaf_types(schema.get("items", {}))
     # Legal OpenAPI 3.1 (JSON Schema 2020-12) also allows a nullable string as
     # a `type` array - Pydantic v2 emits `anyOf` today, but a schema written
     # or generated the other legal way must not silently read as "not a
     # string".
     if isinstance(declared_type, list):
-        return set(declared_type) <= {"string", "null"} and "string" in declared_type
-
+        return set(declared_type)
     branches = schema.get("anyOf")
-    if not branches:
-        return False
-    types = {branch.get("type") for branch in branches}
+    if branches:
+        types: set[str | None] = set()
+        for branch in branches:
+            types |= _leaf_types(branch)
+        return types
+    return {declared_type}
+
+
+def _is_string_or_nullable_string(schema: dict[str, Any]) -> bool:
+    types = _leaf_types(schema)
     return "string" in types and types <= {"string", "null"}
 
 

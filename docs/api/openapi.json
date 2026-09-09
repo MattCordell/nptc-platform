@@ -2796,7 +2796,7 @@
           "registry"
         ],
         "summary": "List a coded property's offerable values",
-        "description": "FR-10's concept-picker data source (issue #247). Resolves `key`'s own\nbinding and answers from Ontoserver or the `LocalCode` table - see\n`nptc.catalogue.property_value_sources.list_property_values` for the\none place that branches on `binding_target`; this route and\n`PropertyValuePage` never see it.",
+        "description": "FR-10's concept-picker data source (issue #247), plus issue #306's\nresolve-by-code lookup for a value beyond the picker page's own\n`DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers\nfrom Ontoserver or the `LocalCode` table - see\n`nptc.catalogue.property_value_sources.list_property_values`/\n`resolve_property_values` for the only places that branch on\n`binding_target`; this route and `PropertyValuePage` never see it.\n\n`code` is a second, mutually exclusive selection mode, never combined\nwith `filter`/`offset`/`count` (issue #306 plan) - `offset`/`count`\ndefault to values a caller resolving by `code` would not need to\nchange, so a genuine attempt to combine them is what this refuses,\nnot every request that happens to also carry those defaults.",
         "operationId": "list_property_value_options_api_v1_registry_properties__key__values_get",
         "parameters": [
           {
@@ -2846,6 +2846,26 @@
               "default": 50,
               "title": "Count"
             }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
           }
         ],
         "responses": {
@@ -2890,7 +2910,7 @@
             }
           },
           "422": {
-            "description": "The property named by `key` is not a coded property (it has no bound value source), or the `offset`/`count` query parameters failed validation.",
+            "description": "The property named by `key` is not a coded property (it has no bound value source); the `offset`/`count`/`code` query parameters failed validation (`code` accepts at most 200 values, matching `count`'s own ceiling); or `code` was combined with `filter`, `offset`, or `count`, which this route refuses rather than defining an order between the two selection modes.",
             "content": {
               "application/json": {
                 "schema": {

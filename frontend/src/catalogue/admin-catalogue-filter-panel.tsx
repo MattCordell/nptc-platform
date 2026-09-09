@@ -1,6 +1,11 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
-import { usePropertyDefinitions, usePropertyValueOptions } from "../api/queries.ts";
+import {
+  MAX_RESOLVE_CODES,
+  usePropertyDefinitions,
+  usePropertyValueOptions,
+  usePropertyValueResolve,
+} from "../api/queries.ts";
 import { Checkbox } from "../components/checkbox.tsx";
 import { Field } from "../components/field.tsx";
 import { STATUS_OPTIONS } from "./status-options.ts";
@@ -86,19 +91,94 @@ function PropertyFacetGroup({
   const [filterText, setFilterText] = useState("");
   const debouncedFilter = useDebouncedValue(filterText, 400);
   const options = usePropertyValueOptions(propertyKey, debouncedFilter);
+  // The same property's *unfiltered* page, read whether or not the facet's
+  // own filter text is blank - `usePropertyValueOptions` shares one cache
+  // entry per `(key, filter)` pair, so this is a fresh request only the
+  // first time a facet is shown; every filtered render after that reads it
+  // straight from cache (review round 1, PR #307). A carried value already
+  // on this page has a known label without a resolve-by-code request at
+  // all, and - unlike the filtered page above - it does not go stale every
+  // time the filter text changes, so typing in the filter box no longer
+  // fires a fresh resolve for a value the unfiltered page already answered.
+  const unfilteredOptions = usePropertyValueOptions(propertyKey, "");
 
   const fetchedOptions: FacetOption[] = (options.data?.items ?? []).map((item) => ({
     value: item.code,
     label: item.display ?? item.code,
   }));
+  const unfilteredLabelByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of unfilteredOptions.data?.items ?? []) {
+      map.set(item.code, item.display ?? item.code);
+    }
+    return map;
+  }, [unfilteredOptions.data]);
   // A value already selected but absent from the current fetched page (a
   // retired code, or one the current filter text no longer matches) stays
   // offered - matching `ConceptPickerControl`'s own reasoning for a single
   // value - so unchecking it is still possible without first clearing the
-  // filter text back to nothing.
-  const carriedOptions: FacetOption[] = selected
-    .filter((value) => !fetchedOptions.some((option) => option.value === value))
-    .map((value) => ({ value, label: value }));
+  // filter text back to nothing. Rendered from `selected` unconditionally,
+  // never blanked while a page is still pending (review round 1, PR #307):
+  // an off-page value stays checked from the first paint, rather than
+  // disappearing for one render and reappearing once a page settles.
+  const carriedValues = useMemo(
+    () =>
+      selected.filter(
+        (value) => !fetchedOptions.some((option) => option.value === value),
+      ),
+    // `fetchedOptions` is a new array identity every render (derived from
+    // `options.data`) - depending on `options.data` instead keeps this memo
+    // stable across renders where neither the page nor the selection
+    // actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, options.data],
+  );
+  // Its label is resolved directly by code (issue #306, ADR-0038), unbounded
+  // by `DEFAULT_PAGE_SIZE` and independent of the property's current bound
+  // value set, for whichever carried values the unfiltered page above did
+  // not already answer. Held to `[]` until *both* `options` and
+  // `unfilteredOptions` have settled (success or error) - not `options`
+  // alone (review round 2, PR #307): with a blank filter box the two are
+  // the same cache entry, so that gate alone is invisible in the common
+  // case, but typing inside the 400ms debounce before the unfiltered page
+  // has settled leaves them as two in-flight queries under different keys,
+  // and the filtered one settling first would otherwise compute this
+  // against an empty `unfilteredLabelByCode` - firing exactly the redundant
+  // resolve request the unfiltered-page merge above exists to avoid.
+  // `.slice(0, MAX_RESOLVE_CODES)` matches the route's own `code` ceiling
+  // and `admin-catalogue-list.tsx`'s identical cap on its chip resolver -
+  // past it, the request would 422 and every carried checkbox in this facet
+  // would fall back to its raw code, including the ones within the
+  // ceiling. The two caps also need to agree: both surfaces resolve the
+  // same property's codes through one shared query-cache entry
+  // (`propertyValueResolveQuery`'s sorted key), so a facet at or under the
+  // ceiling still shares one fetch between the chip and the panel.
+  const carriedCodes = useMemo(
+    () =>
+      options.isPending || unfilteredOptions.isPending
+        ? []
+        : carriedValues
+            .filter((value) => !unfilteredLabelByCode.has(value))
+            .slice(0, MAX_RESOLVE_CODES),
+    [
+      carriedValues,
+      options.isPending,
+      unfilteredOptions.isPending,
+      unfilteredLabelByCode,
+    ],
+  );
+  const carriedLabels = usePropertyValueResolve(propertyKey, carriedCodes);
+  const carriedLabelByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of carriedLabels.data?.items ?? []) {
+      map.set(item.code, item.display ?? item.code);
+    }
+    return map;
+  }, [carriedLabels.data]);
+  const carriedOptions: FacetOption[] = carriedValues.map((value) => ({
+    value,
+    label: unfilteredLabelByCode.get(value) ?? carriedLabelByCode.get(value) ?? value,
+  }));
 
   return (
     <div className="flex flex-col gap-2">

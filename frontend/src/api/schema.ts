@@ -578,11 +578,19 @@ export interface paths {
         };
         /**
          * List a coded property's offerable values
-         * @description FR-10's concept-picker data source (issue #247). Resolves `key`'s own
-         *     binding and answers from Ontoserver or the `LocalCode` table - see
-         *     `nptc.catalogue.property_value_sources.list_property_values` for the
-         *     one place that branches on `binding_target`; this route and
-         *     `PropertyValuePage` never see it.
+         * @description FR-10's concept-picker data source (issue #247), plus issue #306's
+         *     resolve-by-code lookup for a value beyond the picker page's own
+         *     `DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers
+         *     from Ontoserver or the `LocalCode` table - see
+         *     `nptc.catalogue.property_value_sources.list_property_values`/
+         *     `resolve_property_values` for the only places that branch on
+         *     `binding_target`; this route and `PropertyValuePage` never see it.
+         *
+         *     `code` is a second, mutually exclusive selection mode, never combined
+         *     with `filter`/`offset`/`count` (issue #306 plan) - `offset`/`count`
+         *     default to values a caller resolving by `code` would not need to
+         *     change, so a genuine attempt to combine them is what this refuses,
+         *     not every request that happens to also carry those defaults.
          */
         get: operations["list_property_value_options_api_v1_registry_properties__key__values_get"];
         put?: never;
@@ -3881,6 +3889,7 @@ export interface operations {
                 filter?: string | null;
                 offset?: number;
                 count?: number;
+                code?: string[] | null;
             };
             header?: never;
             path: {
@@ -3926,7 +3935,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The property named by `key` is not a coded property (it has no bound value source), or the `offset`/`count` query parameters failed validation. */
+            /** @description The property named by `key` is not a coded property (it has no bound value source); the `offset`/`count`/`code` query parameters failed validation (`code` accepts at most 200 values, matching `count`'s own ceiling); or `code` was combined with `filter`, `offset`, or `count`, which this route refuses rather than defining an order between the two selection modes. */
             422: {
                 headers: {
                     [name: string]: unknown;
