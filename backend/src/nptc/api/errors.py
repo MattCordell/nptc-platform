@@ -58,7 +58,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -277,29 +277,6 @@ class PropertyValidationResponse(BaseModel):
     issues: list[PropertyIssueItem]
 
 
-class PreferredTermVersionRequiredError(Exception):
-    """`POST .../designations/amendment` was asked to amend the catalogue's
-    own en-AU preferred term, but carried no `expected_row_version`
-    (issue #227, FR-38).
-
-    Defined here rather than in `nptc.catalogue`, and raised rather than
-    validated: the service layer has no such state - `save_entry` simply
-    takes `expected_row_version` as a required argument, and there is no
-    call it could reject. This is purely a fact about one HTTP request
-    body, on the one route where the field is conditionally required.
-
-    It cannot be a pydantic `model_validator` on the request either, which
-    is where every other cross-field refusal on that route lives: whether
-    the submitted term is the entry's own preferred term or a `designation`
-    row is a database question (ADR-0022 splits the two storage homes), and
-    a validator runs before the route body has a session. 422 all the same,
-    so a caller sees the same status a missing required field would have
-    produced had the requirement been expressible in the schema.
-    """
-
-    http_status: ClassVar[int] = 422
-
-
 def _step_up_challenge(mfa_acr_values: frozenset[str]) -> str:
     """RFC 9470 step-up challenge - pre-specified in
     docs/architecture/permissions.md. `acr_values` names the LoA(s) the
@@ -336,11 +313,6 @@ _DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
 #: that is the considered answer, not an oversight. Sourced from the
 #: registry itself so a second registered alias updates this text for free.
 _DETAIL_CODE_LOOKUP_NOT_FOUND = REGISTERED_TOKENS_DETAIL
-_DETAIL_PREFERRED_TERM_VERSION_REQUIRED = (
-    "This term is the entry's own preferred term, so changing it needs the entry "
-    "version you loaded. Reload the entry and send its `expected_row_version` with "
-    "the amendment."
-)
 _DETAIL_CHANGELOG_NOTE = (
     "A changelog note is required and must describe the change. It becomes the "
     'published History text, so single words like "update" or "fix" are not accepted.'
@@ -537,18 +509,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             # rather than a `datetime` `JSONResponse` cannot encode - the
             # same serialisation the declared schema promises.
             content=body.model_dump(mode="json"),
-        )
-
-    @app.exception_handler(PreferredTermVersionRequiredError)
-    async def _handle_preferred_term_version_required(
-        _request: Request, exc: PreferredTermVersionRequiredError
-    ) -> JSONResponse:
-        # Logged as the class only: the message names the entry's own
-        # preferred term, which is user-supplied free text (NFR-26/NFR-35).
-        _logger.info("preferred-term amendment without a row version: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PREFERRED_TERM_VERSION_REQUIRED},
         )
 
     @app.exception_handler(EntryNotFoundError)
