@@ -662,6 +662,8 @@ export interface components {
             use: components["schemas"]["DesignationUse"];
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
         };
         /**
          * AdminEntryPage
@@ -797,7 +799,7 @@ export interface components {
             reason: string;
             use?: components["schemas"]["DesignationUse"] | null;
             /** Expected Row Version */
-            expected_row_version?: number | null;
+            expected_row_version: number;
         };
         /**
          * AmendDesignationResult
@@ -813,11 +815,11 @@ export interface components {
          *
          *     `row_version` is the entry's, on both branches, and is what a client
          *     sends back as `expected_row_version` on its next write - so a save
-         *     never has to be followed by a re-fetch just to learn the new token. On
-         *     the designation branch it is unchanged by the write: a `designation`
-         *     row has no version of its own, and amending one does not bump the
-         *     entry's (see the module docstring on what taking the entry's lock here
-         *     does and does not buy).
+         *     never has to be followed by a re-fetch just to learn the new token. It
+         *     now advances on both branches (FR-38, issue #300): a `designation` row
+         *     has no version of its own, but amending one bumps the entry's counter
+         *     via `nptc.catalogue.entries.entry_child_write`, the same way the
+         *     preferred-term branch's `save_entry` always has.
          */
         AmendDesignationResult: {
             designation: components["schemas"]["Designation"];
@@ -1309,12 +1311,20 @@ export interface components {
          * @enum {string}
          */
         DesignationUse: "preferred" | "synonym";
-        /** DesignationWriteResult */
+        /**
+         * DesignationWriteResult
+         * @description `add_designations`'s response: the created row(s), any warning-severity
+         *     collisions, and the entry's new `row_version` (FR-38, issue #300) - so a
+         *     client never has to re-fetch the entry just to learn its next lock
+         *     token.
+         */
         DesignationWriteResult: {
             /** Designations */
             designations: components["schemas"]["Designation"][];
             /** Warnings */
             warnings: components["schemas"]["CollisionWarning"][];
+            /** Row Version */
+            row_version: number;
         };
         /**
          * EntryCoreWriteResult
@@ -1836,6 +1846,23 @@ export interface components {
             term: string;
             /** Reason */
             reason: string;
+            /** Expected Row Version */
+            expected_row_version: number;
+        };
+        /**
+         * RetireDesignationResult
+         * @description `retire_designation_route`'s response: the retired row, plus the
+         *     entry's new `row_version` (FR-38, issue #300).
+         *
+         *     Declared here rather than returning a bare `Designation`, which has
+         *     nowhere to carry `row_version` - `Designation` is the shared public read
+         *     model (`catalogue_shared.py`) and must not grow an admin-only field,
+         *     matching `catalogue_bindings.py`'s own `BindingWriteResult` precedent.
+         */
+        RetireDesignationResult: {
+            designation: components["schemas"]["Designation"];
+            /** Row Version */
+            row_version: number;
         };
         /**
          * SavePropertyValuesRequest
@@ -2484,13 +2511,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
@@ -2967,7 +2994,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express. */
+            /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3000,7 +3027,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Designation"];
+                    "application/json": components["schemas"]["RetireDesignationResult"];
                 };
             };
             /** @description No credential, or one that could not be verified. */
@@ -3030,13 +3057,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
             /** @description A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */

@@ -736,7 +736,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05).",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -746,6 +746,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/DesignationCollisionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
                     }
                   ],
                   "title": "Response 409 Add Designations Api V1 Catalogue Entries  Business Key  Designations Post"
@@ -1484,7 +1487,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). Also a `term` naming the entry's own preferred term with no `expected_row_version` to save it under (FR-38): the field is optional in the schema because it is required on only that one branch, which a schema cannot express.",
+            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1543,7 +1546,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Designation"
+                  "$ref": "#/components/schemas/RetireDesignationResult"
                 }
               }
             }
@@ -1579,11 +1582,19 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Retire Designation Route Api V1 Catalogue Entries  Business Key  Designations Retirement Post"
                 }
               }
             }
@@ -3080,12 +3091,18 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Row Version"
           }
         },
         "type": "object",
         "required": [
           "terms",
-          "reason"
+          "reason",
+          "expected_row_version"
         ],
         "title": "AddDesignationsRequest",
         "description": "The body of `POST /catalogue/entries/{business_key}/designations`.\n\n`use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s\nown precedent in `catalogue_bindings.py`), so an unrecognised value is a\npydantic 422 before any row is touched, rather than an unmapped\n`ck_designation_use` `IntegrityError`. `terms` is a batch - the common\ncase is pasting a delimiter-corrupted synonym cell (FR-04) - but a\npreferred variant permits at most one, since at most one can ever be\nactive per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each\nterm holds a `pg_advisory_xact_lock` until commit and costs its own\ncollision-check flush (`add_synonyms`'s own docstring), so an unbounded\nbatch is an unbounded amount of lock contention for one request (issue\n#224 review finding 4)."
@@ -3310,15 +3327,8 @@
             ]
           },
           "expected_row_version": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "minimum": 1.0,
             "title": "Expected Row Version"
           }
         },
@@ -3326,7 +3336,8 @@
         "required": [
           "term",
           "new_term",
-          "reason"
+          "reason",
+          "expected_row_version"
         ],
         "title": "AmendDesignationRequest",
         "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* en-AU preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires."
@@ -3355,7 +3366,7 @@
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. On\nthe designation branch it is unchanged by the write: a `designation`\nrow has no version of its own, and amending one does not bump the\nentry's (see the module docstring on what taking the entry's lock here\ndoes and does not buy)."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nnow advances on both branches (FR-38, issue #300): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -4220,14 +4231,20 @@
             },
             "type": "array",
             "title": "Warnings"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
           }
         },
         "type": "object",
         "required": [
           "designations",
-          "warnings"
+          "warnings",
+          "row_version"
         ],
-        "title": "DesignationWriteResult"
+        "title": "DesignationWriteResult",
+        "description": "`add_designations`'s response: the created row(s), any warning-severity\ncollisions, and the entry's new `row_version` (FR-38, issue #300) - so a\nclient never has to re-fetch the entry just to learn its next lock\ntoken."
       },
       "EntryCoreWriteResult": {
         "properties": {
@@ -5191,14 +5208,38 @@
           "reason": {
             "type": "string",
             "title": "Reason"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Row Version"
           }
         },
         "type": "object",
         "required": [
           "term",
-          "reason"
+          "reason",
+          "expected_row_version"
         ],
         "title": "RetireDesignationRequest"
+      },
+      "RetireDesignationResult": {
+        "properties": {
+          "designation": {
+            "$ref": "#/components/schemas/Designation"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "designation",
+          "row_version"
+        ],
+        "title": "RetireDesignationResult",
+        "description": "`retire_designation_route`'s response: the retired row, plus the\nentry's new `row_version` (FR-38, issue #300).\n\nDeclared here rather than returning a bare `Designation`, which has\nnowhere to carry `row_version` - `Designation` is the shared public read\nmodel (`catalogue_shared.py`) and must not grow an admin-only field,\nmatching `catalogue_bindings.py`'s own `BindingWriteResult` precedent."
       },
       "SavePropertyValuesRequest": {
         "properties": {
