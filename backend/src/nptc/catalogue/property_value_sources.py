@@ -362,10 +362,15 @@ def resolve_property_values(
 
     `items` omits a code neither side can resolve rather than inventing a
     placeholder; `total` is always `len(items)`, so the two can never
-    disagree (issue #306 plan). Raises the same `PropertyDefinitionNotFoundError`
-    / `PropertyNotCodeTypeError` as `list_property_values` for the same
-    reasons.
+    disagree (issue #306 plan). A duplicate in `codes` resolves once, not
+    twice - `_resolve_local_code_system_values` below queries once per
+    element of `codes` with no deduplication of its own, so a repeated code
+    would otherwise double up in `items` and inflate `total` past the number
+    of *distinct* codes actually resolved. Raises the same
+    `PropertyDefinitionNotFoundError` / `PropertyNotCodeTypeError` as
+    `list_property_values` for the same reasons.
     """
+    distinct_codes = list(dict.fromkeys(codes))
     definition = load_definition(session, key)
     spec = spec_for(definition)
     if spec.binding is None:
@@ -377,7 +382,7 @@ def resolve_property_values(
     if binding.binding_target == "local_code_system":
         assert binding.local_code_system_key is not None  # DB CHECK-enforced pairing
         return _resolve_local_code_system_values(
-            session, system_key=binding.local_code_system_key, codes=codes
+            session, system_key=binding.local_code_system_key, codes=distinct_codes
         )
 
     assert binding.value_set_uri is not None  # DB CHECK-enforced pairing
@@ -386,5 +391,5 @@ def resolve_property_values(
         key=key,
         value_set_uri=binding.value_set_uri,
         edition_label=binding.edition,
-        codes=codes,
+        codes=distinct_codes,
     )

@@ -626,6 +626,44 @@ def test_resolve_property_values_serves_discipline_with_no_terminology_call(
 
 @pytest.mark.req("FR-10")
 @pytest.mark.req("FR-90")
+def test_resolve_property_values_dedupes_a_repeated_local_code(app_session: Session) -> None:
+    """A duplicate in `codes` resolves once, not twice - `total` must count
+    distinct codes, since `find_local_code_with_system_status` (unlike the
+    SNOMED side's `ecl_set_of`) has no dedup of its own and would otherwise
+    return the same `ValueItem` once per repetition."""
+    _seed(app_session)
+
+    page = resolve_property_values(
+        app_session,
+        StubTerminologyClient(),
+        key="discipline",
+        codes=["chemical_pathology", "chemical_pathology"],
+    )
+
+    assert [item.code for item in page.items] == ["chemical_pathology"]
+    assert page.total == 1
+
+
+@pytest.mark.req("FR-10")
+def test_resolve_property_values_dedupes_a_repeated_snomed_code(app_session: Session) -> None:
+    _seed(app_session)
+    client = StubTerminologyClient()
+    client.seed_expansion(
+        "122192001",
+        _expansion([("122192001", "Acanthamoeba culture")]),
+        edition=SNOMED_CT_AU,
+    )
+
+    page = resolve_property_values(
+        app_session, client, key="specimen", codes=["122192001", "122192001"]
+    )
+
+    assert [item.code for item in page.items] == ["122192001"]
+    assert page.total == 1
+
+
+@pytest.mark.req("FR-10")
+@pytest.mark.req("FR-90")
 def test_resolve_property_values_resolves_a_deprecated_local_code(app_session: Session) -> None:
     """A deprecated code is excluded from `list_property_values`'s picker
     page but must still resolve here, mirroring `DatabaseLocalCodeLookup.
