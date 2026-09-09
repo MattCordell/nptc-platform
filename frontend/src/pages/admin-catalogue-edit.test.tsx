@@ -38,15 +38,24 @@ const ENTRY = {
     },
     // A non-en-AU preferred *designation*, which is a shape the read route
     // documents ("an entry's active synonyms and non-en-AU preferred
-    // variants") and which the panel must not amend as a synonym. There is no
-    // retired row here: both read routes build `designations` from
-    // `queries.load_designations`, which omits them.
+    // variants") and which the panel must not amend as a synonym.
     {
       term: "Ferritine",
       use: "preferred",
       language: "fr-FR",
       status: "active",
       length: 9,
+    },
+    // A retired synonym (issue #239). The admin read route serves retired
+    // designations alongside active ones, unlike the public route, so the
+    // terms table has to render one to exercise the Status column and the
+    // status-gated row actions.
+    {
+      term: "Obsolete ferritin note",
+      use: "synonym",
+      language: "en-AU",
+      status: "retired",
+      length: 22,
     },
   ],
   bindings: [],
@@ -632,20 +641,43 @@ describe("the terms table", () => {
     );
   });
 
-  it("has no Status column, because every row it can hold is active", async () => {
-    // `queries.load_designations` omits retired designations and
-    // `catalogue_entry.preferred_term` is NOT NULL, so a Status column could
-    // only ever render the same literal on every row (review finding 2).
-    // Scoped to this table: the code bindings panel (#150) below it legitimately
-    // has one, since a binding can genuinely be active or retired.
+  it("has a Status column, active rows before retired (issue #239)", async () => {
+    // The admin read route now serves retired designations alongside active
+    // ones (`queries.load_designations_any_status`), so this table can
+    // genuinely hold both - unlike before #239, when `catalogue_entry.
+    // preferred_term` (NOT NULL) and the active-only `load_designations` made
+    // every row active and a Status column furniture, not information.
     stubApi([READ_OK]);
 
     await renderLoaded();
 
     const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
     expect(
-      within(table).queryByRole("columnheader", { name: "Status" }),
-    ).not.toBeInTheDocument();
+      within(table).getByRole("columnheader", { name: "Status" }),
+    ).toBeInTheDocument();
+
+    // Active-first sort: the fixture's retired row sorts last regardless of
+    // its position in `ENTRY.designations`.
+    const rows = within(table).getAllByRole("row");
+    expect(within(rows[4] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
+      "Obsolete ferritin note",
+    );
+    expect(within(rows[4] as HTMLElement).getByText("retired")).toBeInTheDocument();
+  });
+
+  it("offers no Edit or Retire action on a retired term", async () => {
+    // Issue #239: a retired row is read-only history on this screen - there
+    // is no reinstate path, so an editor cannot act on one at all (follow-up
+    // issue tracks reinstatement).
+    stubApi([READ_OK]);
+
+    await renderLoaded();
+
+    const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
+    const retiredRow = within(table)
+      .getByRole("rowheader", { name: "Obsolete ferritin note" })
+      .closest("tr") as HTMLElement;
+    expect(within(retiredRow).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("does not offer to retire the entry's own preferred term", async () => {
@@ -966,11 +998,11 @@ describe("an error-severity collision", () => {
     await user.click(screen.getByRole("button", { name: "Add terms" }));
     await screen.findByRole("link", { name: /NPTC-000111/ });
 
-    // Header plus the three terms the entry started with, and no fourth.
+    // Header plus the four terms the entry started with, and no fifth.
     // Scoped to this table, not the whole page: the code bindings table (#150)
     // below it renders its own header and empty-state rows.
     const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
-    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getAllByRole("row")).toHaveLength(5);
   });
 });
 

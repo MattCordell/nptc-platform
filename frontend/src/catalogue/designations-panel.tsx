@@ -80,6 +80,7 @@ interface TermRow {
   use: string;
   language: string;
   length: number;
+  status: string;
   /**
    * True for the entry's own en-AU preferred term. Drives the two places the
    * ADR-0022 split is visible: the `use` sent on amendment, and whether the
@@ -99,6 +100,9 @@ function termRows(entry: EntryDetail): TermRow[] {
     // disagree with the catalogue for exactly the terms PRD Appendix A.1 is
     // about.
     length: entry.length,
+    // `catalogue_entry.preferred_term` is `NOT NULL` and no route retires it
+    // (ADR-0022) - this row is always active.
+    status: "active",
     isEntryPreferredTerm: true,
   };
   const designations = entry.designations.map((designation: Designation) => ({
@@ -106,9 +110,20 @@ function termRows(entry: EntryDetail): TermRow[] {
     use: designation.use,
     language: designation.language,
     length: designation.length,
+    status: designation.status,
     isEntryPreferredTerm: false,
   }));
   return [preferred, ...designations];
+}
+
+/**
+ * Active first, then retired (issue #239) - matching `bindings-panel.tsx`'s
+ * own `sortedBindings`, so the two panels read as one system.
+ */
+function sortedTermRows(rows: TermRow[]): TermRow[] {
+  const active = rows.filter((row) => row.status === "active");
+  const retired = rows.filter((row) => row.status !== "active");
+  return [...active, ...retired];
 }
 
 export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
@@ -123,7 +138,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
   const [acknowledging, setAcknowledging] = useState<PendingWarning | null>(null);
   const { message, politeness, announce } = useAnnounce();
 
-  const rows = termRows(entry);
+  const rows = sortedTermRows(termRows(entry));
 
   return (
     <section aria-labelledby="designations-heading">
@@ -145,58 +160,61 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           // amend dialog, or on any other path - the figure is computed from
           // the preferred term and is not a thing anyone can type.
           { key: "length", header: "Length", render: (row) => row.length },
-          // No Status column, and no status guard on the actions below. Both
-          // read routes build `designations` from `queries.load_designations`,
-          // which omits retired rows by design, and
-          // `catalogue_entry.preferred_term` is `NOT NULL` - so every row this
-          // table can ever hold is active, and a column that always renders
-          // the same literal is furniture, not information (review finding 2).
-          // Whether an editor should be able to *see* retired terms here is a
-          // real question, and a backend one: issue #239.
+          { key: "status", header: "Status", render: (row) => row.status },
           {
             key: "actions",
             header: "Actions",
-            render: (row) => (
-              <span className="flex gap-2">
-                {/* Named for the row, not just "Edit": a screen-reader user
-                    moving button to button hears which term each one acts on,
-                    and the use as well as the term - an entry can hold a
-                    synonym whose comparison key equals its own preferred term
-                    (the state #227's `use` exists for), and "Edit Ferritin"
-                    twice over is two buttons a screen-reader user cannot tell
-                    apart. `aria-label` rather than visually-hidden text
-                    because the accessible-name algorithm trims each node
-                    before joining, so "Edit" + " Ferritin" computes as
-                    "EditFerritin". The visible word is a prefix of the label,
-                    which is what WCAG 2.5.3 asks for. */}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  aria-label={`Edit ${row.term} (${row.use})`}
-                  onClick={() => setEditing(row)}
-                >
-                  Edit
-                </Button>
-                {/* No retire action on the entry's own preferred term:
-                    `catalogue_entry.preferred_term` is NOT NULL and no route
-                    retires it (ADR-0022). Offering a button that could only
-                    ever fail would be worse than not offering one. */}
-                {!row.isEntryPreferredTerm && (
+            render: (row) =>
+              row.status === "active" ? (
+                <span className="flex gap-2">
+                  {/* Named for the row, not just "Edit": a screen-reader user
+                      moving button to button hears which term each one acts on,
+                      and the use as well as the term - an entry can hold a
+                      synonym whose comparison key equals its own preferred term
+                      (the state #227's `use` exists for), and "Edit Ferritin"
+                      twice over is two buttons a screen-reader user cannot tell
+                      apart. `aria-label` rather than visually-hidden text
+                      because the accessible-name algorithm trims each node
+                      before joining, so "Edit" + " Ferritin" computes as
+                      "EditFerritin". The visible word is a prefix of the label,
+                      which is what WCAG 2.5.3 asks for. */}
                   <Button
                     type="button"
-                    variant="danger"
-                    aria-label={`Retire ${row.term} (${row.use})`}
-                    onClick={() => setRetiring(row)}
+                    variant="secondary"
+                    aria-label={`Edit ${row.term} (${row.use})`}
+                    onClick={() => setEditing(row)}
                   >
-                    Retire
+                    Edit
                   </Button>
-                )}
-              </span>
-            ),
+                  {/* No retire action on the entry's own preferred term:
+                      `catalogue_entry.preferred_term` is NOT NULL and no route
+                      retires it (ADR-0022). Offering a button that could only
+                      ever fail would be worse than not offering one. */}
+                  {!row.isEntryPreferredTerm && (
+                    <Button
+                      type="button"
+                      variant="danger"
+                      aria-label={`Retire ${row.term} (${row.use})`}
+                      onClick={() => setRetiring(row)}
+                    >
+                      Retire
+                    </Button>
+                  )}
+                </span>
+              ) : null,
           },
         ]}
         rows={rows}
-        getRowKey={(row) => `${row.language}:${row.use}:${row.term}`}
+        // `(language, use, term)` is not unique on its own: it is unique only
+        // among *active* designations (`ix_designation_no_duplicate_active_term`),
+        // so a term added, retired and re-added leaves two retired rows
+        // sharing all three - matching `bindings-panel.tsx`'s identical
+        // `getRowKey` reasoning for `Binding`, which carries no id for the
+        // same reason (NFR-04/NFR-26). `rows`' own stable order (from
+        // `sortedTermRows`) is what disambiguates.
+        getRowKey={(row) =>
+          `${row.language}:${row.use}:${row.term}:${row.status}:${rows.indexOf(row)}`
+        }
         emptyState="This entry has no terms."
       />
 
