@@ -887,8 +887,6 @@ def build_facet_counts_statement(
     """
     branches: list[Select[Any]] = []
     for descriptor in descriptors:
-        if not descriptor.facetable:
-            continue
         inner = build_facet_count_statement(descriptor, base_for(descriptor))
         if inner is None:
             continue
