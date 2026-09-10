@@ -673,13 +673,19 @@ describe("AdminCatalogueListPage", () => {
       expect(router.state.location.href).not.toContain(`after=${DRAFT_KEY}`);
     });
 
-    it("disables the sort control while in search mode", async () => {
+    it("disables the sort control while in search mode, showing Relevance rather than a stale ordering", async () => {
       stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
-      await renderRoute(`${LIST_URL}?q=glucose`, SIGNED_IN);
+      await renderRoute(`${LIST_URL}?q=glucose&sort=updated_at`, SIGNED_IN);
       await screen.findByRole("link", { name: ACTIVE_KEY });
 
-      expect(screen.getByRole("combobox", { name: "Sort by" })).toBeDisabled();
+      const control = screen.getByRole("combobox", { name: "Sort by" });
+      expect(control).toBeDisabled();
+      // Review finding: showing "Last changed" (the `sort` still in the URL
+      // from browse mode) here would claim an ordering the relevance-ranked
+      // search results are not actually in.
+      expect(control).toHaveValue("relevance");
+      expect(screen.getByRole("option", { name: "Relevance" })).toBeInTheDocument();
     });
   });
 

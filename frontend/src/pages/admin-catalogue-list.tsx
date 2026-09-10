@@ -102,6 +102,17 @@ function sortLabel(sort: AdminListingSort): string {
 }
 
 /**
+ * A sentinel `<select>` value shown only while `mode === "search"` (review
+ * finding) - not an `AdminListingSort`, and never sent anywhere: `GET
+ * /catalogue/admin/search` stays relevance-ranked, so none of `SORT_OPTIONS`
+ * describes the order search results are actually in. Showing the last
+ * browse-mode `sort` (or "Code") there instead would claim an ordering the
+ * results are not actually in; a distinct, disabled "Relevance" option
+ * says what is true without adding a fifth real sort value anywhere.
+ */
+const SEARCH_MODE_SORT_VALUE = "relevance";
+
+/**
  * A facet's display name for the active-filter chip row (issue #289). `status`
  * is special-cased the same way `AdminCatalogueFilterPanel` special-cases it
  * (a core column, not a registry property); every other key resolves against
@@ -468,10 +479,13 @@ export function AdminCatalogueListPage() {
         <label htmlFor="catalogue-list-sort">Sort by</label>
         <select
           id="catalogue-list-sort"
-          value={search.sort ?? "business_key"}
+          value={
+            mode === "search" ? SEARCH_MODE_SORT_VALUE : (search.sort ?? "business_key")
+          }
           onChange={handleSortChange}
           disabled={mode === "search"}
         >
+          {mode === "search" && <option value={SEARCH_MODE_SORT_VALUE}>Relevance</option>}
           {SORT_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}

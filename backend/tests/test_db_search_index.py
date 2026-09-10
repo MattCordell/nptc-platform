@@ -18,6 +18,8 @@ plan is a database fact - there is no unit-level substitute (NFR-39).
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
@@ -665,6 +667,29 @@ FROM generate_series(1, :count) AS g
 """)
 
 
+#: A base-table access node, by name - `Seq Scan`, `Index Scan`, `Index Only
+#: Scan` and `Bitmap Heap Scan` each read `catalogue_entry` itself exactly
+#: once. Deliberately excludes `Bitmap Index Scan`: it never touches the
+#: heap on its own (a `Bitmap Heap Scan` always sits above it and is what
+#: actually reads the table), so counting it as a second access would fail a
+#: plan this test means to accept - `plan.count("Scan") == 1`'s own bug,
+#: caught in review (a bitmap plan reports two "Scan" occurrences for one
+#: logical table access, and this docstring already claimed to accept it).
+_BASE_TABLE_ACCESS = re.compile(
+    r"(?:Seq Scan|Index Scan using \S+|Index Only Scan using \S+|Bitmap Heap Scan)"
+    r" on catalogue_entry"
+)
+
+
+def _assert_one_base_table_access(plan: str) -> None:
+    """The structural claim every case below makes: no per-row join or
+    correlated subquery (`Nested Loop`), and exactly one read of
+    `catalogue_entry` - whatever shape the planner picks for it."""
+    assert "Nested Loop" not in plan, plan
+    accesses = _BASE_TABLE_ACCESS.findall(plan)
+    assert len(accesses) == 1, plan
+
+
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
 @pytest.mark.parametrize("sort", ["business_key", "preferred_term", "updated_at", "status"])
@@ -678,16 +703,24 @@ def test_the_real_listing_query_plans_as_one_scan_and_sort(db: Connection, sort:
     catalogue.search.build_search_statement`'s own precedent above:
     explaining a hand-copied approximation would be a test of the copy.
 
-    The claim under test is narrower than "an index is used" - it is that
-    the statement costs one table access and (at most) one sort, with no
-    per-row join or correlated subquery to multiply that cost, which is
-    what would actually need a composite index to fix. `plan.count("Scan")
-    == 1` is that claim structurally: exactly one scan node, whether the
-    planner chooses a `Seq Scan` (`status`, `updated_at`, no index on
-    either) or an `Index Scan` on the pre-existing `business_key` unique
-    index or `ix_catalogue_entry_preferred_term_key` (which can, but need
-    not, make a separate `Sort` node unnecessary) - either shape is cheap at
-    this table's real size, and neither is a `Nested Loop`.
+    Two statements per sort, not one: the first page (no keyset predicate)
+    and a *paged* request carrying a real cursor's values through the
+    composite `(sort_value, business_key) > (after_sort_value, after_key)`
+    predicate - the one shape this issue actually introduces, and the shape
+    most likely to defeat an index if it were ever going to. Explaining page
+    one alone would leave that predicate never planned at all (review
+    finding). The paged statement's own `after_sort_value`/`after_key` come
+    from a real row `build_listing_statement` itself returns for this same
+    `sort` - not hand-constructed - so the bound parameter types match
+    exactly what `list_entries_any_status` would pass at runtime.
+
+    `_assert_one_base_table_access` is the claim under test, and it is
+    narrower than "an index is used": one table access and no per-row join,
+    which is what would actually need a composite index to fix. Whether the
+    planner picks a `Seq Scan` (`status`, `updated_at`, no index on either),
+    an `Index Scan` on the pre-existing `business_key` unique index or
+    `ix_catalogue_entry_preferred_term_key`, or a `Bitmap Heap Scan` pair, is
+    cheap at this table's real size either way.
     """
     from nptc.catalogue import maintenance
 
@@ -696,7 +729,22 @@ def test_the_real_listing_query_plans_as_one_scan_and_sort(db: Connection, sort:
     # table in front of it - matching the trigram test's own reasoning.
     db.execute(text("ANALYZE catalogue_entry"))
 
-    plan = _explain(db, maintenance.build_listing_statement(sort=sort, limit=50), {})
+    first_page_plan = _explain(db, maintenance.build_listing_statement(sort=sort, limit=50), {})
+    _assert_one_base_table_access(first_page_plan)
 
-    assert "Nested Loop" not in plan, plan
-    assert plan.count("Scan") == 1, plan
+    # `build_listing_statement(limit=1)` itself fetches `limit + 1 = 2` rows
+    # (the "one more than asked for" trick its own docstring describes), so
+    # `.first()`, not `.one()` - the latter would raise on the second row.
+    boundary = db.execute(maintenance.build_listing_statement(sort=sort, limit=1)).first()
+    assert boundary is not None
+    paged_plan = _explain(
+        db,
+        maintenance.build_listing_statement(
+            sort=sort,
+            after_sort_value=boundary.sort_value,
+            after_key=boundary.business_key,
+            limit=50,
+        ),
+        {},
+    )
+    _assert_one_base_table_access(paged_plan)

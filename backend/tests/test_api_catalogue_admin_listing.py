@@ -16,13 +16,12 @@ here rather than passing on the strength of the other.
 from __future__ import annotations
 
 import importlib.util
-import random
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from sqlalchemy import select, update
@@ -84,13 +83,38 @@ class SortableCatalogue:
     #: the statement's own `ORDER BY` does.
     by_preferred_term: tuple[str, ...]
     by_updated_at: tuple[str, ...]
-    #: In `status` order, tie-broken by `business_key` - proves the
-    #: guaranteed tie (the three `active` rows).
+    #: In lifecycle order (`draft`, `active`, `deprecated`, `withdrawn` -
+    #: `_STATUS_LIFECYCLE_ORDER`), not alphabetical, tie-broken by
+    #: `business_key` - proves the guaranteed tie (the three `active` rows)
+    #: resolves the same way the statement's `CASE`-based `ORDER BY` does.
     by_status: tuple[str, ...]
 
 
+#: `_STATUS_LIFECYCLE_ORDER`'s own key, matching `nptc.catalogue.maintenance.
+#: MAINTENANCE_STATUSES` - both are `CatalogueEntryStatus`'s own declaration
+#: order (`draft`, `active`, `deprecated`, `withdrawn`), which is the
+#: lifecycle order `sort=status` actually orders by (a `CASE` expression, not
+#: the raw text column - see that module's own docstring on why alphabetical
+#: order is not what this sort means).
+_STATUS_LIFECYCLE_ORDER: Final[dict[str, int]] = {
+    status.value: index for index, status in enumerate(CatalogueEntryStatus)
+}
+
+#: A fixed, deterministic prefix - not `random.randrange(...)` like `public_
+#: catalogue_support.py`'s own fixtures - review finding: this fixture's own
+#: business keys must never collide with `test_db_search_index.py`'s
+#: `_BULK_LISTING_ENTRIES_SQL` (`NPTC-900000001`..`NPTC-900005000`), and a
+#: hand-picked, reproducible value is both easier to debug on failure (no
+#: seed to hunt down) and impossible to place inside that range by chance.
+#: Reused unchanged across every test invocation is safe: each test's own
+#: `app_db` transaction rolls back before the next one starts (`conftest.
+#: py`), so nothing here is ever visible to, or in conflict with, another
+#: test's transaction.
+_SORTABLE_BUSINESS_KEY_BASE: Final[int] = 850_000_001
+
+
 def _seed_sortable(session: Session) -> SortableCatalogue:
-    base = random.randrange(100_000_000, 999_000_000)
+    base = _SORTABLE_BUSINESS_KEY_BASE
 
     def key(offset: int) -> str:
         return f"NPTC-{base + offset}"
@@ -134,7 +158,10 @@ def _seed_sortable(session: Session) -> SortableCatalogue:
     )
     by_status = tuple(
         entry.business_key
-        for entry in sorted(entries, key=lambda entry: (entry.status, entry.business_key))
+        for entry in sorted(
+            entries,
+            key=lambda entry: (_STATUS_LIFECYCLE_ORDER[entry.status], entry.business_key),
+        )
     )
     return SortableCatalogue(
         by_business_key=by_business_key,
@@ -531,14 +558,29 @@ def test_sorting_by_each_column_orders_the_page(
     its own guaranteed tie (`preferred_term`'s two `"Same term"` rows,
     `status`'s three `active` rows) - `business_key` is always the
     tie-break, matching `build_listing_statement`'s own `ORDER BY <sort>,
-    business_key`."""
+    business_key`.
+
+    Scoped to this fixture's own business keys before comparing (review
+    finding): asserting the *whole* page equals `sortable`'s tuple would be
+    an absolute-state assertion against a table `backend/tests` shares
+    across the run (CLAUDE.md) - it happens to hold today only because each
+    test's own transaction rolls back, and scoping removes that dependence
+    without giving up the ordering claim, which is exactly what asserting a
+    relative sequence rather than an absolute count is for.
+    """
     token = _admin_token(api, subject=f"sub-sort-{sort}")
+    expected = getattr(sortable, expected_attr)
+    fixture_keys = set(expected)
 
     response = _admin_list(api, token, sort=sort, limit=200)
 
     assert response.status_code == 200, response.text
-    keys = tuple(item["business_key"] for item in response.json()["items"])
-    assert keys == getattr(sortable, expected_attr)
+    keys = tuple(
+        item["business_key"]
+        for item in response.json()["items"]
+        if item["business_key"] in fixture_keys
+    )
+    assert keys == expected
 
 
 @pytest.mark.req("FR-16")
