@@ -663,19 +663,21 @@ first HTTP surface that can hold row-exclusive locks on more than one `catalogue
 row in one transaction, which makes a cycle against `nptc.audit.writer`'s own
 `pg_advisory_xact_lock` reachable: a bulk request already holding that lock (from an
 earlier entry's audit append) can block on a row a concurrent single-entry writer holds,
-while that writer blocks on the same advisory lock. `save_property_values_for_entries`
-acquires the lock once, deterministically, before its loop
-(`nptc.audit.writer.acquire_append_lock`), and - since issue #281 - so does the singular
-`save_property_values`, `nptc.catalogue.entries.create_entry`/`save_entry`, and
-`nptc.catalogue.designations.add_designation`/`amend_designation` - each as its own
-**literal first statement**, not merely "before" the row/collision lock (a round-2 review of
-this fix found that a later placement still left an ORM `select()` or two in between, each
-of which autoflushes any already-pending `catalogue_entry` mutation by default). Every
-catalogue-entry writer now acquires the append lock before any row lock or collision lock it
-can also take, closing the cycle rather than narrowing it to bulk-vs-bulk. See ADR-0035's
-own addendum for the full history, and `backend/tests/test_lock_ordering.py` for both the
-concurrency regression coverage and the pure-`ast` guard pinning the "literal first
-statement" invariant itself.
+while that writer blocks on the same advisory lock. `save_property_values_for_entries`,
+the singular `save_property_values`, `nptc.catalogue.entries.create_entry`/`save_entry`/
+`save_entries`, and `nptc.catalogue.designations.add_designation`/`amend_designation`/
+`add_synonyms`/`retire_designation` (`nptc.audit.writer.acquire_append_lock`) each acquire
+the lock as their own **literal first statement**, not merely "before" the row/collision
+lock or "once, before a loop" - two rounds of review on this same fix each found that a
+later placement still left an ORM `select()` or two in between (the bulk seam's own
+property-definition lookup included), each of which autoflushes any already-pending
+`catalogue_entry` mutation by default. Every catalogue-entry writer now acquires the append
+lock before any row lock or collision lock it can also take, closing the cycle rather than
+narrowing it to bulk-vs-bulk. See ADR-0035's own addendum for the full history, and
+`backend/tests/test_lock_ordering.py` for both the concurrency regression coverage and a
+pure-`ast` guard that derives, from these three modules' own source, every function
+required to satisfy the "literal first statement" invariant - not a hand-maintained list,
+so a new writer added later is checked automatically.
 
 ### Errors (bulk property-value write)
 

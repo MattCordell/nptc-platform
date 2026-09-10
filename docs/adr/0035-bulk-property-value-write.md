@@ -249,9 +249,16 @@ detector is no longer expected to fire for either case.
 single `pg_advisory_xact_lock` shared by every audit append in the application; it is now
 held from before `create_entry`'s own `pg_trgm`-backed collision scan and across the whole
 of `save_entry`/`save_property_values`/`add_designation`/`amend_designation`, including
-their own no-op paths that previously took no lock at all. Every catalogue write now
-serialises against every other on this one lock for a longer window than before this issue.
-Given this platform's real catalogue size (~2,000 terms, ~5,000 ceiling — see
+their own no-op paths that previously took no lock at all. Because the lock now precedes
+both `reason` validation and the row-version check in every one of these functions, a
+rejected changelog note (422) or a stale `expected_row_version` (409) each hold it until
+the request's transaction unwinds too — not only a successful write. Every catalogue write
+now serialises against every other on this one lock for a longer window than before this
+issue. `add_synonyms`' own per-term loop re-asserts the same already-held lock once per
+term (via each `add_designation` call) rather than once per batch — each re-assertion
+re-runs `acquire_append_lock`'s isolation-level `SELECT`, pure waste on a lock the caller
+already holds, though harmless at today's batch sizes. Given this platform's real
+catalogue size (~2,000 terms, ~5,000 ceiling — see
 ADR-0039's identical note, not the PRD's 20,000-entry planning ceiling), this is not
 expected to be a measurable contention source in practice, and was not separately
 load-tested; a future catalogue an order of magnitude larger, or a much higher write
