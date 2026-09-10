@@ -637,3 +637,66 @@ def test_the_similarity_threshold_reverts_when_the_transaction_ends(
         "the search threshold outlived its transaction - it is being set at session "
         f"scope, and every later request on this connection now sees {after}"
     )
+
+
+# --- the admin listing sort (issue #287): evidence for "no new indexes" ----
+
+#: A different `business_key` prefix from `_BULK_ENTRIES_SQL`'s own
+#: `NPTC-8...`, so the two bulk fixtures cannot collide if a future change
+#: ever ran them in the same transaction - each test's own transaction rolls
+#: back regardless, so this is belt-and-braces rather than load-bearing.
+#:
+#: Sized to this catalogue's real ceiling (~5,000 rows - see `nptc.catalogue.
+#: maintenance`'s own module docstring), not to the trigram test's 20,000:
+#: the point of this test is that the *real* size needs no more than a plain
+#: scan and sort, and a larger fixture would prove a different, easier
+#: claim (a bigger table still not needing an index) rather than the one
+#: this issue's deferral actually rests on.
+_LISTING_ROW_COUNT = 5_000
+
+_BULK_LISTING_ENTRIES_SQL = text("""
+INSERT INTO catalogue_entry (business_key, preferred_term, status, updated_at)
+SELECT
+    'NPTC-9' || lpad(g::text, 8, '0'),
+    'assay ' || md5(g::text),
+    (ARRAY['draft', 'active', 'deprecated', 'withdrawn'])[1 + (g % 4)],
+    now() - (g || ' seconds')::interval
+FROM generate_series(1, :count) AS g
+""")
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize("sort", ["business_key", "preferred_term", "updated_at", "status"])
+def test_the_real_listing_query_plans_as_one_scan_and_sort(db: Connection, sort: str) -> None:
+    """`EXPLAIN` on the exact statement `maintenance.list_entries_any_status`
+    runs, for each `sort` (issue #287) - evidence for this issue's own "no
+    new database indexes" deferral (see `nptc.catalogue.maintenance`'s
+    module docstring), rather than an unverified assumption.
+
+    Built through `build_listing_statement` on purpose, matching `nptc.
+    catalogue.search.build_search_statement`'s own precedent above:
+    explaining a hand-copied approximation would be a test of the copy.
+
+    The claim under test is narrower than "an index is used" - it is that
+    the statement costs one table access and (at most) one sort, with no
+    per-row join or correlated subquery to multiply that cost, which is
+    what would actually need a composite index to fix. `plan.count("Scan")
+    == 1` is that claim structurally: exactly one scan node, whether the
+    planner chooses a `Seq Scan` (`status`, `updated_at`, no index on
+    either) or an `Index Scan` on the pre-existing `business_key` unique
+    index or `ix_catalogue_entry_preferred_term_key` (which can, but need
+    not, make a separate `Sort` node unnecessary) - either shape is cheap at
+    this table's real size, and neither is a `Nested Loop`.
+    """
+    from nptc.catalogue import maintenance
+
+    db.execute(_BULK_LISTING_ENTRIES_SQL, {"count": _LISTING_ROW_COUNT})
+    # Statistics, or the planner is working from defaults unrelated to the
+    # table in front of it - matching the trigram test's own reasoning.
+    db.execute(text("ANALYZE catalogue_entry"))
+
+    plan = _explain(db, maintenance.build_listing_statement(sort=sort, limit=50), {})
+
+    assert "Nested Loop" not in plan, plan
+    assert plan.count("Scan") == 1, plan
