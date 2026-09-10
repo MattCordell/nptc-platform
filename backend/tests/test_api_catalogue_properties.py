@@ -216,11 +216,12 @@ def test_save_property_values_first_write_audits_a_whole_set_snapshot_with_reaso
     api: ApiTestApp,
 ) -> None:
     """The parent-level acceptance criterion #61 owns for property values -
-    with the shape this path actually produces flagged, not assumed:
-    `save_property_values` diffs via `record_snapshot_change` over the
-    *whole value set*, not a field-level diff of one changed value (see
-    that function's own `before_payload`/`after_payload` construction). For
-    a first write, `existing` is empty so `before` is `None` (the
+    with the shape this path actually produces confirmed by issue #264/
+    ADR-0040, not merely flagged: `save_property_values` diffs via
+    `record_snapshot_change` over the *whole value set*, accepted as this
+    write path's own field-level unit (see that function's own
+    `before_payload`/`after_payload` construction). For a first write,
+    `existing` is empty so `before` is `None` (the
     `before=before_payload if existing else None` branch) and `after` is
     the one value just stored. The changelog note supplied still reaches
     `AuditEvent.reason` verbatim."""
@@ -258,9 +259,10 @@ def test_save_property_values_first_write_audits_a_whole_set_snapshot_with_reaso
 def test_save_property_values_second_write_audits_before_and_after_the_replacement(
     api: ApiTestApp,
 ) -> None:
-    """The other half of the snapshot shape: once a value already exists,
-    `before` is the whole prior set (`_value_payload` reading the stored
-    row back, not the request's own submitted shape), not `None`."""
+    """The other half of the snapshot shape confirmed by issue #264/
+    ADR-0040: once a value already exists, `before` is the whole prior set
+    (`_value_payload` reading the stored row back, not the request's own
+    submitted shape), not `None`."""
     token = _admin_token(api, subject="sub-save-replace-audit")
     key = _unique_key("save_replace_audit")
     _create_string_property(api, token, key=key)
