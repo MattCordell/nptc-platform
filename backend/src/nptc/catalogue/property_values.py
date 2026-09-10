@@ -153,7 +153,9 @@ _SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE: Final[str] = (
 #: model's own per-row columns (`entry_id`/`property_key`/`ordinal`/...).
 #: A `save_property_values` call replaces a whole row *set* in one
 #: transaction, so the thing worth diffing is "the property's value list
-#: before" vs "...after", not any one row's attribute history.
+#: before" vs "...after", not any one row's attribute history. This
+#: whole-set shape is confirmed, not merely convenient, as NFR-08's
+#: field-level unit for this write path - see ADR-0040 (issue #264).
 _PROPERTY_VALUES_AUDIT_POLICY = AuditFieldPolicy(
     entity_type="property_value_set",
     auditable=frozenset({"values"}),
