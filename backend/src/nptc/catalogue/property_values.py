@@ -70,14 +70,20 @@ single-entry writer holds, while that writer blocks waiting for the same
 advisory lock. `save_property_values_for_entries` acquires the lock once,
 deterministically, before its loop starts (see `nptc.audit.writer.
 acquire_append_lock`) rather than relying on whichever entry happens to
-apply first - this removes the bulk-vs-bulk case (two concurrent batches
+apply first - this removed the bulk-vs-bulk case (two concurrent batches
 locking rows in different orders now both queue on the same advisory lock
-before touching a row) but does not, by itself, close the bulk-vs-a-
-concurrent-singular-write case; see ADR-0035's addendum for why a complete
-fix needs the same ordering applied to every catalogue-entry writer, not
-just this one, and why that is out of scope here. Postgres's own deadlock
-detector aborts one of the two transactions in the residual case (a 500,
-full rollback of the whole batch, no corruption) - not silent data loss.
+before touching a row) but did not, by itself, close the bulk-vs-a-
+concurrent-singular-write case: `save_property_values` (the singular
+writer) itself acquired the lock only via `record_snapshot_change`'s own
+`append_audit_event` call, after the row-locking flush below, not before
+it. Issue #281 closes that gap: `save_property_values` now calls
+`acquire_append_lock` itself, before the row_version bump/flush, so every
+caller of this module - bulk or singular - takes the append lock before
+any `catalogue_entry` row lock, closing the cycle for good rather than
+narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
+detector still aborts one of the two transactions in the (now closed)
+residual case (a 500, full rollback, no corruption) - not silent data
+loss, and no longer expected to occur.
 """
 
 from __future__ import annotations
@@ -467,6 +473,14 @@ def save_property_values(
     to track per entry, covering both this path and `save_entry`'s.
 
     Returns the newly inserted rows, ordered by ordinal.
+
+    `acquire_append_lock` runs before the `row_version` bump/flush below
+    that issues the implicit `catalogue_entry` row-locking UPDATE - the
+    same ordering `entry_child_write` and `save_entry` already establish
+    for their own writers (issue #281). Not acquired for the no-op case
+    (matching `save_property_values_for_entries`'s reference call site,
+    already ordered this way): a resubmission that changes nothing never
+    takes any lock at all.
     """
     validated_reason = validate_changelog_note(reason)
 
@@ -533,6 +547,11 @@ def save_property_values(
     # concurrent editor's own unrelated, still-current row_version.
     if before_payload == intended_after_payload:
         return existing
+
+    # See the docstring's lock-ordering note: acquired here, after the
+    # no-op short-circuit above, before anything below can take the
+    # implicit `catalogue_entry` row lock.
+    acquire_append_lock(session)
 
     if existing:
         session.execute(
