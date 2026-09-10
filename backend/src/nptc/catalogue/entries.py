@@ -206,9 +206,19 @@ def create_entry(
     collision must not consume a sequence value. There is no exemption for
     the seeded-import path: PRD Section 6.3's own consequence is that a
     baseline carrying a genuine error-severity collision cannot be created
-    until it is resolved editorially."""
+    until it is resolved editorially.
+
+    `acquire_append_lock` runs before that collision check, for the same
+    reason `entry_child_write` takes it before its own row lock (issue
+    #281): `assert_no_error_collisions` takes its own advisory lock
+    (keyed per comparison-key), and taking it before the audit append lock
+    is the reverse of the order every other write path here now uses -
+    a lock-ordering cycle no different from the row-lock one, just against
+    a different pair of locks.
+    """
     validated_reason = validate_changelog_note(reason)
     cleaned_preferred_term = clean_term(preferred_term)
+    acquire_append_lock(session)
     assert_no_error_collisions(
         session,
         entry=None,
@@ -578,6 +588,11 @@ def save_entry(
     module docstring for why neither path ever leaves an audit event
     behind.
 
+    `acquire_append_lock` runs before the collision check and before the
+    savepoint whose flush issues the implicit row-locking UPDATE - the same
+    ordering `entry_child_write` already establishes for a child-table
+    write (issue #281), applied here to the entry's own columns.
+
     `reason` (FR-37) is validated before the entry is even loaded, so a
     rejected note never reaches the row-version check at all."""
     validated_reason = validate_changelog_note(reason)
@@ -606,6 +621,16 @@ def save_entry(
     # token for no actual change.
     if not _would_change(entry, changes) and not _has_pending_audit_changes(entry):
         return entry
+
+    # `acquire_append_lock` runs before anything below that can take a lock
+    # of its own - `assert_no_error_collisions`'s collision-key advisory
+    # lock, and (via the savepoint's flush) the implicit `catalogue_entry`
+    # row lock `version_id_col` issues - the same invariant `entry_child_
+    # write` already establishes for a child-table write (issue #281).
+    # After the no-op check, not before: a no-op resubmission takes no lock
+    # at all, matching `save_property_values_for_entries`'s own posture of
+    # not acquiring the lock for work that turns out not to happen.
+    acquire_append_lock(session)
 
     if changes.preferred_term is not None:
         # FR-05: checked after the row_version precondition (a stale
