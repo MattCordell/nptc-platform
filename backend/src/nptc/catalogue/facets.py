@@ -861,11 +861,11 @@ def build_facet_counts_statement(
     Two columns are added over what `build_facet_count_statement` returns:
     a `facet_key` literal, so the combined rows can be attributed back to
     their descriptor, and a `Text` cast on `value` - the branches' value
-    types are heterogeneous (`text`, `numeric`, the `status` column's own
-    type...) and `UNION ALL` requires one type per column. The cast lives in
-    this wrapper, not inside `build_facet_count_statement`, so the grouping
-    expression - and therefore the index plan the other module proves - is
-    untouched.
+    types are heterogeneous (`text` for `string`/`code`/`status`, `numeric`
+    for `positiveInt`) and `UNION ALL` requires one type per column. The
+    cast lives in this wrapper, not inside `build_facet_count_statement`, so
+    the grouping expression - and therefore the index plan the other module
+    proves - is untouched.
 
     The result is ordered `(facet_key, bucket_count DESC, value ASC)` so a
     caller can split it back into each facet's own buckets, in the same
