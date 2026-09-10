@@ -179,6 +179,17 @@ GRANT_CODE_BINDING_RETIRED_AT_UPDATE_SQL = (
 #: column that does not exist yet on a from-scratch replay
 #: (`test_db_round_trip.py`'s downgrade/upgrade fingerprint test).
 GRANT_DESIGNATION_TERM_KEY_UPDATE_SQL = "GRANT UPDATE (term_key) ON TABLE designation TO nptc_app;"
+
+#: issue #313 (FR-17-style tie-break): `retired_at` is a new column added
+#: in migration 0020, after 0007 already granted `designation`'s other
+#: columns - a **separate** statement, executed only by 0020, matching
+#: `GRANT_CODE_BINDING_RETIRED_AT_UPDATE_SQL`'s own precedent above rather
+#: than editing `GRANT_DESIGNATION_UPDATE_SQL` in place (which would make
+#: 0007 grant a column that does not exist yet on a from-scratch replay).
+#: Set by `retire_designation`, cleared by `reinstate_designation`.
+GRANT_DESIGNATION_RETIRED_AT_UPDATE_SQL = (
+    "GRANT UPDATE (retired_at) ON TABLE designation TO nptc_app;"
+)
 GRANT_CATALOGUE_ENTRY_PREFERRED_TERM_KEY_UPDATE_SQL = (
     "GRANT UPDATE (preferred_term_key) ON TABLE catalogue_entry TO nptc_app;"
 )

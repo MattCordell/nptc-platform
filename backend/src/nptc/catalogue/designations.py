@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, ClassVar
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
@@ -416,7 +417,13 @@ def retire_designation(
     with no per-function exceptions to reason about, is what
     `test_lock_ordering.py`'s own derived guard checks - and is cheaper to
     keep true everywhere than to justify a carve-out for the one function
-    that happens not to need it today."""
+    that happens not to need it today.
+
+    Sets `retired_at` (issue #313, mirroring `nptc.catalogue.bindings.
+    retire_binding`'s own precedent for its own table's retirement
+    timestamp, FR-17-style) - `func.now()`, the **database's** clock, so
+    `retired_at` orders correctly across every app instance's writes, not
+    just this process's own."""
     acquire_append_lock(session)
 
     from nptc.db.models.designation import DesignationStatus
@@ -426,6 +433,7 @@ def retire_designation(
 
     validated_reason = validate_changelog_note(reason)
     designation.status = str(DesignationStatus.RETIRED)
+    designation.retired_at = func.now()
     record_change(
         session,
         ctx,
