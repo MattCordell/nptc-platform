@@ -47,6 +47,7 @@ from nptc.catalogue.facets import (
     FacetDescriptor,
     _PropertyFacetSource,
     build_facet_count_statement,
+    build_facet_counts_statement,
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.property_definition import (
@@ -60,6 +61,7 @@ from nptc.db.models.property_value import PropertyValue
 from nptc.db.property_indexes import index_name
 from nptc.db.property_reconciler import get_indexer_engine, reconcile_property_indexes
 from nptc.registry.datatypes.code import CodeHandler
+from nptc.registry.datatypes.positive_int import PositiveIntHandler
 from nptc.registry.datatypes.string import StringHandler
 from nptc.registry.handlers import FilterOp, PropertyDefinitionSpec
 from nptc_shared.terminology.stub import StubTerminologyClient
@@ -583,3 +585,116 @@ def test_the_facet_filter_and_count_plans_are_both_index_supported(
         assert "Seq Scan on property_value" not in count_plan, count_plan
     finally:
         _delete_bulk_entries(owner_engine, prefix)
+
+
+@pytest.fixture
+def _positive_int_property(owner_engine: Engine, migrated: None) -> Iterator[None]:
+    """One filterable `positiveInt` property - a `numeric`-valued facet, the
+    shape `test_the_combined_statement_preserves_a_numeric_facet_s_native_ordering`
+    needs and none of this module's other fixtures give it."""
+    key = "test_plan_positive_int"
+    with Session(bind=owner_engine) as session:
+        definition = PropertyDefinition(
+            key=key,
+            label=key,
+            datatype="positiveInt",
+            cardinality=PropertyCardinality.ZERO_OR_ONE,
+            scope=PropertyScope.BOTH,
+            required_for_submission=False,
+            required_for_publication=False,
+            filterable=True,
+            origin=PropertyOrigin.ADMIN,
+            display_order=0,
+            constraints={},
+        )
+        session.add(definition)
+        session.commit()
+    try:
+        yield
+    finally:
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text("DELETE FROM property_value WHERE property_key = :key"), {"key": key}
+            )
+            connection.execute(
+                text("DELETE FROM property_definition WHERE key = :key"), {"key": key}
+            )
+            connection.commit()
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_the_combined_statement_preserves_a_numeric_facet_s_native_ordering(
+    owner_engine: Engine, _positive_int_property: None
+) -> None:
+    """PR #315 review: `build_facet_counts_statement` casts `value` to `TEXT`
+    so a `UNION ALL` across heterogeneous handler value types can share one
+    column. An earlier version of that statement's outer `ORDER BY` sorted
+    on the *cast* column - which reorders a numeric facet, since `'10' <
+    '100' < '2'` as text while `2 < 10 < 100` as numbers, and worse, changes
+    which row the bucket cap truncates away.
+
+    Three entries, one `positiveInt` value each (10, 100, 2, deliberately in
+    that creation order - it is also the *text*-sorted order, so this test
+    fails under the old ordering and passes only under the numeric one), all
+    with an equal bucket count of 1: the case a `bucket_count DESC` tie-break
+    alone cannot distinguish, so only the value ordering is left to get right
+    or wrong.
+    """
+    key = "test_plan_positive_int"
+    prefix = "NPTC-97"
+    try:
+        with owner_engine.connect() as connection:
+            connection.execute(_BULK_ENTRIES_SQL, {"count": 3, "prefix": prefix})
+            connection.commit()
+            entry_ids = (
+                connection.execute(
+                    text(
+                        "SELECT id FROM catalogue_entry WHERE business_key LIKE :prefix || '%' "
+                        "ORDER BY business_key"
+                    ),
+                    {"prefix": prefix},
+                )
+                .scalars()
+                .all()
+            )
+            for entry_id, value in zip(entry_ids, [10, 100, 2], strict=True):
+                connection.execute(
+                    text(
+                        "INSERT INTO property_value (entry_id, property_key, ordinal, value) "
+                        "VALUES (:entry_id, :key, 0, to_jsonb(:value))"
+                    ),
+                    {"entry_id": entry_id, "key": key, "value": value},
+                )
+            connection.commit()
+
+        descriptor = FacetDescriptor(
+            key=key,
+            label=key,
+            display_order=0,
+            source=_PropertyFacetSource(
+                handler=PositiveIntHandler(),
+                spec=PropertyDefinitionSpec(
+                    key=key,
+                    label=key,
+                    datatype="positiveInt",
+                    cardinality="0..1",
+                    scope=frozenset({"submission", "maintenance"}),
+                    required_for_submission=False,
+                    required_for_publication=False,
+                    binding=None,
+                    filterable=True,
+                    constraints={},
+                ),
+            ),
+        )
+        base = select(CatalogueEntry.id).where(CatalogueEntry.business_key.like(f"{prefix}%"))
+        statement = build_facet_counts_statement((descriptor,), lambda _d: base)
+        assert statement is not None
+
+        with owner_engine.connect() as connection:
+            rows = connection.execute(statement).all()
+    finally:
+        _delete_bulk_entries(owner_engine, prefix)
+
+    assert [row.value for row in rows] == ["2", "10", "100"]

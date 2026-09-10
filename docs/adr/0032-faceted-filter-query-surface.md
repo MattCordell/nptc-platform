@@ -247,14 +247,31 @@ by hand.
   object the caller supplies, and a CTE referenced more than once is what Postgres
   materialises rather than re-plans per reference — so the expensive scan happens once per
   request regardless of facet count. `compute_facets` executes that one statement and splits
-  the rows back into each facet's own buckets in Python, ordered by `(facet_key,
-  bucket_count DESC, value ASC)`.
+  the rows back into each facet's own buckets in Python, ordered by a `bucket_rank` window
+  function computed per branch, before the union, over each branch's own still-typed `value`
+  column (`row_number() OVER (ORDER BY bucket_count DESC, value ASC)`) — not by the `value`
+  column the union itself exposes, which is cast to `TEXT` so `UNION ALL` can share one
+  column across handlers whose native value types differ (`text`, `numeric`). A first version
+  of this statement ordered on the cast column directly; a PR #315 review caught that this
+  reorders a `positiveInt` facet's ties (`'10' < '100' < '2'` as text, `2 < 10 < 100` as
+  numbers) and, worse, changes which row the bucket cap truncates away, since the inner
+  `LIMIT` keeps the correct top 21 by numeric order but the Python-side slice then drops
+  whichever arrives 21st in the outer statement's own order. `test_db_property_index_plan.py`
+  now asserts the served order for a numeric facet directly.
 
   **Why not `GROUPING SETS`.** Each facet's population differs (a facet's own selection is
   excluded from its own counts, above), and each facet's grouping expression comes from a
   different property's handler, so there is no single `GROUP BY` base a `GROUPING SETS`
   formulation could share across facets — a `UNION ALL` of independently-based aggregations
   was the shape that fit, not a stylistic preference.
+
+  **What this trades away.** The old N separate statements gave the planner N separate,
+  smaller planning problems; the combined statement gives it one planning problem sized by
+  every facet at once — up to `FILTER_VALUE_CAP` (50) `EXISTS` branches per facet, times the
+  facet count, in a single planner invocation. Total query *work* is no worse (each branch
+  still costs what it always cost), but the planner's *search space* for that one invocation
+  is larger. Not judged a blocker: planning cost for this shape of query is not the
+  bottleneck NFR-32 is aimed at, and nothing here has shown otherwise.
 
   **Why the threshold round trip (`_SET_THRESHOLD_SQL`) was considered and kept.**
   `search_facets` re-issues it even though `search_entries` already set it earlier in the

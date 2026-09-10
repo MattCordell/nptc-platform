@@ -858,41 +858,59 @@ def build_facet_counts_statement(
     wrapped in its own subquery precisely so its own `LIMIT` survives the
     union rather than applying to the combined row set.
 
-    Two columns are added over what `build_facet_count_statement` returns:
+    Three columns are added over what `build_facet_count_statement` returns:
     a `facet_key` literal, so the combined rows can be attributed back to
-    their descriptor, and a `Text` cast on `value` - the branches' value
+    their descriptor; a `Text` cast on `value`, because the branches' value
     types are heterogeneous (`text` for `string`/`code`/`status`, `numeric`
-    for `positiveInt`) and `UNION ALL` requires one type per column. The
-    cast lives in this wrapper, not inside `build_facet_count_statement`, so
-    the grouping expression - and therefore the index plan the other module
-    proves - is untouched.
+    for `positiveInt`) and `UNION ALL` requires one type per column; and a
+    `bucket_rank` - `row_number() OVER (ORDER BY bucket_count DESC, value
+    ASC)`, computed **before** the `Text` cast, directly over `wrapped`'s own
+    still-typed `value` column.
 
-    The result is ordered `(facet_key, bucket_count DESC, value ASC)` so a
-    caller can split it back into each facet's own buckets, in the same
-    count-desc/value-asc order `build_facet_count_statement` itself used to
-    produce, without depending on a per-branch `ORDER BY` surviving the
-    union.
+    That ordering, not the cast one, is what the outer statement sorts by
+    (PR #315 review). A `positiveInt` facet's `value` is `numeric` - `'10' <
+    '100' < '2'` as text, but `2 < 10 < 100` as numbers - so ordering the
+    union on the *cast* column would both reorder a numeric facet's ties on
+    `bucket_count` and, worse, change which row the cap truncates: the inner
+    `LIMIT FACET_BUCKET_CAP + 1` keeps the correct top 21 by numeric order,
+    but `compute_facets` slices `rows[:FACET_BUCKET_CAP]` off whatever order
+    the rows arrive in, so a text-ordered outer sort drops the row that is
+    21st in text order rather than the one that was 21st - and least
+    relevant - numerically. `bucket_rank` is a window function over one
+    branch's own (already-limited) row set, so it never needs a
+    `PARTITION BY`: each branch's numbering restarts at 1 independently,
+    before the branches are ever unioned together.
+
+    The cast lives in this wrapper, not inside `build_facet_count_statement`,
+    so the grouping expression - and therefore the index plan the other
+    module proves - is untouched.
     """
     branches: list[Select[Any]] = []
     for descriptor in descriptors:
+        if not descriptor.facetable:
+            continue
         inner = build_facet_count_statement(descriptor, base_for(descriptor))
         if inner is None:
             continue
         wrapped = inner.subquery(f"facet_counts_{descriptor.key}")
+        bucket_rank = (
+            func.row_number()
+            .over(order_by=(wrapped.c.bucket_count.desc(), wrapped.c.value.asc()))
+            .label("bucket_rank")
+        )
         branches.append(
             sa_select(
                 literal(descriptor.key).label("facet_key"),
                 cast(wrapped.c.value, Text).label("value"),
                 wrapped.c.label.label("label"),
                 wrapped.c.bucket_count.label("bucket_count"),
+                bucket_rank,
             )
         )
     if not branches:
         return None
     combined = union_all(*branches).subquery("facet_counts")
-    return sa_select(combined).order_by(
-        combined.c.facet_key.asc(), combined.c.bucket_count.desc(), combined.c.value.asc()
-    )
+    return sa_select(combined).order_by(combined.c.facet_key.asc(), combined.c.bucket_rank.asc())
 
 
 def compute_facets(
