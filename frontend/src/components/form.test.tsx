@@ -118,6 +118,32 @@ function ValidateOnChangeForm() {
 }
 
 /**
+ * A caller whose `onSubmit` returns a promise that *resolves* right after it
+ * sets a form error - the exact shape a bare `.finally(() => disarm)` gets
+ * wrong (issue #214's approach notes): that microtask would beat the
+ * error-reading effect's macrotask and disarm the flag before the summary
+ * ever got focus. The fix routes the settle through the same effect that
+ * reads `hasErrors`, so the error takes priority regardless of timing.
+ */
+function ResolvingAfterErrorForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={async () => {
+        setFormError("The catalogue rejected this entry.");
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
  * A form whose errors can be set from outside it, without a submit - the
  * case that separates "the answer to a submit" from "an error that simply
  * appeared".
@@ -516,6 +542,18 @@ describe("Form", () => {
       screen.getByRole("heading", { name: "There is a problem" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Requesting term")).toHaveFocus();
+  });
+
+  it("still focuses the summary when the settling promise resolves right after the caller sets a form error", async () => {
+    const user = userEvent.setup();
+    render(<ResolvingAfterErrorForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
   });
 
   it("announces a refusal that arrives late, from a caller that never sets pending", async () => {
