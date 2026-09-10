@@ -124,7 +124,19 @@ an OpenAPI change first.
   ever runs. Instead the settle callback only records "a result arrived for submit N";
   the existing focus-move effect, guarded by a submit generation id, is the sole place
   that decides to disarm, giving errors priority over a settled promise from the same
-  submit. `Form` no longer assumes validate-on-submit.
+  submit.
+
+  This closes the race for a caller whose error state commits before, or in the same
+  pass as, the settle — the `try { await mutate() } catch (e) { setFormError(e) }`
+  shape the issue was raised against. It does not close every case: a caller whose error
+  state commits in a render *after* the promise settles (`mutateAsync()`'s `isError` /
+  `error` lagging the resolved promise by a render or two) still has that error go
+  unannounced, because the flag already disarmed on the earlier settle with no error yet
+  visible. `Form`'s contract is narrower than "no longer assumes validate-on-submit": it
+  supports validate-on-change for a caller whose promise does not settle before its
+  error state does. See `onSubmit`'s doc comment in `form.tsx` and
+  `SlowRefusingPromiseForm` in `form.test.tsx`, which pins this boundary rather than
+  hiding it.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.

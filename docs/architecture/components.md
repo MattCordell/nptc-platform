@@ -153,13 +153,20 @@ submit's answer until an error actually arrives, however many renders later, and
 require the caller to set `pending` for that to work — `pending` drives the button and
 `aria-busy` only.
 
-**`Form` supports validate-on-change.** A caller whose `onSubmit` returns a promise gets
-a second disarm path: the flag clears when that promise settles, whether it resolves or
-rejects, in addition to clearing when an error actually arrives. A screen that validates
-on *change* returns a promise from `onSubmit` so a settled successful submit disarms the
-flag before the next keystroke can produce an error — the void case (an `onSubmit` that
-returns nothing) still relies on an error arriving, exactly as before, so a caller with no
-promise to await keeps its existing behaviour unchanged.
+**`Form` supports validate-on-change, with a caveat.** A caller whose `onSubmit` returns
+a promise gets a second disarm path: the flag clears when that promise settles, whether
+it resolves or rejects, in addition to clearing when an error actually arrives. A screen
+that validates on *change* returns a promise from `onSubmit` so a settled successful
+submit disarms the flag before the next keystroke can produce an error.
+
+The caveat: the promise must not settle until any error it causes is already set. A
+caller whose error state commits in a render *after* the promise settles — the common
+`mutateAsync()` shape, where `isError` / `error` can lag the resolved promise by a
+render or two — will have that later error go unannounced, because the flag already
+disarmed on the earlier settle with no error yet visible. See `onSubmit`'s doc comment
+in `form.tsx` and `SlowRefusingPromiseForm` in `form.test.tsx`, which pins this boundary.
+The void case (an `onSubmit` that returns nothing) is unaffected by any of this — it
+still relies solely on an error arriving, however many renders later, exactly as before.
 
 ## Known limits of the automated check
 

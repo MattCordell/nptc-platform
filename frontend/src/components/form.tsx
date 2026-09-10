@@ -8,10 +8,24 @@ import type { FormError } from "./error-summary.tsx";
 type FormProps = {
   /** Called once per accepted submit, already `preventDefault`-ed. Takes no
    * event: a caller that needed the event would be reaching around the one
-   * submit path this component exists to provide. A returned promise
-   * disarms the focus-move flag below when it settles, whether it resolves
-   * or rejects (issue #214) - a caller that returns nothing keeps the
-   * void-case behaviour unchanged. */
+   * submit path this component exists to provide.
+   *
+   * A returned promise disarms the focus-move flag below when it settles,
+   * whether it resolves or rejects (issue #214) - a caller that returns
+   * nothing keeps the void-case behaviour unchanged, staying armed until an
+   * error prop actually arrives. `Form` handles the promise's rejection
+   * itself (it disarms either way), so a rejecting `onSubmit` no longer
+   * surfaces as an unhandled rejection the way it did before this prop
+   * accepted a promise.
+   *
+   * Contract: only settle the promise once any `errors` / `formError` the
+   * settlement itself causes is already set - synchronously, or awaited
+   * before resolving or rejecting. `Form` disarms on the settlement, not on
+   * a later render where an error prop happens to change, so a caller whose
+   * error state commits in a render *after* the promise settles (the
+   * `mutateAsync()` shape, where `isError` / `error` can lag the resolved
+   * promise by a render or two) will have that later error go unannounced.
+   * See `SlowRefusingPromiseForm` in `form.test.tsx` for the pinned case. */
   onSubmit: () => void | Promise<void>;
   /** Field-level failures the caller has computed. Passing a non-empty list
    * after a submit attempt is what moves focus to the summary. */
@@ -235,6 +249,13 @@ export function Form({
     // once per render, after `hasErrors` is committed - is the one place
     // that decides. Guarded by matching submit id: a stale settle from a
     // superseded submit must not disarm the current one.
+    //
+    // This still disarms the moment a settled submit has no error *yet* -
+    // it cannot wait to see whether one shows up in a later render, since
+    // that is indistinguishable from "no error is coming" (the case this
+    // effect exists to disarm for). See `onSubmit`'s doc comment for the
+    // contract this implies: a caller whose error state commits after the
+    // promise settles will have that error go unannounced.
     if (settledSubmitId === submitIdRef.current) {
       awaitingResultRef.current = false;
     }
@@ -259,6 +280,15 @@ export function Form({
           onSubmitBlocked?.();
           awaitingResultRef.current = true;
           setSubmitCount((count) => count + 1);
+          // Bumped here too, even though a blocked attempt always produces
+          // an error today (`announcedBlockedReason`'s fallback guarantees
+          // it, so `hasErrors` always wins before the settledSubmitId check
+          // below is reached) - without it, a stale settledSubmitId left
+          // over from the previous successful submit would still equal
+          // `submitIdRef.current` during a blocked attempt, a latent
+          // coupling to that guarantee rather than a guard that holds on
+          // its own.
+          ++submitIdRef.current;
           return;
         }
         awaitingResultRef.current = true;
@@ -269,9 +299,9 @@ export function Form({
         // that would make the void case start disarming itself a tick
         // later too, silently regaining the always-armed contract's
         // opposite bug for every caller that never returns a promise.
-        if (result && typeof (result as Promise<void>).then === "function") {
+        if (result instanceof Promise) {
           const settle = () => setSettledSubmitId(thisSubmitId);
-          (result as Promise<void>).then(settle, settle);
+          result.then(settle, settle);
         }
       }}
       className={["flex flex-col gap-4", className ?? ""].filter(Boolean).join(" ")}

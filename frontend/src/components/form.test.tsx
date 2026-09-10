@@ -220,6 +220,51 @@ function SlowRefusingForm() {
   );
 }
 
+/**
+ * The same slow refusal as `SlowRefusingForm`, but `onSubmit` also returns a
+ * settled promise - the `mutateAsync()` shape, where the promise resolves
+ * once the network call finishes but `isError` / `error` surface a render
+ * or two later. This is a known, documented limitation (see `onSubmit`'s
+ * doc comment in `form.tsx`): the promise settles with no error yet
+ * visible, so the flag disarms there, and the refusal that commits several
+ * renders later goes unannounced. This test pins that boundary rather than
+ * hiding it - the void-case equivalent (`SlowRefusingForm`, exercised by
+ * "announces a refusal that arrives late") still announces correctly,
+ * because it never returns a promise for the settle path to disarm early.
+ */
+function SlowRefusingPromiseForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (tick === 0 || tick > 3) {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      if (tick === 3) {
+        setFormError("The catalogue rejected this entry.");
+      }
+      setTick((current) => current + 1);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [tick]);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={() => {
+        setTick(1);
+        return Promise.resolve();
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
 /** A form whose save starts and never finishes, so the mid-save state can
  *  actually be observed. */
 function NeverFinishingForm() {
@@ -566,6 +611,21 @@ describe("Form", () => {
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
     expect(summaryElement()).toHaveFocus();
+  });
+
+  it("pins the known limitation: a refusal committed after a settled promise is not announced", async () => {
+    const user = userEvent.setup();
+    render(<SlowRefusingPromiseForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // The promise settled with no error yet, disarming the flag - see
+    // onSubmit's doc comment. The refusal still renders, it is just not
+    // announced: this documents the boundary rather than papering over it.
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    expect(summaryElement()).not.toHaveFocus();
   });
 
   it("announces again on a resubmit that fails the same way", async () => {
