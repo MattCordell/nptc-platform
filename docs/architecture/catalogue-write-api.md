@@ -666,12 +666,16 @@ earlier entry's audit append) can block on a row a concurrent single-entry write
 while that writer blocks on the same advisory lock. `save_property_values_for_entries`
 acquires the lock once, deterministically, before its loop
 (`nptc.audit.writer.acquire_append_lock`), and - since issue #281 - so does the singular
-`save_property_values`, before the `row_version` bump/flush that takes the row lock, and
-`nptc.catalogue.entries.create_entry`/`save_entry`, before their own collision-key check.
-Every catalogue-entry writer now acquires the append lock before any row lock or
-collision lock it can also take, closing the cycle rather than narrowing it to
-bulk-vs-bulk. See ADR-0035's own addendum for the full history and
-`backend/tests/test_lock_ordering.py` for the regression coverage.
+`save_property_values`, `nptc.catalogue.entries.create_entry`/`save_entry`, and
+`nptc.catalogue.designations.add_designation`/`amend_designation` - each as its own
+**literal first statement**, not merely "before" the row/collision lock (a round-2 review of
+this fix found that a later placement still left an ORM `select()` or two in between, each
+of which autoflushes any already-pending `catalogue_entry` mutation by default). Every
+catalogue-entry writer now acquires the append lock before any row lock or collision lock it
+can also take, closing the cycle rather than narrowing it to bulk-vs-bulk. See ADR-0035's
+own addendum for the full history, and `backend/tests/test_lock_ordering.py` for both the
+concurrency regression coverage and the pure-`ast` guard pinning the "literal first
+statement" invariant itself.
 
 ### Errors (bulk property-value write)
 
