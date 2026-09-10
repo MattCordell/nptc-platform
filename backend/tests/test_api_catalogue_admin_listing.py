@@ -222,6 +222,20 @@ def test_maintenance_statuses_is_every_catalogue_entry_status() -> None:
     assert set(MAINTENANCE_STATUSES) == {status.value for status in CatalogueEntryStatus}
 
 
+def test_maintenance_statuses_is_ordered_by_lifecycle() -> None:
+    """A literal, order-sensitive guard the set comparison above deliberately
+    is not (review finding): `sort=status` (`nptc.catalogue.maintenance.
+    _SORT_COLUMNS`) and this file's own `_STATUS_LIFECYCLE_ORDER` both derive
+    their ordering from `enumerate(MAINTENANCE_STATUSES)`, i.e. from
+    `CatalogueEntryStatus`'s declaration order - so reordering the enum, or
+    inserting a fifth status anywhere but the end, would shift the
+    implementation and every test's own expectation together, and every test
+    parametrised on `by_status` would keep passing while the user-visible
+    ordering silently changed underneath it. Pinning the literal tuple is
+    what makes that reordering a visible, deliberate diff instead."""
+    assert MAINTENANCE_STATUSES == ("draft", "active", "deprecated", "withdrawn")
+
+
 # --- visibility parity: both surfaces asserted together ---------------------
 
 

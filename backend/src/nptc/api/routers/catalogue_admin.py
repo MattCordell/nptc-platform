@@ -320,9 +320,10 @@ SortQuery = Annotated[
     Query(
         description=(
             "How to order the page: `business_key` (the default, and the pre-#287 "
-            "behaviour), `preferred_term`, `updated_at`, or `status`. Changing `sort` "
-            "invalidates any `after` cursor from a different sort - pass `after=null` "
-            "(omit it) when changing sort, matching a changed filter set."
+            "behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by "
+            "lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. "
+            "Changing `sort` invalidates any `after` cursor from a different sort - pass "
+            "`after=null` (omit it) when changing sort, matching a changed filter set."
         )
     ),
 ]

@@ -157,7 +157,17 @@ _SORT_COLUMNS: Final[dict[SortName, ColumnElement[Any]]] = {
         *(
             (CatalogueEntry.status == status, index)
             for index, status in enumerate(MAINTENANCE_STATUSES)
-        )
+        ),
+        # A status outside `MAINTENANCE_STATUSES` cannot happen through this
+        # column's own `CHECK` constraint today, but that constraint
+        # (`_STATUS_CHECK_SQL`, `nptc.db.models.catalogue_entry`) is a
+        # hand-written literal held separately from the enum, so the two
+        # *can* drift. Without `else_`, such a row's sort value is `NULL`,
+        # which sorts last and then raises `TypeError` from
+        # `_format_sort_value` if that row ever becomes a page boundary - a
+        # 500, not a degraded-but-stable ordering. This puts every
+        # unrecognised status after every recognised one instead.
+        else_=len(MAINTENANCE_STATUSES),
     ),
 }
 
@@ -270,11 +280,23 @@ def _parse_sort_value(sort: SortName, raw: str, *, cursor: str) -> Any:
         return parsed
     if sort == "status":
         try:
-            return int(raw)
+            value = int(raw)
         except ValueError:
             raise MalformedListingCursorError(
                 f"listing cursor {cursor!r} does not begin with a well-formed status order value"
             ) from None
+        # Matching the `updated_at` branch's own tightening: `int()` alone
+        # accepts `"+1"`, `" 1 "`, or an arbitrary magnitude, none of which
+        # this module ever mints. The valid range is `0` through
+        # `len(MAINTENANCE_STATUSES)` inclusive - the upper bound is the
+        # `CASE` expression's own `else_` fallback for a status outside
+        # `MAINTENANCE_STATUSES` (`_SORT_COLUMNS`).
+        if not 0 <= value <= len(MAINTENANCE_STATUSES):
+            raise MalformedListingCursorError(
+                f"listing cursor {cursor!r} does not begin with a status order value "
+                "this module mints"
+            )
+        return value
     return raw
 
 
