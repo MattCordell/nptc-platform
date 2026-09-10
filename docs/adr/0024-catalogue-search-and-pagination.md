@@ -265,3 +265,27 @@ surface's job (#141), where it is the subject rather than a footnote.
   cursor minted by one surface is refused by the other rather than silently resuming the
   keyset over the wrong population - `backend/tests/test_api_catalogue_admin_listing.py`
   replays one across the boundary, both directions.
+- 2026-09-10: issue #287 gives `GET /catalogue/admin/entries` a `sort` parameter (FR-16's
+  second acceptance criterion: filter *and* sort state survive a reload and a pasted
+  link), extending this ADR's keyset design to a column other than `business_key` for the
+  first time. `business_key` is the only column the pre-existing cursor understood
+  because it is the only one that is `UNIQUE`; every other candidate (`preferred_term`,
+  `updated_at`, `status`) needs a composite `(sort_value, business_key)` keyset - the
+  identical `(score, business_key)` shape this ADR's own relevance cursor already uses,
+  applied to an intrinsic row value instead of a computed one. `nptc.catalogue.
+  maintenance` retires the old bare-`business_key` cursor entirely (this repository is
+  pre-alpha, with no compatibility obligation to a client that might have depended on
+  that shape) and unifies on one `"<sort value>:<digest>:<business key>"` grammar for
+  every sort, including `business_key` itself, where the digest binds to the sort column
+  and the filter set - not to status scope, since this route has only the one
+  (`MAINTENANCE_STATUSES`), and binding a cursor to a constant would be exactly the
+  speculative infrastructure this project's own CLAUDE.md warns against. A cursor
+  replayed under a different `sort` or filter set is refused (422) rather than silently
+  resuming the keyset under a different ordering, mirroring this ADR's own
+  `SearchCursorQueryMismatchError` precedent for `q`. No new database index accompanies
+  this: the catalogue's real size (~2,000 rows today, ~5,000 ceiling for this domain) has
+  no plausible pathology a composite index would fix, and `backend/tests/
+  test_db_search_index.py` `EXPLAIN`s the real statement per sort at that scale as
+  evidence rather than assumption. `GET /catalogue/admin/search` is deliberately
+  untouched - it stays relevance-ranked, and this issue's acceptance criteria scope
+  `sort` to the browse route alone.
