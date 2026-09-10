@@ -77,9 +77,13 @@ concurrent-singular-write case: `save_property_values` (the singular
 writer) itself acquired the lock only via `record_snapshot_change`'s own
 `append_audit_event` call, after the row-locking flush below, not before
 it. Issue #281 closes that gap: `save_property_values` now calls
-`acquire_append_lock` itself, before the row_version bump/flush, so every
-caller of this module - bulk or singular - takes the append lock before
-any `catalogue_entry` row lock, closing the cycle for good rather than
+`acquire_append_lock` itself, as its own first statement (round-2 review of
+that fix found that a narrower placement - after the row-version check, just
+before the row-locking flush - still left several ORM `select()` calls
+in between, each of which autoflushes any already-pending `catalogue_entry`
+mutation by default), so every caller of this module - bulk or singular -
+takes the append lock before any `catalogue_entry` row lock, closing the
+cycle for good rather than
 narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
 detector still aborts one of the two transactions in the (now closed)
 residual case (a 500, full rollback, no corruption) - not silent data
@@ -474,14 +478,23 @@ def save_property_values(
 
     Returns the newly inserted rows, ordered by ordinal.
 
-    `acquire_append_lock` runs before the `row_version` bump/flush below
-    that issues the implicit `catalogue_entry` row-locking UPDATE - the
-    same ordering `entry_child_write` and `save_entry` already establish
-    for their own writers (issue #281). Not acquired for the no-op case
-    (matching `save_property_values_for_entries`'s reference call site,
-    already ordered this way): a resubmission that changes nothing never
-    takes any lock at all.
+    `acquire_append_lock` runs as the literal first statement, before even
+    `reason` validation - matching `entry_child_write`'s own precedent
+    (issue #281 round-2 review). A narrower placement (after the no-op
+    short-circuit below, taking the lock only once a real change is
+    confirmed) was tried first, but every one of the steps between here and
+    there - the identity flush below, `_load_active_property_definition`'s
+    own `select()`, the `existing` query - is an ORM statement that
+    autoflushes by default: any `catalogue_entry` mutation already pending
+    in this session (from earlier in the same transaction) would flush,
+    taking a row lock, before a later-placed `acquire_append_lock` ever
+    ran. Acquiring first, unconditionally, is what makes the guarantee hold
+    at this function's own boundary rather than depending on every caller
+    entering with a clean session - the same trade-off `save_entry` now
+    makes, giving up "a no-op resubmission takes no lock" for a guarantee
+    that does not depend on caller discipline.
     """
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
 
     # `entry.id` is read into every query/insert below - a brand-new,
@@ -547,11 +560,6 @@ def save_property_values(
     # concurrent editor's own unrelated, still-current row_version.
     if before_payload == intended_after_payload:
         return existing
-
-    # See the docstring's lock-ordering note: acquired here, after the
-    # no-op short-circuit above, before anything below can take the
-    # implicit `catalogue_entry` row lock.
-    acquire_append_lock(session)
 
     if existing:
         session.execute(
