@@ -18,6 +18,8 @@ plan is a database fact - there is no unit-level substitute (NFR-39).
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
@@ -637,3 +639,112 @@ def test_the_similarity_threshold_reverts_when_the_transaction_ends(
         "the search threshold outlived its transaction - it is being set at session "
         f"scope, and every later request on this connection now sees {after}"
     )
+
+
+# --- the admin listing sort (issue #287): evidence for "no new indexes" ----
+
+#: A different `business_key` prefix from `_BULK_ENTRIES_SQL`'s own
+#: `NPTC-8...`, so the two bulk fixtures cannot collide if a future change
+#: ever ran them in the same transaction - each test's own transaction rolls
+#: back regardless, so this is belt-and-braces rather than load-bearing.
+#:
+#: Sized to this catalogue's real ceiling (~5,000 rows - see `nptc.catalogue.
+#: maintenance`'s own module docstring), not to the trigram test's 20,000:
+#: the point of this test is that the *real* size needs no more than a plain
+#: scan and sort, and a larger fixture would prove a different, easier
+#: claim (a bigger table still not needing an index) rather than the one
+#: this issue's deferral actually rests on.
+_LISTING_ROW_COUNT = 5_000
+
+_BULK_LISTING_ENTRIES_SQL = text("""
+INSERT INTO catalogue_entry (business_key, preferred_term, status, updated_at)
+SELECT
+    'NPTC-9' || lpad(g::text, 8, '0'),
+    'assay ' || md5(g::text),
+    (ARRAY['draft', 'active', 'deprecated', 'withdrawn'])[1 + (g % 4)],
+    now() - (g || ' seconds')::interval
+FROM generate_series(1, :count) AS g
+""")
+
+
+#: A base-table access node, by name - `Seq Scan`, `Index Scan`, `Index Only
+#: Scan` and `Bitmap Heap Scan` each read `catalogue_entry` itself exactly
+#: once. Deliberately excludes `Bitmap Index Scan`: it never touches the
+#: heap on its own (a `Bitmap Heap Scan` always sits above it and is what
+#: actually reads the table), so counting it as a second access would fail a
+#: plan this test means to accept - `plan.count("Scan") == 1`'s own bug,
+#: caught in review (a bitmap plan reports two "Scan" occurrences for one
+#: logical table access, and this docstring already claimed to accept it).
+_BASE_TABLE_ACCESS = re.compile(
+    r"(?:Seq Scan|Index Scan using \S+|Index Only Scan using \S+|Bitmap Heap Scan)"
+    r" on catalogue_entry"
+)
+
+
+def _assert_one_base_table_access(plan: str) -> None:
+    """The structural claim every case below makes: no per-row join or
+    correlated subquery (`Nested Loop`), and exactly one read of
+    `catalogue_entry` - whatever shape the planner picks for it."""
+    assert "Nested Loop" not in plan, plan
+    accesses = _BASE_TABLE_ACCESS.findall(plan)
+    assert len(accesses) == 1, plan
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize("sort", ["business_key", "preferred_term", "updated_at", "status"])
+def test_the_real_listing_query_plans_as_one_scan_and_sort(db: Connection, sort: str) -> None:
+    """`EXPLAIN` on the exact statement `maintenance.list_entries_any_status`
+    runs, for each `sort` (issue #287) - evidence for this issue's own "no
+    new database indexes" deferral (see `nptc.catalogue.maintenance`'s
+    module docstring), rather than an unverified assumption.
+
+    Built through `build_listing_statement` on purpose, matching `nptc.
+    catalogue.search.build_search_statement`'s own precedent above:
+    explaining a hand-copied approximation would be a test of the copy.
+
+    Two statements per sort, not one: the first page (no keyset predicate)
+    and a *paged* request carrying a real cursor's values through the
+    composite `(sort_value, business_key) > (after_sort_value, after_key)`
+    predicate - the one shape this issue actually introduces, and the shape
+    most likely to defeat an index if it were ever going to. Explaining page
+    one alone would leave that predicate never planned at all (review
+    finding). The paged statement's own `after_sort_value`/`after_key` come
+    from a real row `build_listing_statement` itself returns for this same
+    `sort` - not hand-constructed - so the bound parameter types match
+    exactly what `list_entries_any_status` would pass at runtime.
+
+    `_assert_one_base_table_access` is the claim under test, and it is
+    narrower than "an index is used": one table access and no per-row join,
+    which is what would actually need a composite index to fix. Whether the
+    planner picks a `Seq Scan` (`status`, `updated_at`, no index on either),
+    an `Index Scan` on the pre-existing `business_key` unique index or
+    `ix_catalogue_entry_preferred_term_key`, or a `Bitmap Heap Scan` pair, is
+    cheap at this table's real size either way.
+    """
+    from nptc.catalogue import maintenance
+
+    db.execute(_BULK_LISTING_ENTRIES_SQL, {"count": _LISTING_ROW_COUNT})
+    # Statistics, or the planner is working from defaults unrelated to the
+    # table in front of it - matching the trigram test's own reasoning.
+    db.execute(text("ANALYZE catalogue_entry"))
+
+    first_page_plan = _explain(db, maintenance.build_listing_statement(sort=sort, limit=50), {})
+    _assert_one_base_table_access(first_page_plan)
+
+    # `build_listing_statement(limit=1)` itself fetches `limit + 1 = 2` rows
+    # (the "one more than asked for" trick its own docstring describes), so
+    # `.first()`, not `.one()` - the latter would raise on the second row.
+    boundary = db.execute(maintenance.build_listing_statement(sort=sort, limit=1)).first()
+    assert boundary is not None
+    paged_plan = _explain(
+        db,
+        maintenance.build_listing_statement(
+            sort=sort,
+            after_sort_value=boundary.sort_value,
+            after_key=boundary.business_key,
+            limit=50,
+        ),
+        {},
+    )
+    _assert_one_base_table_access(paged_plan)

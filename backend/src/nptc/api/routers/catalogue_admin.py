@@ -88,7 +88,6 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
     CursorQuery,
-    EntryCursorQuery,
     EntryDetail,
     EntrySummary,
     Facet,
@@ -105,8 +104,8 @@ from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.catalogue.facets import load_facet_context, parse_filters
+from nptc.catalogue.maintenance import SortName
 from nptc.catalogue.term_hygiene import preferred_term_length
-from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -148,16 +147,19 @@ _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
 }
 
 #: `GET /catalogue/admin/entries`' own 422 - it takes no `q`, so it cannot
-#: produce a blank-search-query or query-cursor-mismatch refusal the way the
-#: search route can (issue #266 review: a shared response description that
-#: named the wrong cause for a given route is worse than two short ones).
+#: produce a blank-search-query refusal the way the search route can (issue
+#: #266 review: a shared response description that named the wrong cause for
+#: a given route is worse than two short ones). Issue #287 adds the cursor/
+#: sort mismatch case, mirroring the search route's own cursor-mismatch
+#: wording below.
 _RESPONSE_422_LISTING: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
-        "A query parameter was unprocessable - a cursor this API did not issue, a "
-        "`limit` outside its range, or a `filter.*` parameter naming a facet this "
-        "endpoint does not offer, an operator the facet does not support, or a value "
-        "the property cannot hold. A filter is never silently ignored."
+        "A query parameter was unprocessable - a cursor this API did not issue "
+        "(including one issued for a different `sort` or filter set), an unrecognised "
+        "`sort` value, a `limit` outside its range, or a `filter.*` parameter naming a "
+        "facet this endpoint does not offer, an operator the facet does not support, or "
+        "a value the property cannot hold. A filter is never silently ignored."
     ),
 }
 
@@ -264,21 +266,25 @@ class AdminSearchPage(BaseModel):
     )
 
 
-def _admin_summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> AdminEntrySummary:
-    """`summary_from_entry`'s admin counterpart: the one extra field is
-    read directly off the loaded row, exactly as `EntryDetail`'s own
-    assembly already does for the single-entry route."""
+def _admin_summary_from_row(
+    row: maintenance.ListingRow, has_open_finding: bool
+) -> AdminEntrySummary:
+    """`summary_from_entry`'s admin counterpart, over a `maintenance.
+    ListingRow` rather than a mapped `CatalogueEntry` (issue #287's sort
+    made the listing statement select explicit columns, matching
+    `nptc.catalogue.search.SearchHit`'s own precedent - see that module's
+    docstring)."""
     return AdminEntrySummary(
         **entry_summary_fields(
-            entry.business_key,
-            entry.preferred_term,
-            entry.length,
-            entry.status,
-            entry.specimen_unconstrained,
-            entry.updated_at,
+            row.business_key,
+            row.preferred_term,
+            preferred_term_length(row.preferred_term),
+            row.status,
+            row.specimen_unconstrained,
+            row.updated_at,
             has_open_finding,
         ),
-        row_version=entry.row_version,
+        row_version=row.row_version,
     )
 
 
@@ -305,6 +311,47 @@ def _admin_filter_request(
 
 AdminFiltersDep = Annotated[FilterRequest, Depends(_admin_filter_request)]
 
+#: `?sort=` (issue #287). A `Literal`, not a hand-validated free string - see
+#: `nptc.catalogue.maintenance.SortName`'s own docstring for why: FastAPI
+#: puts the enum in `docs/api/openapi.json` for free and 422s an
+#: unrecognised value before this handler ever runs.
+SortQuery = Annotated[
+    SortName,
+    Query(
+        description=(
+            "How to order the page: `business_key` (the default, and the pre-#287 "
+            "behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by "
+            "lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. "
+            "Changing `sort` invalidates any `after` cursor from a different sort - pass "
+            "`after=null` (omit it) when changing sort, matching a changed filter set."
+        )
+    ),
+]
+
+#: `GET /catalogue/admin/entries`'s own cursor type (issue #287) - forked
+#: from `catalogue_shared.EntryCursorQuery`, which stays a bare
+#: `business_key`-shaped string for the *public* `/catalogue/entries` route,
+#: unchanged. This route's cursor is no longer always a `business_key` - it
+#: is `"<sort value>:<digest>:<business key>"` for every `sort`, including
+#: `business_key` itself (see `nptc.catalogue.maintenance`'s own module
+#: docstring on why one shape is used uniformly) - so it is validated by
+#: `nptc.catalogue.maintenance.list_entries_any_status` instead of by a
+#: `Query(pattern=...)`, the same division of labour
+#: `nptc.catalogue.search`'s `CursorQuery` already uses for its own
+#: non-business-key cursor shape.
+AdminEntryCursorQuery = Annotated[
+    str | None,
+    Query(
+        description=(
+            "The `next_cursor` from the previous page. Opaque: pass it back "
+            "unmodified, and do not construct one. It is bound to `sort` and the "
+            "filter set - sending it back after changing either is a 422, not a "
+            "meaningless page, because the keyset ordering means nothing against a "
+            "different request."
+        )
+    ),
+]
+
 
 @router.get(
     "/admin/entries",
@@ -316,13 +363,15 @@ AdminFiltersDep = Annotated[FilterRequest, Depends(_admin_filter_request)]
 def list_entries_any_status(
     session: SessionDep,
     filters: AdminFiltersDep,
+    sort: SortQuery = "business_key",
     limit: LimitQuery = 50,
-    after: EntryCursorQuery = None,
+    after: AdminEntryCursorQuery = None,
 ) -> AdminEntryPage:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
-    public `list_entries`: identical keyset paging on `business_key`, every
-    status in scope rather than `PUBLIC_STATUSES` alone, and `status` on
-    each row so a caller can tell a draft from an active entry.
+    public `list_entries`: keyset paging on `sort` then `business_key`
+    (issue #287; `business_key` alone before it), every status in scope
+    rather than `PUBLIC_STATUSES` alone, and `status` on each row so a
+    caller can tell a draft from an active entry.
 
     `filter.*` parameters behave as they do on the public surface, except
     `?filter.status=` now accepts any `CatalogueEntryStatus` value rather
@@ -336,15 +385,14 @@ def list_entries_any_status(
     carry FR-38's optimistic-locking token per row without a second read.
     """
     page = maintenance.list_entries_any_status(
-        session, limit=limit, after=after, filters=filters.selections
+        session, sort=sort, limit=limit, after=after, filters=filters.selections
     )
     open_findings = queries.open_finding_business_keys(
-        session, (entry.business_key for entry in page.entries)
+        session, (row.business_key for row in page.rows)
     )
     return AdminEntryPage(
         items=[
-            _admin_summary_from_entry(entry, entry.business_key in open_findings)
-            for entry in page.entries
+            _admin_summary_from_row(row, row.business_key in open_findings) for row in page.rows
         ],
         next_cursor=page.next_cursor,
     )

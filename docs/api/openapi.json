@@ -1969,9 +1969,27 @@
           "catalogue-admin"
         ],
         "summary": "One page of catalogue entries, any status (issue #266)",
-        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `list_entries`: identical keyset paging on `business_key`, every\nstatus in scope rather than `PUBLIC_STATUSES` alone, and `status` on\neach row so a caller can tell a draft from an active entry.\n\n`filter.*` parameters behave as they do on the public surface, except\n`?filter.status=` now accepts any `CatalogueEntryStatus` value rather\nthan only `active` - `AdminFiltersDep` builds its facet context from\n`maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the\nsame reason they are not on `/catalogue/entries`: `GET\n/catalogue/admin/search` is where the facet list with counts lives.\n\nRows carry `row_version` (issue #267) - `AdminEntryPage`, not the public\n`EntryPage` - so the maintenance list screen's selection surface can\ncarry FR-38's optimistic-locking token per row without a second read.",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `list_entries`: keyset paging on `sort` then `business_key`\n(issue #287; `business_key` alone before it), every status in scope\nrather than `PUBLIC_STATUSES` alone, and `status` on each row so a\ncaller can tell a draft from an active entry.\n\n`filter.*` parameters behave as they do on the public surface, except\n`?filter.status=` now accepts any `CatalogueEntryStatus` value rather\nthan only `active` - `AdminFiltersDep` builds its facet context from\n`maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the\nsame reason they are not on `/catalogue/entries`: `GET\n/catalogue/admin/search` is where the facet list with counts lives.\n\nRows carry `row_version` (issue #267) - `AdminEntryPage`, not the public\n`EntryPage` - so the maintenance list screen's selection surface can\ncarry FR-38's optimistic-locking token per row without a second read.",
         "operationId": "list_entries_any_status_api_v1_catalogue_admin_entries_get",
         "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "business_key",
+                "preferred_term",
+                "updated_at",
+                "status"
+              ],
+              "type": "string",
+              "description": "How to order the page: `business_key` (the default, and the pre-#287 behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. Changing `sort` invalidates any `after` cursor from a different sort - pass `after=null` (omit it) when changing sort, matching a changed filter set.",
+              "default": "business_key",
+              "title": "Sort"
+            },
+            "description": "How to order the page: `business_key` (the default, and the pre-#287 behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. Changing `sort` invalidates any `after` cursor from a different sort - pass `after=null` (omit it) when changing sort, matching a changed filter set."
+          },
           {
             "name": "limit",
             "in": "query",
@@ -1993,17 +2011,16 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string",
-                  "pattern": "^NPTC-([0-9]{6,})$"
+                  "type": "string"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one.",
+              "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to `sort` and the filter set - sending it back after changing either is a 422, not a meaningless page, because the keyset ordering means nothing against a different request.",
               "title": "After"
             },
-            "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+            "description": "The `next_cursor` from the previous page. Opaque: pass it back unmodified, and do not construct one. It is bound to `sort` and the filter set - sending it back after changing either is a 422, not a meaningless page, because the keyset ordering means nothing against a different request."
           },
           {
             "name": "filter.{property_key}",
@@ -2052,7 +2069,7 @@
             }
           },
           "422": {
-            "description": "A query parameter was unprocessable - a cursor this API did not issue, a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
+            "description": "A query parameter was unprocessable - a cursor this API did not issue (including one issued for a different `sort` or filter set), an unrecognised `sort` value, a `limit` outside its range, or a `filter.*` parameter naming a facet this endpoint does not offer, an operator the facet does not support, or a value the property cannot hold. A filter is never silently ignored.",
             "content": {
               "application/json": {
                 "schema": {

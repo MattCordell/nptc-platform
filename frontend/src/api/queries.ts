@@ -1,5 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import type { AdminListingSort } from "../router/search-params.ts";
 import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
 import { filterQueryParams } from "./filter-params.ts";
@@ -114,6 +115,10 @@ type AdminSearchQuery = NonNullable<
 export interface AdminEntriesListParams {
   limit?: number;
   after?: string;
+  /** Issue #287. Only the browse route is sortable - `AdminSearchParams`
+   * below carries no equivalent field, matching the backend's own scope for
+   * this issue (`GET /catalogue/admin/search` stays relevance-ranked). */
+  sort?: AdminListingSort;
   /** Keyed by facet alone (`filterSelections`'s own output shape,
    * `router/search-params.ts`) - turned into the wire `filter.<key>`
    * parameters by `filterQueryParams` (`api/filter-params.ts`). */
@@ -133,8 +138,8 @@ export interface AdminEntriesListParams {
  */
 export function useAdminEntriesList(params: AdminEntriesListParams = {}) {
   const client = useApiClient();
-  const { limit, after, filters = {}, enabled = true } = params;
-  const query = { limit, after, ...filterQueryParams(filters) };
+  const { limit, after, sort, filters = {}, enabled = true } = params;
+  const query = { limit, after, sort, ...filterQueryParams(filters) };
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/admin/entries", query],
     queryFn: async ({ signal }) =>
