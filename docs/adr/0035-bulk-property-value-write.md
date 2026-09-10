@@ -216,6 +216,19 @@ its own follow-up: the complete fix is the same one this addendum already calls 
 single, consistent lock-acquisition order across every catalogue-entry writer, covering
 both lock pairs (append-vs-row and append-vs-collision) at once.
 
+**Issue #281 closes both cases above.** `nptc.catalogue.entries.create_entry`/`save_entry`
+and `nptc.catalogue.property_values.save_property_values` (the singular writer) now call
+`acquire_append_lock` before, respectively, their own collision check and the
+`row_version` bump/flush that takes the implicit row lock — the same ordering
+`entry_child_write` and the bulk seam above already used. Every catalogue-entry writer now
+acquires the append lock before it can take either a row lock or the collision lock, so
+the residual bulk-vs-singular and collision-lock cycles this addendum accepted above are
+closed, not merely narrowed: `backend/tests/test_lock_ordering.py` proves both directly,
+forcing the interleaving each cycle needs (a `threading.Barrier` alone was verified, against
+a deliberately reverted pre-#281 checkout, not to reproduce either cycle reliably — the two
+racing call paths differ too much in preamble length for that). Postgres's deadlock
+detector is no longer expected to fire for either case.
+
 ## Consequences
 
 - A generated client (or a future frontend) must read `outcomes[]`/`applied`/

@@ -658,16 +658,20 @@ no-op posture at the batch level. All of it shares one `correlation_id` for free
 once per request (NFR-08), not per audit call - so the whole batch is reconstructable
 from the log via that one value. See ADR-0035's addendum.
 
-**Lock ordering (issue #265 round-2 review).** This route is the first HTTP surface that
-can hold row-exclusive locks on more than one `catalogue_entry` row in one transaction,
-which makes a cycle against `nptc.audit.writer`'s own `pg_advisory_xact_lock` reachable:
-a bulk request already holding that lock (from an earlier entry's audit append) can
-block on a row a concurrent single-entry writer holds, while that writer blocks on the
-same advisory lock. `save_property_values_for_entries` now acquires the lock once,
-deterministically, before its loop (`nptc.audit.writer.acquire_append_lock`) - this
-closes the bulk-vs-bulk case but not bulk-vs-a-concurrent-singular-write, which Postgres
-resolves safely (aborts one transaction, no corruption) rather than correctly (no
-deadlock at all). See ADR-0035's own addendum and issue #281 for the complete fix.
+**Lock ordering (issue #265 round-2 review; closed by issue #281).** This route is the
+first HTTP surface that can hold row-exclusive locks on more than one `catalogue_entry`
+row in one transaction, which makes a cycle against `nptc.audit.writer`'s own
+`pg_advisory_xact_lock` reachable: a bulk request already holding that lock (from an
+earlier entry's audit append) can block on a row a concurrent single-entry writer holds,
+while that writer blocks on the same advisory lock. `save_property_values_for_entries`
+acquires the lock once, deterministically, before its loop
+(`nptc.audit.writer.acquire_append_lock`), and - since issue #281 - so does the singular
+`save_property_values`, before the `row_version` bump/flush that takes the row lock, and
+`nptc.catalogue.entries.create_entry`/`save_entry`, before their own collision-key check.
+Every catalogue-entry writer now acquires the append lock before any row lock or
+collision lock it can also take, closing the cycle rather than narrowing it to
+bulk-vs-bulk. See ADR-0035's own addendum for the full history and
+`backend/tests/test_lock_ordering.py` for the regression coverage.
 
 ### Errors (bulk property-value write)
 
