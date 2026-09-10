@@ -73,7 +73,16 @@ business making a datatype-aware equality judgement to build a diff.
 - Any future write path that replaces a whole `property_value` set in one transaction
   (the bulk seam's per-entry `save_property_values` call included, per ADR-0035)
   inherits this same reasoning by construction - it is a property of what
-  `save_property_values` does, not a decision made per caller.
+  `save_property_values` does, not a decision made per caller. This covers only the
+  bulk seam's per-entry `property_value.set` events; its own `property_value_bulk`
+  header (`_BULK_ENTITY_TYPE`, ADR-0035) is a separate, deliberately diff-free summary
+  event and carries no `values` payload for this decision to apply to.
+- `save_property_values` also short-circuits before touching a row when the resubmitted
+  values match the stored set exactly (`before_payload == intended_after_payload`),
+  emitting no audit event at all for that request - the same "no diff, no event" posture
+  ADR-0018 sets generally, not a special case this ADR introduces. This is the full
+  audit surface of this write path: either the whole-set snapshot decided above, or
+  nothing, never a partial write.
 - If cardinality or the value model changes so that individual values gain a stable
   identity across writes (rather than a purely positional `ordinal`), this decision
   should be revisited - it depends on that absence, not on multi-valued fields being
