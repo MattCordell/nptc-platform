@@ -118,7 +118,14 @@ def test_hidden_entries_are_in_the_admin_listing_and_absent_from_the_public_one(
 ) -> None:
     token = _admin_token(api, subject="sub-list-visibility")
 
-    admin_response = _admin_list(api, token, after=seeded.before_all, limit=200)
+    # No `after`: issue #287 binds the admin listing cursor to a digest, so
+    # it can no longer be a hand-constructed `before_all` sentinel the way
+    # the public route's own bare-`business_key` cursor still can (see
+    # `public_catalogue_support.py`'s own docstring on that convention).
+    # Each test's `app_db` transaction is rolled back afterwards (`conftest.
+    # py`), so `seeded` is the only `catalogue_entry` data this request can
+    # see regardless.
+    admin_response = _admin_list(api, token, limit=200)
     assert admin_response.status_code == 200, admin_response.text
     admin_keys = {item["business_key"] for item in admin_response.json()["items"]}
     assert set(seeded.hidden) <= admin_keys
@@ -176,7 +183,7 @@ def test_each_row_carries_its_own_status(
     }[status]
     token = _admin_token(api, subject=f"sub-status-{status}")
 
-    response = _admin_list(api, token, after=seeded.before_all, limit=200)
+    response = _admin_list(api, token, limit=200)
 
     assert response.status_code == 200, response.text
     rows = {item["business_key"]: item["status"] for item in response.json()["items"]}
@@ -193,7 +200,7 @@ def test_the_listing_pages_with_no_offset_and_a_null_cursor_on_the_last_page(
 ) -> None:
     token = _admin_token(api, subject="sub-list-paging")
 
-    first = _admin_list(api, token, after=seeded.before_all, limit=1)
+    first = _admin_list(api, token, limit=1)
     assert first.status_code == 200, first.text
     first_body = first.json()
     assert len(first_body["items"]) == 1
@@ -356,9 +363,7 @@ def test_filtering_by_a_hidden_status_is_accepted_and_narrows_the_page(
     from `MAINTENANCE_STATUSES`."""
     token = _admin_token(api, subject="sub-status-filter")
 
-    response = _admin_list(
-        api, token, after=seeded.before_all, limit=200, **{"filter.status": "draft"}
-    )
+    response = _admin_list(api, token, limit=200, **{"filter.status": "draft"})
 
     assert response.status_code == 200, response.text
     keys = {item["business_key"] for item in response.json()["items"]}
@@ -377,7 +382,7 @@ def test_the_listing_carries_row_version_per_row(api: ApiTestApp, seeded: Seeded
     `EntrySummary` rows - carry the token without a second read."""
     token = _admin_token(api, subject="sub-list-row-version")
 
-    response = _admin_list(api, token, after=seeded.before_all, limit=200)
+    response = _admin_list(api, token, limit=200)
 
     assert response.status_code == 200, response.text
     rows = {item["business_key"]: item["row_version"] for item in response.json()["items"]}

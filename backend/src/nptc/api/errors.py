@@ -108,6 +108,7 @@ from nptc.catalogue.errors import (
 )
 from nptc.catalogue.facets import FilterRefusedError
 from nptc.catalogue.history import MalformedHistoryCursorError
+from nptc.catalogue.maintenance import MalformedListingCursorError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
     PropertyValueSelectionConflictError,
@@ -355,6 +356,13 @@ _DETAIL_HISTORY_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
     "unmodified, or start again from the first page."
 )
+#: Issue #287. Mirrors `_DETAIL_SEARCH_CURSOR`'s own wording, adapted for
+#: `sort` in place of a search query.
+_DETAIL_LISTING_CURSOR = (
+    "This page cursor is not one this API issued, or it was issued for a different "
+    "sort or filter set. Pass a `next_cursor` value back unmodified alongside the "
+    "same `sort` and filters, or start again from the first page."
+)
 _DETAIL_ENTITY_ID_REQUIRES_ENTITY_TYPE = "The `entity_id` filter requires `entity_type` as well."
 _DETAIL_OCCURRED_RANGE_INVALID = "`occurred_from` must be strictly before `occurred_to`."
 #: FR-16. Names no property key and no value: the parameter is caller-supplied
@@ -592,6 +600,20 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=MalformedHistoryCursorError.http_status,
             content={"detail": _DETAIL_HISTORY_CURSOR},
+        )
+
+    @app.exception_handler(MalformedListingCursorError)
+    async def _handle_malformed_listing_cursor(
+        _request: Request, exc: MalformedListingCursorError
+    ) -> JSONResponse:
+        # Issue #287. Covers `ListingCursorMismatchError` too, via the same
+        # polymorphic registration `_handle_malformed_search_cursor` already
+        # relies on for its own mismatch subclass - the class only, never
+        # `str(exc)`, matching that handler's own reasoning.
+        _logger.info("listing cursor refused: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=MalformedListingCursorError.http_status,
+            content={"detail": _DETAIL_LISTING_CURSOR},
         )
 
     @app.exception_handler(MalformedAuditCursorError)
