@@ -338,18 +338,6 @@ export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSea
 }
 
 /**
- * One facet value toggled on or off (issue #267) - the filter panel's own
- * `onChange`, so every facet checkbox shares one implementation of
- * "add/remove a value and invalidate the current page" rather than each
- * re-deriving the parameter name and the add/remove logic.
- *
- * Toggling any filter drops `after`: the population a cursor was paging over
- * no longer exists once the filter set changes underneath it - the same
- * fact `MalformedSearchCursorError`'s `SearchCursorQueryMismatchError`
- * subclass refuses server-side for a search cursor (ADR-0024), applied here
- * before a stale cursor is ever sent.
- */
-/**
  * Changes `sort` (issue #287) - the browse list screen's own `<select>`
  * `onChange`, matching `toggleFilterValue`'s own shape below.
  *
@@ -374,6 +362,18 @@ export function changeSort(
   return updated;
 }
 
+/**
+ * One facet value toggled on or off (issue #267) - the filter panel's own
+ * `onChange`, so every facet checkbox shares one implementation of
+ * "add/remove a value and invalidate the current page" rather than each
+ * re-deriving the parameter name and the add/remove logic.
+ *
+ * Toggling any filter drops `after`: the population a cursor was paging over
+ * no longer exists once the filter set changes underneath it - the same
+ * fact `MalformedSearchCursorError`'s `SearchCursorQueryMismatchError`
+ * subclass refuses server-side for a search cursor (ADR-0024), applied here
+ * before a stale cursor is ever sent.
+ */
 export function toggleFilterValue(
   search: AdminCatalogueSearch,
   facetKey: string,

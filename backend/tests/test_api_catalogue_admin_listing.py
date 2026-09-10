@@ -562,17 +562,34 @@ def test_explicit_business_key_sort_matches_the_default(
 
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("sort", "expected_attr"),
+    [
+        ("business_key", "by_business_key"),
+        ("preferred_term", "by_preferred_term"),
+        ("updated_at", "by_updated_at"),
+        ("status", "by_status"),
+    ],
+)
 def test_paging_under_a_non_default_sort_is_stable_and_total(
-    api: ApiTestApp, sortable: SortableCatalogue
+    api: ApiTestApp, sortable: SortableCatalogue, sort: str, expected_attr: str
 ) -> None:
-    """One row at a time through `sort=preferred_term`, including its
+    """One row at a time through every `sort`, including each one's own
     guaranteed tie - no row dropped, none repeated, matching ADR-0024's
-    keyset discipline for the pre-existing `business_key` ordering."""
-    token = _admin_token(api, subject="sub-sort-paging")
+    keyset discipline for the pre-existing `business_key` ordering.
+
+    Parametrised over every sort, not just `preferred_term`: `updated_at` is
+    the one whose cursor round-trips a `datetime` rather than a bare string
+    (`_format_sort_value`/`_parse_sort_value`), and `limit=200` elsewhere in
+    this file never exercises that round-trip at all - a single page never
+    mints or parses a cursor.
+    """
+    token = _admin_token(api, subject=f"sub-sort-paging-{sort}")
 
     seen: list[str] = []
-    params: dict[str, Any] = {"sort": "preferred_term", "limit": 1}
-    for _ in range(len(sortable.by_preferred_term) + 1):
+    params: dict[str, Any] = {"sort": sort, "limit": 1}
+    expected = getattr(sortable, expected_attr)
+    for _ in range(len(expected) + 1):
         response = _admin_list(api, token, **params)
         assert response.status_code == 200, response.text
         body = response.json()
@@ -583,7 +600,7 @@ def test_paging_under_a_non_default_sort_is_stable_and_total(
         params["after"] = after
 
     assert after is None, "paging did not terminate within the fixture's own row count"
-    assert tuple(seen) == sortable.by_preferred_term
+    assert tuple(seen) == expected
 
 
 @pytest.mark.req("FR-16")
