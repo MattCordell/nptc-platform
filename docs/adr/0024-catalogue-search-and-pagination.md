@@ -288,4 +288,8 @@ surface's job (#141), where it is the subject rather than a footnote.
   test_db_search_index.py` `EXPLAIN`s the real statement per sort at that scale as
   evidence rather than assumption. `GET /catalogue/admin/search` is deliberately
   untouched - it stays relevance-ranked, and this issue's acceptance criteria scope
-  `sort` to the browse route alone.
+  `sort` to the browse route alone. `sort=status` orders by lifecycle
+  (`draft`/`active`/`deprecated`/`withdrawn`), not alphabetically, via a `CASE` over
+  `MAINTENANCE_STATUSES`' own declaration order rather than the raw text column - stated
+  here, not only in the module docstring, because this is where a future reader looks for
+  why an ordering is not the alphabetical default a text column would otherwise give.
