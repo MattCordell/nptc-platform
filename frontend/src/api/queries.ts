@@ -224,6 +224,7 @@ export function useAdminEntryDetail(businessKey: string) {
 type AddDesignationsBody = components["schemas"]["AddDesignationsRequest"];
 type AmendDesignationBody = components["schemas"]["AmendDesignationRequest"];
 type RetireDesignationBody = components["schemas"]["RetireDesignationRequest"];
+type ReinstateDesignationBody = components["schemas"]["ReinstateDesignationRequest"];
 type AcknowledgeCollisionBody = components["schemas"]["AcknowledgeCollisionRequest"];
 type BindCodeBody = components["schemas"]["BindCodeRequest"];
 type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
@@ -334,6 +335,41 @@ export function useRetireDesignation(businessKey: string) {
     // can refuse with a version conflict, same as `useAmendDesignation`/
     // `useRetireBinding` - refetch so a retry from the open dialog does not
     // fail identically on the same stale token.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: adminEntryDetailKey(businessKey),
+        });
+      }
+    },
+  });
+}
+
+/**
+ * Reinstate a retired designation (issue #313) - the same row goes active
+ * again, so its history reads as one continuous record across create,
+ * retire and reinstate, rather than the orphaned-history-plus-unrelated-
+ * new-row result re-adding the term produces.
+ */
+export function useReinstateDesignation(businessKey: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: ReinstateDesignationBody) =>
+      unwrap(
+        await client.POST(
+          "/api/v1/catalogue/entries/{business_key}/designations/reinstatement",
+          {
+            params: { path: { business_key: businessKey } },
+            body,
+          },
+        ),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    // FR-38 (issue #300): this route takes `expected_row_version` too, and
+    // can refuse with a version conflict - same reasoning as
+    // `useRetireDesignation`/`useAmendDesignation`.
     onError: (error: unknown) => {
       if (asVersionConflict(error) !== null) {
         void queryClient.invalidateQueries({

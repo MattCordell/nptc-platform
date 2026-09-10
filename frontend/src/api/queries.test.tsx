@@ -18,6 +18,7 @@ import {
   usePatchEntryCore,
   usePropertyDefinitions,
   usePropertyValueOptions,
+  useReinstateDesignation,
   useRetireDesignation,
   useSavePropertyValues,
   useSession,
@@ -514,6 +515,62 @@ describe("useRetireDesignation", () => {
       language: "en-AU",
       term: "Cyclir",
       reason: "Retire under a stale version",
+      expected_row_version: 1,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(2);
+  });
+});
+
+describe("useReinstateDesignation", () => {
+  it("posts the term and its mandatory reason to the reinstatement route", async () => {
+    const fetchMock = stubFetch(200, {
+      designation: { term: "Cyclir", status: "active" },
+      warnings: [],
+      row_version: 2,
+    });
+    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      language: "en-AU",
+      term: "Cyclir",
+      reason: "Retired by mistake",
+      expected_row_version: 1,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock);
+    expect(new URL(request.url).pathname).toBe(
+      "/api/v1/catalogue/entries/NPTC-000247/designations/reinstatement",
+    );
+    expect(await bodyOf(request)).toEqual({
+      language: "en-AU",
+      term: "Cyclir",
+      reason: "Retired by mistake",
+      expected_row_version: 1,
+    });
+  });
+
+  // FR-38 (issue #300): this route takes a lock token too, and can refuse on
+  // it - see useRetireDesignation's identical test for why the cache must be
+  // refetched, not left stale.
+  it("refetches the entry on a version conflict", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "NPTC-000247",
+      expected_row_version: 1,
+      current_row_version: 2,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-09-02T00:00:00Z",
+    });
+    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), { wrapper });
+
+    result.current.mutate({
+      language: "en-AU",
+      term: "Cyclir",
+      reason: "Reinstate under a stale version",
       expected_row_version: 1,
     });
 
