@@ -81,9 +81,13 @@ it. Issue #281 closes that gap: `save_property_values` now calls
 that fix found that a narrower placement - after the row-version check, just
 before the row-locking flush - still left several ORM `select()` calls
 in between, each of which autoflushes any already-pending `catalogue_entry`
-mutation by default), so every caller of this module - bulk or singular -
-takes the append lock before any `catalogue_entry` row lock, closing the
-cycle for good rather than
+mutation by default). Round-3 review found the same gap in this bulk seam
+itself: acquiring the lock after `_load_active_property_definition`'s own
+`select()` had exactly the same autoflush hazard, just one call further
+out - `save_property_values_for_entries` now also acquires it as its own
+first statement, before that or any other query. Every caller of this
+module - bulk or singular - now takes the append lock before any
+`catalogue_entry` row lock, closing the cycle for good rather than
 narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
 detector still aborts one of the two transactions in the (now closed)
 residual case (a 500, full rollback, no corruption) - not silent data
@@ -687,6 +691,17 @@ def save_property_values_for_entries(
     whole transaction on any exception that reaches it, discarding any
     entry already applied earlier in the loop too.
 
+    `acquire_append_lock` runs as the literal first statement (issue #281
+    round-3 review): a placement after `_load_active_property_definition`'s
+    own `select()` - the shape this function used until this round - is
+    exactly the autoflush-before-lock gap that round's own fix to
+    `save_property_values` itself closed; the bulk seam had the identical
+    gap, just one call further out. Acquired once, unconditionally, before
+    any other statement runs - not left to whichever entry's own audit
+    append happens to acquire it first, which would otherwise defer
+    acquisition arbitrarily for a batch whose earliest entries are all
+    `unchanged`.
+
     An entry deleted by another transaction between the row-version
     pre-check and this call's own flush (`ObjectDeletedError`, issue #265
     review) becomes a `not-found` outcome, the same as a `business_key` that
@@ -699,6 +714,8 @@ def save_property_values_for_entries(
     emits no audit event" posture and keeping a client that retries a stale
     selection from appending one permanent audit row per attempt.
     """
+    acquire_append_lock(session)
+
     # Deferred to break an import cycle: `nptc.catalogue.entries` imports
     # `assert_specimen_flag_allowed` from this module at its own top level,
     # so a top-level import the other way here would fail with a partially
@@ -710,12 +727,6 @@ def save_property_values_for_entries(
     preflight = _preflight_property_write(definition, values, registry)
     if preflight.write_issues:
         raise PropertyValidationError(preflight.write_issues)
-
-    # See the module docstring's "Lock ordering" note: acquired once, here,
-    # rather than left to whichever entry's own audit append happens to
-    # acquire it first - a batch whose earliest entries are all `unchanged`
-    # would otherwise defer acquisition arbitrarily.
-    acquire_append_lock(session)
 
     outcomes: list[BulkPropertyOutcome] = []
 
