@@ -91,9 +91,15 @@ first place, uses a separate, permission-gated surface instead, never this one:
 **Retired code bindings *are* published** (FR-08). An implementer holding a code that
 has since been inactivated needs to learn that here, with `retirement_reason` and -
 where PRD FR-08's replacement case applies - `replaced_by_code`, the code that
-superseded it. Retired *designations* are not published: a retired synonym carries no
-forward pointer and no obligation, and is editorial history rather than a term the entry
-is known by.
+superseded it. Retired *designations* are not published on this surface: a retired
+synonym carries no forward pointer and no obligation, and is editorial history rather
+than a term the entry is known by.
+
+That reasoning is about *this*, the public surface, and stops at it (issue #239): the
+admin route (`GET /catalogue/admin/entries/{business_key}`) serves retired designations
+too, because its reader is an editor deciding against editorial history, not an
+implementer with no use for it. See
+[catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228).
 
 **`has_open_finding` names nothing about the finding itself** (FR-18, issue #141). It is
 a bare boolean: `true` when the entry carries at least one `open` `ValidationFinding`,

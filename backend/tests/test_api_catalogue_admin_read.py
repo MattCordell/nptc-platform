@@ -150,6 +150,30 @@ def test_a_drafts_full_detail_is_populated_not_a_bare_summary(
     assert {b["code"] for b in body["bindings"]} == {_seed.DRAFT_CODE}
 
 
+@pytest.mark.req("FR-17")
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_retired_designations_are_included_unlike_the_public_route(
+    api: ApiTestApp, seeded: SeededCatalogue
+) -> None:
+    """Issue #239: the admin route's reader is an editor deciding against
+    editorial history, not an implementer with no use for it - unlike
+    `test_api_public_catalogue.py::
+    test_designations_endpoint_serves_active_designations_only`, this
+    route's own mirror of that test, which asserts the opposite for the
+    identical fixture."""
+    token = _admin_token(api, subject="sub-admin-retired-designation")
+
+    response = _admin_read(api, seeded.canonical, token)
+
+    assert response.status_code == 200, response.text
+    designations = response.json()["designations"]
+    retired = [d for d in designations if d["term"] == _seed.RETIRED_SYNONYM]
+    assert len(retired) == 1, designations
+    assert retired[0]["status"] == "retired"
+    assert any(d["status"] == "active" for d in designations)
+
+
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_the_detail_carries_the_row_version_a_write_will_demand(

@@ -486,9 +486,13 @@ export interface paths {
         /**
          * One catalogue entry, any status, with everything attached to it
          * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
-         *     public `read_entry`: identical assembly, no status filter. An edit
-         *     screen (#149) calls this to load a `draft` entry's current state before
-         *     the #224 write routes save changes to it.
+         *     public `read_entry`: no status filter on the entry itself, and - unlike
+         *     the public route - `designations` includes retired rows too (issue
+         *     #239). The other two sub-resources were already unfiltered here before
+         *     this issue: `bindings` publishes retired rows on both routes (FR-08),
+         *     and `properties` has no per-row status of its own. An edit screen (#149)
+         *     calls this to load a `draft` entry's current state before the #224
+         *     write routes save changes to it.
          */
         get: operations["read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get"];
         put?: never;
@@ -1483,7 +1487,12 @@ export interface components {
          *     `catalogue_admin.py`'s admin detail route (any status, issue #228) -
          *     one shape, so an edit screen consuming the admin route today gets the
          *     exact same fields a public consumer of the same entry, once published,
-         *     would see.
+         *     would see. One exception (issue #239): `designations` also carries
+         *     retired rows on the admin route, because its reader is an editor
+         *     deciding against editorial history rather than an implementer who has
+         *     no use for it - see `queries.load_designations`'s own docstring.
+         *     `bindings` and `properties` were already identical on both routes
+         *     before this issue and stay that way.
          */
         EntryDetail: {
             /** Business Key */

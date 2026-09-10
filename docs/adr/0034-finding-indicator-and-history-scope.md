@@ -104,7 +104,7 @@ name and discarding it before serialising.
 A `designation`/`code_binding` audit event's `entity_id` is that child row's *own* primary
 key (`nptc.audit.recording._default_entity_id`'s default), never the parent entry's - so
 `load_history` first resolves every designation and binding id attached to the entry
-(`nptc.catalogue.queries.load_designations_for_write`/`load_bindings`, both already
+(`nptc.catalogue.queries.load_designations_any_status`/`load_bindings`, both already
 unfiltered by status: a retired child's history belongs in the entry's history too), then
 queries `audit_event` for the union of `catalogue_entry`, `designation`, `code_binding` and
 `property_value_set` rows naming one of those ids. `property_value_set`'s own composite key

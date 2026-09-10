@@ -17,9 +17,9 @@ The **Code bindings** table lists every binding this entry has ever had — acti
 retired — one row each: the code, its fully specified name, its AU preferred term, its
 status, and, for a retired row, why it was retired and what replaced it if anything did.
 
-Unlike the Terms table on this same screen, retired bindings stay listed here. A retired
-code is still a code someone might be holding a reference to, and the entry that replaced
-it is exactly what that person needs to find.
+Retired bindings stay listed, the same way retired terms do in the Terms table on this
+screen. A retired code is still a code someone might be holding a reference to, and the
+entry that replaced it is exactly what that person needs to find.
 
 ## You only ever type the code
 

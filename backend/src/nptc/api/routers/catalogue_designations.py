@@ -621,7 +621,7 @@ def add_designations(
     created_ids = {designation.id for designation in created}
     rows = [
         row
-        for row in queries.load_designations_for_write(session, (entry.id,))
+        for row in queries.load_designations_any_status(session, (entry.id,))
         if row.id in created_ids
     ]
     # `warning_collisions` only ever looks for another live entry's active

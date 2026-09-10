@@ -10,6 +10,7 @@ module, layered on top of the rows created here.
 from __future__ import annotations
 
 import inspect
+import uuid
 
 import pytest
 from sqlalchemy import func, select
@@ -18,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
+from nptc.catalogue import queries
 from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import (
@@ -391,6 +393,82 @@ def test_retiring_an_already_retired_designation_is_refused(app_session: Session
         )
 
     assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.integration
+def test_load_designations_any_status_orders_repeated_retired_terms_deterministically(
+    app_session: Session,
+) -> None:
+    """Issue #239 review: `(use, language, term)` is unique only among
+    *active* designations (`ix_designation_no_duplicate_active_term`), so a
+    term added, retired, re-added and retired again leaves rows sharing all
+    three - the exact case that left `load_designations_any_status`'s
+    original `ORDER BY use, language, term` with no total order, and the
+    reason it now adds `status` (active before retired) and `id` as
+    tiebreakers.
+
+    Two things a weaker version of this test got wrong (issue #239 review,
+    round 2 - verified by reverting the `ORDER BY` fix and running this test
+    against it, which then passed 4 of 6 runs):
+
+    - **The active row's term must not already sort first alphabetically.**
+      `"Active synonym"` sorts before `"FBC"` on `term` alone, so a query
+      with no `status` in its `ORDER BY` at all would still put the active
+      row first - the assertion could not fail pre-fix. `"Zebra panel"`
+      sorts *after* `"FBC"`, so the active-first assertion only passes
+      because `status` actually leads the sort.
+    - **Two retired rows sharing a comparison key is a coin flip, not a
+      guard.** `Designation.id` is `gen_random_uuid()`-backed, so an
+      unordered pair lands in ascending `id` order about half the time by
+      chance. Four retired rows cuts that to 1 in 24 (`4!`), a much smaller
+      chance of a false pass.
+
+    Asserted against a Python-side sort by `id`, not a fixed expected order:
+    `Designation.id` is a UUID (issue #224/FR-06's precedent - never an
+    integer a test could predict), so the guarantee under test is that the
+    query's own order is deterministic and matches ascending `id` among
+    otherwise-identical rows, not that it matches insertion order. Postgres
+    orders `uuid` by byte comparison, which agrees with Python's
+    `UUID.__lt__`, so the two sorts genuinely match."""
+    entry = _new_entry(app_session)
+    active = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Zebra panel",
+        reason="Adding an active synonym that sorts after FBC",
+    )
+    app_session.flush()
+
+    retired_ids: list[uuid.UUID] = []
+    for cycle in range(4):
+        retired = add_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            term="FBC",
+            reason=f"Adding FBC synonym, cycle {cycle}",
+        )
+        app_session.flush()
+        retire_designation(
+            app_session,
+            AuditContext.system(),
+            designation=retired,
+            reason=f"Retiring FBC synonym, cycle {cycle}",
+        )
+        app_session.flush()
+        retired_ids.append(retired.id)
+
+    rows = queries.load_designations_any_status(app_session, (entry.id,))
+
+    assert [row.status for row in rows] == ["active"] + ["retired"] * 4
+    assert rows[0].id == active.id
+
+    returned_retired_ids = [row.id for row in rows[1:]]
+    assert returned_retired_ids == sorted(returned_retired_ids), (
+        "retired rows must be in ascending id order"
+    )
+    assert set(returned_retired_ids) == set(retired_ids)
 
 
 # --- Decision 1: the catalogue's en-AU preferred term lives in one place ----

@@ -567,7 +567,12 @@ class EntryDetail(EntrySummary):
     `catalogue_admin.py`'s admin detail route (any status, issue #228) -
     one shape, so an edit screen consuming the admin route today gets the
     exact same fields a public consumer of the same entry, once published,
-    would see.
+    would see. One exception (issue #239): `designations` also carries
+    retired rows on the admin route, because its reader is an editor
+    deciding against editorial history rather than an implementer who has
+    no use for it - see `queries.load_designations`'s own docstring.
+    `bindings` and `properties` were already identical on both routes
+    before this issue and stay that way.
     """
 
     model_config = ConfigDict(frozen=True)
