@@ -25,8 +25,15 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.expression import ClauseElement, Executable
 
+from nptc.catalogue.facets import (
+    FacetDescriptor,
+    _PropertyFacetSource,
+    build_facet_counts_statement,
+)
 from nptc.catalogue.maintenance import MAINTENANCE_STATUSES
 from nptc.catalogue.search import PUBLIC_STATUSES
+from nptc.registry.datatypes.string import StringHandler
+from nptc.registry.handlers import PropertyDefinitionSpec
 
 _NORMALISE_SQL = text("SELECT nptc_search_text(:value)")
 
@@ -440,6 +447,98 @@ def test_the_real_search_query_plans_against_the_trigram_indexes(
     # this assertion.
     assert "Filter: (nptc_search_text(" not in plan, plan
     assert "Filter: (to_tsvector(" not in plan, plan
+
+
+def _scale_facet_descriptor(key: str, order: int) -> FacetDescriptor:
+    """A synthetic `string` facet - built the way `load_facet_context` builds
+    one, a handler plus a spec - purely to vary *how many* descriptors
+    `build_facet_counts_statement` unions. No real `PropertyDefinition` or
+    `property_value` row is needed: this test's claim is about the scoring
+    CTE's own scan count, which does not depend on whether the property has
+    data. `test_db_property_index_plan.py`'s own facet test already covers
+    that one facet's aggregation reaches issue #54's generated index."""
+    return FacetDescriptor(
+        key=key,
+        label=key,
+        display_order=order,
+        source=_PropertyFacetSource(
+            handler=StringHandler(),
+            spec=PropertyDefinitionSpec(
+                key=key,
+                label=key,
+                datatype="string",
+                cardinality="0..1",
+                scope=frozenset({"submission", "maintenance"}),
+                required_for_submission=False,
+                required_for_publication=False,
+                binding=None,
+                filterable=True,
+                constraints={},
+            ),
+        ),
+    )
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize("facet_count", [2, 5], ids=lambda n: f"{n}_facets")
+def test_the_combined_facet_counts_statement_scans_the_scoring_cte_a_fixed_number_of_times(
+    db: Connection, facet_count: int
+) -> None:
+    """Issue #275's own claim, at the plan level: the scoring scan itself -
+    the four trigram and four full-text `Index Cond`s - must appear the
+    same fixed number of times whatever the facet count is, because
+    `build_facet_counts_statement` gives Postgres several references to the
+    same `scored` CTE object and Postgres materialises a CTE referenced more
+    than once rather than re-planning it per reference. Before issue #275,
+    `compute_facets` submitted one statement per facet, each embedding its
+    own copy of the CTE - invisible to `test_api_public_search.py`'s
+    count/result parity test, which passes identically either way, and
+    visible only as a plan that grows with the facet count.
+
+    Built through `build_facet_counts_statement` and
+    `nptc.catalogue.search._matching_entry_ids` themselves, for the same
+    reason every other plan test in this module explains the real
+    statement rather than a hand-copied approximation of it.
+    """
+    from nptc.catalogue import search
+
+    db.execute(_BULK_ENTRIES_SQL, {"count": _ROW_COUNT})
+    db.execute(_BULK_DESIGNATIONS_SQL)
+    db.execute(
+        _BULK_BINDINGS_SQL,
+        {"bindings": _BINDING_COUNT, "candidates": _CODE_CANDIDATES},
+    )
+    db.execute(text("ANALYZE catalogue_entry"))
+    db.execute(text("ANALYZE designation"))
+    db.execute(text("ANALYZE code_binding"))
+    db.execute(
+        text("SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"),
+        {"threshold": 0.3},
+    )
+    db.execute(text("SET LOCAL enable_seqscan = off"))
+
+    term: str = db.execute(_ONE_TERM_SQL).scalar_one()
+    descriptors = tuple(
+        _scale_facet_descriptor(f"test_scale_facet_{i}", i) for i in range(facet_count)
+    )
+    scored = search._SCORED_SQL.cte("scored")
+
+    def base_for(descriptor: FacetDescriptor) -> object:
+        return search._matching_entry_ids(scored, (), statuses=PUBLIC_STATUSES)
+
+    statement = build_facet_counts_statement(descriptors, base_for)
+    assert statement is not None
+
+    plan = _explain(db, statement, dict(search._text_parameters(term, statuses=PUBLIC_STATUSES)))
+
+    # Four trigram scans, four full-text scans, one code equality - exactly
+    # as many as `test_the_real_search_query_plans_against_the_trigram_indexes`
+    # asserts for the single-page statement, and unchanged between 2 and 5
+    # facets: the claim this test exists for.
+    assert plan.count("Index Cond: (nptc_search_text(") == 4, plan
+    assert plan.count("Index Cond: (to_tsvector(") == 4, plan
+    assert plan.count("Index Cond: (code = ") == 1, plan
 
 
 @pytest.mark.req("FR-14")

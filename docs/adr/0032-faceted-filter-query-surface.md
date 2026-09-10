@@ -232,14 +232,58 @@ by hand.
   `,`, so a value containing a literal comma could digest identically to two separate
   repeated values — length-prefixing every value closes it regardless of content). All
   three are now refused with a 422 and covered by a test at both the unit and HTTP layer.
-- Computing every facet's bucket counts costs one query per facet, and each one re-scans
-  and re-scores the whole matched set independently — Postgres does not share a CTE's
-  result across separately-submitted statements. That cost is bounded by the number of
-  `filterable` properties, not by `FACET_BUCKET_CAP`, and grows as an administrator marks
-  more properties filterable (FR-09). Tracked as a performance follow-up (#275) rather than
-  fixed here: it is a latency question, not a correctness one, and the fix (combining the
-  per-facet aggregations into one statement) is independent of the query surface this ADR
-  settles.
+- Computing every facet's bucket counts used to cost one query per facet, and each one
+  re-scanned and re-scored the whole matched set independently — Postgres does not share a
+  CTE's result across separately-submitted statements. That cost was bounded by the number
+  of `filterable` properties, not by `FACET_BUCKET_CAP`, and grew as an administrator marked
+  more properties filterable (FR-09). Fixed in issue #275, after landing as a tracked
+  follow-up here: it was a latency question, not a correctness one, so the fix is
+  independent of the query surface this ADR settles.
+
+  `nptc.catalogue.facets.build_facet_counts_statement` unions every facetable descriptor's
+  `build_facet_count_statement` — reused verbatim, unchanged — into one statement, wrapping
+  each branch in its own subquery so its own `LIMIT FACET_BUCKET_CAP + 1` and grouping
+  expression survive the union untouched. Every branch closes over the *same* scored-CTE
+  object the caller supplies, and a CTE referenced more than once is what Postgres
+  materialises rather than re-plans per reference — so the expensive scan happens once per
+  request regardless of facet count. `compute_facets` executes that one statement and splits
+  the rows back into each facet's own buckets in Python, ordered by a `bucket_rank` window
+  function computed per branch, before the union, over each branch's own still-typed `value`
+  column (`row_number() OVER (ORDER BY bucket_count DESC, value ASC)`) — not by the `value`
+  column the union itself exposes, which is cast to `TEXT` so `UNION ALL` can share one
+  column across handlers whose native value types differ (`text`, `numeric`). A first version
+  of this statement ordered on the cast column directly; a PR #315 review caught that this
+  reorders a `positiveInt` facet's ties (`'10' < '100' < '2'` as text, `2 < 10 < 100` as
+  numbers) and, worse, changes which row the bucket cap truncates away, since the inner
+  `LIMIT` keeps the correct top 21 by numeric order but the Python-side slice then drops
+  whichever arrives 21st in the outer statement's own order. `test_db_property_index_plan.py`
+  now asserts the served order for a numeric facet directly.
+
+  **Why not `GROUPING SETS`.** Each facet's population differs (a facet's own selection is
+  excluded from its own counts, above), and each facet's grouping expression comes from a
+  different property's handler, so there is no single `GROUP BY` base a `GROUPING SETS`
+  formulation could share across facets — a `UNION ALL` of independently-based aggregations
+  was the shape that fit, not a stylistic preference.
+
+  **What this trades away.** The old N separate statements gave the planner N separate,
+  smaller planning problems; the combined statement gives it one planning problem sized by
+  every facet at once — up to `FILTER_VALUE_CAP` (50) `EXISTS` branches per facet, times the
+  facet count, in a single planner invocation. Total query *work* is no worse (each branch
+  still costs what it always cost), but the planner's *search space* for that one invocation
+  is larger. Not judged a blocker: planning cost for this shape of query is not the
+  bottleneck NFR-32 is aimed at, and nothing here has shown otherwise.
+
+  **Why the threshold round trip (`_SET_THRESHOLD_SQL`) was considered and kept.**
+  `search_facets` re-issues it even though `search_entries` already set it earlier in the
+  same request/transaction. Folding it away would save one `set_config` round trip on a
+  local socket, at the cost of `search_facets` trusting that an earlier, unrelated call set
+  the GUC it depends on rather than asserting its own precondition — not a trade this ADR's
+  threshold-discipline (`search.py`'s own docstring) is willing to make for one round trip.
+
+  Proof: `test_db_search_index.py`'s `EXPLAIN` test shows the scoring scan's own `Index
+  Cond` count fixed across 2 and 5 synthetic facets, and `test_api_public_search.py`'s
+  statement-count test shows `compute_facets` issuing exactly one statement whatever the
+  seeded catalogue's real facet count is.
 - A maintainer review round found four more gaps, all now closed. `_request_digest` bound
   the cursor to `q` and the filter set by concatenating them, and only the filter side was
   length-prefixed — `q` is arbitrary caller-supplied text too, so it could in principle end

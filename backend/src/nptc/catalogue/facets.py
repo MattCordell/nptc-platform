@@ -69,7 +69,18 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
 from typing import cast as type_cast
 
-from sqlalchemy import ColumnElement, Select, Text, bindparam, cast, distinct, exists, func, or_
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    Text,
+    bindparam,
+    cast,
+    distinct,
+    exists,
+    func,
+    or_,
+    union_all,
+)
 from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import literal
@@ -105,6 +116,7 @@ __all__ = [
     "UnknownFilterKeyError",
     "UnsupportedFilterOperatorError",
     "build_facet_count_statement",
+    "build_facet_counts_statement",
     "compute_facets",
     "filter_digest_material",
     "filter_predicates",
@@ -128,12 +140,11 @@ FACET_BUCKET_CAP: Final[int] = 20
 #: bounds the *response*; nothing bounded the *request* before this existed.
 #: For any operator but `IN`, `_selection_predicate` builds one correlated
 #: `EXISTS` subquery per value and `or_`s them, so an uncapped repeat count
-#: is an uncapped `OR` chain on an unauthenticated endpoint - and
-#: `compute_facets` re-runs that chain, embedded in the whole scored CTE,
-#: once per facet (the query-cost amplification issue #275 tracks). In the
-#: same spirit as `limit`'s 200: an invented number, not a tuned one, and
-#: named here rather than left implicit in whatever the query planner
-#: happens to tolerate.
+#: is an uncapped `OR` chain on an unauthenticated endpoint - and every
+#: facetable descriptor's chain is embedded in the one statement
+#: `compute_facets` runs (issue #275). In the same spirit as `limit`'s 200:
+#: an invented number, not a tuned one, and named here rather than left
+#: implicit in whatever the query planner happens to tolerate.
 FILTER_VALUE_CAP: Final[int] = 50
 
 #: `?filter.discipline=chem&filter.discipline=haem`. The dotted prefix keeps
@@ -225,8 +236,8 @@ class TooManyFilterValuesError(FilterRefusedError):
     `FACET_BUCKET_CAP` bounds a facet's *response*; this is the request-side
     counterpart. Without it, any operator but `IN` turns into one correlated
     `EXISTS` subquery per value, `or_`-ed together, with no upper bound but
-    the query string's own length limit - and `compute_facets` re-runs that
-    chain, embedded in the whole scored CTE, once per facet on the page."""
+    the query string's own length limit - and every facetable descriptor
+    carries its own chain into the one statement `compute_facets` runs."""
 
 
 class FilterValueError(FilterRefusedError):
@@ -823,6 +834,83 @@ def build_facet_count_statement(
     )
 
 
+def build_facet_counts_statement(
+    descriptors: Sequence[FacetDescriptor],
+    base_for: Callable[[FacetDescriptor], Select[Any]],
+) -> Select[Any] | None:
+    """Every facetable descriptor's buckets, unioned into one statement - or
+    `None` if none of `descriptors` can be grouped at all.
+
+    Issue #275: `compute_facets` used to call `build_facet_count_statement`
+    once per descriptor, and every one of those statements embedded its own
+    copy of the caller's scored CTE - which Postgres does not share across
+    separately-submitted statements, so the expensive scan the CTE performs
+    ran once per facet. A `UNION ALL` of the same per-facet aggregations
+    inside *one* statement instead gives Postgres several references to the
+    one CTE object `base_for` closes over, which is what makes it
+    materialise the scan once regardless of how many facets are requested.
+
+    `build_facet_count_statement` is reused **verbatim** as each branch,
+    unmodified - that is what keeps `test_db_property_index_plan.py`'s
+    `EXPLAIN` of it still proving #54's partial index, and keeps this
+    statement's truncation semantics (`FACET_BUCKET_CAP + 1` rows per facet)
+    identical to the old one-execute-per-facet behaviour. Each branch is
+    wrapped in its own subquery precisely so its own `LIMIT` survives the
+    union rather than applying to the combined row set.
+
+    Three columns are added over what `build_facet_count_statement` returns:
+    a `facet_key` literal, so the combined rows can be attributed back to
+    their descriptor; a `Text` cast on `value`, because the branches' value
+    types are heterogeneous (`text` for `string`/`code`/`status`, `numeric`
+    for `positiveInt`) and `UNION ALL` requires one type per column; and a
+    `bucket_rank` - `row_number() OVER (ORDER BY bucket_count DESC, value
+    ASC)`, computed **before** the `Text` cast, directly over `wrapped`'s own
+    still-typed `value` column.
+
+    That ordering, not the cast one, is what the outer statement sorts by
+    (PR #315 review). A `positiveInt` facet's `value` is `numeric` - `'10' <
+    '100' < '2'` as text, but `2 < 10 < 100` as numbers - so ordering the
+    union on the *cast* column would both reorder a numeric facet's ties on
+    `bucket_count` and, worse, change which row the cap truncates: the inner
+    `LIMIT FACET_BUCKET_CAP + 1` keeps the correct top 21 by numeric order,
+    but `compute_facets` slices `rows[:FACET_BUCKET_CAP]` off whatever order
+    the rows arrive in, so a text-ordered outer sort drops the row that is
+    21st in text order rather than the one that was 21st - and least
+    relevant - numerically. `bucket_rank` is a window function over one
+    branch's own (already-limited) row set, so it never needs a
+    `PARTITION BY`: each branch's numbering restarts at 1 independently,
+    before the branches are ever unioned together.
+
+    The cast lives in this wrapper, not inside `build_facet_count_statement`,
+    so the grouping expression - and therefore the index plan the other
+    module proves - is untouched.
+    """
+    branches: list[Select[Any]] = []
+    for descriptor in descriptors:
+        inner = build_facet_count_statement(descriptor, base_for(descriptor))
+        if inner is None:
+            continue
+        wrapped = inner.subquery(f"facet_counts_{descriptor.key}")
+        bucket_rank = (
+            func.row_number()
+            .over(order_by=(wrapped.c.bucket_count.desc(), wrapped.c.value.asc()))
+            .label("bucket_rank")
+        )
+        branches.append(
+            sa_select(
+                literal(descriptor.key).label("facet_key"),
+                cast(wrapped.c.value, Text).label("value"),
+                wrapped.c.label.label("label"),
+                wrapped.c.bucket_count.label("bucket_count"),
+                bucket_rank,
+            )
+        )
+    if not branches:
+        return None
+    combined = union_all(*branches).subquery("facet_counts")
+    return sa_select(combined).order_by(combined.c.facet_key.asc(), combined.c.bucket_rank.asc())
+
+
 def compute_facets(
     session: Session,
     *,
@@ -833,10 +921,12 @@ def compute_facets(
 ) -> tuple[Facet, ...]:
     """Every facet's buckets, counted against the current result set.
 
-    One statement per facet, each one `COUNT(DISTINCT entry_id)` grouped by
-    the handler's own facet expression - see the module docstring on why
-    `DISTINCT` and why the facet's own selection is excluded from its own
-    base.
+    One statement for every facetable descriptor (issue #275), unioning each
+    one's `COUNT(DISTINCT entry_id)` grouped by the handler's own facet
+    expression - see the module docstring on why `DISTINCT` and why the
+    facet's own selection is excluded from its own base, and
+    `build_facet_counts_statement` on why one statement rather than one per
+    facet costs the scoring scan once regardless of facet count.
 
     **This is the one place a `COUNT` over the catalogue is legitimate**,
     and `nptc.catalogue.queries`'s own docstring records the exception. That
@@ -847,11 +937,19 @@ def compute_facets(
     it is served from #54's per-property partial index rather than a scan of
     `catalogue_entry`.
     """
+
+    def base_for(descriptor: FacetDescriptor) -> Select[Any]:
+        return base_entry_ids(filter_predicates(selections, excluding=descriptor.key))
+
+    statement = build_facet_counts_statement(context.descriptors, base_for)
+    rows_by_key: dict[str, list[Any]] = {}
+    if statement is not None:
+        for row in session.execute(statement, dict(params or {})).all():
+            rows_by_key.setdefault(row.facet_key, []).append(row)
+
     facets: list[Facet] = []
     for descriptor in context.descriptors:
-        base = base_entry_ids(filter_predicates(selections, excluding=descriptor.key))
-        statement = build_facet_count_statement(descriptor, base)
-        if statement is None:
+        if not descriptor.facetable:
             facets.append(
                 Facet(
                     key=descriptor.key,
@@ -862,7 +960,7 @@ def compute_facets(
                 )
             )
             continue
-        rows = session.execute(statement, dict(params or {})).all()
+        rows = rows_by_key.get(descriptor.key, [])
         truncated = len(rows) > FACET_BUCKET_CAP
         buckets = tuple(
             FacetBucket(

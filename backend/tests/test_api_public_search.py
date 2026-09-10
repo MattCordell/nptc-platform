@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
@@ -625,6 +625,78 @@ def test_flipping_filterable_makes_a_property_a_facet_with_no_restart(
     for bucket in facet["buckets"]:
         keys = _keys(api, **{"q": _seed.CANONICAL_TERM, f"filter.{key}": bucket["value"]})
         assert len(keys) == bucket["count"]
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize("extra_filterable_properties", [0, 2], ids=["baseline", "two_more"])
+def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
+    api: ApiTestApp,
+    seeded: SeededCatalogue,
+    app_db: Connection,
+    extra_filterable_properties: int,
+) -> None:
+    """Issue #275's own acceptance criterion, asserted at the statement
+    level rather than only the timing level a wall-clock test would give:
+    `compute_facets` must issue exactly one statement embedding the scoring
+    scan, however many `filterable` properties exist, so a future
+    reintroduction of the per-facet loop fails this test outright rather
+    than merely running slower.
+
+    `volume_ml` and `flippable` are seeded non-filterable (`SeededCatalogue`'s
+    own docstring); flipping either through the real admin `PATCH` route -
+    the same one `test_flipping_filterable_makes_a_property_a_facet_with_no_restart`
+    exercises - raises the facet count, which is the whole point of
+    parametrising over 0 and 2 extra: the assertion below must hold
+    identically either way.
+    """
+    admin_token = _admin_token(api, subject="sub-fr16-stmt-count")
+    for key in (seeded.volume_property_key, seeded.flippable_property_key)[
+        :extra_filterable_properties
+    ]:
+        current = api.get(f"/registry/properties/{key}", token=admin_token)
+        assert current.status_code == 200, current.text
+        patched = api.request(
+            "PATCH",
+            f"/registry/properties/{key}",
+            token=admin_token,
+            json={
+                "expected_row_version": current.json()["row_version"],
+                "reason": "Raising the facet count for the #275 statement-count regression test.",
+                "filterable": True,
+            },
+        )
+        assert patched.status_code == 200, patched.text
+
+    statements: list[str] = []
+
+    def _record(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(app_db, "before_cursor_execute", _record)
+    try:
+        response = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM})
+    finally:
+        event.remove(app_db, "before_cursor_execute", _record)
+    assert response.status_code == 200, response.text
+
+    # Every statement embedding the scoring scan carries its inner CTE's own
+    # name verbatim (`_SCORED_SQL`'s `WITH matches AS (...`) - the result
+    # page's one, and, since issue #275, the one combined statement for
+    # every facet. Exactly two, never N+1, whatever N is.
+    scored_statements = [s for s in statements if "matches AS (" in s]
+    assert len(scored_statements) == 2, (
+        "expected exactly 2 statements embedding the scoring scan (the result page, "
+        f"and one combined statement for every facet), got {len(scored_statements)}:\n"
+        + "\n---\n".join(scored_statements)
+    )
 
 
 # --- FR-16 refusals -------------------------------------------------------

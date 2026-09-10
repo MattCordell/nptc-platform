@@ -18,7 +18,11 @@ uses #54's generated index.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from sqlalchemy import Select
+from sqlalchemy import select as sa_select
 from sqlalchemy.dialects import postgresql
 
 from nptc.catalogue.facets import (
@@ -32,12 +36,14 @@ from nptc.catalogue.facets import (
     TooManyFilterValuesError,
     UnknownFilterKeyError,
     UnsupportedFilterOperatorError,
+    build_facet_counts_statement,
     filter_digest_material,
     filter_predicates,
     parse_filters,
 )
 
 from nptc.catalogue.search import _request_digest  # isort: skip
+from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.datatypes.code import CodeHandler
 from nptc.registry.datatypes.decimal import DecimalHandler
 from nptc.registry.datatypes.positive_int import PositiveIntHandler
@@ -490,3 +496,45 @@ def test_the_bucket_cap_is_a_named_constant() -> None:
     """ADR-0032 argues the number; this asserts it is stated once rather
     than repeated at a call site where it could drift."""
     assert FACET_BUCKET_CAP == 20
+
+
+# --- the combined statement (issue #275) -----------------------------------
+
+
+def _base_for(descriptor: FacetDescriptor) -> Select[Any]:
+    """A stand-in for `search._matching_entry_ids` - what matters to this
+    module's unit tests is the shape `build_facet_counts_statement` unions,
+    not a real scored CTE (that half is `test_db_search_index.py`'s job)."""
+    return sa_select(CatalogueEntry.id)
+
+
+@pytest.mark.req("FR-16")
+def test_the_combined_statement_still_renders_every_property_key_as_a_literal(
+    context: FacetContext,
+) -> None:
+    """`build_facet_counts_statement` (issue #275) reuses
+    `build_facet_count_statement` verbatim as each union branch - this is
+    what keeps `test_db_property_index_plan.py`'s `EXPLAIN` of that function
+    still proving #54's partial index. Asserted here at the SQL-text level,
+    the same way `test_the_property_key_is_rendered_as_a_literal_not_a_placeholder`
+    checks a single filter predicate."""
+    statement = build_facet_counts_statement(context.descriptors, _base_for)
+    assert statement is not None
+    rendered = _rendered(statement)
+    assert "'specimen'" in rendered
+    assert "'discipline'" in rendered
+    assert "'volume_ml'" in rendered
+    # `turnaround_days` is filterable but not facetable (a `decimal`) - it
+    # contributes no branch, so its key never appears.
+    assert "'turnaround_days'" not in rendered
+
+
+@pytest.mark.req("FR-16")
+def test_the_combined_statement_is_none_when_nothing_is_facetable(
+    context: FacetContext,
+) -> None:
+    """Zero facetable descriptors -> no statement at all, so `compute_facets`
+    executes nothing rather than a `UNION ALL` of zero branches."""
+    only_ungroupable = tuple(d for d in context.descriptors if not d.facetable)
+    assert only_ungroupable
+    assert build_facet_counts_statement(only_ungroupable, _base_for) is None

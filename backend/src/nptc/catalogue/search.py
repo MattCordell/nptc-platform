@@ -699,9 +699,10 @@ def _parse_cursor(
 def _text_parameters(q: str, *, statuses: Sequence[str] = PUBLIC_STATUSES) -> dict[str, Any]:
     """Every value `_SCORED_SQL` binds.
 
-    Kept in one function because the CTE is now used by several statements
-    - the result page, and one aggregation per facet - and several copies
-    of this dict would be several places for a weight to go stale.
+    Kept in one function because the CTE is used by two statements - the
+    result page, and the one combined aggregation for every facet (issue
+    #275) - and two copies of this dict would be two places for a weight to
+    go stale.
 
     `statuses` defaults to `PUBLIC_STATUSES` for every existing caller
     (`/catalogue/search`); issue #266's maintenance search passes
