@@ -1,6 +1,6 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import {
@@ -22,10 +22,12 @@ import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import {
   activeFilterEntries,
+  changeSort,
   clearAllFilters,
   filterSelections,
   toggleFilterValue,
 } from "../router/search-params.ts";
+import type { AdminListingSort } from "../router/search-params.ts";
 
 /**
  * The admin catalogue list screen (issue #267; FR-14, FR-15, FR-16, FR-36,
@@ -82,6 +84,22 @@ function selectionAnnouncement(count: number): string {
 }
 
 type PropertyDefinition = components["schemas"]["PropertyDefinitionResponse"];
+
+/**
+ * The `sort` control's own options (issue #287), labelled to match the
+ * `DataTable` column headers below rather than the raw parameter names -
+ * `business_key`'s column is headed "Code", not "Business key".
+ */
+const SORT_OPTIONS: { value: AdminListingSort; label: string }[] = [
+  { value: "business_key", label: "Code" },
+  { value: "preferred_term", label: "Requesting term" },
+  { value: "updated_at", label: "Last changed" },
+  { value: "status", label: "Status" },
+];
+
+function sortLabel(sort: AdminListingSort): string {
+  return SORT_OPTIONS.find((option) => option.value === sort)?.label ?? sort;
+}
 
 /**
  * A facet's display name for the active-filter chip row (issue #289). `status`
@@ -269,6 +287,7 @@ export function AdminCatalogueListPage() {
   const listQuery = useAdminEntriesList({
     limit: 50,
     after: search.after,
+    sort: search.sort,
     filters,
     enabled: mode === "browse",
   });
@@ -384,6 +403,14 @@ export function AdminCatalogueListPage() {
     void navigate({ search: (prev) => toggleFilterValue(prev, facetKey, value) });
   }
 
+  // Issue #287. Only meaningful in browse mode - the `<select>` itself is
+  // disabled while `mode === "search"`, so this cannot fire from there.
+  function handleSortChange(event: ChangeEvent<HTMLSelectElement>) {
+    const sort = event.target.value as AdminListingSort;
+    void navigate({ search: (prev) => changeSort(prev, sort) });
+    announce(`Sorted by ${sortLabel(sort)}.`);
+  }
+
   function handleClearAllFilters() {
     void navigate({ search: (prev) => clearAllFilters(prev) });
   }
@@ -432,6 +459,26 @@ export function AdminCatalogueListPage() {
         />
         <button type="submit">Search</button>
       </form>
+
+      {/* Issue #287. Disabled in search mode: `GET /catalogue/admin/search`
+          stays relevance-ranked, matching the backend's own scope for this
+          issue, so there is nothing here to send a `sort` to while a query
+          is active. */}
+      <div>
+        <label htmlFor="catalogue-list-sort">Sort by</label>
+        <select
+          id="catalogue-list-sort"
+          value={search.sort ?? "business_key"}
+          onChange={handleSortChange}
+          disabled={mode === "search"}
+        >
+          {SORT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
 

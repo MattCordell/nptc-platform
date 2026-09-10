@@ -200,6 +200,24 @@ function asStringArray(value: unknown): string[] {
 }
 
 /**
+ * The `sort` values `GET /catalogue/admin/entries` accepts (issue #287),
+ * matching `nptc.catalogue.maintenance.SortName` on the backend. Only the
+ * *browse* surface is sortable - `GET /catalogue/admin/search` stays
+ * relevance-ranked, matching the backend's own scope for this issue - so
+ * this is a separate list from `CATALOGUE_SORTS` above rather than a shared
+ * one a search-mode caller could otherwise send.
+ */
+const ADMIN_LISTING_SORTS = ["business_key", "preferred_term", "updated_at", "status"] as const;
+export type AdminListingSort = (typeof ADMIN_LISTING_SORTS)[number];
+
+function asAdminListingSort(value: unknown): AdminListingSort {
+  const candidate = asString(value);
+  return (ADMIN_LISTING_SORTS as readonly string[]).includes(candidate)
+    ? (candidate as AdminListingSort)
+    : "business_key";
+}
+
+/**
  * Search state for `/admin/catalogue/` (issue #267, FR-16, FR-36).
  *
  * Deliberately flat, not `{ q, after, filters: Record<string, string[]> }`:
@@ -216,10 +234,17 @@ function asStringArray(value: unknown): string[] {
  * keyset-paginated (ADR-0024), so there is no page number to restore, only
  * "the cursor from the last page the caller saw" - see `docs/adr/
  * 0024-catalogue-search-and-pagination.md`.
+ *
+ * `sort` (issue #287) is optional, like `after`, and for the identical
+ * reason: `business_key` is the default both here and on the backend, so
+ * there is nothing to gain from always writing it into the URL - unlike
+ * `CatalogueSearch.sort` above, which has no such backend default to fall
+ * back to.
  */
 export type AdminCatalogueSearch = {
   q: string;
   after?: string;
+  sort?: AdminListingSort;
 } & {
   [key: `${typeof FILTER_PARAM_PREFIX}${string}`]: string[] | undefined;
 };
@@ -238,6 +263,10 @@ export function validateAdminCatalogueSearch(
   const after = asString(search.after);
   if (after.length > 0) {
     validated.after = after;
+  }
+  const sort = asAdminListingSort(search.sort);
+  if (sort !== "business_key") {
+    validated.sort = sort;
   }
   for (const [key, value] of Object.entries(search)) {
     if (!key.startsWith(FILTER_PARAM_PREFIX)) {
@@ -297,9 +326,15 @@ export function activeFilterEntries(
  * own handler, for the same reason `toggleFilterValue` drops `after`: the
  * population being paged over no longer exists once the filter set changes
  * underneath it.
+ *
+ * `sort` (issue #287) is kept, not dropped: changing the filter set does not
+ * invalidate an ordering the way changing `sort` itself does (the backend's
+ * cursor digest agrees - it binds to `sort` and the filter set
+ * independently, and a filter change alone does not need a fresh cursor for
+ * keyset *correctness*, only because this control also drops `after`).
  */
 export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSearch {
-  return { q: search.q };
+  return search.sort === undefined ? { q: search.q } : { q: search.q, sort: search.sort };
 }
 
 /**
@@ -314,6 +349,31 @@ export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSea
  * subclass refuses server-side for a search cursor (ADR-0024), applied here
  * before a stale cursor is ever sent.
  */
+/**
+ * Changes `sort` (issue #287) - the browse list screen's own `<select>`
+ * `onChange`, matching `toggleFilterValue`'s own shape below.
+ *
+ * Drops `after` for the identical reason `toggleFilterValue` does: the
+ * keyset ordering a cursor was paging over no longer exists once `sort`
+ * changes underneath it - `nptc.catalogue.maintenance`'s cursor digest
+ * refuses a replayed cursor server-side for exactly this reason (issue
+ * #287), and this is that same fact applied before a stale cursor is ever
+ * sent.
+ */
+export function changeSort(
+  search: AdminCatalogueSearch,
+  sort: AdminListingSort,
+): AdminCatalogueSearch {
+  const updated: AdminCatalogueSearch = { ...search };
+  delete updated.after;
+  if (sort === "business_key") {
+    delete updated.sort;
+  } else {
+    updated.sort = sort;
+  }
+  return updated;
+}
+
 export function toggleFilterValue(
   search: AdminCatalogueSearch,
   facetKey: string,

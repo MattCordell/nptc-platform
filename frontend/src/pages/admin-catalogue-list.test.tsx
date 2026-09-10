@@ -593,6 +593,95 @@ describe("AdminCatalogueListPage", () => {
     });
   });
 
+  // Issue #287: filter *and* sort state must survive a reload and a pasted
+  // link (FR-16's second acceptance criterion). Only the browse route is
+  // sortable - `GET /catalogue/admin/search` stays relevance-ranked.
+  describe("sort", () => {
+    it("defaults to Code (business_key) with no sort in the URL", async () => {
+      const sentSorts: (string | null)[] = [];
+      stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/catalogue/admin/entries")) {
+            return null;
+          }
+          sentSorts.push(call.searchParams.get("sort"));
+          return ENTRIES_OK;
+        },
+      });
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
+        "business_key",
+      );
+      expect(sentSorts).not.toHaveLength(0);
+      expect(sentSorts.every((sort) => sort === null)).toBe(true);
+    });
+
+    it("restores a sort selection from a pasted link", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?sort=updated_at`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
+        "updated_at",
+      );
+    });
+
+    it("navigates with the chosen sort, sends it to the API, and announces it", async () => {
+      const sentSorts: (string | null)[] = [];
+      stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/catalogue/admin/entries")) {
+            return null;
+          }
+          sentSorts.push(call.searchParams.get("sort"));
+          return ENTRIES_OK;
+        },
+      });
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      await user.selectOptions(screen.getByRole("combobox", { name: "Sort by" }), "status");
+
+      await waitFor(() => expect(router.state.location.href).toContain("sort=status"));
+      await waitFor(() => expect(sentSorts).toContain("status"));
+      expect(await screen.findByRole("status")).toHaveTextContent("Sorted by Status.");
+    });
+
+    it("drops the after cursor once sort is changed from a later page", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(`${LIST_URL}?after=${DRAFT_KEY}`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      expect(router.state.location.href).toContain(`after=${DRAFT_KEY}`);
+
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Sort by" }),
+        "preferred_term",
+      );
+
+      await waitFor(() =>
+        expect(router.state.location.href).toContain("sort=preferred_term"),
+      );
+      expect(router.state.location.href).not.toContain(`after=${DRAFT_KEY}`);
+    });
+
+    it("disables the sort control while in search mode", async () => {
+      stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?q=glucose`, SIGNED_IN);
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toBeDisabled();
+    });
+  });
+
   // Acceptance criterion: rows can be selected individually and all at
   // once, and the selection is announced accessibly.
   describe("row selection", () => {

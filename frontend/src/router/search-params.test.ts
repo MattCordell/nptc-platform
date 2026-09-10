@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeFilterEntries,
+  changeSort,
   clearAllFilters,
   filterSelections,
   toggleFilterValue,
@@ -197,6 +198,25 @@ describe("validateAdminCatalogueSearch", () => {
     );
     expect(twice).toEqual(once);
   });
+
+  // Issue #287. `sort` is optional, matching `after`'s own precedent: the
+  // default (`business_key`) is not worth always writing into the URL,
+  // unlike `CatalogueSearch.sort` above, which has no backend default to
+  // fall back to.
+  it("omits sort from the output when it is business_key, the default", () => {
+    expect(validateAdminCatalogueSearch({ sort: "business_key" })).toEqual({ q: "" });
+  });
+
+  it("keeps a recognised, non-default sort", () => {
+    expect(validateAdminCatalogueSearch({ sort: "updated_at" })).toEqual({
+      q: "",
+      sort: "updated_at",
+    });
+  });
+
+  it("degrades an unrecognised sort to the default rather than throwing", () => {
+    expect(validateAdminCatalogueSearch({ sort: "nonsense" })).toEqual({ q: "" });
+  });
 });
 
 describe("filterSelections", () => {
@@ -330,6 +350,47 @@ describe("clearAllFilters", () => {
 
   it("is a no-op on a search with no filters", () => {
     expect(clearAllFilters({ q: "glucose" })).toEqual({ q: "glucose" });
+  });
+
+  // Issue #287: clearing filters does not invalidate an ordering the way
+  // changing sort itself does, so sort survives it unlike after.
+  it("keeps sort while dropping the after cursor", () => {
+    const search: AdminCatalogueSearch = {
+      q: "glucose",
+      after: "NPTC-000123",
+      sort: "updated_at",
+      "filter.status": ["draft"],
+    };
+
+    expect(clearAllFilters(search)).toEqual({ q: "glucose", sort: "updated_at" });
+  });
+});
+
+describe("changeSort", () => {
+  it("sets sort and drops the after cursor", () => {
+    const search: AdminCatalogueSearch = { q: "glucose", after: "NPTC-000123" };
+
+    expect(changeSort(search, "updated_at")).toEqual({ q: "glucose", sort: "updated_at" });
+  });
+
+  it("omits sort when changed back to business_key, the default", () => {
+    const search: AdminCatalogueSearch = {
+      q: "glucose",
+      after: "NPTC-000123",
+      sort: "updated_at",
+    };
+
+    expect(changeSort(search, "business_key")).toEqual({ q: "glucose" });
+  });
+
+  it("leaves filters untouched", () => {
+    const search: AdminCatalogueSearch = { q: "", "filter.status": ["draft"] };
+
+    expect(changeSort(search, "status")).toEqual({
+      q: "",
+      sort: "status",
+      "filter.status": ["draft"],
+    });
   });
 });
 
