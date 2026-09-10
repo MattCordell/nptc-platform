@@ -58,21 +58,26 @@ A third test, `test_acquire_append_lock_is_the_literal_first_statement`,
 is a pure-`ast` guard proving the invariant the two concurrency tests above
 rely on: it does not itself prove absence of a deadlock (that is what the
 concurrency tests are for), but it does mean a future change that moves
-`acquire_append_lock` later in one of these five functions - which would
-make the concurrency tests above unreliable again, not merely slower, since
-their determinism depends on both racing sides reaching the same lock
-first - fails immediately and specifically, rather than only occasionally
-as a flaky concurrency test.
+`acquire_append_lock` later in one of the functions it checks - which
+would make the concurrency tests above unreliable again, not merely
+slower, since their determinism depends on both racing sides reaching the
+same lock first - fails immediately and specifically, rather than only
+occasionally as a flaky concurrency test.
+
+**That guard's own checklist is derived from source, not hand-maintained**
+(round-2 review: a hardcoded tuple of "the five functions this issue
+happens to touch" would silently miss a *new* writer added later to one of
+these modules - the same class of gap the issue itself is about, just
+moved into the regression test). See `_derive_required_functions`'s own
+docstring for the scan and its scope.
 """
 
 from __future__ import annotations
 
 import ast
-import inspect
-import textwrap
 import threading
 import uuid
-from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -80,15 +85,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
+import nptc.catalogue.designations as designations_module
+import nptc.catalogue.entries as entries_module
+import nptc.catalogue.property_values as property_values_module
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.collisions import DesignationCollisionError
-from nptc.catalogue.designations import add_designation, amend_designation
-from nptc.catalogue.entries import (
-    EntryChanges,
-    create_entry,
-    entry_child_write,
-    save_entry,
-)
+from nptc.catalogue.designations import add_designation
+from nptc.catalogue.entries import EntryChanges, create_entry, entry_child_write, save_entry
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
@@ -103,29 +106,86 @@ from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc_shared.terminology.stub import StubTerminologyClient
 
-#: Every function this issue requires to acquire the append lock as its own
-#: literal first statement (round-2 review) - `save_property_values_for_
-#: entries` and `entry_child_write` already did before this issue and are
-#: not re-checked here, since neither was ever the gap.
-_MUST_ACQUIRE_APPEND_LOCK_FIRST: tuple[Callable[..., object], ...] = (
-    create_entry,
-    save_entry,
-    save_property_values,
-    add_designation,
-    amend_designation,
+#: The three files issue #281's two lock-ordering cycles concern - every
+#: function whose body calls `assert_no_error_collisions` (the collision
+#: lock), mutates `row_version`, or calls `bump_entry_row_version`/
+#: `record_change`/`record_snapshot_change` (which can flush a pending
+#: `catalogue_entry` row-version mutation) lives in one of these.
+#:
+#: Not every module under `nptc.catalogue`: `bindings.py` (`code_binding`)
+#: and `local_codes.py` (`local_code`/`local_code_system`) each write a
+#: different table with no collision-key lock of their own - neither ever
+#: calls `assert_no_error_collisions` - and `bindings.py`'s own row-lock-
+#: vs-append-lock ordering was already closed by issue #60's
+#: `entry_child_write`, which this scan's own `entries.py` file already
+#: covers. Extending this same derived-guard treatment to those two
+#: modules would be a reasonable follow-up, but it is a different module's
+#: own review history, not this issue's.
+_SCAN_FILES: tuple[Path, ...] = (
+    Path(entries_module.__file__),
+    Path(property_values_module.__file__),
+    Path(designations_module.__file__),
+)
+
+#: `bump_entry_row_version` itself directly does `entry.row_version += 1`,
+#: which is exactly what `_assigns_row_version` looks for - but it is a
+#: single-purpose private helper `entry_child_write` calls *after* already
+#: acquiring the append lock (see its own docstring: "Called from inside
+#: `entry_child_write` on a clean exit"), never a top-level writer callable
+#: on its own, so requiring it to also acquire the lock itself would be
+#: requiring a redundant call inside code that is already inside the lock's
+#: scope by construction - the one documented, named exemption this guard
+#: allows, matching `test_sql_parameterisation.py`'s own convention for a
+#: justified carve-out rather than a silent gap.
+_EXEMPT_FUNCTIONS = frozenset({"bump_entry_row_version"})
+
+#: A direct call to any of these, anywhere in a function's body, means that
+#: function can take a lock `acquire_append_lock` must precede -
+#: `assert_no_error_collisions`'s own collision-key lock, or (via
+#: `bump_entry_row_version`, or `record_change`/`record_snapshot_change`'s
+#: own internal flush) the implicit `catalogue_entry` row lock.
+_DIRECT_TRIGGER_CALL_NAMES = frozenset(
+    {
+        "assert_no_error_collisions",
+        "record_change",
+        "record_snapshot_change",
+        "bump_entry_row_version",
+    }
 )
 
 
-def _first_statement_is_acquire_append_lock(func: Callable[..., object]) -> bool:
-    """Whether `func`'s body, after skipping a leading docstring, starts
-    with a bare `acquire_append_lock(<something>)` call - syntactic, like
-    `test_datatype_dispatch.py`'s own guard, not a check against the
-    imported name's identity (which module a given `acquire_append_lock`
-    was imported from does not matter here)."""
-    source = textwrap.dedent(inspect.getsource(func))
-    module = ast.parse(source)
-    (func_def,) = module.body
-    assert isinstance(func_def, ast.FunctionDef)
+def _call_names(func_def: ast.FunctionDef) -> set[str]:
+    return {
+        node.func.id
+        for node in ast.walk(func_def)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+
+def _assigns_row_version(func_def: ast.FunctionDef) -> bool:
+    """Whether `func_def`'s body directly sets some `<object>.row_version`
+    - `entry.row_version += 1` inside `bump_entry_row_version`, and
+    `save_property_values`'s identical inline bump, are what this catches;
+    a *call* to `bump_entry_row_version` is caught by `_call_names`
+    instead, not this."""
+    for node in ast.walk(func_def):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AugAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Attribute) and t.attr == "row_version" for t in targets):
+            return True
+    return False
+
+
+def _first_statement_is_acquire_append_lock(func_def: ast.FunctionDef) -> bool:
+    """Whether `func_def`'s body, after skipping a leading docstring,
+    starts with a bare `acquire_append_lock(<something>)` call -
+    syntactic, like `test_datatype_dispatch.py`'s own guard: it checks the
+    called name, not which module a given `acquire_append_lock` was
+    imported from."""
     body = func_def.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
@@ -140,22 +200,70 @@ def _first_statement_is_acquire_append_lock(func: Callable[..., object]) -> bool
     )
 
 
+def _derive_required_functions() -> dict[str, ast.FunctionDef]:
+    """Every function, across `_SCAN_FILES`, that must acquire the append
+    lock before anything else - derived from source rather than hand-
+    listed, so a new writer added to one of these three modules is caught
+    automatically rather than silently sitting outside a maintained
+    allowlist (round-2 review).
+
+    Two passes: a function is in the **base** set if `_DIRECT_TRIGGER_
+    CALL_NAMES`/`_assigns_row_version` finds it taking a contended lock
+    itself; a **closure** pass then repeatedly adds any function that
+    calls one already in the set - `save_property_values_for_entries`,
+    `save_entries` and `add_synonyms` are each a per-entry/per-term loop
+    around a base-set function and so join through this pass, not the
+    first one. Every function this scan finds - base or closure - is
+    required to itself satisfy `_first_statement_is_acquire_append_lock`,
+    never merely "the call it delegates to satisfies it": that keeps this
+    check a flat, one-shape rule (see `add_synonyms`'s and `save_entries`'
+    own docstrings for why each still calls it directly despite every
+    per-item call already re-asserting the same lock) rather than one that
+    also has to reason about whether a delegator's own preamble could
+    autoflush before it ever reaches its first delegate call - the exact
+    class of gap round-2 review found in the narrower "before the row/
+    collision lock" placement this issue's fix moved away from.
+    """
+    func_defs: dict[str, ast.FunctionDef] = {}
+    for path in _SCAN_FILES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                func_defs[node.name] = node
+
+    required = {
+        name
+        for name, func_def in func_defs.items()
+        if _call_names(func_def) & _DIRECT_TRIGGER_CALL_NAMES or _assigns_row_version(func_def)
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for name, func_def in func_defs.items():
+            if name not in required and _call_names(func_def) & required:
+                required.add(name)
+                changed = True
+
+    return {name: func_defs[name] for name in required - _EXEMPT_FUNCTIONS}
+
+
 def test_acquire_append_lock_is_the_literal_first_statement() -> None:
     """Enforces the invariant `test_bulk_and_singular_property_writes_do_
     not_deadlock` and `test_save_entry_and_entry_child_write_do_not_
     deadlock_on_the_same_collision_key` below both rely on for their own
-    determinism (see the module docstring): each of these five functions
-    must call `acquire_append_lock` before anything else, not merely
-    "early" or "before its own collision/row lock". A placement that is
-    still correct by that looser reading (e.g. after a no-op precondition
-    check) would make those two tests flaky rather than reliably red, which
-    is a worse failure mode than this guard failing loudly and immediately.
-    """
-    violations = [
-        func.__qualname__
-        for func in _MUST_ACQUIRE_APPEND_LOCK_FIRST
-        if not _first_statement_is_acquire_append_lock(func)
-    ]
+    determinism (see the module docstring): every function `_derive_
+    required_functions` finds must call `acquire_append_lock` before
+    anything else, not merely "early" or "before its own collision/row
+    lock". A placement that is still correct by that looser reading (e.g.
+    after a no-op precondition check) would make those two tests flaky
+    rather than reliably red, which is a worse failure mode than this
+    guard failing loudly and immediately."""
+    violations = sorted(
+        name
+        for name, func_def in _derive_required_functions().items()
+        if not _first_statement_is_acquire_append_lock(func_def)
+    )
     assert violations == []
 
 
