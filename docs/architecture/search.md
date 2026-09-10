@@ -249,6 +249,15 @@ says `truncated: true` when the cap bit. There is no way to page through the rem
 narrow the search instead. The number is invented, in the same category as the similarity
 threshold above, and is named once in code (`FACET_BUCKET_CAP`) and argued in ADR-0032.
 
+**One statement computes every facet's counts, not one per facet** (issue #275).
+`build_facet_counts_statement` unions each facetable descriptor's own bucket aggregation —
+`build_facet_count_statement`, unchanged — into a single `UNION ALL` statement, every branch
+referencing the *same* scored-CTE object the search half of the query built. Postgres
+materialises a CTE referenced more than once rather than re-planning it per reference, so
+the expensive scan-and-score step that ranks a query's matches runs once per request
+whatever the facet count is, rather than once per facet as it used to. `compute_facets`
+executes that one statement and buckets the rows by facet key in Python.
+
 **Labels.** A coded facet groups on the code alone and is labelled from the `display`
 stored beside it when the value was recorded. No terminology call happens on the search
 path (FR-54) — a `$lookup` per bucket would be slow on the happy path and would break
@@ -300,6 +309,8 @@ total whatever the filters are.
 | An unknown, non-filterable, badly-operated or badly-valued filter is refused | `test_api_public_search.py`, `test_catalogue_facets.py` |
 | A cursor replayed under a different filter set is refused | `test_api_public_search.py` |
 | The filter predicate reaches #54's generated index; the count reads one property, not the table | `test_db_property_index_plan.py` |
+| Every facet's counts cost one statement, whatever the facet count | `test_api_public_search.py` |
+| The scoring scan's own scan count does not grow with facet count | `test_db_search_index.py` |
 | A hidden entry is found by `GET /catalogue/admin/search` and still absent from `GET /catalogue/search` | `test_api_catalogue_admin_listing.py` |
 | The admin status facet has more than one bucket, and `?filter.status=draft` narrows rather than 422s | `test_api_catalogue_admin_listing.py` |
 
