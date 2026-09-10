@@ -625,9 +625,7 @@ describe("AdminCatalogueListPage", () => {
       await renderRoute(`${LIST_URL}?sort=updated_at`, SIGNED_IN);
       await screen.findByRole("link", { name: DRAFT_KEY });
 
-      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
-        "updated_at",
-      );
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue("updated_at");
     });
 
     it("navigates with the chosen sort, sends it to the API, and announces it", async () => {
@@ -646,7 +644,10 @@ describe("AdminCatalogueListPage", () => {
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
       await screen.findByRole("link", { name: DRAFT_KEY });
 
-      await user.selectOptions(screen.getByRole("combobox", { name: "Sort by" }), "status");
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Sort by" }),
+        "status",
+      );
 
       await waitFor(() => expect(router.state.location.href).toContain("sort=status"));
       await waitFor(() => expect(sentSorts).toContain("status"));

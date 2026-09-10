@@ -207,7 +207,12 @@ function asStringArray(value: unknown): string[] {
  * this is a separate list from `CATALOGUE_SORTS` above rather than a shared
  * one a search-mode caller could otherwise send.
  */
-const ADMIN_LISTING_SORTS = ["business_key", "preferred_term", "updated_at", "status"] as const;
+const ADMIN_LISTING_SORTS = [
+  "business_key",
+  "preferred_term",
+  "updated_at",
+  "status",
+] as const;
 export type AdminListingSort = (typeof ADMIN_LISTING_SORTS)[number];
 
 function asAdminListingSort(value: unknown): AdminListingSort {

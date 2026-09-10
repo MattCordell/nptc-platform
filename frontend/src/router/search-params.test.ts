@@ -370,7 +370,10 @@ describe("changeSort", () => {
   it("sets sort and drops the after cursor", () => {
     const search: AdminCatalogueSearch = { q: "glucose", after: "NPTC-000123" };
 
-    expect(changeSort(search, "updated_at")).toEqual({ q: "glucose", sort: "updated_at" });
+    expect(changeSort(search, "updated_at")).toEqual({
+      q: "glucose",
+      sort: "updated_at",
+    });
   });
 
   it("omits sort when changed back to business_key, the default", () => {
