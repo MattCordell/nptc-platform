@@ -84,6 +84,40 @@ function AsyncRejectingForm({ onSubmit }: { onSubmit: () => void }) {
 }
 
 /**
+ * A form that validates on change as well as on submit, whose `onSubmit`
+ * resolves successfully - the shape issue #214 exists to support. A
+ * validation error produced by typing, after a settled successful submit,
+ * must not pull focus out of the field the user is typing in.
+ */
+function ValidateOnChangeForm() {
+  const [term, setTerm] = useState("Sodium");
+  const [errors, setErrors] = useState<{ fieldId: string; message: string }[]>([]);
+
+  return (
+    <Form submitLabel="Save entry" errors={errors} onSubmit={() => Promise.resolve()}>
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => (
+          <input
+            {...controlProps}
+            type="text"
+            value={term}
+            onChange={(event) => {
+              const value = event.target.value;
+              setTerm(value);
+              setErrors(
+                value
+                  ? []
+                  : [{ fieldId: "requesting-term", message: "Enter a requesting term" }],
+              );
+            }}
+          />
+        )}
+      </Field>
+    </Form>
+  );
+}
+
+/**
  * A form whose errors can be set from outside it, without a submit - the
  * case that separates "the answer to a submit" from "an error that simply
  * appeared".
@@ -451,19 +485,37 @@ describe("Form", () => {
     expect(screen.getByRole("button", { name: "Set an error" })).toHaveFocus();
   });
 
-  it("keeps listening for the answer to a submit until an error actually arrives", async () => {
+  it("keeps listening for the answer to a void submit until an error actually arrives", async () => {
     const user = userEvent.setup();
     render(<ExternallyErroringForm />);
 
-    // The deliberate cost of not consulting `pending`: a submit leaves the
-    // form listening, so an error that turns up afterwards is treated as
-    // that submit's answer and announced. After a submit, an error is far
-    // more likely to be its answer than not - and the case that matters
-    // more, a refusal arriving several renders later, is announced at all.
+    // The deliberate cost of not consulting `pending`, for a caller whose
+    // `onSubmit` returns nothing: a submit leaves the form listening, so an
+    // error that turns up afterwards is treated as that submit's answer and
+    // announced. After a submit, an error is far more likely to be its
+    // answer than not - and the case that matters more, a refusal arriving
+    // several renders later, is announced at all. A caller whose `onSubmit`
+    // returns a promise instead gets a second, earlier disarm path on a
+    // successful settle - see "does not steal focus from a validate-on-change
+    // error after a successful submit settles" below.
     await user.click(screen.getByRole("button", { name: "Save entry" }));
     await user.click(screen.getByRole("button", { name: "Set an error" }));
 
     expect(summaryElement()).toHaveFocus();
+  });
+
+  it("does not steal focus from a validate-on-change error after a successful submit settles", async () => {
+    const user = userEvent.setup();
+    render(<ValidateOnChangeForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    await user.clear(screen.getByLabelText("Requesting term"));
+
+    expect(
+      screen.getByRole("heading", { name: "There is a problem" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Requesting term")).toHaveFocus();
   });
 
   it("announces a refusal that arrives late, from a caller that never sets pending", async () => {
