@@ -360,9 +360,17 @@ def add_synonyms(
     not by the order `terms` was given in - #149's caller should not rely
     on positional correspondence between `terms` and the return value.
 
-    No `acquire_append_lock` call of its own: this function takes no lock
-    `add_designation` does not already take on its behalf, once per call
-    (issue #281) - re-asserting it here would add nothing."""
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason `retire_designation` now does (issue #281 round-3 review): every
+    `add_designation` call below already re-asserts the same lock on this
+    function's behalf, so this call is itself a cheap, safe re-assertion,
+    not a second acquisition - kept anyway so this function's own first
+    statement satisfies the uniform invariant `test_lock_ordering.py`'s
+    derived guard checks, the same as every other writer in this module,
+    rather than relying on a reader (or that guard) reasoning transitively
+    through the loop below to see that nothing unsafe happens before the
+    first `add_designation` call."""
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
     seen: set[str] = set()
     deduplicated: list[tuple[str, str]] = []
@@ -398,7 +406,19 @@ def retire_designation(
     (`nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a privilege-
     level guarantee, matching `CatalogueEntry.status`'s own precedent for
     deprecation-not-deletion). Raises `DesignationAlreadyRetiredError`
-    rather than silently no-opping - see that class's own docstring."""
+    rather than silently no-opping - see that class's own docstring.
+
+    `acquire_append_lock` runs as the literal first statement, matching
+    every other writer in this module that reaches `record_change` (issue
+    #281 round-3 review): this function takes no *other* lock today, so
+    the ordering has no live deadlock to close yet, but a uniform "the
+    append lock is always this function's first statement" invariant,
+    with no per-function exceptions to reason about, is what
+    `test_lock_ordering.py`'s own derived guard checks - and is cheaper to
+    keep true everywhere than to justify a carve-out for the one function
+    that happens not to need it today."""
+    acquire_append_lock(session)
+
     from nptc.db.models.designation import DesignationStatus
 
     if designation.status == str(DesignationStatus.RETIRED):

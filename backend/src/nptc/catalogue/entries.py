@@ -730,7 +730,15 @@ def save_entries(
     reclassify, which sets a coded registry property (discipline,
     `origin=system`) and so must go through
     `nptc.catalogue.property_values.save_property_values_for_entries`
-    instead (issue #265)."""
+    instead (issue #265).
+
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason `add_synonyms` now does (issue #281 round-3 review): each
+    `save_entry` call below already re-asserts the same lock on this
+    function's behalf, so this is a cheap, safe re-assertion, kept so this
+    function's own first statement satisfies the same uniform invariant
+    every other writer in this package does."""
+    acquire_append_lock(session)
     return [
         save_entry(
             session,
