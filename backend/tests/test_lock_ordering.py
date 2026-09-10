@@ -1,7 +1,14 @@
 """Regression tests for issue #281: every catalogue-entry writer acquires
 the audit append lock (`nptc.audit.writer.acquire_append_lock`) before it
 can take either a `catalogue_entry` row lock or the collision-key advisory
-lock (`nptc.catalogue.collisions.assert_no_error_collisions`).
+lock (`nptc.catalogue.collisions.assert_no_error_collisions`) - as the
+*literal first statement* of the function, before any other operation
+(round-2 review: a narrower placement, taking the lock only once some
+earlier precondition had already passed, still left an ORM `select()` or
+two in between - each of which autoflushes any already-pending
+`catalogue_entry` mutation by default, so a later-placed lock could still
+be beaten by an earlier row lock depending on what the caller's session
+already had pending).
 
 Two independent lock-ordering cycles are closed by this issue - see its own
 follow-up comments and ADR-0035's addendum:
@@ -14,40 +21,58 @@ follow-up comments and ADR-0035's addendum:
   order.
 - **Collision lock vs. append lock**: `nptc.catalogue.entries.entry_child_
   write` (issue #60) already takes the append lock before its wrapped
-  body, which can reach a collision-key lock via `add_designation`/`amend_
-  designation` (issue #300's designation routes). Before this issue,
-  `save_entry`/`create_entry` took the collision lock first and the append
-  lock only via `record_change`, afterwards - the reverse order, against a
-  different lock pair.
+  body. Before this issue, `save_entry`/`create_entry`, and `add_
+  designation`/`amend_designation` themselves, took the collision-key lock
+  first and the append lock only via `record_change` - the reverse order,
+  against a different lock pair. `add_designation`/`amend_designation` now
+  take the append lock as their own first statement too, rather than
+  relying on every caller wrapping them in `entry_child_write` correctly.
 
-**Why these tests pin the interleaving with a monkeypatched delay, unlike
-`test_catalogue_collisions.py`'s own barrier-only concurrency tests.**
-Both cycles here involve two call paths with genuinely different amounts
-of work before each one reaches its first lock - unlike, say, `add_
-synonyms`' own opposite-lock-order test, where both racing calls run the
-*same* function and so reach each lock at nearly the same relative time.
-Verified empirically (against a deliberately reverted pre-#281 checkout):
-a `threading.Barrier`-only version of each test below - releasing both
-threads together and trusting real scheduling jitter to produce contention
-- passed cleanly dozens of times in a row even against the unfixed code,
-because the faster side simply finishes before the slower side ever
-attempts the contended lock. A short, deterministic delay - injected via
-`monkeypatch` into the exact `acquire_append_lock` call each production
-code path already makes, so the delay only pins *when* a real
-`pg_advisory_xact_lock`/row-lock attempt happens, never *whether* one
-does - reliably forces the actual overlap, and was confirmed (same
-reverted checkout) to reproduce a genuine Postgres `40P01` deadlock. Both
-tests below use two genuine Postgres sessions/threads (`app_engine`,
-matching `test_catalogue_collisions.py`'s own "FR-05: concurrency"
-pattern) - a single session exercising the same code path twice cannot
-reproduce a cross-transaction lock cycle at all.
+**Why a plain `threading.Barrier` is enough here, unlike an earlier version
+of these tests.** Because the append lock is now unconditionally each
+function's first statement, both sides of each race attempt the *same*
+lock before touching anything else - there is no longer any preamble for
+natural scheduling jitter to race through first. Releasing both threads
+together and letting real Postgres contention resolve it is sufficient:
+whichever thread's `acquire_append_lock` call wins holds it for its whole
+operation, and the other blocks immediately, before it could have taken
+any other lock to cycle against. (An earlier version of this fix placed
+the lock later - after the row-version/no-op precondition, just before the
+flush - and a barrier-only test against *that* code passed cleanly dozens
+of times even without the fix, because the two racing call paths' earlier
+preambles differed enough in length that the faster side simply finished
+before the slower side ever reached the contended lock. That is what
+prompted moving the lock to the literal first statement everywhere, rather
+than only pinning the test's timing around a narrower placement.)
+
+Both concurrency tests below use two genuine Postgres sessions/threads
+(`app_engine`, matching `test_catalogue_collisions.py`'s own "FR-05:
+concurrency" pattern) - a single session exercising the same code path
+twice cannot reproduce a cross-transaction lock cycle at all. Neither
+makes a whole-table assertion; `pristine_audit_event` is requested purely
+to clean up the `audit_event` rows each test's real, committed writes
+leave behind (see that fixture's own docstring) - not because either
+assertion here depends on the table being empty.
+
+A third test, `test_acquire_append_lock_is_the_literal_first_statement`,
+is a pure-`ast` guard proving the invariant the two concurrency tests above
+rely on: it does not itself prove absence of a deadlock (that is what the
+concurrency tests are for), but it does mean a future change that moves
+`acquire_append_lock` later in one of these five functions - which would
+make the concurrency tests above unreliable again, not merely slower, since
+their determinism depends on both racing sides reaching the same lock
+first - fails immediately and specifically, rather than only occasionally
+as a flaky concurrency test.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
 import threading
-import time
 import uuid
+from collections.abc import Callable
 
 import pytest
 from sqlalchemy import text
@@ -55,12 +80,15 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
-import nptc.catalogue.entries as entries_mod
-import nptc.catalogue.property_values as property_values_mod
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.collisions import DesignationCollisionError
-from nptc.catalogue.designations import add_designation
-from nptc.catalogue.entries import EntryChanges, create_entry, entry_child_write, save_entry
+from nptc.catalogue.designations import add_designation, amend_designation
+from nptc.catalogue.entries import (
+    EntryChanges,
+    create_entry,
+    entry_child_write,
+    save_entry,
+)
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import (
@@ -75,13 +103,60 @@ from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc_shared.terminology.stub import StubTerminologyClient
 
-#: How long the thread that already holds the contended lock sleeps before
-#: proceeding - long enough, in practice, for the other thread's own
-#: (much shorter) preamble to reach and take the *other* lock in the pair,
-#: on ordinary CI/dev hardware. Not tied to any production timing - purely
-#: a test-harness knob to force the overlap deterministically (see the
-#: module docstring).
-_FORCED_OVERLAP_DELAY_SECONDS = 0.2
+#: Every function this issue requires to acquire the append lock as its own
+#: literal first statement (round-2 review) - `save_property_values_for_
+#: entries` and `entry_child_write` already did before this issue and are
+#: not re-checked here, since neither was ever the gap.
+_MUST_ACQUIRE_APPEND_LOCK_FIRST: tuple[Callable[..., object], ...] = (
+    create_entry,
+    save_entry,
+    save_property_values,
+    add_designation,
+    amend_designation,
+)
+
+
+def _first_statement_is_acquire_append_lock(func: Callable[..., object]) -> bool:
+    """Whether `func`'s body, after skipping a leading docstring, starts
+    with a bare `acquire_append_lock(<something>)` call - syntactic, like
+    `test_datatype_dispatch.py`'s own guard, not a check against the
+    imported name's identity (which module a given `acquire_append_lock`
+    was imported from does not matter here)."""
+    source = textwrap.dedent(inspect.getsource(func))
+    module = ast.parse(source)
+    (func_def,) = module.body
+    assert isinstance(func_def, ast.FunctionDef)
+    body = func_def.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if not body:
+        return False
+    first = body[0]
+    return (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Call)
+        and isinstance(first.value.func, ast.Name)
+        and first.value.func.id == "acquire_append_lock"
+    )
+
+
+def test_acquire_append_lock_is_the_literal_first_statement() -> None:
+    """Enforces the invariant `test_bulk_and_singular_property_writes_do_
+    not_deadlock` and `test_save_entry_and_entry_child_write_do_not_
+    deadlock_on_the_same_collision_key` below both rely on for their own
+    determinism (see the module docstring): each of these five functions
+    must call `acquire_append_lock` before anything else, not merely
+    "early" or "before its own collision/row lock". A placement that is
+    still correct by that looser reading (e.g. after a no-op precondition
+    check) would make those two tests flaky rather than reliably red, which
+    is a worse failure mode than this guard failing loudly and immediately.
+    """
+    violations = [
+        func.__qualname__
+        for func in _MUST_ACQUIRE_APPEND_LOCK_FIRST
+        if not _first_statement_is_acquire_append_lock(func)
+    ]
+    assert violations == []
 
 
 def _inputs(*values: object) -> list[PropertyValueInput]:
@@ -124,10 +199,7 @@ def _new_string_property(session: Session, *, key: str) -> PropertyDefinition:
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_bulk_and_singular_property_writes_do_not_deadlock(
-    pristine_audit_event: None,
-    app_engine: Engine,
-    owner_engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
 ) -> None:
     """The residual deadlock issue #281 closes: before this fix,
     `save_property_values` (the singular writer) only acquired the append
@@ -140,29 +212,16 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
     Postgres's `40P01`, an occasional 500 under contention rather than the
     two writers simply serialising on whichever lock either takes first.
 
-    `save_property_values` now takes the append lock before that flush, so
-    both writers agree on the order regardless of which runs first:
-    whichever acquires the append lock first has not yet taken any row
-    lock the other could be waiting on, so there is nothing left to cycle
-    on - the two can only ever serialise, never deadlock. The bulk writer
-    (forced, via the monkeypatch below, to hold the append lock across the
-    singular writer's whole attempt - see the module docstring) simply
-    finishes first; the singular writer then either applies cleanly or
-    hits a genuine, expected version conflict against the entry bulk just
-    changed - either is the correct outcome of real contention, not the
-    deadlock this test rules out.
+    `save_property_values` now takes the append lock as its own first
+    statement, so both writers agree on the order regardless of which runs
+    first: whichever wins holds the append lock for its whole operation,
+    and the other blocks immediately, before it could have taken any row
+    lock to cycle against. Whichever side loses the race then either
+    applies cleanly (if it reads the entry before the winner's write) or
+    hits a genuine, expected version conflict against the entry the winner
+    just changed - either is the correct outcome of real contention, not
+    the deadlock this test rules out.
     """
-    original_acquire_append_lock = property_values_mod.acquire_append_lock
-    bulk_holds_append_lock = threading.Event()
-
-    def _acquire_and_hold_for_bulk(session: Session) -> None:
-        original_acquire_append_lock(session)
-        if threading.current_thread().name == "bulk":
-            bulk_holds_append_lock.set()
-            time.sleep(_FORCED_OVERLAP_DELAY_SECONDS)
-
-    monkeypatch.setattr(property_values_mod, "acquire_append_lock", _acquire_and_hold_for_bulk)
-
     property_key = f"race_property_{uuid.uuid4().hex}"
     setup_session = Session(app_engine)
     entry_b = create_entry(
@@ -177,6 +236,7 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
     entry_b_key, entry_b_version = entry_b.business_key, entry_b.row_version
     setup_session.close()
 
+    barrier = threading.Barrier(2)
     results: dict[str, str] = {}
     errors: dict[str, BaseException] = {}
 
@@ -184,6 +244,7 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
         session = Session(app_engine)
         try:
             registry = _registry(session)
+            barrier.wait(timeout=5)
             save_property_values_for_entries(
                 session,
                 AuditContext.system(),
@@ -210,11 +271,7 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
         try:
             registry = _registry(session)
             entry_b_local = session.get_one(CatalogueEntry, entry_b_id)
-            # Waits for the bulk writer to already hold the append lock,
-            # rather than racing to start at the same time - see the module
-            # docstring: this test targets *whether a genuine hold-and-wait
-            # cycle can form*, not who wins an unforced footrace.
-            bulk_holds_append_lock.wait(timeout=5)
+            barrier.wait(timeout=5)
             save_property_values(
                 session,
                 AuditContext.system(),
@@ -278,10 +335,7 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_key(
-    pristine_audit_event: None,
-    app_engine: Engine,
-    owner_engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
+    pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
 ) -> None:
     """The second lock-ordering cycle issue #281 closes (see its
     2026-09-09 follow-up comment and ADR-0035's addendum). `save_entry`
@@ -295,24 +349,14 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
     A `save_entry` rename racing an `entry_child_write`-wrapped `add_
     designation` call on the *same* collision key is the same `40P01`
     cycle as the row-lock case, just against a different lock pair.
-    `save_entry` now takes the append lock before its own collision check
-    (this issue's fix), so both paths agree on the order: whichever gets
-    the append lock first is the only one that can reach the collision
-    lock at all - real contention on the collision key itself still
-    resolves as a genuine FR-05 collision for whichever side loses (both
-    are, after all, trying to record the same term), never as a deadlock.
+    `save_entry` and `add_designation` both now take the append lock as
+    their own first statement, so both paths agree on the order:
+    whichever wins holds it for its whole operation, and the other blocks
+    immediately, before it could have taken the collision lock to cycle
+    against. Real contention on the collision key itself still resolves as
+    a genuine FR-05 collision for whichever side loses (both are, after
+    all, trying to record the same term), never as a deadlock.
     """
-    original_acquire_append_lock = entries_mod.acquire_append_lock
-    add_synonym_holds_append_lock = threading.Event()
-
-    def _acquire_and_hold_for_add_synonym(session: Session) -> None:
-        original_acquire_append_lock(session)
-        if threading.current_thread().name == "add_synonym":
-            add_synonym_holds_append_lock.set()
-            time.sleep(_FORCED_OVERLAP_DELAY_SECONDS)
-
-    monkeypatch.setattr(entries_mod, "acquire_append_lock", _acquire_and_hold_for_add_synonym)
-
     racing_term = f"Race collision-lock term {uuid.uuid4()}"
     setup_session = Session(app_engine)
     entry_x = create_entry(
@@ -336,16 +380,14 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
     entry_y_id, entry_y_version = entry_y.id, entry_y.row_version
     setup_session.close()
 
+    barrier = threading.Barrier(2)
     results: dict[str, str] = {}
     errors: dict[str, BaseException] = {}
 
     def _rename() -> None:
         session = Session(app_engine)
         try:
-            # Waits for the designation-add thread to already hold the
-            # append lock, rather than racing to start at the same time -
-            # see the module docstring.
-            add_synonym_holds_append_lock.wait(timeout=5)
+            barrier.wait(timeout=5)
             save_entry(
                 session,
                 AuditContext.system(),
@@ -369,6 +411,7 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
         session = Session(app_engine)
         try:
             entry_y_local = session.get_one(CatalogueEntry, entry_y_id)
+            barrier.wait(timeout=5)
             with entry_child_write(session, entry_y_local, entry_y_version):
                 add_designation(
                     session,
@@ -391,8 +434,8 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
 
     thread_rename = threading.Thread(target=_rename, name="rename")
     thread_add = threading.Thread(target=_add_synonym, name="add_synonym")
-    thread_add.start()
     thread_rename.start()
+    thread_add.start()
     thread_rename.join(timeout=15)
     thread_add.join(timeout=15)
 
