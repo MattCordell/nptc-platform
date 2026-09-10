@@ -8,8 +8,11 @@ import type { FormError } from "./error-summary.tsx";
 type FormProps = {
   /** Called once per accepted submit, already `preventDefault`-ed. Takes no
    * event: a caller that needed the event would be reaching around the one
-   * submit path this component exists to provide. */
-  onSubmit: () => void;
+   * submit path this component exists to provide. A returned promise
+   * disarms the focus-move flag below when it settles, whether it resolves
+   * or rejects (issue #214) - a caller that returns nothing keeps the
+   * void-case behaviour unchanged. */
+  onSubmit: () => void | Promise<void>;
   /** Field-level failures the caller has computed. Passing a non-empty list
    * after a submit attempt is what moves focus to the summary. */
   errors?: FormError[];
@@ -108,6 +111,21 @@ export function Form({
   // would submit an invalid form a second time and get no announcement at
   // all, because nothing React can see changed between the two attempts.
   const [submitCount, setSubmitCount] = useState(0);
+  // Identifies each real submit so a promise-settle handler (below) can tell
+  // whether it is answering the most recent submit or a stale one - a
+  // caller that allows a second submit before the first promise settles
+  // (possible if it never sets `pending`) must not have the first submit's
+  // late settle disarm the second submit's still-armed flag. A ref, not
+  // state: it only needs to be read back inside the settle handler and by
+  // the effect below, never rendered.
+  const submitIdRef = useRef(0);
+  // The most recently settled submit's id, or `undefined` before any promise
+  // has settled. Set only from a promise's `.then(settle, settle)` - never
+  // decided directly by the settle callback, which is a microtask that can
+  // run before the effect below has even seen an error the same settle
+  // caused the caller to set (see the effect's own comment for the race this
+  // avoids).
+  const [settledSubmitId, setSettledSubmitId] = useState<number | undefined>(undefined);
   // Whether the user has actually attempted a submit while blocked - the
   // gate is announced only from that point, never merely because the field
   // is currently empty (see `blockedReason`'s doc comment). Reset the
@@ -185,10 +203,11 @@ export function Form({
   // still listening, so an error appearing later with no further submit does
   // take focus. That is the better way round - after a submit, an error is
   // far more likely to be its answer than not - and an error that follows no
-  // submit at all still never moves focus. It does mean these primitives
-  // assume validate-on-submit: a screen validating on *change* would pull
-  // focus out of the input on every keystroke that produced an error. Issue
-  // #214 tracks disarming on a settled `onSubmit` promise instead.
+  // submit at all still never moves focus. For a caller whose `onSubmit`
+  // returns a promise, a *successful* settle disarms below instead of
+  // waiting on an error that may never come - see the promise-settle branch.
+  // The void case (no promise returned) still relies entirely on an error
+  // arriving, exactly as before.
   //
   // The dependency array below is not what gates this effect: `effectiveFormError`
   // has a new identity every render (see its own comment above), so in practice
@@ -196,12 +215,30 @@ export function Form({
   // dependencies actually changed. `awaitingResultRef.current` above is the only
   // real gate - treat the array as "what to re-check", not "when this runs".
   useEffect(() => {
-    if (!awaitingResultRef.current || !hasErrors) {
+    if (!awaitingResultRef.current) {
       return;
     }
-    awaitingResultRef.current = false;
-    summaryRef.current?.focus();
-  }, [submitCount, errors, effectiveFormError, hasErrors]);
+    if (hasErrors) {
+      // Takes priority over a settled promise: a rejected promise that also
+      // set a form error still gets announced, whether or not the settle
+      // below landed in the same render as this error.
+      awaitingResultRef.current = false;
+      summaryRef.current?.focus();
+      return;
+    }
+    // A promise-driven success disarms without moving focus - this is what
+    // lets a validate-on-change screen use `Form` (issue #214): the settle
+    // handler never decides arm/disarm directly (that would race the error
+    // this same settle may have just caused the caller to set - see the
+    // settle handler's own comment), it only reports "a result arrived for
+    // submit N" via `settledSubmitId`, and this effect - which already runs
+    // once per render, after `hasErrors` is committed - is the one place
+    // that decides. Guarded by matching submit id: a stale settle from a
+    // superseded submit must not disarm the current one.
+    if (settledSubmitId === submitIdRef.current) {
+      awaitingResultRef.current = false;
+    }
+  }, [submitCount, errors, effectiveFormError, hasErrors, settledSubmitId]);
 
   return (
     <form
@@ -226,7 +263,16 @@ export function Form({
         }
         awaitingResultRef.current = true;
         setSubmitCount((count) => count + 1);
-        onSubmit();
+        const thisSubmitId = ++submitIdRef.current;
+        const result = onSubmit();
+        // Checked explicitly, rather than wrapped in `Promise.resolve(...)`:
+        // that would make the void case start disarming itself a tick
+        // later too, silently regaining the always-armed contract's
+        // opposite bug for every caller that never returns a promise.
+        if (result && typeof (result as Promise<void>).then === "function") {
+          const settle = () => setSettledSubmitId(thisSubmitId);
+          (result as Promise<void>).then(settle, settle);
+        }
       }}
       className={["flex flex-col gap-4", className ?? ""].filter(Boolean).join(" ")}
     >
