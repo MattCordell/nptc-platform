@@ -16,20 +16,24 @@ here rather than passing on the strength of the other.
 from __future__ import annotations
 
 import importlib.util
+import random
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.maintenance import MAINTENANCE_STATUSES
-from nptc.db.models.catalogue_entry import CatalogueEntryStatus
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 
@@ -60,6 +64,89 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
 @pytest.fixture
 def seeded(api: ApiTestApp) -> SeededCatalogue:
     return seed_public_catalogue(api.session)
+
+
+@dataclass(frozen=True)
+class SortableCatalogue:
+    """A small, fully-controlled fixture for issue #287's sort tests.
+
+    `SeededCatalogue`'s own `preferred_term`/`status`/`updated_at` values are
+    not designed to prove an ordering - reusing it here would couple every
+    other test in this file to a sort-specific shape, the same reason
+    `seed_worked_example`/`seed_code_lookup_fixtures` are their own fixtures
+    rather than additions to it.
+    """
+
+    #: Business keys in insertion (and so `business_key`) order.
+    by_business_key: tuple[str, ...]
+    #: In `preferred_term_key` order, tie-broken by `business_key` - proves
+    #: the guaranteed tie (the two `"Same term"` rows) resolves the same way
+    #: the statement's own `ORDER BY` does.
+    by_preferred_term: tuple[str, ...]
+    by_updated_at: tuple[str, ...]
+    #: In `status` order, tie-broken by `business_key` - proves the
+    #: guaranteed tie (the three `active` rows).
+    by_status: tuple[str, ...]
+
+
+def _seed_sortable(session: Session) -> SortableCatalogue:
+    base = random.randrange(100_000_000, 999_000_000)
+
+    def key(offset: int) -> str:
+        return f"NPTC-{base + offset}"
+
+    # (offset, preferred_term, status) - three `active` rows (a guaranteed
+    # status tie among them), one each of the other three statuses, and two
+    # rows sharing a `preferred_term` (a guaranteed preferred_term tie).
+    rows = (
+        (0, "Charlie term", CatalogueEntryStatus.WITHDRAWN.value),
+        (1, "Alpha term", CatalogueEntryStatus.DRAFT.value),
+        (2, "Delta term", CatalogueEntryStatus.DEPRECATED.value),
+        (3, "Bravo term", CatalogueEntryStatus.ACTIVE.value),
+        (4, "Same term", CatalogueEntryStatus.ACTIVE.value),
+        (5, "Same term", CatalogueEntryStatus.ACTIVE.value),
+    )
+    entries = [
+        CatalogueEntry(business_key=key(offset), preferred_term=term, status=status)
+        for offset, term, status in rows
+    ]
+    session.add_all(entries)
+    session.flush()
+
+    # Staggered, distinct `updated_at` values, deliberately in the *reverse*
+    # of `business_key` order - so a `sort=updated_at` page proves a real
+    # ordering, not one that happens to coincide with `business_key`'s.
+    anchor = datetime.now(UTC)
+    for index, entry in enumerate(entries):
+        session.execute(
+            update(CatalogueEntry)
+            .where(CatalogueEntry.id == entry.id)
+            .values(updated_at=anchor - timedelta(seconds=index))
+        )
+    session.flush()
+
+    by_business_key = tuple(entry.business_key for entry in entries)
+    by_preferred_term = tuple(
+        entry.business_key
+        for entry in sorted(
+            entries, key=lambda entry: (entry.preferred_term_key, entry.business_key)
+        )
+    )
+    by_status = tuple(
+        entry.business_key
+        for entry in sorted(entries, key=lambda entry: (entry.status, entry.business_key))
+    )
+    return SortableCatalogue(
+        by_business_key=by_business_key,
+        by_preferred_term=by_preferred_term,
+        by_updated_at=tuple(reversed(by_business_key)),
+        by_status=by_status,
+    )
+
+
+@pytest.fixture
+def sortable(api: ApiTestApp) -> SortableCatalogue:
+    return _seed_sortable(api.session)
 
 
 def _token_with_role(api: ApiTestApp, *, subject: str, role: Role, with_mfa: bool = True) -> str:
@@ -421,6 +508,146 @@ def test_the_public_listing_and_search_do_not_carry_row_version(
     search_response = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM, "limit": 200})
     assert search_response.status_code == 200, search_response.text
     assert all("row_version" not in item for item in search_response.json()["items"])
+
+
+# --- server-side sort (issue #287) ------------------------------------------
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("sort", "expected_attr"),
+    [
+        ("business_key", "by_business_key"),
+        ("preferred_term", "by_preferred_term"),
+        ("updated_at", "by_updated_at"),
+        ("status", "by_status"),
+    ],
+)
+def test_sorting_by_each_column_orders_the_page(
+    api: ApiTestApp, sortable: SortableCatalogue, sort: str, expected_attr: str
+) -> None:
+    """Every `sort` value orders the whole page correctly, including through
+    its own guaranteed tie (`preferred_term`'s two `"Same term"` rows,
+    `status`'s three `active` rows) - `business_key` is always the
+    tie-break, matching `build_listing_statement`'s own `ORDER BY <sort>,
+    business_key`."""
+    token = _admin_token(api, subject=f"sub-sort-{sort}")
+
+    response = _admin_list(api, token, sort=sort, limit=200)
+
+    assert response.status_code == 200, response.text
+    keys = tuple(item["business_key"] for item in response.json()["items"])
+    assert keys == getattr(sortable, expected_attr)
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_explicit_business_key_sort_matches_the_default(
+    api: ApiTestApp, sortable: SortableCatalogue
+) -> None:
+    """`sort=business_key` and omitting `sort` produce byte-identical
+    responses - the "default-vs-explicit parity" the plan for this issue
+    calls for, proving the unified cursor grammar did not quietly special-
+    case the pre-existing default."""
+    token = _admin_token(api, subject="sub-sort-parity")
+
+    default_response = _admin_list(api, token, limit=2)
+    explicit_response = _admin_list(api, token, sort="business_key", limit=2)
+
+    assert default_response.status_code == 200, default_response.text
+    assert explicit_response.status_code == 200, explicit_response.text
+    assert default_response.json() == explicit_response.json()
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_paging_under_a_non_default_sort_is_stable_and_total(
+    api: ApiTestApp, sortable: SortableCatalogue
+) -> None:
+    """One row at a time through `sort=preferred_term`, including its
+    guaranteed tie - no row dropped, none repeated, matching ADR-0024's
+    keyset discipline for the pre-existing `business_key` ordering."""
+    token = _admin_token(api, subject="sub-sort-paging")
+
+    seen: list[str] = []
+    params: dict[str, Any] = {"sort": "preferred_term", "limit": 1}
+    for _ in range(len(sortable.by_preferred_term) + 1):
+        response = _admin_list(api, token, **params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(item["business_key"] for item in body["items"])
+        after = body["next_cursor"]
+        if after is None:
+            break
+        params["after"] = after
+
+    assert after is None, "paging did not terminate within the fixture's own row count"
+    assert tuple(seen) == sortable.by_preferred_term
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_an_unrecognised_sort_value_is_a_422(api: ApiTestApp, sortable: SortableCatalogue) -> None:
+    token = _admin_token(api, subject="sub-sort-unrecognised")
+
+    response = _admin_list(api, token, sort="not-a-real-sort", limit=200)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+@pytest.mark.parametrize("sort", ["business_key", "preferred_term", "updated_at", "status"])
+def test_a_malformed_listing_cursor_is_a_422_for_every_sort(
+    api: ApiTestApp, sortable: SortableCatalogue, sort: str
+) -> None:
+    token = _admin_token(api, subject=f"sub-sort-bad-cursor-{sort}")
+
+    response = _admin_list(api, token, sort=sort, after="not-a-cursor-at-all", limit=200)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_listing_cursor_replayed_under_a_different_sort_is_a_422(
+    api: ApiTestApp, sortable: SortableCatalogue
+) -> None:
+    """The acceptance criterion this issue's plan states directly: a cursor
+    minted under one `sort` means nothing replayed under another, because
+    `sort_value > :after` compares against a different column."""
+    token = _admin_token(api, subject="sub-sort-cursor-mismatch")
+
+    first = _admin_list(api, token, sort="preferred_term", limit=1)
+    assert first.status_code == 200, first.text
+    cursor = first.json()["next_cursor"]
+    assert cursor is not None
+
+    replayed = _admin_list(api, token, sort="updated_at", after=cursor, limit=200)
+
+    assert replayed.status_code == 422, replayed.text
+
+
+@pytest.mark.req("FR-16")
+@pytest.mark.integration
+def test_a_listing_cursor_replayed_under_a_different_filter_set_is_a_422(
+    api: ApiTestApp, sortable: SortableCatalogue
+) -> None:
+    """The filter-set half of the digest, proved independently of the sort
+    case above (issue #287's own plan: "as an independent case, not combined
+    with the sort case, so a bug checking only one axis can't hide behind
+    the other")."""
+    token = _admin_token(api, subject="sub-sort-filter-mismatch")
+
+    first = _admin_list(api, token, limit=1, **{"filter.status": "active"})
+    assert first.status_code == 200, first.text
+    cursor = first.json()["next_cursor"]
+    assert cursor is not None
+
+    replayed = _admin_list(api, token, after=cursor, limit=200, **{"filter.status": "draft"})
+
+    assert replayed.status_code == 422, replayed.text
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) ----------------------------------
