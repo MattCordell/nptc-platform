@@ -139,6 +139,23 @@ def _designation_id(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
     ).scalar_one()
 
 
+def _designation_id_any_status(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
+    """The id of the designation matching `term` on `entry_id`, whatever its
+    `status` - unlike `_designation_id` above, since issue #313's own point
+    is that reinstating keeps the *same* row (`_designation_id` would raise
+    `NoResultFound` against a designation this has just reinstated back to
+    `active` from... no, it would find it; the case this actually exists
+    for is proving the id is stable *before* a reinstatement, while the row
+    is still `retired` and `_designation_id`'s own `status == 'active'`
+    filter would find nothing)."""
+    return api.session.execute(
+        select(Designation.id).where(
+            Designation.entry_id == entry_id,
+            Designation.term == term,
+        )
+    ).scalar_one()
+
+
 def _stored_row_version(api: ApiTestApp, business_key: str) -> int:
     """`catalogue_entry.row_version` read directly from the ORM - the
     pre-write baseline every write helper below auto-fills
@@ -183,6 +200,15 @@ def _retire(api: ApiTestApp, business_key: str, token: str | None, **overrides: 
     body = _with_row_version(api, business_key, body)
     return api.post(
         f"/catalogue/entries/{business_key}/designations/retirement", token=token, json=body
+    )
+
+
+def _reinstate(api: ApiTestApp, business_key: str, token: str | None, **overrides: object) -> Any:
+    body: dict[str, object] = {"term": "FBC", "reason": "Reinstating after a mistaken retirement."}
+    body.update(overrides)
+    body = _with_row_version(api, business_key, body)
+    return api.post(
+        f"/catalogue/entries/{business_key}/designations/reinstatement", token=token, json=body
     )
 
 
@@ -417,6 +443,62 @@ def test_retire_designation_audits_the_status_change_with_reason(api: ApiTestApp
     assert event.reason == reason
 
 
+@pytest.mark.req("FR-36")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_reinstate_designation_returns_200_with_the_same_row_active_again(
+    api: ApiTestApp,
+) -> None:
+    """Issue #313's whole point: the reinstated row is the *same* row, not
+    a fresh one - re-adding the term today produces a new row instead, and
+    the audit history splits across two unrelated-looking rows as a
+    result."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-happy")
+    _add(api, business_key, token)
+    entry_id = _entry_id(api, business_key)
+    designation_id_before = _designation_id_any_status(api, entry_id=entry_id, term="FBC")
+    _retire(api, business_key, token)
+    version = _stored_row_version(api, business_key)
+    before = _audit_event_count(api)
+
+    response = _reinstate(api, business_key, token, expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["status"] == "active"
+    assert body["designation"]["term"] == "FBC"
+    # FR-38 (issue #300): reinstating a designation bumps the entry's
+    # counter too, matching add/amend/retire.
+    assert body["row_version"] == version + 1
+    assert _audit_event_count(api) == before + 1
+    designation_id_after = _designation_id(api, entry_id=entry_id, term="FBC")
+    assert designation_id_after == designation_id_before
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_reinstate_designation_audits_the_status_change_with_reason(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-audit")
+    _add(api, business_key, token)
+    entry_id = _entry_id(api, business_key)
+    _retire(api, business_key, token)
+    designation_id = _designation_id_any_status(api, entry_id=entry_id, term="FBC")
+    reason = "Reinstating after a mistaken retirement, audit test."
+
+    response = _reinstate(api, business_key, token, reason=reason)
+
+    assert response.status_code == 200, response.text
+    event = latest_audit_event(api.session, entity_type="designation", entity_id=designation_id)
+    assert event.action == "designation.reinstated"
+    assert event.before == {"status": "retired"}
+    assert event.after == {"status": "active"}
+    assert event.reason == reason
+
+
 @pytest.mark.req("FR-05")
 @pytest.mark.req("FR-98")
 @pytest.mark.integration
@@ -465,6 +547,42 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     recheck = _add(api, third_entry, token, terms=["ADA2"])
     assert recheck.status_code == 201, recheck.text
     assert recheck.json()["warnings"] == []
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_an_acknowledged_warning_stays_silenced_after_reinstatement(api: ApiTestApp) -> None:
+    """Issue #313's own acceptance criterion:
+    `designation_collision_acknowledgement` is keyed on `(entry_id,
+    term_key, language)`, independent of any designation row, so an
+    acknowledgement recorded before a retirement still silences the
+    warning once the *same* row is reinstated - not only after a fresh
+    add, which the test above already covers via a retire-and-re-add
+    cycle."""
+    token = _admin_token(api, subject="sub-ada2-reinstate")
+    first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
+    second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
+    _add(api, first_entry, token, terms=["ADA2"])
+    add_response = _add(api, second_entry, token, terms=["ADA2"])
+    assert add_response.json()["warnings"] != []
+
+    ack_response = api.post(
+        f"/catalogue/entries/{second_entry}/designations/acknowledgement",
+        token=token,
+        json={"term": "ADA2", "reason": "Genuinely ambiguous, disambiguated by specimen."},
+    )
+    assert ack_response.status_code == 200, ack_response.text
+    retire_response = _retire(
+        api, second_entry, token, term="ADA2", reason="Retiring the ADA2 synonym by mistake"
+    )
+    assert retire_response.status_code == 200, retire_response.text
+
+    reinstate_response = _reinstate(
+        api, second_entry, token, term="ADA2", reason="Reinstating the ADA2 synonym"
+    )
+
+    assert reinstate_response.status_code == 200, reinstate_response.text
+    assert reinstate_response.json()["warnings"] == []
 
 
 @pytest.mark.req("FR-05")
@@ -701,6 +819,84 @@ def test_retiring_an_already_retired_term_is_404_not_409(api: ApiTestApp) -> Non
     response = _retire(api, business_key, token, reason="Second retirement attempt")
 
     assert response.status_code == 404, response.text
+
+
+@pytest.mark.integration
+def test_reinstating_a_term_that_was_never_added_is_404(api: ApiTestApp) -> None:
+    """No active *or* retired designation matches this address at all -
+    `load_retired_designation`'s own 404, the reinstatement analogue of
+    `test_amending_a_term_that_is_not_currently_active_is_404_not_409`."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-not-found")
+
+    response = _reinstate(api, business_key, token, term="No such term")
+
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_reinstating_a_currently_active_term_is_409_not_404(api: ApiTestApp) -> None:
+    """A term that is currently active was never retired in the first
+    place - refused before any mutation (issue #313's plan), not the 404
+    a term with no retired row at all gets, since this address already has
+    something live to conflict with."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-active")
+    _add(api, business_key, token)
+
+    response = _reinstate(api, business_key, token)
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_reinstating_a_term_superseded_by_a_re_add_is_409(api: ApiTestApp) -> None:
+    """Issue #313's own motivating scenario: a term retired and then
+    re-added leaves the *original* row retired while a **new** row holds
+    the term active - reinstating the original would produce two active
+    rows for the same term, refused as a 409 naming the same conflict
+    `test_reinstating_a_currently_active_term_is_409_not_404` does, not the
+    partial-unique-index `IntegrityError` translation
+    `test_catalogue_designations.py`'s own service-level test for this
+    exercises directly."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-superseded")
+    _add(api, business_key, token)
+    _retire(api, business_key, token, reason="Retiring by mistake")
+    _add(api, business_key, token, reason="Re-adding after the mistaken retirement")
+
+    response = _reinstate(api, business_key, token, reason="Reinstating the original row")
+
+    assert response.status_code == 409, response.text
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_reinstating_a_term_colliding_with_another_entrys_preferred_term_is_409_naming_it(
+    api: ApiTestApp,
+) -> None:
+    """FR-05 is not exempt for reinstatement either - the reinstatement
+    analogue of `test_add_a_term_colliding_with_another_entrys_preferred_
+    term_is_409_naming_it`, but the collision only comes into existence
+    *after* the term is retired (an add with this term already colliding
+    would have been refused outright)."""
+    token = _admin_token(api, subject="sub-reinstate-collision")
+    business_key = _seed_entry(api, preferred_term="21-Hydroxylase Ab")
+    _add(api, business_key, token, terms=["Adrenal Ab"])
+    _retire(api, business_key, token, term="Adrenal Ab", reason="Retiring before the collision")
+    adrenal_ab_entry = _seed_entry(api, preferred_term="Adrenal Ab")
+
+    response = _reinstate(api, business_key, token, term="Adrenal Ab")
+
+    assert response.status_code == 409, response.text
+    collisions = response.json()["collisions"]
+    assert collisions[0]["business_key"] == adrenal_ab_entry
+    assert collisions[0]["preferred_term"] == "Adrenal Ab"
+    assert collisions[0]["severity"] == "error"
 
 
 @pytest.mark.integration
@@ -1374,6 +1570,23 @@ def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
 
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
+def test_reinstate_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-missing-version")
+    _add(api, business_key, token)
+    _retire(api, business_key, token)
+
+    response = api.post(
+        f"/catalogue/entries/{business_key}/designations/reinstatement",
+        token=token,
+        json={"term": "FBC", "reason": _REASON},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
 def test_add_then_amend_a_different_term_is_refused_on_the_stale_version(
     api: ApiTestApp,
 ) -> None:
@@ -1583,6 +1796,50 @@ def test_add_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp)
     assert 'acr_values="2"' in challenge
 
 
+#: Add/amend/retire share one triad above, on the strength of sharing one
+#: `_EDIT` dependency (`_RESPONSES_WRITE`'s own module comment) - #313's
+#: plan asks for reinstatement's own triad explicitly, since it is the
+#: newest of the four and the cheapest possible proof its route wires the
+#: same dependency up correctly, rather than trusting it by resemblance.
+@pytest.mark.req("NFR-20")
+@pytest.mark.integration
+def test_reinstate_with_no_credential_is_401_not_403(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+
+    response = _reinstate(api, business_key, None)
+
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_reinstate_authenticated_without_the_permission_is_403_with_no_challenge(
+    api: ApiTestApp,
+) -> None:
+    business_key = _seed_entry(api)
+    token = api.token(subject="sub-reinstate-no-permission")
+
+    response = _reinstate(api, business_key, token)
+
+    assert response.status_code == 403, response.text
+    assert "WWW-Authenticate" not in response.headers
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_reinstate_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-reinstate-admin-no-mfa", with_mfa=False)
+
+    response = _reinstate(api, business_key, token)
+
+    assert response.status_code == 403, response.text
+    challenge = response.headers["WWW-Authenticate"]
+    assert 'error="insufficient_user_authentication"' in challenge
+    assert 'acr_values="2"' in challenge
+
+
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_acknowledge_with_no_credential_is_401_not_403(api: ApiTestApp) -> None:
@@ -1698,6 +1955,18 @@ def test_write_responses_contain_no_internal_identifier(api: ApiTestApp) -> None
     for designation in add_response.json()["designations"]:
         assert "id" not in designation
         assert "entry_id" not in designation
+
+    retire_response = _retire(api, business_key, token)
+    assert retire_response.status_code == 200, retire_response.text
+    assert "id" not in retire_response.json()["designation"]
+    assert "entry_id" not in retire_response.json()["designation"]
+
+    # issue #313: the reinstatement response is shaped exactly like the
+    # other three - same hygiene hazard, same check.
+    reinstate_response = _reinstate(api, business_key, token)
+    assert reinstate_response.status_code == 200, reinstate_response.text
+    assert "id" not in reinstate_response.json()["designation"]
+    assert "entry_id" not in reinstate_response.json()["designation"]
 
     ack_response = api.post(
         f"/catalogue/entries/{business_key}/designations/acknowledgement",

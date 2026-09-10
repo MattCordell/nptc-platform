@@ -102,12 +102,15 @@ from nptc.catalogue import queries
 from nptc.catalogue.collisions import Collision, acknowledge_collision, warning_collisions
 from nptc.catalogue.designations import (
     DesignationNotFoundError,
+    DesignationNotRetiredError,
     add_designation,
     add_synonyms,
     amend_designation,
     find_active_designation,
     load_active_designation,
+    load_retired_designation,
 )
+from nptc.catalogue.designations import reinstate_designation as _reinstate_designation
 from nptc.catalogue.designations import retire_designation as _retire_designation
 from nptc.catalogue.entries import (
     EntryChanges,
@@ -157,11 +160,13 @@ _RESPONSE_409: Final[dict[str, Any]] = {
         "The request is well-formed but conflicts with the current state of the "
         "system - an error-severity collision against another entry (FR-05), a "
         "duplicate active term or a second active preferred term in one language "
-        "on this same entry, a designation already retired, or a concurrent "
-        "acknowledgement of the same collision. A term already retired, or never "
-        "added, is a 404 here rather than a 409: every route below addresses a "
-        "designation by its currently-*active* term, so a retired one is simply "
-        "not addressable this way any more, not a conflicting state."
+        "on this same entry, a designation already retired (or, for reinstatement, "
+        "already active - issue #313), or a concurrent acknowledgement of the same "
+        "collision. Add, amend and retire address a designation by its "
+        "currently-*active* term, so a retired one is simply not addressable that "
+        "way any more (404, not 409); reinstatement addresses one by its "
+        "currently-*retired* term instead, so a term that was never retired is its "
+        "own 404 there."
     ),
 }
 #: Two distinct 422 body shapes occur on every route below: a typed domain
@@ -246,10 +251,11 @@ _RESPONSE_409_COLLISION_AND_VERSION: Final[dict[str, Any]] = {
     "description": f"{_RESPONSE_409_COLLISION['description']} {_STALE_VERSION_DESCRIPTION}",
 }
 
-#: Shared by add/amend/retire: all three are gated on the same permission
-#: and can fail with the same set of statuses. One constant, not three
-#: identical dicts, so a future divergence between them is a deliberate
-#: edit rather than an accident of copy-paste (issue #224 review, minor).
+#: Shared by add/amend/retire/reinstate: all four are gated on the same
+#: permission and can fail with the same set of statuses. One constant, not
+#: four identical dicts, so a future divergence between them is a
+#: deliberate edit rather than an accident of copy-paste (issue #224
+#: review, minor).
 _RESPONSES_WRITE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_EDIT,
@@ -265,6 +271,13 @@ _RESPONSES_ADD: Final[dict[int | str, dict[str, Any]]] = {
 #: Amend: can do both, and is the only route here that writes an entry
 #: directly on its preferred-term branch.
 _RESPONSES_AMEND: Final[dict[int | str, dict[str, Any]]] = {
+    **_RESPONSES_WRITE,
+    409: _RESPONSE_409_COLLISION_AND_VERSION,
+}
+#: Reinstate (issue #313): can collide (FR-05) exactly as add can, since
+#: reactivating a row is subject to the same partial unique indexes a fresh
+#: insert is.
+_RESPONSES_REINSTATE: Final[dict[int | str, dict[str, Any]]] = {
     **_RESPONSES_WRITE,
     409: _RESPONSE_409_COLLISION_AND_VERSION,
 }
@@ -509,6 +522,40 @@ class RetireDesignationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     designation: Designation
+    row_version: int
+
+
+class ReinstateDesignationRequest(_WithLanguage):
+    """The body of `POST .../designations/reinstatement` (issue #313).
+    `term` addresses the designation to reinstate - resolved against the
+    most-recently-retired row matching `(entry, term, language)`
+    (`nptc.catalogue.designations.load_retired_designation`), never a
+    specific row's internal id, matching every other route in this module."""
+
+    model_config = ConfigDict(frozen=True)
+
+    term: str
+    reason: str
+    #: FR-38 (issue #300): see `AddDesignationsRequest`'s own field for why
+    #: this is required rather than optional.
+    expected_row_version: int = Field(ge=1)
+
+
+class ReinstateDesignationResult(BaseModel):
+    """`reinstate_designation_route`'s response: the reinstated row, any
+    warning-severity collisions, and the entry's new `row_version` (FR-38,
+    issue #300).
+
+    A new model, not a reuse of `DesignationWriteResult` (issue #313's own
+    open question) - this route always acts on exactly one row, and
+    `DesignationWriteResult.designations` being a list would misdescribe
+    that. Shaped like `AmendDesignationResult` instead, which reinstatement
+    otherwise matches exactly: one designation, warnings, row_version."""
+
+    model_config = ConfigDict(frozen=True)
+
+    designation: Designation
+    warnings: list[CollisionWarning]
     row_version: int
 
 
@@ -855,6 +902,65 @@ def retire_designation_route(
         raise RuntimeError(f"designation {designation_id} not found immediately after retirement")
     return RetireDesignationResult(
         designation=designation_from_row(row), row_version=entry.row_version
+    )
+
+
+@router.post(
+    "/entries/{business_key}/designations/reinstatement",
+    summary="Reinstate an entry's most-recently-retired designation",
+    responses=_RESPONSES_REINSTATE,
+    dependencies=[_EDIT],
+)
+def reinstate_designation_route(
+    session: SessionDep,
+    ctx: AuditContextDep,
+    business_key: BusinessKeyPath,
+    body: Annotated[ReinstateDesignationRequest, Body()],
+) -> ReinstateDesignationResult:
+    """Issue #313. Both lookups run inside the lock, after
+    `entry_child_write`'s own version check, matching every other route
+    here (FR-38, issue #300).
+
+    The already-active check runs first, and outside `load_retired_
+    designation` itself: a term that already has an active designation
+    (the exact scenario re-adding a retired term creates today) must
+    refuse with a 409 naming that conflict, not the 404 a term that was
+    simply never retired gets - `load_retired_designation` only ever
+    inspects retired rows, so it cannot tell the two cases apart on its
+    own (see its own docstring)."""
+    entry = load_entry_for_update(session, business_key)
+    with entry_child_write(session, entry, body.expected_row_version):
+        active = find_active_designation(
+            session, entry_id=entry.id, term=body.term, language=body.language
+        )
+        if active is not None:
+            raise DesignationNotRetiredError(
+                f"entry {entry.id} already has an active designation for term "
+                f"{body.term!r} in language {body.language!r}"
+            )
+        designation = load_retired_designation(
+            session, entry_id=entry.id, term=body.term, language=body.language
+        )
+        reinstated = _reinstate_designation(
+            session, ctx, entry=entry, designation=designation, reason=body.reason
+        )
+    reinstated_id = reinstated.id
+    row = queries.load_designation_by_id(session, reinstated_id)
+    if row is None:
+        raise RuntimeError(f"designation {reinstated_id} not found immediately after reinstatement")
+    # See `add_designations`'/`amend_designation_route`'s own comment:
+    # meaningless for a preferred designation (issue #224 review, minor).
+    warnings = (
+        ()
+        if reinstated.use == str(DesignationUse.PREFERRED)
+        else warning_collisions(
+            session, entry=entry, terms=[reinstated.term], language=body.language
+        )
+    )
+    return ReinstateDesignationResult(
+        designation=designation_from_row(row),
+        warnings=[_collision_warning(warning) for warning in warnings],
+        row_version=entry.row_version,
     )
 
 

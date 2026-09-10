@@ -444,6 +444,17 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
             "expected_row_version": amend_response.json()["row_version"],
         },
     )
+    # issue #313: the reinstatement response is shaped exactly like
+    # add/amend's - same hygiene hazard, same check.
+    reinstate_response = api.post(
+        f"/catalogue/entries/{business_key}/designations/reinstatement",
+        token=admin_token,
+        json={
+            "term": "Full Blood Count",
+            "reason": "Reinstated for the designation write-hygiene test.",
+            "expected_row_version": retire_response.json()["row_version"],
+        },
+    )
     ack_response = api.post(
         f"/catalogue/entries/{business_key}/designations/acknowledgement",
         token=admin_token,
@@ -453,7 +464,13 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
         },
     )
 
-    for response in (add_response, amend_response, retire_response, ack_response):
+    for response in (
+        add_response,
+        amend_response,
+        retire_response,
+        reinstate_response,
+        ack_response,
+    ):
         assert response.status_code in (200, 201), response.text
         found_uuid = _UUID_RE.search(response.text)
         assert found_uuid is None, f"{response.request.url}: {found_uuid and found_uuid.group()}"
