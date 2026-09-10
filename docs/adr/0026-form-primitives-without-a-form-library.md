@@ -111,14 +111,32 @@ an OpenAPI change first.
   sets `pending`, or sets it a tick later, therefore still gets its refusal announced —
   the majority case. An error that follows no submit at all still never moves focus.
 
-  The cost runs the other way, and is sharper than "a stale flag": after a *successful*
-  submit the form stays armed indefinitely. For a validate-on-submit screen that is
-  benign. For a screen that also validates on change it is not — the next keystroke that
-  produces an error would pull focus out of the input the user is typing in, once per
-  keystroke. **These primitives therefore assume validate-on-submit.** Issue #214 tracks
-  the clean fix: widen `onSubmit` to `() => void | Promise<void>` and disarm when the
-  returned promise settles, so arming stays unconditional for the sync case and the bug
-  that motivated the always-armed flag does not come back.
+  The cost ran the other way, and was sharper than "a stale flag": after a *successful*
+  submit the form stayed armed indefinitely. For a validate-on-submit screen that was
+  benign. For a screen that also validated on change it was not — the next keystroke
+  that produced an error would pull focus out of the input the user was typing in, once
+  per keystroke. **Issue #214 fixed this**: `onSubmit` is widened to
+  `() => void | Promise<void>` and disarms when the returned promise settles, whether it
+  resolves or rejects, so arming stays unconditional and the sync/void case is
+  unchanged. The settle callback never decides arm/disarm directly — a bare
+  `.finally(...)` races a caller whose promise resolves right after it sets a form
+  error, clearing the flag as a microtask before the error-reading effect's macrotask
+  ever runs. Instead the settle callback only records "a result arrived for submit N";
+  the existing focus-move effect, guarded by a submit generation id, is the sole place
+  that decides to disarm, giving errors priority over a settled promise from the same
+  submit.
+
+  This closes the race for a caller whose error state commits before, or in the same
+  pass as, the settle — the `try { await mutate() } catch (e) { setFormError(e) }`
+  shape the issue was raised against. It does not close every case: a caller whose error
+  state commits in a render *after* the promise settles (`mutateAsync()`'s `isError` /
+  `error` lagging the resolved promise by a render or two) still has that error go
+  unannounced, because the flag already disarmed on the earlier settle with no error yet
+  visible. `Form`'s contract is narrower than "no longer assumes validate-on-submit": it
+  supports validate-on-change for a caller whose promise does not settle before its
+  error state does. See `onSubmit`'s doc comment in `form.tsx` and
+  `SlowRefusingPromiseForm` in `form.test.tsx`, which pins this boundary rather than
+  hiding it.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.

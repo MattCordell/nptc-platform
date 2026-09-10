@@ -84,6 +84,66 @@ function AsyncRejectingForm({ onSubmit }: { onSubmit: () => void }) {
 }
 
 /**
+ * A form that validates on change as well as on submit, whose `onSubmit`
+ * resolves successfully - the shape issue #214 exists to support. A
+ * validation error produced by typing, after a settled successful submit,
+ * must not pull focus out of the field the user is typing in.
+ */
+function ValidateOnChangeForm() {
+  const [term, setTerm] = useState("Sodium");
+  const [errors, setErrors] = useState<{ fieldId: string; message: string }[]>([]);
+
+  return (
+    <Form submitLabel="Save entry" errors={errors} onSubmit={() => Promise.resolve()}>
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => (
+          <input
+            {...controlProps}
+            type="text"
+            value={term}
+            onChange={(event) => {
+              const value = event.target.value;
+              setTerm(value);
+              setErrors(
+                value
+                  ? []
+                  : [{ fieldId: "requesting-term", message: "Enter a requesting term" }],
+              );
+            }}
+          />
+        )}
+      </Field>
+    </Form>
+  );
+}
+
+/**
+ * A caller whose `onSubmit` returns a promise that *resolves* right after it
+ * sets a form error - the exact shape a bare `.finally(() => disarm)` gets
+ * wrong (issue #214's approach notes): that microtask would beat the
+ * error-reading effect's macrotask and disarm the flag before the summary
+ * ever got focus. The fix routes the settle through the same effect that
+ * reads `hasErrors`, so the error takes priority regardless of timing.
+ */
+function ResolvingAfterErrorForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={async () => {
+        setFormError("The catalogue rejected this entry.");
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
  * A form whose errors can be set from outside it, without a submit - the
  * case that separates "the answer to a submit" from "an error that simply
  * appeared".
@@ -153,6 +213,51 @@ function SlowRefusingForm() {
 
   return (
     <Form submitLabel="Save entry" formError={formError} onSubmit={() => setTick(1)}>
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
+ * The same slow refusal as `SlowRefusingForm`, but `onSubmit` also returns a
+ * settled promise - the `mutateAsync()` shape, where the promise resolves
+ * once the network call finishes but `isError` / `error` surface a render
+ * or two later. This is a known, documented limitation (see `onSubmit`'s
+ * doc comment in `form.tsx`): the promise settles with no error yet
+ * visible, so the flag disarms there, and the refusal that commits several
+ * renders later goes unannounced. This test pins that boundary rather than
+ * hiding it - the void-case equivalent (`SlowRefusingForm`, exercised by
+ * "announces a refusal that arrives late") still announces correctly,
+ * because it never returns a promise for the settle path to disarm early.
+ */
+function SlowRefusingPromiseForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (tick === 0 || tick > 3) {
+      return;
+    }
+    const id = window.setTimeout(() => {
+      if (tick === 3) {
+        setFormError("The catalogue rejected this entry.");
+      }
+      setTick((current) => current + 1);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [tick]);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={() => {
+        setTick(1);
+        return Promise.resolve();
+      }}
+    >
       <Field id="requesting-term" label="Requesting term">
         {(controlProps) => <input {...controlProps} type="text" />}
       </Field>
@@ -451,18 +556,48 @@ describe("Form", () => {
     expect(screen.getByRole("button", { name: "Set an error" })).toHaveFocus();
   });
 
-  it("keeps listening for the answer to a submit until an error actually arrives", async () => {
+  it("keeps listening for the answer to a void submit until an error actually arrives", async () => {
     const user = userEvent.setup();
     render(<ExternallyErroringForm />);
 
-    // The deliberate cost of not consulting `pending`: a submit leaves the
-    // form listening, so an error that turns up afterwards is treated as
-    // that submit's answer and announced. After a submit, an error is far
-    // more likely to be its answer than not - and the case that matters
-    // more, a refusal arriving several renders later, is announced at all.
+    // The deliberate cost of not consulting `pending`, for a caller whose
+    // `onSubmit` returns nothing: a submit leaves the form listening, so an
+    // error that turns up afterwards is treated as that submit's answer and
+    // announced. After a submit, an error is far more likely to be its
+    // answer than not - and the case that matters more, a refusal arriving
+    // several renders later, is announced at all. A caller whose `onSubmit`
+    // returns a promise instead gets a second, earlier disarm path on a
+    // successful settle - see "does not steal focus from a validate-on-change
+    // error after a successful submit settles" below.
     await user.click(screen.getByRole("button", { name: "Save entry" }));
     await user.click(screen.getByRole("button", { name: "Set an error" }));
 
+    expect(summaryElement()).toHaveFocus();
+  });
+
+  it("does not steal focus from a validate-on-change error after a successful submit settles", async () => {
+    const user = userEvent.setup();
+    render(<ValidateOnChangeForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    await user.clear(screen.getByLabelText("Requesting term"));
+
+    expect(
+      screen.getByRole("heading", { name: "There is a problem" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Requesting term")).toHaveFocus();
+  });
+
+  it("still focuses the summary when the settling promise resolves right after the caller sets a form error", async () => {
+    const user = userEvent.setup();
+    render(<ResolvingAfterErrorForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
     expect(summaryElement()).toHaveFocus();
   });
 
@@ -476,6 +611,21 @@ describe("Form", () => {
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
     expect(summaryElement()).toHaveFocus();
+  });
+
+  it("pins the known limitation: a refusal committed after a settled promise is not announced", async () => {
+    const user = userEvent.setup();
+    render(<SlowRefusingPromiseForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // The promise settled with no error yet, disarming the flag - see
+    // onSubmit's doc comment. The refusal still renders, it is just not
+    // announced: this documents the boundary rather than papering over it.
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    expect(summaryElement()).not.toHaveFocus();
   });
 
   it("announces again on a resubmit that fails the same way", async () => {
