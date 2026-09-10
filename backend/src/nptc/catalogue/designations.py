@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
-from nptc.audit.writer import AuditContext
+from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.collisions import assert_no_error_collisions
 from nptc.catalogue.term_hygiene import (
@@ -264,7 +264,23 @@ def add_designation(
     by `Designation`'s own `@validates` hook when the row is constructed
     below: `assert_no_error_collisions`'s `language == DEFAULT_LANGUAGE`
     branching would otherwise silently take the wrong path for a
-    caller-supplied `en-au` (issue #224 review finding 2)."""
+    caller-supplied `en-au` (issue #224 review finding 2).
+
+    **`acquire_append_lock` runs as the literal first statement (issue #281
+    round-2 review).** Every existing caller today reaches this function
+    already wrapped in `nptc.catalogue.entries.entry_child_write` (issue
+    #60/#300), which takes the same lock first - so this call is a cheap,
+    safe re-assertion of a lock already held, not a second acquisition.
+    Without it, a caller invoking `add_designation` directly (bypassing
+    `entry_child_write`) would reopen the exact collision-lock-vs-append-
+    lock cycle issue #281 closes elsewhere: this function's own collision
+    check takes `assert_no_error_collisions`'s advisory lock, and reaching
+    the append lock only afterwards, via `record_change`, is the reverse
+    order a concurrent `entry_child_write`-wrapped caller uses. Making the
+    invariant hold at this function's own boundary, rather than relying on
+    every caller to wrap it correctly, is what closes that gap for good."""
+    acquire_append_lock(session)
+
     from nptc.db.models.designation import Designation
 
     validated_reason = validate_changelog_note(reason)
@@ -342,7 +358,19 @@ def add_synonyms(
     submitted in, so two batches can only ever block on each other, never
     deadlock. The returned list is therefore ordered by comparison key,
     not by the order `terms` was given in - #149's caller should not rely
-    on positional correspondence between `terms` and the return value."""
+    on positional correspondence between `terms` and the return value.
+
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason `retire_designation` now does (issue #281 round-3 review): every
+    `add_designation` call below already re-asserts the same lock on this
+    function's behalf, so this call is itself a cheap, safe re-assertion,
+    not a second acquisition - kept anyway so this function's own first
+    statement satisfies the uniform invariant `test_lock_ordering.py`'s
+    derived guard checks, the same as every other writer in this module,
+    rather than relying on a reader (or that guard) reasoning transitively
+    through the loop below to see that nothing unsafe happens before the
+    first `add_designation` call."""
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
     seen: set[str] = set()
     deduplicated: list[tuple[str, str]] = []
@@ -378,7 +406,19 @@ def retire_designation(
     (`nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a privilege-
     level guarantee, matching `CatalogueEntry.status`'s own precedent for
     deprecation-not-deletion). Raises `DesignationAlreadyRetiredError`
-    rather than silently no-opping - see that class's own docstring."""
+    rather than silently no-opping - see that class's own docstring.
+
+    `acquire_append_lock` runs as the literal first statement, matching
+    every other writer in this module that reaches `record_change` (issue
+    #281 round-3 review): this function takes no *other* lock today, so
+    the ordering has no live deadlock to close yet, but a uniform "the
+    append lock is always this function's first statement" invariant,
+    with no per-function exceptions to reason about, is what
+    `test_lock_ordering.py`'s own derived guard checks - and is cheaper to
+    keep true everywhere than to justify a carve-out for the one function
+    that happens not to need it today."""
+    acquire_append_lock(session)
+
     from nptc.db.models.designation import DesignationStatus
 
     if designation.status == str(DesignationStatus.RETIRED):
@@ -419,7 +459,15 @@ def amend_designation(
     so the collision check can exclude this entry's own other designations
     the same way `add_designation` does - the caller (already having
     resolved both via `load_entry_for_update`/`load_active_designation`)
-    has them both on hand."""
+    has them both on hand.
+
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason `add_designation` now does (issue #281 round-2 review): makes
+    the append-lock-before-collision-lock invariant hold at this function's
+    own boundary rather than depending on every caller wrapping it in
+    `entry_child_write` correctly."""
+    acquire_append_lock(session)
+
     from nptc.db.models.designation import DesignationStatus
 
     if designation.status == str(DesignationStatus.RETIRED):

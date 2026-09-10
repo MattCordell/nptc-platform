@@ -199,14 +199,29 @@ def create_entry(
     seeded-import path (ADR-0010) supplies its own, positionally-derived
     key rather than minting.
 
-    `reason` (FR-37) is validated before anything is added to the session -
-    see the module docstring. FR-05's error-severity collision check
-    (`nptc.catalogue.collisions.assert_no_error_collisions`) runs
-    immediately after, before `business_key` is even minted - a rejected
-    collision must not consume a sequence value. There is no exemption for
-    the seeded-import path: PRD Section 6.3's own consequence is that a
-    baseline carrying a genuine error-severity collision cannot be created
-    until it is resolved editorially."""
+    `reason` (FR-37) is validated after the append lock, but still before
+    anything is added to the session - see the module docstring. FR-05's
+    error-severity collision check (`nptc.catalogue.collisions.
+    assert_no_error_collisions`) runs immediately after that, before
+    `business_key` is even minted - a rejected collision must not consume a
+    sequence value. There is no exemption for the seeded-import path: PRD
+    Section 6.3's own consequence is that a baseline carrying a genuine
+    error-severity collision cannot be created until it is resolved
+    editorially.
+
+    `acquire_append_lock` runs as the literal first statement, matching
+    `entry_child_write`'s own precedent (issue #281): `assert_no_error_
+    collisions` takes its own advisory lock (keyed per comparison-key), and
+    taking it before the audit append lock is the reverse of the order every
+    other write path here now uses - a lock-ordering cycle no different from
+    the row-lock one, just against a different pair of locks. Neither
+    `validate_changelog_note` nor `clean_term` touches the session, so
+    nothing here could take another lock ahead of this one regardless of
+    ordering - acquired first anyway, for the same reason `save_entry` now
+    does: a guarantee that holds at this function's own boundary, not one
+    that depends on staying that way.
+    """
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
     cleaned_preferred_term = clean_term(preferred_term)
     assert_no_error_collisions(
@@ -578,8 +593,29 @@ def save_entry(
     module docstring for why neither path ever leaves an audit event
     behind.
 
-    `reason` (FR-37) is validated before the entry is even loaded, so a
-    rejected note never reaches the row-version check at all."""
+    `acquire_append_lock` runs as the literal first statement - before
+    `reason` validation, the entry load, the collision check, and the
+    savepoint whose flush issues the implicit row-locking UPDATE - the same
+    ordering `entry_child_write` already establishes for a child-table write
+    (issue #281), applied here to the entry's own columns. See that
+    statement's own comment for why "first, unconditionally" rather than
+    only once a genuine change is confirmed.
+
+    `reason` (FR-37) is still validated before the entry is even loaded, so
+    a rejected note never reaches the row-version check at all - it is just
+    no longer the *first* thing this function does."""
+    # The literal first statement, before even `load_entry_for_update` -
+    # matching `entry_child_write`'s own precedent (round-2 review, issue
+    # #281). `load_entry_for_update` is an ORM `select()`, and SQLAlchemy's
+    # default autoflush means any pending `catalogue_entry` mutation already
+    # sitting in this session (from earlier in the same transaction) would
+    # otherwise flush - taking a row lock - before this function ever reaches
+    # its own, later call. Acquiring unconditionally here, rather than only
+    # once a genuine change is confirmed, gives up the "a no-op resubmission
+    # takes no lock" optimisation a narrower placement would allow, in
+    # exchange for a guarantee that holds at this function's own boundary
+    # rather than depending on every caller having no unflushed state.
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
     entry = load_entry_for_update(session, business_key)
 
@@ -694,7 +730,15 @@ def save_entries(
     reclassify, which sets a coded registry property (discipline,
     `origin=system`) and so must go through
     `nptc.catalogue.property_values.save_property_values_for_entries`
-    instead (issue #265)."""
+    instead (issue #265).
+
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason `add_synonyms` now does (issue #281 round-3 review): each
+    `save_entry` call below already re-asserts the same lock on this
+    function's behalf, so this is a cheap, safe re-assertion, kept so this
+    function's own first statement satisfies the same uniform invariant
+    every other writer in this package does."""
+    acquire_append_lock(session)
     return [
         save_entry(
             session,

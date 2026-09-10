@@ -580,17 +580,18 @@ def add_designations(
     #
     # This nests `add_synonyms`'/`add_designation`'s own collision-key
     # `pg_advisory_xact_lock` (`assert_no_error_collisions`) *inside* the
-    # append lock `entry_child_write` takes first - the reverse of the order
-    # `nptc.catalogue.entries.save_entry`/`create_entry` use (collision lock,
-    # then later the append lock via `record_change`). Re-entrancy is not
-    # what makes this safe (they are two different advisory keys, not the
-    # same one taken twice) - see ADR-0035's "Lock ordering" addendum, which
-    # already accepts this same class of cross-lock inversion (there,
-    # append-lock-vs-row-lock) as a live-but-rare deadlock risk rather than a
-    # correctness one: Postgres's own detector aborts one side with a `500`,
-    # the caller retries, no partial write or corruption survives. This
-    # route adds a second instance of that accepted risk - collision-lock-
-    # vs-append-lock - tracked alongside it under issue #281.
+    # append lock `entry_child_write` takes first - and, since issue #281,
+    # `add_designation` also takes the append lock itself, as its own first
+    # statement, before this call ever reaches it. That is a safe,
+    # re-entrant no-op re-assertion of the lock `entry_child_write` already
+    # holds, not a second acquisition, and it is what keeps this route
+    # correctly ordered (append lock, then collision lock) regardless of
+    # whether some future caller reaches `add_designation`/`add_synonyms`
+    # without going through `entry_child_write` at all - `nptc.catalogue.
+    # entries.save_entry`/`create_entry` take the same append-lock-first
+    # order today, for the same reason. See ADR-0035's "Lock ordering"
+    # addendum for the fuller history of why this pair of locks needed a
+    # single, consistent order in the first place.
     with entry_child_write(session, entry, body.expected_row_version):
         if body.use is DesignationUse.PREFERRED:
             # add_synonyms is synonym-only (it hardcodes use="synonym") and a
@@ -780,10 +781,11 @@ def amend_designation_route(
     # `retire_binding` documents for its own lookup.
     #
     # `amend_designation` below also takes the collision-key advisory lock
-    # (`assert_no_error_collisions`), nested inside the append lock
-    # `entry_child_write` already holds by then - the same accepted
-    # lock-ordering inversion `add_designations`' own comment above explains
-    # (ADR-0035, issue #281).
+    # (`assert_no_error_collisions`), and (since issue #281) the append lock
+    # itself first, as its own first statement - a safe re-assertion of the
+    # lock `entry_child_write` already holds, not a second acquisition. See
+    # `add_designations`' own comment above and ADR-0035's "Lock ordering"
+    # addendum for the fuller history.
     with entry_child_write(session, entry, body.expected_row_version):
         if designation is None:
             # Raised here rather than by calling `load_active_designation`

@@ -216,6 +216,54 @@ its own follow-up: the complete fix is the same one this addendum already calls 
 single, consistent lock-acquisition order across every catalogue-entry writer, covering
 both lock pairs (append-vs-row and append-vs-collision) at once.
 
+**Issue #281 closes both cases above.** `nptc.catalogue.entries.create_entry`/`save_entry`,
+`nptc.catalogue.property_values.save_property_values` (the singular writer), and
+`nptc.catalogue.designations.add_designation`/`amend_designation` now call
+`acquire_append_lock` as their own **literal first statement** — not merely "early" or
+"before the collision/row lock", which a round-2 review of this fix itself found was not
+strong enough: a placement after some earlier precondition check still left one or more ORM
+`select()` calls in between (`_load_active_property_definition`, the existing-values query,
+`load_entry_for_update`), each of which autoflushes any already-pending `catalogue_entry`
+mutation by default — so a caller entering with unflushed state could still take a row lock
+before a later-placed `acquire_append_lock` ever ran. Acquiring first, unconditionally,
+removes that dependency on caller discipline entirely. `add_designation`/`amend_designation`
+taking it themselves (rather than relying on every caller wrapping them in
+`entry_child_write`, as every caller happens to today) closes the same gap at the function's
+own boundary, not just its current call sites.
+
+Every catalogue-entry writer now acquires the append lock before it can take either a row
+lock or the collision lock, so the residual bulk-vs-singular and collision-lock cycles this
+addendum accepted above are closed, not merely narrowed: `backend/tests/
+test_lock_ordering.py` proves both directly with two genuine concurrent Postgres sessions,
+plus a pure-`ast` guard (`test_acquire_append_lock_is_the_literal_first_statement`) pinning
+the "literal first statement" invariant itself, so a future change that moves the lock later
+in any of these five functions fails that guard immediately rather than only occasionally
+failing a flaky concurrency test. (A `threading.Barrier`-only version of the concurrency
+tests, against a version of this fix that took the lock merely "before the row/collision
+lock" rather than as the literal first statement, was verified not to reproduce either
+deadlock reliably — the racing call paths differ too much in preamble length for natural
+scheduling to force the overlap without the stronger placement.) Postgres's deadlock
+detector is no longer expected to fire for either case.
+
+**Cost: a longer, and now unconditional, hold on one global lock.** The append lock is a
+single `pg_advisory_xact_lock` shared by every audit append in the application; it is now
+held from before `create_entry`'s own `pg_trgm`-backed collision scan and across the whole
+of `save_entry`/`save_property_values`/`add_designation`/`amend_designation`, including
+their own no-op paths that previously took no lock at all. Because the lock now precedes
+both `reason` validation and the row-version check in every one of these functions, a
+rejected changelog note (422) or a stale `expected_row_version` (409) each hold it until
+the request's transaction unwinds too — not only a successful write. Every catalogue write
+now serialises against every other on this one lock for a longer window than before this
+issue. `add_synonyms`' own per-term loop re-asserts the same already-held lock once per
+term (via each `add_designation` call) rather than once per batch — each re-assertion
+re-runs `acquire_append_lock`'s isolation-level `SELECT`, pure waste on a lock the caller
+already holds, though harmless at today's batch sizes. Given this platform's real
+catalogue size (~2,000 terms, ~5,000 ceiling — see
+ADR-0039's identical note, not the PRD's 20,000-entry planning ceiling), this is not
+expected to be a measurable contention source in practice, and was not separately
+load-tested; a future catalogue an order of magnitude larger, or a much higher write
+concurrency, would be the trigger to revisit it, not this issue's own scope.
+
 ## Consequences
 
 - A generated client (or a future frontend) must read `outcomes[]`/`applied`/

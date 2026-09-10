@@ -70,14 +70,28 @@ single-entry writer holds, while that writer blocks waiting for the same
 advisory lock. `save_property_values_for_entries` acquires the lock once,
 deterministically, before its loop starts (see `nptc.audit.writer.
 acquire_append_lock`) rather than relying on whichever entry happens to
-apply first - this removes the bulk-vs-bulk case (two concurrent batches
+apply first - this removed the bulk-vs-bulk case (two concurrent batches
 locking rows in different orders now both queue on the same advisory lock
-before touching a row) but does not, by itself, close the bulk-vs-a-
-concurrent-singular-write case; see ADR-0035's addendum for why a complete
-fix needs the same ordering applied to every catalogue-entry writer, not
-just this one, and why that is out of scope here. Postgres's own deadlock
-detector aborts one of the two transactions in the residual case (a 500,
-full rollback of the whole batch, no corruption) - not silent data loss.
+before touching a row) but did not, by itself, close the bulk-vs-a-
+concurrent-singular-write case: `save_property_values` (the singular
+writer) itself acquired the lock only via `record_snapshot_change`'s own
+`append_audit_event` call, after the row-locking flush below, not before
+it. Issue #281 closes that gap: `save_property_values` now calls
+`acquire_append_lock` itself, as its own first statement (round-2 review of
+that fix found that a narrower placement - after the row-version check, just
+before the row-locking flush - still left several ORM `select()` calls
+in between, each of which autoflushes any already-pending `catalogue_entry`
+mutation by default). Round-3 review found the same gap in this bulk seam
+itself: acquiring the lock after `_load_active_property_definition`'s own
+`select()` had exactly the same autoflush hazard, just one call further
+out - `save_property_values_for_entries` now also acquires it as its own
+first statement, before that or any other query. Every caller of this
+module - bulk or singular - now takes the append lock before any
+`catalogue_entry` row lock, closing the cycle for good rather than
+narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
+detector still aborts one of the two transactions in the (now closed)
+residual case (a 500, full rollback, no corruption) - not silent data
+loss, and no longer expected to occur.
 """
 
 from __future__ import annotations
@@ -469,7 +483,24 @@ def save_property_values(
     to track per entry, covering both this path and `save_entry`'s.
 
     Returns the newly inserted rows, ordered by ordinal.
+
+    `acquire_append_lock` runs as the literal first statement, before even
+    `reason` validation - matching `entry_child_write`'s own precedent
+    (issue #281 round-2 review). A narrower placement (after the no-op
+    short-circuit below, taking the lock only once a real change is
+    confirmed) was tried first, but every one of the steps between here and
+    there - the identity flush below, `_load_active_property_definition`'s
+    own `select()`, the `existing` query - is an ORM statement that
+    autoflushes by default: any `catalogue_entry` mutation already pending
+    in this session (from earlier in the same transaction) would flush,
+    taking a row lock, before a later-placed `acquire_append_lock` ever
+    ran. Acquiring first, unconditionally, is what makes the guarantee hold
+    at this function's own boundary rather than depending on every caller
+    entering with a clean session - the same trade-off `save_entry` now
+    makes, giving up "a no-op resubmission takes no lock" for a guarantee
+    that does not depend on caller discipline.
     """
+    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
 
     # `entry.id` is read into every query/insert below - a brand-new,
@@ -662,6 +693,17 @@ def save_property_values_for_entries(
     whole transaction on any exception that reaches it, discarding any
     entry already applied earlier in the loop too.
 
+    `acquire_append_lock` runs as the literal first statement (issue #281
+    round-3 review): a placement after `_load_active_property_definition`'s
+    own `select()` - the shape this function used until this round - is
+    exactly the autoflush-before-lock gap that round's own fix to
+    `save_property_values` itself closed; the bulk seam had the identical
+    gap, just one call further out. Acquired once, unconditionally, before
+    any other statement runs - not left to whichever entry's own audit
+    append happens to acquire it first, which would otherwise defer
+    acquisition arbitrarily for a batch whose earliest entries are all
+    `unchanged`.
+
     An entry deleted by another transaction between the row-version
     pre-check and this call's own flush (`ObjectDeletedError`, issue #265
     review) becomes a `not-found` outcome, the same as a `business_key` that
@@ -674,6 +716,8 @@ def save_property_values_for_entries(
     emits no audit event" posture and keeping a client that retries a stale
     selection from appending one permanent audit row per attempt.
     """
+    acquire_append_lock(session)
+
     # Deferred to break an import cycle: `nptc.catalogue.entries` imports
     # `assert_specimen_flag_allowed` from this module at its own top level,
     # so a top-level import the other way here would fail with a partially
@@ -685,12 +729,6 @@ def save_property_values_for_entries(
     preflight = _preflight_property_write(definition, values, registry)
     if preflight.write_issues:
         raise PropertyValidationError(preflight.write_issues)
-
-    # See the module docstring's "Lock ordering" note: acquired once, here,
-    # rather than left to whichever entry's own audit append happens to
-    # acquire it first - a batch whose earliest entries are all `unchanged`
-    # would otherwise defer acquisition arbitrarily.
-    acquire_append_lock(session)
 
     outcomes: list[BulkPropertyOutcome] = []
 
