@@ -68,7 +68,12 @@ over rule configuration).
   `disabled` removes the control from the tab order and strands their focus. It styles
   the control only: refusing the action stays the caller's job (`Form` guards re-entry
   in its own submit handler), so a `type="button"` action needs its `onClick` guarded
-  too.
+  too. `button-class-name.ts` exports the base + variant classes `Button` renders
+  (`buttonClassName`) for a call site that needs the same look on an element `Button`
+  can't be — e.g. a router `Link` styled as an action (`pages/home.tsx`'s register/
+  sign-in/sign-out actions) — so nothing hand-copies the variant classes into a second,
+  divergent copy. Kept out of `button.tsx` itself: mixing a component export with a
+  plain function export in one file defeats Fast Refresh.
 - **`dialog.tsx` — `Dialog`.** A modal that prefers the native `<dialog>` element's
   `showModal()` where the runtime supports it, but does not depend on it for the focus
   contract — `showModal()`/the browser's own `Tab` trap are not implemented in jsdom, so

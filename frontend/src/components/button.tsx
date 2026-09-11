@@ -1,6 +1,6 @@
 import type { ComponentPropsWithoutRef } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "danger";
+import { buttonClassName, type ButtonVariant } from "./button-class-name.ts";
 
 type ButtonProps = {
   variant?: ButtonVariant;
@@ -8,15 +8,6 @@ type ButtonProps = {
    * inheriting the native element's "submit" default. */
   type: "button" | "submit" | "reset";
 } & Omit<ComponentPropsWithoutRef<"button">, "type">;
-
-const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary:
-    "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] border-transparent hover:bg-[var(--color-accent-hover)]",
-  secondary:
-    "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]",
-  danger:
-    "bg-[var(--color-danger)] text-[var(--color-accent-contrast)] border-transparent",
-};
 
 /**
  * A button that always declares its `type` explicitly (issue #148): inside
@@ -56,8 +47,7 @@ export function Button({
       disabled={disabled}
       aria-disabled={ariaDisabled}
       className={[
-        "rounded-md border px-4 py-2 text-sm font-medium",
-        VARIANT_CLASSES[variant],
+        buttonClassName(variant),
         unavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         className ?? "",
       ]

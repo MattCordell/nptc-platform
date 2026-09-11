@@ -3,7 +3,24 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
+import { buttonClassName } from "./button-class-name.ts";
 import { Button } from "./button.tsx";
+
+describe("buttonClassName", () => {
+  // Asserted against the literal string, not against what `Button` itself
+  // renders: `Button` calls `buttonClassName` internally, so comparing the
+  // two would just assert the function against itself and could never catch
+  // a drift - which is exactly what this export exists to prevent.
+  it("returns the base classes plus the secondary variant's colours", () => {
+    expect(buttonClassName("secondary")).toBe(
+      "rounded-md border px-4 py-2 text-sm font-medium bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]",
+    );
+  });
+
+  it("defaults to the primary variant", () => {
+    expect(buttonClassName()).toBe(buttonClassName("primary"));
+  });
+});
 
 describe("Button", () => {
   it("requires an explicit type, so it never defaults to submit inside a form", () => {
