@@ -114,6 +114,13 @@ The platform's real lifecycle (`STATUS_OPTIONS` in
   fallback for a status value the mapping does not recognise (`statusToneFor` in
   `status-options.ts`), so a badge degrades to a muted pill rather than a component
   crashing over an unexpected string.
+- **`--color-text-tertiary` is darkened from this table's `#8B9391`** to `#656C6B`
+  (`frontend/src/styles/app.css`), within the same hue and saturation. As drafted it was
+  3.14:1 on paper; a first fix (`#6E7774`, 4.61:1 on paper) still measured 3.94:1 on
+  `--color-surface-sunken` - `DataTable`'s row-hover fill this PR adds - so meta/help text
+  in a hovered row lost AA precisely while the pointer was over it (PR #327 second review).
+  The current value clears 4.5:1 on both surfaces; `design-tokens-contrast.test.ts` checks
+  both.
 
 Danger/error keeps the platform's existing red pair (`--color-danger` /
 `--color-danger-surface`); the notes specify no validation-error colour.

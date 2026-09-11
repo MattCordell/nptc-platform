@@ -46,9 +46,13 @@
   --color-text: #1e2a2c;
   --color-text-muted: #5a6462;
   /* #8b9391 as drafted is 3.14:1 on paper - below WCAG AA's 4.5:1 for normal
-     text (PR #327 review). Darkened within the same hue/saturation to
-     4.61:1, since #324/#325 use this for help/meta text, not just icons. */
-  --color-text-tertiary: #6e7774;
+     text (PR #327 review). The first darkened value (#6e7774, 4.61:1 on
+     paper) still dropped to 3.94:1 on --color-surface-sunken - DataTable's
+     row-hover fill - so meta/help text in a hovered row lost AA precisely
+     while the pointer was over it (PR #327 second review). Darkened further,
+     within the same hue/saturation, to pass on both surfaces: 4.59:1 on
+     sunken, 5.37:1 on paper. */
+  --color-text-tertiary: #656c6b;
 
   --color-code-text: #4a5250;
   --color-code-bg: #efebe0;
