@@ -11,9 +11,9 @@ type ButtonProps = {
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] border-transparent",
+    "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] border-transparent hover:bg-[var(--color-accent-hover)]",
   secondary:
-    "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]",
+    "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]",
   danger:
     "bg-[var(--color-danger)] text-[var(--color-accent-contrast)] border-transparent",
 };

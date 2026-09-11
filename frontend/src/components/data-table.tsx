@@ -9,6 +9,9 @@ type Column<Row> = {
    * a data cell - typically the row's identifying field. At most one
    * column should set this. */
   isRowHeader?: boolean;
+  /** Text alignment for both the header cell and the matching data cell.
+   * Defaults to left. */
+  align?: "left" | "right";
   render: (row: Row) => ReactNode;
 };
 
@@ -102,7 +105,10 @@ export function DataTable<Row>({
             <th
               key={column.key}
               scope="col"
-              className="border-b border-[var(--color-border)] p-2 text-left"
+              className={[
+                "border-b border-[var(--color-border)] p-2 text-xs font-semibold tracking-wide text-[var(--color-text-muted)] uppercase",
+                column.align === "right" ? "text-right" : "text-left",
+              ].join(" ")}
             >
               {column.header}
             </th>
@@ -120,7 +126,7 @@ export function DataTable<Row>({
           rows.map((row) => {
             const rowKey = getRowKey(row);
             return (
-              <tr key={rowKey}>
+              <tr key={rowKey} className="hover:bg-[var(--color-surface-sunken)]">
                 {selection ? (
                   <td className="border-b border-[var(--color-border)] p-2">
                     <Checkbox
@@ -138,14 +144,20 @@ export function DataTable<Row>({
                     <th
                       key={column.key}
                       scope="row"
-                      className="border-b border-[var(--color-border)] p-2 text-left font-normal"
+                      className={[
+                        "border-b border-[var(--color-border)] p-2 font-normal",
+                        column.align === "right" ? "text-right" : "text-left",
+                      ].join(" ")}
                     >
                       {column.render(row)}
                     </th>
                   ) : (
                     <td
                       key={column.key}
-                      className="border-b border-[var(--color-border)] p-2"
+                      className={[
+                        "border-b border-[var(--color-border)] p-2",
+                        column.align === "right" ? "text-right" : "text-left",
+                      ].join(" ")}
                     >
                       {column.render(row)}
                     </td>

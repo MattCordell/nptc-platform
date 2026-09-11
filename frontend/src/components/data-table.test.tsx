@@ -103,6 +103,35 @@ describe("DataTable", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("right-aligns a column's header and data cells when align is right", () => {
+    const columnsWithAlignedStatus = [
+      { key: "id", header: "Code", isRowHeader: true, render: (row: Entry) => row.id },
+      {
+        key: "status",
+        header: "Status",
+        align: "right" as const,
+        render: (row: Entry) => row.status,
+      },
+    ];
+
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={columnsWithAlignedStatus}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Status" }).className).toContain(
+      "text-right",
+    );
+    expect(screen.getByRole("cell", { name: "Active" }).className).toContain(
+      "text-right",
+    );
+  });
+
   it("shows the empty state, not a headers-only table, when there are no rows", () => {
     render(
       <DataTable
