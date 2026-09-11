@@ -27,7 +27,11 @@ const APP_CSS_PATH = join(
   "styles",
   "app.css",
 );
-const appCss = readFileSync(APP_CSS_PATH, "utf-8");
+// Comments stripped before matching (PR #327 second review): several
+// comments in app.css quote a token's *superseded* hex value while
+// explaining why it changed, and an unstripped, unanchored regex would
+// happily match that old value instead of the live declaration below it.
+const appCss = readFileSync(APP_CSS_PATH, "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
 
 function tokenValue(name: string): string {
   const match = appCss.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`));
@@ -70,9 +74,16 @@ describe("design tokens meet WCAG AA contrast", () => {
     },
   );
 
-  it("--color-text-tertiary reaches 4.5:1 on --color-surface", () => {
-    const text = tokenValue("color-text-tertiary");
-    const surface = tokenValue("color-surface");
-    expect(contrastRatio(text, surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-  });
+  it.each(["color-surface", "color-surface-sunken"] as const)(
+    "--color-text-tertiary reaches 4.5:1 on --%s",
+    (surfaceToken) => {
+      // Both surfaces, not just paper (PR #327 second review):
+      // --color-surface-sunken is DataTable's row-hover fill, and tertiary
+      // text sitting in a hovered row is a real case this token has to
+      // cover, not a hypothetical one.
+      const text = tokenValue("color-text-tertiary");
+      const surface = tokenValue(surfaceToken);
+      expect(contrastRatio(text, surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    },
+  );
 });
