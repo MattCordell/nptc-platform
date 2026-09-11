@@ -99,7 +99,16 @@ The platform's real lifecycle (`STATUS_OPTIONS` in
   either, so each maps onto the nearest drafted pair rather than inventing a new one.
 - **"In review" has no counterpart in the real lifecycle.** It stays in the palette table
   above, unused, rather than being silently dropped — a future status added to the
-  lifecycle that means "in review" already has a drafted colour to reuse.
+  lifecycle that means "in review" already has a drafted colour to reuse. Note for
+  whoever does that: `#4F6D8C` on `#E4EAF0` is 4.44:1, below WCAG AA's 4.5:1 for
+  `StatusBadge`'s 12px text (PR #327 review) — darken it before wiring it to a token,
+  the same way Draft's and Active's pairs were below.
+- **Draft's and Active's `*-text` values are darkened from this table's `#A86A3A` /
+  `#3F7D4E`** to `#905B32` / `#3B7448` in the actual `--color-status-*` tokens
+  (`frontend/src/styles/app.css`), within the same hue and saturation. As drafted they were
+  3.59:1 and 4.13:1 against their backgrounds — both below the 4.5:1 `StatusBadge`'s 12px
+  text needs. `frontend/tests/design-tokens-contrast.test.ts` asserts every status pair stays
+  at or above 4.5:1, so a future edit can't reintroduce this.
 - **A `neutral` tone was added**, with its own colour pair (not a reuse of Deprecated's),
   so every `StatusBadge` tone has a symmetrical entry in the token table. It is the
   fallback for a status value the mapping does not recognise (`statusToneFor` in

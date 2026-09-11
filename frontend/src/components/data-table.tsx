@@ -10,7 +10,10 @@ type Column<Row> = {
    * column should set this. */
   isRowHeader?: boolean;
   /** Text alignment for both the header cell and the matching data cell.
-   * Defaults to left. */
+   * Defaults to left. Alignment only - the design system's numeric/date
+   * columns also want tabular figures (`font-variant-numeric: tabular-nums`,
+   * docs/architecture/design-system.md), which a caller has to add to its
+   * own `render` output; this doesn't add it (PR #327 review). */
   align?: "left" | "right";
   render: (row: Row) => ReactNode;
 };

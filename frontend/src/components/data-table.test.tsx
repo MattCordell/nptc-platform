@@ -53,6 +53,12 @@ describe("DataTable", () => {
     }
   });
 
+  // The next two assert the Tailwind class contract, not rendered style -
+  // jsdom has no layout engine, so there is no computed colour or hover
+  // state to check (PR #327 review). They are change-detectors for the
+  // class string in data-table.tsx, not visual proof of the styling; see
+  // frontend/tests/design-tokens-contrast.test.ts for the one place token
+  // *values* are checked.
   it("styles the header row uppercase, small and muted, per the dense-table pattern", () => {
     render(
       <DataTable
