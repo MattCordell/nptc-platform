@@ -8,6 +8,8 @@ statement aborts the surrounding transaction, 25P02).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -25,8 +27,8 @@ _INSERT_ENTRY = text(
     "VALUES (:business_key, :preferred_term) RETURNING id"
 )
 _INSERT_DESIGNATION = text(
-    "INSERT INTO designation (entry_id, term, term_key, use, language) "
-    "VALUES (:entry_id, :term, :term_key, :use, :language) RETURNING id"
+    "INSERT INTO designation (entry_id, term, term_key, use, language, status, retired_at) "
+    "VALUES (:entry_id, :term, :term_key, :use, :language, :status, :retired_at) RETURNING id"
 )
 
 
@@ -48,6 +50,8 @@ def _insert_designation(
     term: str = "FBC",
     use: str = "synonym",
     language: str = "en-AU",
+    status: str = "active",
+    retired_at: datetime | None = None,
 ) -> None:
     # `term_key` is computed here via the real `collision_key` (issue
     # #49), not left to the column's own `server_default = ''` - every
@@ -65,6 +69,8 @@ def _insert_designation(
             "term_key": collision_key(term),
             "use": use,
             "language": language,
+            "status": status,
+            "retired_at": retired_at,
         },
     )
 
@@ -224,12 +230,41 @@ def test_a_case_and_punctuation_variant_of_an_active_synonym_is_also_refused(
     assert exc_info.value.orig.sqlstate == _UNIQUE_VIOLATION  # type: ignore[union-attr]
 
 
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_retiring_without_retired_at_is_refused(db: Connection) -> None:
+    """`ck_designation_retired_at` mirrors `ck_code_binding_retired_at`
+    (issue #313, issue #140) exactly - mandatory exactly when retired."""
+    entry_id = _insert_entry(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_designation(db, entry_id=entry_id, status="retired", retired_at=None)
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_active_designation_with_retired_at_is_refused(db: Connection) -> None:
+    """A stale `retired_at` cannot linger on a designation that is active -
+    forbidden exactly when not retired, the other half of
+    `ck_designation_retired_at`."""
+    entry_id = _insert_entry(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_designation(db, entry_id=entry_id, status="active", retired_at=datetime.now(UTC))
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
 @pytest.mark.integration
 def test_app_role_can_insert_select_and_update(app_db: Connection) -> None:
     entry_id = _insert_entry(app_db, business_key="NPTC-100002")
     _insert_designation(app_db, entry_id=entry_id, term="FBC")
 
-    app_db.execute(text("UPDATE designation SET status = 'retired' WHERE term = 'FBC'"))
+    app_db.execute(
+        text("UPDATE designation SET status = 'retired', retired_at = now() WHERE term = 'FBC'")
+    )
     row = app_db.execute(text("SELECT status FROM designation WHERE term = 'FBC'")).one()
     assert row.status == "retired"
 

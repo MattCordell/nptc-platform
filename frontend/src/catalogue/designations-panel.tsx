@@ -9,6 +9,7 @@ import {
   useAcknowledgeCollision,
   useAddDesignations,
   useAmendDesignation,
+  useReinstateDesignation,
   useRetireDesignation,
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
@@ -135,6 +136,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
   const [warnings, setWarnings] = useState<PendingWarning[]>([]);
   const [editing, setEditing] = useState<TermRow | null>(null);
   const [retiring, setRetiring] = useState<TermRow | null>(null);
+  const [reinstating, setReinstating] = useState<TermRow | null>(null);
   const [acknowledging, setAcknowledging] = useState<PendingWarning | null>(null);
   const { message, politeness, announce } = useAnnounce();
 
@@ -166,44 +168,63 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           {
             key: "actions",
             header: "Actions",
-            render: (row) =>
-              row.status === "active" ? (
-                <span className="flex gap-2">
-                  {/* Named for the row, not just "Edit": a screen-reader user
-                      moving button to button hears which term each one acts on,
-                      and the use as well as the term - an entry can hold a
-                      synonym whose comparison key equals its own preferred term
-                      (the state #227's `use` exists for), and "Edit Ferritin"
-                      twice over is two buttons a screen-reader user cannot tell
-                      apart. `aria-label` rather than visually-hidden text
-                      because the accessible-name algorithm trims each node
-                      before joining, so "Edit" + " Ferritin" computes as
-                      "EditFerritin". The visible word is a prefix of the label,
-                      which is what WCAG 2.5.3 asks for. */}
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    aria-label={`Edit ${row.term} (${row.use})`}
-                    onClick={() => setEditing(row)}
-                  >
-                    Edit
-                  </Button>
-                  {/* No retire action on the entry's own preferred term:
-                      `catalogue_entry.preferred_term` is NOT NULL and no route
-                      retires it (ADR-0022). Offering a button that could only
-                      ever fail would be worse than not offering one. */}
-                  {!row.isEntryPreferredTerm && (
+            render: (row) => {
+              if (row.status === "active") {
+                return (
+                  <span className="flex gap-2">
+                    {/* Named for the row, not just "Edit": a screen-reader user
+                        moving button to button hears which term each one acts on,
+                        and the use as well as the term - an entry can hold a
+                        synonym whose comparison key equals its own preferred term
+                        (the state #227's `use` exists for), and "Edit Ferritin"
+                        twice over is two buttons a screen-reader user cannot tell
+                        apart. `aria-label` rather than visually-hidden text
+                        because the accessible-name algorithm trims each node
+                        before joining, so "Edit" + " Ferritin" computes as
+                        "EditFerritin". The visible word is a prefix of the label,
+                        which is what WCAG 2.5.3 asks for. */}
                     <Button
                       type="button"
-                      variant="danger"
-                      aria-label={`Retire ${row.term} (${row.use})`}
-                      onClick={() => setRetiring(row)}
+                      variant="secondary"
+                      aria-label={`Edit ${row.term} (${row.use})`}
+                      onClick={() => setEditing(row)}
                     >
-                      Retire
+                      Edit
                     </Button>
-                  )}
-                </span>
-              ) : null,
+                    {/* No retire action on the entry's own preferred term:
+                        `catalogue_entry.preferred_term` is NOT NULL and no route
+                        retires it (ADR-0022). Offering a button that could only
+                        ever fail would be worse than not offering one. */}
+                    {!row.isEntryPreferredTerm && (
+                      <Button
+                        type="button"
+                        variant="danger"
+                        aria-label={`Retire ${row.term} (${row.use})`}
+                        onClick={() => setRetiring(row)}
+                      >
+                        Retire
+                      </Button>
+                    )}
+                  </span>
+                );
+              }
+              // Issue #313: a retired row offers Reinstate, and nothing else -
+              // there is no route to edit or re-retire a row that is already
+              // retired. `isEntryPreferredTerm` rows are always active
+              // (`termRows`' own construction - the entry's own preferred term
+              // has no retire route, ADR-0022), so this branch is only ever
+              // reached for a real `designation` row.
+              return (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={`Reinstate ${row.term} (${row.use})`}
+                  onClick={() => setReinstating(row)}
+                >
+                  Reinstate
+                </Button>
+              );
+            },
           },
         ]}
         rows={rows}
@@ -279,6 +300,25 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
             );
             setRetiring(null);
             announce("Term retired.");
+          }}
+        />
+      )}
+
+      {reinstating !== null && (
+        <ReinstateDialog
+          businessKey={businessKey}
+          rowVersion={entry.row_version}
+          row={reinstating}
+          onClose={() => setReinstating(null)}
+          onSaved={(newWarnings) => {
+            setWarnings(
+              newWarnings.map((warning) => ({
+                ...warning,
+                language: reinstating.language,
+              })),
+            );
+            setReinstating(null);
+            announce("Term reinstated.");
           }}
         />
       )}
@@ -598,6 +638,69 @@ function RetireDialog({
           the change, in the entry&rsquo;s history.
         </p>
         <ChangelogNoteField id="retire-note" changelogNote={changelogNote} />
+      </Form>
+    </Dialog>
+  );
+}
+
+function ReinstateDialog({
+  businessKey,
+  rowVersion,
+  row,
+  onClose,
+  onSaved,
+}: {
+  businessKey: string;
+  rowVersion: number;
+  row: TermRow;
+  onClose: () => void;
+  onSaved: (warnings: CollisionWarning[]) => void;
+}) {
+  const changelogNote = useChangelogNote("reinstate-note");
+  const reinstate = useReinstateDesignation(businessKey);
+
+  return (
+    <Dialog open onClose={onClose} title={`Reinstate ${row.term}`}>
+      <Form
+        submitLabel="Reinstate term"
+        pendingLabel="Reinstating"
+        pending={reinstate.isPending}
+        formError={
+          reinstate.isError ? <RefusalNotice error={reinstate.error} /> : undefined
+        }
+        submitBlocked={changelogNote.blocked}
+        blockedReason={changelogNote.blockedReason}
+        blockedFieldId={changelogNote.fieldId}
+        onSubmitBlocked={changelogNote.markSubmitAttempted}
+        errorSummaryHeadingLevel={3}
+        secondaryActions={
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+        }
+        onSubmit={() => {
+          reinstate.mutate(
+            {
+              language: row.language,
+              term: row.term,
+              reason: changelogNote.note,
+              // FR-38 (issue #300): required, same as add/amend/retire.
+              expected_row_version: rowVersion,
+            },
+            { onSuccess: (result) => onSaved(result.warnings) },
+          );
+        }}
+      >
+        {/* Issue #313: the same row goes active again, so its history reads
+            as one continuous record across create, retire and reinstate -
+            not a retirement paired with an unrelated-looking new row, which
+            re-adding the term instead of reinstating it would produce. */}
+        <p>
+          This publishes the term again. The row is the same one that was retired: its
+          history stays one continuous record, and it keeps its place in the entry&rsquo;s
+          history.
+        </p>
+        <ChangelogNoteField id="reinstate-note" changelogNote={changelogNote} />
       </Form>
     </Dialog>
   );

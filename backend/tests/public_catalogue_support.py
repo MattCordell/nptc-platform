@@ -327,6 +327,10 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
                 use=DesignationUse.SYNONYM.value,
                 language="en-AU",
                 status=DesignationStatus.RETIRED.value,
+                # issue #313: `ck_designation_retired_at` requires this
+                # whenever `status = 'retired'`, mirroring `code_binding`'s
+                # own `retired_at` fixture just below.
+                retired_at=datetime.now(UTC),
             ),
             Designation(
                 entry_id=synonym_only.id,

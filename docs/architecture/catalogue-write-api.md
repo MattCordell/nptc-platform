@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, all-status listing/search, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #227, #248, #249, #265)
+# The catalogue admin API: entry read, all-status listing/search, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #227, #248, #249, #265, #313)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -293,6 +293,7 @@ for the same reason those two stay apart from each other.
 | `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason, expected_row_version}` | `201 {designations: [Designation], warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, row_version}` |
+| `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
 
 `business_key` accepts any status, the same as the code binding routes, via the same
@@ -318,6 +319,29 @@ A term already retired, or never added, is a `404` - not addressable this way an
 more, not a conflicting state - matching code bindings' own `404`-not-`409` reasoning
 for a retired code.
 
+**`/reinstatement` addresses a designation the other way round (issue #313): by its
+currently-*retired* term, not its active one.** `nptc.catalogue.designations.
+find_retired_designation`/`load_retired_designation` are the retired-row siblings of
+`find_active_designation`/`load_active_designation` above - same comparison-key lookup,
+same `(entry_id, term_key, language)` scope, `status = 'retired'` instead of `'active'`.
+More than one retired row can share that key (a term added, retired, and re-added twice
+over, since the partial unique index is active-only), so the lookup orders by
+`retired_at DESC, id ASC` and takes the first: most-recently-retired wins, with `id`
+breaking a tie two rows retired in the same transaction would otherwise leave
+undecided - the same `retired_at DESC`-then-tiebreaker shape `get_entry_by_code`
+already uses for a multi-way retired-*code* collision (FR-17). A term with no retired
+row at all is this route's own `404`.
+
+The route checks for an address-level conflict *before* ever running that lookup: if
+`find_active_designation` already resolves this address, the term is not addressable
+for reinstatement at all (it was never retired, someone already reinstated it, or it
+was retired and then re-added as a new synonym) - a `409`
+(`DesignationNotRetiredError`), refused before any mutation, not the `404` a term with
+no retired row gets. `reinstate_designation` itself repeats a narrower version of the
+same guard on the row it is actually given, mirroring `retire_designation`'s own
+already-retired check - belt and suspenders against a future caller that skips the
+route's own pre-check.
+
 Re-reading a just-written row (to build the response) is by the row's own `id`, not by
 term, for the same reason `_row_to_binding` avoids a code-keyed re-read: `(entry_id,
 term_key, language)` is unique only among *active* rows, so a term retired and re-added
@@ -334,6 +358,33 @@ row and creating a new one. The row keeps its identity (`id`), and the audit log
 one `designation.amended` edit rather than a retirement paired with an
 unrelated-looking creation - the same "one editorial decision, one audit trail" posture
 `/replacement`'s single request takes for code bindings.
+
+### Reinstating keeps the row's identity too (issue #313)
+
+`reinstate_designation` flips `designation.status` back to `active` on the *same* row a
+retirement left behind, rather than the only remedy that existed before this issue -
+re-adding the term, which `ix_designation_no_duplicate_active_term` (active-only)
+happily allows and which creates a **new** row sharing nothing with the original but its
+`term`. `nptc.catalogue.history.load_history` keys a designation's history on the row's
+own `id`, so re-adding orphans the original row's history and starts the new row's
+history empty; reinstating keeps both intact as one continuous record - created,
+retired, reinstated.
+
+Shaped like `add_designation`, not `retire_designation`: retiring can never violate
+either partial unique index (it only ever narrows the active set), but reinstating can
+violate both the same way a fresh add can, so it runs the same FR-05 error-severity
+collision check (`assert_no_error_collisions`) and the same `IntegrityError`-to-domain-
+error translation `add_designation`/`amend_designation` already do, rather than
+`retire_designation`'s simpler unconditional-success shape. A collision here is
+necessarily one that came into existence *after* the term was retired - the FR-05 check
+would have refused the term at add time otherwise - typically another live entry
+claiming the same term as its own preferred term in the meantime.
+
+Warning-severity collisions ride back on the response exactly as `/designations` and
+`/amendment` do (see below), and an acknowledgement recorded before the retirement still
+suppresses the warning after reinstatement: `designation_collision_acknowledgement` is
+keyed on `(entry_id, term_key, language)`, independent of any one `designation` row, so
+it was never tied to the row's own lifecycle in the first place.
 
 ### `/amendment` writes to two storage homes (issue #227)
 
@@ -393,11 +444,13 @@ case or punctuation variant resolves either one.
 
 `catalogue_entry` is a row with FR-38 optimistic locking, so a write to it cannot be
 accepted without the caller's version. `designation` has no version of its own, so all
-three routes here (`/designations`, `/amendment`'s designation branch, `/retirement`)
-share `catalogue_entry.row_version` as their lock, the same argument
+four routes here (`/designations`, `/amendment`'s designation branch, `/retirement`,
+`/reinstatement`) share `catalogue_entry.row_version` as their lock, the same argument
 `nptc.catalogue.property_values.save_property_values` already makes for `property_value`
 and `catalogue_bindings.py` makes for `code_binding` (issue #60). `expected_row_version`
-is required on every route below - no exceptions, no optional branch (issue #300).
+is required on every route below - no exceptions, no optional branch (issue #300;
+`/reinstatement` gained the field at the same moment its only client learned to send it,
+so it was never optional even briefly, unlike `/amendment`'s own history above).
 
 `/amendment`'s two branches take the lock through two different mechanisms, since one
 writes `catalogue_entry` directly and the other does not:
@@ -435,11 +488,11 @@ amend and retire, now conflict with each other.
 ### Warning-severity collisions ride back on the write response
 
 `nptc.catalogue.collisions.warning_collisions` never raises - a warning permits the
-save by construction (FR-05). `add_designations`/`amend_designation` call it after
-their own write and return whatever it finds as `warnings` on the same response,
-rather than exposing it as a separate `GET` endpoint under `/catalogue` that
-`test_api_public_response_hygiene.py`'s GET scanner would otherwise discover and
-attempt to exercise without a credential.
+save by construction (FR-05). `add_designations`/`amend_designation`/`reinstate_
+designation_route` (issue #313) call it after their own write and return whatever it
+finds as `warnings` on the same response, rather than exposing it as a separate `GET`
+endpoint under `/catalogue` that `test_api_public_response_hygiene.py`'s GET scanner
+would otherwise discover and attempt to exercise without a credential.
 
 ### Acknowledging a collision needs a different permission
 
@@ -457,8 +510,8 @@ so there is no route to withdraw one.
 |---|---|
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing the route's required permission, or (for `catalogue.edit_published` routes only) holding it without MFA. |
-| 404 | No catalogue entry with this `business_key`, or a `term` that is neither an *active* designation for this `language` nor (on `/amendment`) the entry's own en-AU preferred term. |
-| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. On every route except `/acknowledgement`, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
+| 404 | No catalogue entry with this `business_key`; a `term` that is neither an *active* designation for this `language` nor (on `/amendment`) the entry's own en-AU preferred term; or (on `/reinstatement`) a `term` with no *retired* designation for this `language`. |
+| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, a term already active with nothing to reinstate (`/reinstatement` only), or a concurrent acknowledgement of the same collision. On every route except `/acknowledgement`, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
 | 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation to `POST .../designations` (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`; amend it through `/amendment` instead), more than one preferred term in one batch, a changelog note that fails FR-37, or a missing `expected_row_version` (FastAPI's own `HTTPValidationError`, matching the code-binding routes - there is no longer a route-specific missing-token error here). |
 
 **Two 409 bodies carry more than `detail`, and are declared as such.** Most refusals are
@@ -472,10 +525,10 @@ payload instead of typing the branch as `{detail}` and dropping it. The models a
 constructed by the handlers that emit them, so the declared schema and the real body
 cannot drift.
 
-They are declared only where they can occur: `POST .../designations` and `/amendment`
-call service functions that run `assert_no_error_collisions`; only `/amendment` writes an
-entry. Retirement and acknowledgement can produce neither, and a documented body a route
-cannot emit is a branch a generated client can never exercise.
+They are declared only where they can occur: `POST .../designations`, `/amendment` and
+`/reinstatement` call service functions that run `assert_no_error_collisions`; only
+`/amendment` writes an entry. Retirement and acknowledgement can produce neither, and a
+documented body a route cannot emit is a branch a generated client can never exercise.
 
 Every exception `nptc.catalogue.designations`/`nptc.catalogue.collisions` raises is
 mapped in `nptc.api.errors` the same way the `CodeBinding*` family is: read
@@ -768,6 +821,11 @@ resubmission (see above) is not a rejection - it is a `200`.
 
 - Entry creation over HTTP. `nptc.catalogue.entries.create_entry` is library-only -
   same FR-36 family as the writes above, different gap, not covered by any issue here.
+- Reinstating a retired **code binding** or a deprecated property definition (issue
+  #313's own out-of-scope note). Bindings carry FR-08 supersession semantics
+  (`replaced_by_binding_id`) a symmetric route would have to answer for separately, and a
+  property definition's own deprecation has no parallel to `designation.retired_at`'s
+  tie-break problem in the first place.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.
@@ -791,7 +849,9 @@ Issue #219 is what first pointed that checker at the real app - previously it on
 synthetic apps to prove itself against, because the real app had no mutating routes yet.
 Issue #224's four designation routes are added to `COVERED_WRITE_ROUTES` alongside the
 three code-binding ones, with their negative-auth coverage in
-`test_api_catalogue_designations.py`. Issue #228's entry-read route is a `GET`, so
+`test_api_catalogue_designations.py`. Issue #313's `/reinstatement` route is added the
+same way, its negative-auth coverage in the same test module alongside the other three.
+Issue #228's entry-read route is a `GET`, so
 `mutating_routes` never sees it and it needs no entry in `COVERED_WRITE_ROUTES` - its
 own negative-auth coverage is `test_api_catalogue_admin_read.py`. Issue #248's `PUT
 .../properties/{key}` is added the same way as the code-binding/designation routes, with

@@ -21,8 +21,8 @@ terms first:
 - Every **retired term** last, marked with its status.
 
 A retired term is history, not something the entry currently publishes — the **Status**
-column tells the two apart. There is no action on a retired row: it cannot be edited,
-retired again, or brought back.
+column tells the two apart. A retired row cannot be edited or retired again, but it can be
+brought back: see [Reinstating a retired term](#reinstating-a-retired-term) below.
 
 **Length** is the character count of the preferred term. It is worked out by the
 catalogue, not stored and not typed, so it always matches the term it describes. There is
@@ -73,6 +73,28 @@ retired it and why, in the entry's history.
 **The preferred term cannot be retired**, so no Retire button appears on that row. Every
 entry must have a preferred term at all times. To change what the entry is called, edit
 the preferred term instead.
+
+## Reinstating a retired term
+
+Choose **Reinstate** on a retired row, give a changelog note, and confirm.
+
+The term is published again, and it is the same row as before: the entry's history still
+reads as one continuous record — created, retired, reinstated — rather than a retirement
+followed by an unrelated-looking new term. This is why reinstating is better than adding
+the term afresh: adding it again would start its history over as a new row and lose the
+link to what happened before.
+
+If the term retired and was then re-added as a new synonym in the meantime, that new
+synonym is already active, so there is nothing to reinstate — the screen refuses the save
+and tells you the term is already active. Edit or retire the new synonym instead.
+
+If the term became another live entry's preferred term while this one was retired,
+reinstating is blocked the same way adding or editing onto that term would be: see
+[When a term is already in use elsewhere](#when-a-term-is-already-in-use-elsewhere) below.
+
+An earlier acknowledgement of a possible duplicate still applies after you reinstate: if
+you acknowledged this term's overlap with another entry before retiring it, that
+acknowledgement carries over and the overlap is not reported again.
 
 ## When a term is already in use elsewhere
 
@@ -132,8 +154,15 @@ from a formatted document. Retype the term rather than pasting it.
 you did. Nothing of yours was saved. The screen picks up their change for you - check yours
 is still needed, then save it again.
 
-**"No active designation was found for the given term."** The term was retired or edited
-by someone else between the page loading and your save. Reload the entry.
+**"No matching designation was found for the given term."** When editing, amending or
+retiring: the term was retired or edited by someone else between the page loading and
+your save. When reinstating: the term has no retired row on this entry to bring back.
+Reload the entry and check the Terms table.
+
+**"This term is already active on this entry, so there is nothing to reinstate."** The
+term is already active — it was never retired, someone else already reinstated it, or it
+was re-added as a new synonym after retiring. Reload the entry and check the Terms table
+before trying again.
 
 **"You cannot edit this entry with your current sign-in."** See the note on multi-factor
 authentication at the top of this page.

@@ -79,6 +79,7 @@ const READ_OK: Route = {
 const ADD_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations`;
 const AMEND_PATH = `${ADD_PATH}/amendment`;
 const RETIRE_PATH = `${ADD_PATH}/retirement`;
+const REINSTATE_PATH = `${ADD_PATH}/reinstatement`;
 const ACK_PATH = `${ADD_PATH}/acknowledgement`;
 
 const BIND_PATH = `/catalogue/entries/${BUSINESS_KEY}/bindings`;
@@ -670,10 +671,7 @@ describe("the terms table", () => {
     expect(within(retiredRow).getByText("retired")).toBeInTheDocument();
   });
 
-  it("offers no Edit or Retire action on a retired term", async () => {
-    // Issue #239: a retired row is read-only history on this screen - there
-    // is no reinstate path, so an editor cannot act on one at all (follow-up
-    // issue tracks reinstatement).
+  it("offers Reinstate, and no Edit or Retire, on a retired term (issue #313)", async () => {
     stubApi([READ_OK]);
 
     await renderLoaded();
@@ -682,7 +680,9 @@ describe("the terms table", () => {
     const retiredRow = within(table)
       .getByRole("rowheader", { name: "Obsolete ferritin note" })
       .closest("tr") as HTMLElement;
-    expect(within(retiredRow).queryByRole("button")).not.toBeInTheDocument();
+    const buttons = within(retiredRow).getAllByRole("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAccessibleName(/^Reinstate/);
   });
 
   it("does not offer to retire the entry's own preferred term", async () => {
@@ -1664,6 +1664,98 @@ describe("retiring a term", () => {
 
     expect(
       await screen.findByText(/This entry has changed since it was loaded/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("reinstating a term (issue #313)", () => {
+  it("posts the term with its mandatory reason", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: REINSTATE_PATH,
+        status: 200,
+        body: {
+          designation: {
+            term: "Obsolete ferritin note",
+            use: "synonym",
+            language: "en-AU",
+            status: "active",
+            length: 22,
+          },
+          warnings: [],
+          row_version: 4,
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(
+      screen.getByRole("button", { name: "Reinstate Obsolete ferritin note (synonym)" }),
+    );
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Retired by mistake, putting it back",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    await waitFor(() => expect(callsTo(calls, REINSTATE_PATH)).toHaveLength(1));
+    expect(callsTo(calls, REINSTATE_PATH)[0]?.body).toEqual({
+      language: "en-AU",
+      term: "Obsolete ferritin note",
+      reason: "Retired by mistake, putting it back",
+      expected_row_version: ENTRY.row_version,
+    });
+  });
+
+  it("refuses to reinstate without a reason", async () => {
+    const user = userEvent.setup();
+    const calls = stubApi([READ_OK]);
+    await renderLoaded();
+
+    await user.click(
+      screen.getByRole("button", { name: "Reinstate Obsolete ferritin note (synonym)" }),
+    );
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    expect(await inDialog().findAllByText(/A changelog note is required\./)).toHaveLength(
+      2,
+    );
+    expect(callsTo(calls, REINSTATE_PATH)).toHaveLength(0);
+  });
+
+  it("surfaces the server's own sentence when it refuses", async () => {
+    // The already-active/already-superseded 409 case (issue #313's plan) -
+    // the panel just has to show it, not interpret it.
+    const user = userEvent.setup();
+    stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: REINSTATE_PATH,
+        status: 409,
+        body: {
+          detail:
+            "entry has an active designation for term 'Obsolete ferritin note' " +
+            "in language 'en-AU'",
+        },
+      },
+    ]);
+    await renderLoaded();
+
+    await user.click(
+      screen.getByRole("button", { name: "Reinstate Obsolete ferritin note (synonym)" }),
+    );
+    await user.type(
+      inDialog().getByLabelText(/Changelog note/),
+      "Reinstating the retired synonym",
+    );
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    expect(
+      await screen.findByText(/entry has an active designation for term/),
     ).toBeInTheDocument();
   });
 });

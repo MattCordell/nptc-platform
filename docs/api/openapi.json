@@ -726,7 +726,7 @@
             }
           },
           "404": {
-            "description": "No catalogue entry, or no active designation, matches the given identifier.",
+            "description": "No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review).",
             "content": {
               "application/json": {
                 "schema": {
@@ -736,7 +736,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1456,7 +1456,7 @@
             }
           },
           "404": {
-            "description": "No catalogue entry, or no active designation, matches the given identifier.",
+            "description": "No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1466,7 +1466,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1572,7 +1572,7 @@
             }
           },
           "404": {
-            "description": "No catalogue entry, or no active designation, matches the given identifier.",
+            "description": "No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1582,7 +1582,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1595,6 +1595,123 @@
                     }
                   ],
                   "title": "Response 409 Retire Designation Route Api V1 Catalogue Entries  Business Key  Designations Retirement Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalogue/entries/{business_key}/designations/reinstatement": {
+      "post": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "Reinstate an entry's most-recently-retired designation",
+        "description": "Issue #313. Both lookups run inside the lock, after\n`entry_child_write`'s own version check, matching every other route\nhere (FR-38, issue #300).\n\nThe already-active check runs first, and outside `load_retired_\ndesignation` itself: a term that already has an active designation\n(the exact scenario re-adding a retired term creates today) must\nrefuse with a 409 naming that conflict, not the 404 a term that was\nsimply never retired gets - `load_retired_designation` only ever\ninspects retired rows, so it cannot tell the two cases apart on its\nown (see its own docstring).",
+        "operationId": "reinstate_designation_route_api_v1_catalogue_entries__business_key__designations_reinstatement_post",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReinstateDesignationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReinstateDesignationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DesignationCollisionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VersionConflictResponse"
+                    }
+                  ],
+                  "title": "Response 409 Reinstate Designation Route Api V1 Catalogue Entries  Business Key  Designations Reinstatement Post"
                 }
               }
             }
@@ -1685,7 +1802,7 @@
             }
           },
           "404": {
-            "description": "No catalogue entry, or no active designation, matches the given identifier.",
+            "description": "No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1695,7 +1812,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, or a concurrent acknowledgement of the same collision. A term already retired, or never added, is a 404 here rather than a 409: every route below addresses a designation by its currently-*active* term, so a retired one is simply not addressable this way any more, not a conflicting state.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5667,6 +5784,62 @@
         ],
         "title": "PropertyValuesWriteResult",
         "description": "The property's values after the write, plus the entry's new\n`row_version` - mirroring `catalogue_designations.\nAmendDesignationResult`, so an editing client never has to re-fetch the\nentry just to learn its next lock token."
+      },
+      "ReinstateDesignationRequest": {
+        "properties": {
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en-AU"
+          },
+          "term": {
+            "type": "string",
+            "title": "Term"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "expected_row_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "term",
+          "reason",
+          "expected_row_version"
+        ],
+        "title": "ReinstateDesignationRequest",
+        "description": "The body of `POST .../designations/reinstatement` (issue #313).\n`term` addresses the designation to reinstate - resolved against the\nmost-recently-retired row matching `(entry, term, language)`\n(`nptc.catalogue.designations.load_retired_designation`), never a\nspecific row's internal id, matching every other route in this module."
+      },
+      "ReinstateDesignationResult": {
+        "properties": {
+          "designation": {
+            "$ref": "#/components/schemas/Designation"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/CollisionWarning"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "designation",
+          "warnings",
+          "row_version"
+        ],
+        "title": "ReinstateDesignationResult",
+        "description": "`reinstate_designation_route`'s response: the reinstated row, any\nwarning-severity collisions, and the entry's new `row_version` (FR-38,\nissue #300).\n\nA new model, not a reuse of `DesignationWriteResult` (issue #313's own\nopen question) - this route always acts on exactly one row, and\n`DesignationWriteResult.designations` being a list would misdescribe\nthat. Shaped like `AmendDesignationResult` instead, which reinstatement\notherwise matches exactly: one designation, warnings, row_version."
       },
       "ReplaceBindingRequest": {
         "properties": {

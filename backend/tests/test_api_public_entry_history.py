@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.bindings import create_binding
-from nptc.catalogue.designations import add_synonyms
+from nptc.catalogue.designations import add_synonyms, reinstate_designation, retire_designation
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.db.models.user import User
@@ -156,6 +156,58 @@ def test_history_includes_designation_changes(api: ApiTestApp, app_db: Connectio
     assert "designation.created" in actions
     synonym_event = next(item for item in body["items"] if item["action"] == "designation.created")
     assert synonym_event["note"] == "added a synonym for review"
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_history_shows_reinstatement_as_one_continuous_record_with_retirement(
+    api: ApiTestApp, app_db: Connection
+) -> None:
+    """Issue #313's own acceptance criterion: the reinstated row is the
+    *same* row a retirement left behind, so its history reads as one
+    continuous record - created, retired, reinstated - rather than a
+    retirement paired with an unrelated-looking new creation, which
+    re-adding the term instead of reinstating it would produce."""
+    session = Session(bind=app_db)
+    ctx = AuditContext.system()
+    entry = create_entry(
+        session,
+        ctx,
+        preferred_term="Reinstatement history fixture",
+        reason="seeded for issue #313 history test",
+        status=CatalogueEntryStatus.ACTIVE,
+        business_key="NPTC-430010",
+    )
+    (designation,) = add_synonyms(
+        session,
+        ctx,
+        entry=entry,
+        terms=["Retired then reinstated synonym"],
+        reason="added a synonym to retire and reinstate",
+    )
+    session.flush()
+    retire_designation(session, ctx, designation=designation, reason="retiring by mistake")
+    session.flush()
+    reinstate_designation(
+        session, ctx, entry=entry, designation=designation, reason="reinstating the synonym"
+    )
+    session.flush()
+
+    body = api.get(f"/catalogue/entries/{entry.business_key}/history").json()
+
+    designation_events = [
+        item for item in body["items"] if item["action"].startswith("designation.")
+    ]
+    # Most recent first, matching the endpoint's own ordering.
+    assert [item["action"] for item in designation_events] == [
+        "designation.reinstated",
+        "designation.retired",
+        "designation.created",
+    ]
+    assert designation_events[0]["note"] == "reinstating the synonym"
+    assert designation_events[1]["note"] == "retiring by mistake"
+    assert designation_events[2]["note"] == "added a synonym to retire and reinstate"
 
 
 @pytest.mark.req("FR-19")

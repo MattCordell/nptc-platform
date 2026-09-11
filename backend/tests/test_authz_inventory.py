@@ -132,6 +132,13 @@ COVERED_WRITE_ROUTES = frozenset(
             method="POST",
             path="/catalogue/entries/{business_key}/designations/retirement",
         ),
+        # issue #313: reinstates the most-recently-retired designation
+        # matching an address. Negative-auth coverage lives in
+        # `test_api_catalogue_designations.py`, alongside the other three.
+        RouteKey(
+            method="POST",
+            path="/catalogue/entries/{business_key}/designations/reinstatement",
+        ),
         RouteKey(
             method="POST",
             path="/catalogue/entries/{business_key}/designations/acknowledgement",

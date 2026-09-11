@@ -40,6 +40,18 @@ own precedent) - `nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a
 privilege-level guarantee, the same trick already used for
 `catalogue_entry`.
 
+**`retired_at`, issue #313.** Mirrors `code_binding.retired_at` (issue
+#140, FR-17) exactly: mandatory when `status = 'retired'`, forbidden
+otherwise (`_RETIRED_AT_CHECK_SQL` below), set by `retire_designation` and
+cleared by `reinstate_designation`. It exists so two retired rows sharing
+one `entry_id`/`term_key`/`language` - a term added, retired, and re-added
+twice over - have a real ordering column to break the tie on
+(`retired_at DESC`, then `id ASC`), the same reasoning
+`get_entry_by_code`'s multi-way retired-binding tie-break already applies.
+`__audit_ignored_fields__`, matching `code_binding.retired_at`'s own
+treatment: bookkeeping the audit event's own timestamp already covers, not
+an independent business fact.
+
 **`term_key` is FR-05's comparison form, stored and indexed (issue #49).**
 The same `@validates("term")` hook that cleans the term also derives
 `term_key` via `nptc_shared.similarity.collision_key` - casefolded, with
@@ -116,6 +128,10 @@ _LANGUAGE_CHECK_SQL = f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"
 #: never a `designation` row. A non-en-AU catalogue-authored preferred
 #: variant is still permitted.
 _NO_EN_AU_PREFERRED_CHECK_SQL = "NOT (use = 'preferred' AND language = 'en-AU')"
+#: FR-17-style tie-break column for designations (issue #313): mandatory
+#: exactly when retired, forbidden otherwise - mirrors
+#: `code_binding._RETIRED_AT_CHECK_SQL` exactly.
+_RETIRED_AT_CHECK_SQL = "(status = 'retired') = (retired_at IS NOT NULL)"
 
 
 class Designation(Base):
@@ -129,7 +145,7 @@ class Designation(Base):
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"id", "created_at", "updated_at", "term_key"}
+        {"id", "created_at", "updated_at", "term_key", "retired_at"}
     )
 
     __table_args__ = (
@@ -138,6 +154,7 @@ class Designation(Base):
         CheckConstraint(_TERM_NOT_BLANK_SQL, name="term_not_blank"),
         CheckConstraint(_LANGUAGE_CHECK_SQL, name="language"),
         CheckConstraint(_NO_EN_AU_PREFERRED_CHECK_SQL, name="no_en_au_preferred"),
+        CheckConstraint(_RETIRED_AT_CHECK_SQL, name="retired_at"),
         # Explicit names throughout: NAMING_CONVENTION's "ix" rule keys off
         # `column_0_label` alone, so two partial indexes both leading with
         # `entry_id` would otherwise both autogenerate the same name and
@@ -234,6 +251,11 @@ class Designation(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'active'"), active_history=True
     )
+    #: Issue #313, mirroring `code_binding.retired_at` (FR-17). Set by
+    #: `retire_designation`, cleared by `reinstate_designation` - see the
+    #: module docstring for why this is a real column rather than an
+    #: `updated_at` proxy.
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

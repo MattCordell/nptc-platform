@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, ClassVar
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
@@ -48,6 +49,7 @@ from nptc_shared.similarity import collision_key
 __all__ = [
     "DesignationAlreadyRetiredError",
     "DesignationNotFoundError",
+    "DesignationNotRetiredError",
     "DuplicateActiveTermError",
     "PreferredDesignationAlreadyActiveError",
     "TermCleaningError",
@@ -56,8 +58,11 @@ __all__ = [
     "amend_designation",
     "clean_term",
     "find_active_designation",
+    "find_retired_designation",
     "load_active_designation",
+    "load_retired_designation",
     "preferred_term_length",
+    "reinstate_designation",
     "retire_designation",
 ]
 
@@ -98,6 +103,32 @@ class DesignationAlreadyRetiredError(ValueError):
     this a caller. 409, not 422: the request is well-formed, it just
     conflicts with the resource's current state - the same reasoning
     `EntryVersionConflictError` already applies."""
+
+    http_status: ClassVar[int] = 409
+
+
+class DesignationNotRetiredError(ValueError):
+    """Raised by `reinstate_designation` (issue #313) when the designation
+    passed to it is not currently retired - reinstating an active row would
+    otherwise reach `record_change` with an empty diff (`status` unchanged),
+    which raises the internal `AuditNoOpError` rather than a clean domain
+    error, exactly the failure mode `retire_designation`'s own
+    already-retired guard exists to avoid.
+
+    The route-level case this also covers: a term retired and then
+    re-added creates a **new** active row sharing the retired row's
+    `term_key` (the scenario #313's own issue body describes) - the
+    original stays retired, but the *address* `(entry_id, term_key,
+    language)` now already has an active designation, so there is nothing
+    to reinstate for that address either. `catalogue_designations.py`'s
+    route checks this before ever resolving a retired row to act on, and
+    raises this same error, so both cases - a caller passing an active row
+    directly, and an address that already resolves to one - answer with
+    the same type.
+
+    409, not 422: matching `DesignationAlreadyRetiredError`'s own
+    reasoning - the request is well-formed, it just conflicts with the
+    resource's current state."""
 
     http_status: ClassVar[int] = 409
 
@@ -218,6 +249,90 @@ def load_active_designation(
         canonical_language = validate_language_tag(language)
         raise DesignationNotFoundError(
             f"entry {entry_id} has no active designation for term {term!r} "
+            f"in language {canonical_language!r}"
+        )
+    return designation
+
+
+def find_retired_designation(
+    session: Session,
+    *,
+    entry_id: uuid.UUID,
+    term: str,
+    language: str = DEFAULT_LANGUAGE,
+) -> Designation | None:
+    """The retired-row equivalent of `find_active_designation` (issue #313).
+    `find_active_designation`/`load_active_designation` are ACTIVE-only by
+    construction (their query hardcodes `status == 'active'`), so they
+    cannot resolve the row a reinstatement needs to act on - this is a
+    sibling, not a variant, of that query.
+
+    More than one retired row can share `(entry_id, term_key, language)`:
+    a term added, retired, and re-added twice over leaves that many rows
+    behind, since `ix_designation_no_duplicate_active_term` is
+    active-only. `retired_at DESC` picks the most recently retired first
+    (issue #313's plan settled this as the answer an editor would expect -
+    two retired rows sharing every field the API exposes are otherwise
+    indistinguishable to them). `created_at DESC` is the tiebreaker for two
+    retirements sharing one transaction (Postgres `now()` is transaction
+    time, so a bulk retirement ties on `retired_at` exactly) - `id` is a
+    UUID and so carries no chronological meaning at all, unlike
+    `get_entry_by_code`'s own `business_key`, which is why this tiebreaker
+    is `created_at`, not `id` (issue #322 review). `id ASC` remains the
+    final tiebreaker after that, for the residual case of two rows sharing
+    both timestamps: two identical requests must never disagree.
+
+    `created_at`'s own `server_default` is also transaction time, so it
+    only breaks a tie between rows created in *different* transactions; a
+    full add/retire cycle repeated twice within one transaction still ties
+    on both columns and falls through to `id ASC` (issue #322 review,
+    follow-up)."""
+    from nptc.db.models.designation import Designation as _Designation
+    from nptc.db.models.designation import DesignationStatus
+
+    key = collision_key(clean_term(term))
+    canonical_language = validate_language_tag(language)
+    return session.execute(
+        select(_Designation)
+        .where(
+            _Designation.entry_id == entry_id,
+            _Designation.term_key == key,
+            _Designation.language == canonical_language,
+            _Designation.status == str(DesignationStatus.RETIRED),
+        )
+        .order_by(
+            _Designation.retired_at.desc(),
+            _Designation.created_at.desc(),
+            _Designation.id.asc(),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def load_retired_designation(
+    session: Session,
+    *,
+    entry_id: uuid.UUID,
+    term: str,
+    language: str = DEFAULT_LANGUAGE,
+) -> Designation:
+    """Resolves the most-recently-retired designation from its public
+    address, or raises `DesignationNotFoundError` (404) - the same 404
+    `load_active_designation` raises for its own miss case, reused rather
+    than a new class: a term that was never retired on this entry is
+    simply not addressable this way, not a conflicting state (issue #313).
+
+    Deliberately does not also check for an *active* designation sharing
+    this address - that is a different outcome (`DesignationNotRetiredError`,
+    409, not 404) and the caller (`catalogue_designations.py`'s route)
+    checks it first, before ever calling this function, so a stale-looking
+    404 is never returned for an address that actually already has an
+    active row."""
+    designation = find_retired_designation(session, entry_id=entry_id, term=term, language=language)
+    if designation is None:
+        canonical_language = validate_language_tag(language)
+        raise DesignationNotFoundError(
+            f"entry {entry_id} has no retired designation for term {term!r} "
             f"in language {canonical_language!r}"
         )
     return designation
@@ -416,7 +531,13 @@ def retire_designation(
     with no per-function exceptions to reason about, is what
     `test_lock_ordering.py`'s own derived guard checks - and is cheaper to
     keep true everywhere than to justify a carve-out for the one function
-    that happens not to need it today."""
+    that happens not to need it today.
+
+    Sets `retired_at` (issue #313, mirroring `nptc.catalogue.bindings.
+    retire_binding`'s own precedent for its own table's retirement
+    timestamp, FR-17-style) - `func.now()`, the **database's** clock, so
+    `retired_at` orders correctly across every app instance's writes, not
+    just this process's own."""
     acquire_append_lock(session)
 
     from nptc.db.models.designation import DesignationStatus
@@ -426,6 +547,7 @@ def retire_designation(
 
     validated_reason = validate_changelog_note(reason)
     designation.status = str(DesignationStatus.RETIRED)
+    designation.retired_at = func.now()
     record_change(
         session,
         ctx,
@@ -434,6 +556,96 @@ def retire_designation(
         kind=ChangeKind.UPDATED,
         reason=validated_reason,
     )
+    return designation
+
+
+def reinstate_designation(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    entry: CatalogueEntry,
+    designation: Designation,
+    reason: str,
+) -> Designation:
+    """Reinstates `designation` via a `status` transition back to active
+    (issue #313) - the row keeps its `id`, so `nptc.catalogue.history.
+    load_history` reads one continuous record across create, retire and
+    reinstate, rather than the orphaned-history-plus-unrelated-new-row
+    result re-adding the term today produces (see the module docstring's
+    context on this issue).
+
+    Shaped like `add_designation`, not `retire_designation`: retirement can
+    never violate a partial unique index (retiring never creates a second
+    active row), but reinstating can violate either
+    `ix_designation_no_duplicate_active_term` or `ix_designation_one_
+    active_preferred_per_entry_language` the same way adding a fresh row
+    can, so this runs the same FR-05 error-severity collision check
+    (`assert_no_error_collisions`) and the same `IntegrityError`
+    translation block `add_designation` does, rather than `retire_
+    designation`'s simpler shape.
+
+    `entry` is required (unlike `retire_designation`, which never needs
+    one) purely to give `assert_no_error_collisions` the entry to exclude
+    from its own comparison - the same reason `amend_designation` takes it.
+
+    **Guards on `designation.status` before mutating, exactly as `retire_
+    designation` guards on already-retired.** Reinstating an already-active
+    row would otherwise reach `record_change` with an empty diff and raise
+    the internal `AuditNoOpError` in place of a clean domain error - see
+    `DesignationNotRetiredError`'s own docstring for why the caller
+    (`catalogue_designations.py`'s route) also checks this at the address
+    level, before ever resolving a row to pass in here, so this guard is
+    reached only if a future direct caller skips that check.
+
+    `entry_id`/`cleaned_term`/`canonical_language` are captured into locals
+    before the flush below, not re-read from the ORM instances inside
+    `except` - a failed flush leaves every instance the session tracks
+    expired, so touching an already-loaded attribute afterwards triggers a
+    reload against a session that is not yet rolled back, raising
+    `PendingRollbackError` in place of the domain error this is meant to
+    raise (matching `add_designation`'s own precedent, issue #224 review).
+
+    `acquire_append_lock` runs as the literal first statement, for the same
+    reason every other writer in this module does (issue #281 round-3
+    review)."""
+    acquire_append_lock(session)
+
+    from nptc.db.models.designation import DesignationStatus
+
+    if designation.status == str(DesignationStatus.ACTIVE):
+        raise DesignationNotRetiredError(f"designation {designation.id} is already active")
+
+    validated_reason = validate_changelog_note(reason)
+    entry_id = entry.id
+    cleaned_term = designation.term
+    canonical_language = designation.language
+    assert_no_error_collisions(
+        session, entry=entry, term=cleaned_term, language=canonical_language, use=designation.use
+    )
+    designation.status = str(DesignationStatus.ACTIVE)
+    designation.retired_at = None
+    try:
+        record_change(
+            session,
+            ctx,
+            action="designation.reinstated",
+            instance=designation,
+            kind=ChangeKind.UPDATED,
+            reason=validated_reason,
+        )
+    except IntegrityError as exc:
+        constraint_name = unique_violation_constraint(exc)
+        if constraint_name == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
+            raise DuplicateActiveTermError(
+                f"entry {entry_id} already has an active designation for term "
+                f"{cleaned_term!r} in language {canonical_language!r}"
+            ) from exc
+        if constraint_name == _ONE_ACTIVE_PREFERRED_PER_LANGUAGE_CONSTRAINT:
+            raise PreferredDesignationAlreadyActiveError(
+                f"entry {entry_id} already has an active preferred designation "
+                f"in language {canonical_language!r}"
+            ) from exc
+        raise
     return designation
 
 

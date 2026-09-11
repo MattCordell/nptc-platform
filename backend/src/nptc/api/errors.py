@@ -97,6 +97,7 @@ from nptc.catalogue.collisions import (
 from nptc.catalogue.designations import (
     DesignationAlreadyRetiredError,
     DesignationNotFoundError,
+    DesignationNotRetiredError,
     DuplicateActiveTermError,
     PreferredDesignationAlreadyActiveError,
 )
@@ -330,10 +331,22 @@ _DETAIL_TERM_CLEANING = (
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
-_DETAIL_DESIGNATION_NOT_FOUND = "No active designation was found for the given term."
+#: Shared by two different addressing conventions (issue #313): add, amend
+#: and retire address a designation by its currently-*active* term, so this
+#: is their "no such active row" 404; reinstate addresses one by its
+#: currently-*retired* term instead, so this is its "no such retired row"
+#: 404 too - deliberately without the word "active", so the same sentence
+#: is not misleading on either route.
+_DETAIL_DESIGNATION_NOT_FOUND = "No matching designation was found for the given term."
 _DETAIL_DUPLICATE_ACTIVE_TERM = (
     "This entry already has an active designation for this term, once case, spacing "
     "and punctuation are ignored."
+)
+#: Issue #313: reinstating a term that already has an active designation -
+#: the term was never retired, or it was already reinstated, or it was
+#: retired and then re-added as a new synonym.
+_DETAIL_DESIGNATION_NOT_RETIRED = (
+    "This term is already active on this entry, so there is nothing to reinstate."
 )
 _DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE = (
     "This entry already has an active preferred term in this language."
@@ -763,6 +776,18 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         _logger.info("designation not found: %s", type(exc).__name__)
         return JSONResponse(
             status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_NOT_FOUND}
+        )
+
+    @app.exception_handler(DesignationNotRetiredError)
+    async def _handle_designation_not_retired(
+        _request: Request, exc: DesignationNotRetiredError
+    ) -> JSONResponse:
+        # issue #313: logged as the class only, matching every other
+        # designation handler here - the message quotes the submitted term
+        # itself, user-supplied free text (NFR-26/NFR-35).
+        _logger.info("reinstatement refused, not retired: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_NOT_RETIRED}
         )
 
     @app.exception_handler(DuplicateActiveTermError)

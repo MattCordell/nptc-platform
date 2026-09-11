@@ -9,8 +9,13 @@ module, layered on top of the rows created here.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
+import sys
 import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -25,12 +30,16 @@ from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import (
     DesignationAlreadyRetiredError,
     DesignationNotFoundError,
+    DesignationNotRetiredError,
     DuplicateActiveTermError,
     PreferredDesignationAlreadyActiveError,
     add_designation,
     add_synonyms,
     amend_designation,
+    find_retired_designation,
     load_active_designation,
+    load_retired_designation,
+    reinstate_designation,
     retire_designation,
 )
 from nptc.catalogue.entries import create_entry
@@ -46,6 +55,18 @@ from nptc_transform.cell_defects import split_synonyms
 
 _NBSP = chr(0x00A0)
 _ZERO_WIDTH_SPACE = chr(0x200B)
+
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+latest_audit_event = _load("audit_support").latest_audit_event
 
 
 @pytest.fixture
@@ -732,4 +753,267 @@ def test_second_active_preferred_designation_in_one_language_is_refused(
             use=str(DesignationUse.PREFERRED),
             language="mi-NZ",
             reason="Adding a second preferred term in the same language",
+        )
+
+
+# --- issue #313: reinstating a retired designation ---------------------
+
+
+@pytest.mark.req("FR-17")
+@pytest.mark.integration
+def test_find_retired_designation_picks_the_most_recently_retired_row(
+    app_session: Session,
+) -> None:
+    """Two retired rows can share `(entry_id, term_key, language)` - a term
+    added, retired, and re-added twice over
+    (`ix_designation_no_duplicate_active_term` is active-only) - so this
+    pins `retired_at DESC` as the tie-break, not insertion or `id` order.
+
+    `retired_at` is set explicitly on the older row after retiring it,
+    rather than trusting `retire_designation`'s own `func.now()` for both
+    rows: Postgres's `now()` is the *transaction* start time, not the
+    statement time, so two retirements in one transaction would otherwise
+    tie and fall straight through to the `id` tiebreaker, proving nothing
+    about `retired_at` itself - the identical hazard `public_catalogue_
+    support.py`'s own `code_binding` seed fixture works around for FR-17's
+    other table."""
+    entry = _new_entry(app_session)
+    older = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC, cycle 1"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=older, reason="Retiring FBC, cycle 1"
+    )
+    older.retired_at = datetime.now(UTC) - timedelta(hours=1)
+    app_session.flush()
+
+    newer = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC, cycle 2"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=newer, reason="Retiring FBC, cycle 2"
+    )
+    app_session.flush()
+
+    found = find_retired_designation(app_session, entry_id=entry.id, term="FBC")
+
+    assert found is not None
+    assert found.id == newer.id
+
+
+@pytest.mark.integration
+def test_load_retired_designation_raises_when_no_retired_match(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+
+    with pytest.raises(DesignationNotFoundError):
+        load_retired_designation(app_session, entry_id=entry.id, term="FBC")
+
+
+@pytest.mark.integration
+def test_reinstate_designation_restores_the_same_row(app_session: Session) -> None:
+    """The whole point of #313: the reinstated row keeps its `id`, so
+    `nptc.catalogue.history.load_history` reads one continuous record
+    across create, retire and reinstate - not a retirement paired with an
+    unrelated-looking new row, the way re-adding the term today does."""
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=designation, reason="Retiring by mistake"
+    )
+    app_session.flush()
+
+    reinstated = reinstate_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        designation=designation,
+        reason="Reinstating the FBC synonym",
+    )
+    app_session.flush()
+
+    assert reinstated.id == designation.id
+    assert reinstated.status == str(DesignationStatus.ACTIVE)
+    assert reinstated.retired_at is None
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_reinstate_designation_records_one_audit_event(app_session: Session) -> None:
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=designation, reason="Retiring by mistake"
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    reinstate_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        designation=designation,
+        reason="Reinstating the FBC synonym",
+    )
+    app_session.flush()
+
+    event = latest_audit_event(app_session, entity_type="designation", entity_id=designation.id)
+    assert _audit_event_count(app_session) == before + 1
+    assert event.action == "designation.reinstated"
+    assert event.before == {"status": "retired"}
+    assert event.after == {"status": "active"}
+
+
+@pytest.mark.integration
+def test_reinstating_an_active_designation_is_refused(app_session: Session) -> None:
+    """`reinstate_designation`'s own guard, mirroring `retire_designation`'s
+    already-retired guard - reinstating a row that is already active would
+    otherwise reach `record_change` with an empty diff."""
+    entry = _new_entry(app_session)
+    designation = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC synonym"
+    )
+    app_session.flush()
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(DesignationNotRetiredError):
+        reinstate_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=designation,
+            reason="Reinstating an already-active synonym",
+        )
+
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_reinstate_designation_still_runs_the_error_collision_check(app_session: Session) -> None:
+    """Reinstating is not exempt from FR-05: a synonym can be retired, and
+    only *afterwards* does another live entry claim the same term as its
+    own preferred term (issue #313's own "collided while retired"
+    scenario) - the designation above could not have been added with this
+    term already colliding, since `add_designation`'s own FR-05 check
+    would have refused it outright."""
+    entry = _new_entry(app_session, preferred_term="21-Hydroxylase Ab")
+    designation = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Adrenal Ab",
+        reason="Adding a synonym that does not collide yet",
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=designation, reason="Retiring it"
+    )
+    app_session.flush()
+    _new_entry(app_session, preferred_term="Adrenal Ab")
+
+    with pytest.raises(DesignationCollisionError):
+        reinstate_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=designation,
+            reason="Reinstating the now-colliding synonym",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_reinstating_onto_an_active_duplicate_on_the_same_entry_is_refused(
+    app_session: Session,
+) -> None:
+    """The within-entry duplicate case (`ix_designation_no_duplicate_
+    active_term`) - a term retired and then re-added creates a **new**
+    active row sharing the retired row's `term_key` (issue #313's own
+    motivating scenario), so reinstating the *original* row would produce
+    two active rows for the same term. `assert_no_error_collisions` never
+    sees this (it excludes this entry from its own comparison), so this is
+    the partial unique index's own `IntegrityError`, translated exactly as
+    `add_designation`'s own duplicate-add case is."""
+    entry = _new_entry(app_session)
+    original = add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Adding FBC"
+    )
+    app_session.flush()
+    retire_designation(
+        app_session, AuditContext.system(), designation=original, reason="Retiring FBC by mistake"
+    )
+    app_session.flush()
+    add_designation(
+        app_session, AuditContext.system(), entry=entry, term="FBC", reason="Re-adding FBC"
+    )
+    app_session.flush()
+
+    with pytest.raises(DuplicateActiveTermError):
+        reinstate_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=original,
+            reason="Reinstating the original FBC synonym",
+        )
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.integration
+def test_reinstating_a_preferred_designation_onto_an_active_one_is_refused(
+    app_session: Session,
+) -> None:
+    """`ix_designation_one_active_preferred_per_entry_language` - the
+    preferred-term sibling of the duplicate-synonym case above: a
+    preferred term retired, then replaced by a new preferred designation
+    in the same language, leaves reinstating the original blocked the
+    same way."""
+    entry = _new_entry(app_session)
+    retired_preferred = add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Panui toto katoa",
+        use=str(DesignationUse.PREFERRED),
+        language="mi-NZ",
+        reason="Adding a non-en-AU preferred term",
+    )
+    app_session.flush()
+    retire_designation(
+        app_session,
+        AuditContext.system(),
+        designation=retired_preferred,
+        reason="Retiring the preferred term by mistake",
+    )
+    app_session.flush()
+    add_designation(
+        app_session,
+        AuditContext.system(),
+        entry=entry,
+        term="Tetahi atu kupu",
+        use=str(DesignationUse.PREFERRED),
+        language="mi-NZ",
+        reason="Adding a replacement preferred term",
+    )
+    app_session.flush()
+
+    with pytest.raises(PreferredDesignationAlreadyActiveError):
+        reinstate_designation(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            designation=retired_preferred,
+            reason="Reinstating the original preferred term",
         )
