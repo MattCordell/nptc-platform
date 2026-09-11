@@ -50,9 +50,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "designation", sa.Column("retired_at", sa.DateTime(timezone=True), nullable=True)
-    )
+    op.add_column("designation", sa.Column("retired_at", sa.DateTime(timezone=True), nullable=True))
     # Backfill before the CHECK below, which would otherwise fail this
     # upgrade against any database already holding a retired designation -
     # see the module docstring.

@@ -530,7 +530,9 @@ describe("useReinstateDesignation", () => {
       warnings: [],
       row_version: 2,
     });
-    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), { wrapper });
+    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), {
+      wrapper,
+    });
 
     result.current.mutate({
       language: "en-AU",
@@ -565,7 +567,9 @@ describe("useReinstateDesignation", () => {
       changed_by: "A Curator",
       changed_at: "2026-09-02T00:00:00Z",
     });
-    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), { wrapper });
+    const { result } = renderHook(() => useReinstateDesignation("NPTC-000247"), {
+      wrapper,
+    });
 
     result.current.mutate({
       language: "en-AU",

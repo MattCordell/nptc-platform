@@ -312,7 +312,10 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           onClose={() => setReinstating(null)}
           onSaved={(newWarnings) => {
             setWarnings(
-              newWarnings.map((warning) => ({ ...warning, language: reinstating.language })),
+              newWarnings.map((warning) => ({
+                ...warning,
+                language: reinstating.language,
+              })),
             );
             setReinstating(null);
             announce("Term reinstated.");
@@ -662,7 +665,9 @@ function ReinstateDialog({
         submitLabel="Reinstate term"
         pendingLabel="Reinstating"
         pending={reinstate.isPending}
-        formError={reinstate.isError ? <RefusalNotice error={reinstate.error} /> : undefined}
+        formError={
+          reinstate.isError ? <RefusalNotice error={reinstate.error} /> : undefined
+        }
         submitBlocked={changelogNote.blocked}
         blockedReason={changelogNote.blockedReason}
         blockedFieldId={changelogNote.fieldId}
