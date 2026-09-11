@@ -551,6 +551,29 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
 
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
+def test_reinstate_returns_a_warning_for_an_unacknowledged_collision(api: ApiTestApp) -> None:
+    """The other half of `test_an_acknowledged_warning_stays_silenced_
+    after_reinstatement` below: with no acknowledgement recorded,
+    reinstating a term that collides with another live entry's synonym
+    reports the warning on the response, the same as a fresh add would."""
+    token = _admin_token(api, subject="sub-ada2-reinstate-unacked")
+    first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
+    second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
+    _add(api, first_entry, token, terms=["ADA2"])
+    _add(api, second_entry, token, terms=["ADA2"])
+    _retire(api, second_entry, token, term="ADA2", reason="Retiring the ADA2 synonym by mistake")
+
+    reinstate_response = _reinstate(
+        api, second_entry, token, term="ADA2", reason="Reinstating the ADA2 synonym"
+    )
+
+    assert reinstate_response.status_code == 200, reinstate_response.text
+    warnings = reinstate_response.json()["warnings"]
+    assert {w["business_key"] for w in warnings} == {first_entry}
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
 def test_an_acknowledged_warning_stays_silenced_after_reinstatement(api: ApiTestApp) -> None:
     """Issue #313's own acceptance criterion:
     `designation_collision_acknowledgement` is keyed on `(entry_id,
