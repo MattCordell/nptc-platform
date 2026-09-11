@@ -3,19 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
-import { Button, buttonClassName } from "./button.tsx";
+import { buttonClassName } from "./button-class-name.ts";
+import { Button } from "./button.tsx";
 
 describe("buttonClassName", () => {
-  it("matches the classes Button itself renders for a variant", () => {
-    render(
-      <Button type="button" variant="secondary">
-        Cancel
-      </Button>,
+  // Asserted against the literal string, not against what `Button` itself
+  // renders: `Button` calls `buttonClassName` internally, so comparing the
+  // two would just assert the function against itself and could never catch
+  // a drift - which is exactly what this export exists to prevent.
+  it("returns the base classes plus the secondary variant's colours", () => {
+    expect(buttonClassName("secondary")).toBe(
+      "rounded-md border px-4 py-2 text-sm font-medium bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]",
     );
-    const button = screen.getByRole("button", { name: "Cancel" });
-    for (const cls of buttonClassName("secondary").split(" ")) {
-      expect(button.className).toContain(cls);
-    }
   });
 
   it("defaults to the primary variant", () => {

@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
-import { buttonClassName } from "../components/button.tsx";
 import { useAuth } from "../auth/session.ts";
+import { buttonClassName } from "../components/button-class-name.ts";
 
 /**
  * The actions row is keyed on `useAuth().status`, not a boolean: `restoring`
@@ -16,24 +16,24 @@ function HomeActions() {
 
   if (status === "signed-out") {
     return (
-      <p className="flex gap-3">
+      <nav aria-label="Account actions" className="flex gap-3">
         <Link to="/register" className={buttonClassName("primary")}>
           Register
         </Link>
         <Link to="/sign-in" className={buttonClassName("secondary")}>
           Sign in
         </Link>
-      </p>
+      </nav>
     );
   }
 
   if (status === "signed-in") {
     return (
-      <p>
+      <nav aria-label="Account actions" className="flex gap-3">
         <Link to="/sign-out" className={buttonClassName("secondary")}>
           Sign out
         </Link>
-      </p>
+      </nav>
     );
   }
 

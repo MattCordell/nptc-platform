@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { expectNoA11yViolations } from "../test/a11y.ts";
 import { renderRoute } from "../test/render-route.tsx";
 
 // Scoped to the `main` landmark throughout: the site header and footer
@@ -13,7 +14,7 @@ function main() {
 
 describe("/ (homepage)", () => {
   it("shows register and sign-in actions for a signed-out visitor", async () => {
-    await renderRoute("/", { auth: { status: "signed-out" } });
+    const { container } = await renderRoute("/", { auth: { status: "signed-out" } });
 
     expect(main().getByRole("link", { name: "Register" })).toHaveAttribute(
       "href",
@@ -24,10 +25,14 @@ describe("/ (homepage)", () => {
       "/sign-in",
     );
     expect(main().queryByRole("link", { name: "Sign out" })).not.toBeInTheDocument();
+    // The first screen with a `Link` styled to look like a `Button` - worth
+    // an axe pass in its own right, not just the pattern's origin in
+    // `button.test.tsx`.
+    await expectNoA11yViolations(container);
   });
 
   it("shows only a sign-out action for a signed-in visitor", async () => {
-    await renderRoute("/", { auth: { status: "signed-in" } });
+    const { container } = await renderRoute("/", { auth: { status: "signed-in" } });
 
     expect(main().getByRole("link", { name: "Sign out" })).toHaveAttribute(
       "href",
@@ -35,6 +40,7 @@ describe("/ (homepage)", () => {
     );
     expect(main().queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
     expect(main().queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+    await expectNoA11yViolations(container);
   });
 
   it("shows no auth actions while the session is still restoring", async () => {
