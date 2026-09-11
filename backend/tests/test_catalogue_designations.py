@@ -921,7 +921,7 @@ def test_reinstate_designation_still_runs_the_error_collision_check(app_session:
         app_session, AuditContext.system(), designation=designation, reason="Retiring it"
     )
     app_session.flush()
-    other_entry = _new_entry(app_session, preferred_term="Adrenal Ab")
+    _new_entry(app_session, preferred_term="Adrenal Ab")
 
     with pytest.raises(DesignationCollisionError):
         reinstate_designation(
@@ -931,8 +931,6 @@ def test_reinstate_designation_still_runs_the_error_collision_check(app_session:
             designation=designation,
             reason="Reinstating the now-colliding synonym",
         )
-
-    assert other_entry.preferred_term == "Adrenal Ab"
 
 
 @pytest.mark.req("FR-04")

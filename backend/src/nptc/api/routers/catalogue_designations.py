@@ -152,7 +152,11 @@ _RESPONSE_403_ACK: Final[dict[str, Any]] = {
 }
 _RESPONSE_404: Final[dict[str, Any]] = {
     "model": ErrorResponse,
-    "description": "No catalogue entry, or no active designation, matches the given identifier.",
+    "description": (
+        "No catalogue entry matches the given identifier, or no matching "
+        "designation does - add/amend/retire look for an active one, "
+        "reinstatement for a retired one (issue #313 review)."
+    ),
 }
 _RESPONSE_409: Final[dict[str, Any]] = {
     "model": ErrorResponse,
@@ -274,13 +278,12 @@ _RESPONSES_AMEND: Final[dict[int | str, dict[str, Any]]] = {
     **_RESPONSES_WRITE,
     409: _RESPONSE_409_COLLISION_AND_VERSION,
 }
-#: Reinstate (issue #313): can collide (FR-05) exactly as add can, since
+#: Reinstate (issue #313): can collide (FR-05) exactly as amend can, since
 #: reactivating a row is subject to the same partial unique indexes a fresh
-#: insert is.
-_RESPONSES_REINSTATE: Final[dict[int | str, dict[str, Any]]] = {
-    **_RESPONSES_WRITE,
-    409: _RESPONSE_409_COLLISION_AND_VERSION,
-}
+#: insert is - same shape as `_RESPONSES_AMEND`, so reused rather than
+#: redeclared (issue #322 review: a third identical dict here would be the
+#: very divergence-by-copy-paste this module's constants exist to avoid).
+_RESPONSES_REINSTATE: Final[dict[int | str, dict[str, Any]]] = _RESPONSES_AMEND
 _RESPONSES_ACKNOWLEDGE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_ACK,

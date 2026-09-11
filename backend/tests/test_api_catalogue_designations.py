@@ -141,13 +141,11 @@ def _designation_id(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
 
 def _designation_id_any_status(api: ApiTestApp, *, entry_id: Any, term: str) -> Any:
     """The id of the designation matching `term` on `entry_id`, whatever its
-    `status` - unlike `_designation_id` above, since issue #313's own point
-    is that reinstating keeps the *same* row (`_designation_id` would raise
-    `NoResultFound` against a designation this has just reinstated back to
-    `active` from... no, it would find it; the case this actually exists
-    for is proving the id is stable *before* a reinstatement, while the row
-    is still `retired` and `_designation_id`'s own `status == 'active'`
-    filter would find nothing)."""
+    `status` - unlike `_designation_id` above, whose `status == 'active'`
+    filter finds nothing while the row is still `retired`. Needed here to
+    capture the id *before* a reinstatement, so the test can assert
+    reinstating keeps the same row rather than inserting a new one
+    (issue #313's own point)."""
     return api.session.execute(
         select(Designation.id).where(
             Designation.entry_id == entry_id,
@@ -1662,6 +1660,35 @@ def test_amend_then_retire_a_different_term_is_refused_on_the_stale_version(
 
     assert response.status_code == 409, response.text
     assert response.json()["current_row_version"] == stale + 1
+
+
+@pytest.mark.req("FR-38")
+@pytest.mark.integration
+def test_retire_then_reinstate_a_different_term_is_refused_on_the_stale_version(
+    api: ApiTestApp,
+) -> None:
+    """Reinstatement shares `entry_child_write` with add/amend/retire (issue
+    #300), so it can refuse the same stale-`expected_row_version` 409 they
+    each have their own test for - this route had none (issue #313 review)."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-cross-retire-reinstate")
+    _add(api, business_key, token, terms=["FBC"])
+    _add(api, business_key, token, terms=["CBC"])
+
+    first = _retire(api, business_key, token, term="FBC")
+    assert first.status_code == 200, first.text
+    stale = _stored_row_version(api, business_key)
+
+    second = _retire(api, business_key, token, term="CBC")
+    assert second.status_code == 200, second.text
+    version_before_reinstate = _stored_row_version(api, business_key)
+
+    response = _reinstate(api, business_key, token, term="FBC", expected_row_version=stale)
+
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["current_row_version"] == version_before_reinstate
+    assert body["expected_row_version"] == stale
 
 
 @pytest.mark.req("FR-38")

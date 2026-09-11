@@ -2706,7 +2706,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3180,7 +3180,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3252,7 +3252,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3324,7 +3324,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3396,7 +3396,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry, or no active designation, matches the given identifier. */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -273,10 +273,14 @@ def find_retired_designation(
     active-only. `retired_at DESC` picks the most recently retired first
     (issue #313's plan settled this as the answer an editor would expect -
     two retired rows sharing every field the API exposes are otherwise
-    indistinguishable to them); `id ASC` is the final deterministic
-    tiebreaker, matching `get_entry_by_code`'s own `business_key ASC` after
-    `retired_at DESC` for the same reason - two identical requests must
-    never disagree."""
+    indistinguishable to them). `created_at DESC` is the tiebreaker for two
+    retirements sharing one transaction (Postgres `now()` is transaction
+    time, so a bulk retirement ties on `retired_at` exactly) - `id` is a
+    UUID and so carries no chronological meaning at all, unlike
+    `get_entry_by_code`'s own `business_key`, which is why this tiebreaker
+    is `created_at`, not `id` (issue #322 review). `id ASC` remains the
+    final tiebreaker after that, for the residual case of two rows sharing
+    both timestamps: two identical requests must never disagree."""
     from nptc.db.models.designation import Designation as _Designation
     from nptc.db.models.designation import DesignationStatus
 
@@ -290,7 +294,11 @@ def find_retired_designation(
             _Designation.language == canonical_language,
             _Designation.status == str(DesignationStatus.RETIRED),
         )
-        .order_by(_Designation.retired_at.desc(), _Designation.id.asc())
+        .order_by(
+            _Designation.retired_at.desc(),
+            _Designation.created_at.desc(),
+            _Designation.id.asc(),
+        )
         .limit(1)
     ).scalar_one_or_none()
 
