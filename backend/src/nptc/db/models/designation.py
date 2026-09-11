@@ -48,9 +48,9 @@ one `entry_id`/`term_key`/`language` - a term added, retired, and re-added
 twice over - have a real ordering column to break the tie on
 (`retired_at DESC`, then `id ASC`), the same reasoning
 `get_entry_by_code`'s multi-way retired-binding tie-break already applies.
-`__audit_ignored__`, matching `code_binding.retired_at`'s own treatment:
-bookkeeping the audit event's own timestamp already covers, not an
-independent business fact.
+`__audit_ignored_fields__`, matching `code_binding.retired_at`'s own
+treatment: bookkeeping the audit event's own timestamp already covers, not
+an independent business fact.
 
 **`term_key` is FR-05's comparison form, stored and indexed (issue #49).**
 The same `@validates("term")` hook that cleans the term also derives
