@@ -60,6 +60,28 @@ accessibility-critical and easy to get wrong with a generic utility:
   verified by tooling — see `docs/architecture/components.md` and the note in
   `frontend/src/test/a11y.ts` on why `axe-core` cannot check contrast under jsdom.
 
+## Typography
+
+Issue #323 adds three type families — Source Serif 4 (display), IBM Plex Sans (interface
+and body), IBM Plex Mono (codes and data) — as `--font-*` tokens in the same `@theme`
+block, self-hosted via `@fontsource-variable/source-serif-4`,
+`@fontsource-variable/ibm-plex-sans` and `@fontsource/ibm-plex-mono` rather than a
+`fonts.googleapis.com` `<link>`. This is a security posture, not a taste call, so it is
+recorded here rather than left to be "simplified" back to a CDN link by a future
+contributor:
+
+- NFR-23 commits the platform to a restrictive Content-Security-Policy.
+- ADR-0021 names that CSP as the mitigation for holding OIDC tokens in memory rather than
+  `localStorage` — a third-party script or font origin is exactly the kind of relaxation
+  that policy exists to prevent.
+- Air-gapped deployment is a supported posture (`deploy/.env.example`,
+  `docs/operations/configuration.md`) that a CDN font dependency would break outright.
+
+`@fontsource` ships the same font files as a Google Fonts `<link>` would fetch, as an npm
+package Vite bundles at build time — same-origin in production, no code added to the
+runtime bundle (the packages are CSS plus `.woff2` files), and no behaviour change from a
+CDN link beyond where the bytes are served from.
+
 ## Rejected alternatives
 
 - **Plain CSS with custom-property tokens** — the case for it is real (see above) and would
