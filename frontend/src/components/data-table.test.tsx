@@ -53,6 +53,39 @@ describe("DataTable", () => {
     }
   });
 
+  it("styles the header row uppercase, small and muted, per the dense-table pattern", () => {
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={COLUMNS}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    const header = screen.getByRole("columnheader", { name: "Code" });
+    expect(header.className).toContain("uppercase");
+    expect(header.className).toContain("tracking-wide");
+    expect(header.className).toContain("text-[var(--color-text-muted)]");
+  });
+
+  it("fills the surface-sunken colour on row hover", () => {
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={COLUMNS}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    const row = screen.getByRole("rowheader", { name: "NPTC-1" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain("hover:bg-[var(--color-surface-sunken)]");
+  });
+
   it("gives the designated column scope=row on each data row", () => {
     render(
       <DataTable
