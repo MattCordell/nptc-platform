@@ -40,16 +40,15 @@ function HomeActions() {
   return null;
 }
 
-const SECONDARY_LINK_CLASSES =
-  "text-[var(--color-accent)] hover:underline";
+const SECONDARY_LINK_CLASSES = "text-[var(--color-accent)] hover:underline";
 
 export function HomePage() {
   return (
     <section aria-labelledby="home-heading">
       <h1 id="home-heading">NPTC Catalogue Maintenance Platform</h1>
       <p className="text-[var(--color-text-muted)]">
-        The National Pathology Test Catalogue: the SPIA Requesting terminology, curated
-        by RCPA-QAP, published by NCTS as a SNOMED CT reference set and FHIR ValueSet.
+        The National Pathology Test Catalogue: the SPIA Requesting terminology, curated by
+        RCPA-QAP, published by NCTS as a SNOMED CT reference set and FHIR ValueSet.
       </p>
       <HomeActions />
       <p>

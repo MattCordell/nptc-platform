@@ -23,9 +23,7 @@ describe("/ (homepage)", () => {
       "href",
       "/sign-in",
     );
-    expect(
-      main().queryByRole("link", { name: "Sign out" }),
-    ).not.toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Sign out" })).not.toBeInTheDocument();
   });
 
   it("shows only a sign-out action for a signed-in visitor", async () => {
@@ -35,12 +33,8 @@ describe("/ (homepage)", () => {
       "href",
       "/sign-out",
     );
-    expect(
-      main().queryByRole("link", { name: "Register" }),
-    ).not.toBeInTheDocument();
-    expect(
-      main().queryByRole("link", { name: "Sign in" }),
-    ).not.toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Register" })).not.toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
   });
 
   it("shows no auth actions while the session is still restoring", async () => {
@@ -64,12 +58,14 @@ describe("/ (homepage)", () => {
     async (status) => {
       await renderRoute("/", { auth: { status } });
 
-      expect(
-        main().getByRole("link", { name: "Search the catalogue" }),
-      ).toHaveAttribute("href", "/catalogue");
-      expect(
-        main().getByRole("link", { name: "About the catalogue" }),
-      ).toHaveAttribute("href", "/about");
+      expect(main().getByRole("link", { name: "Search the catalogue" })).toHaveAttribute(
+        "href",
+        "/catalogue",
+      );
+      expect(main().getByRole("link", { name: "About the catalogue" })).toHaveAttribute(
+        "href",
+        "/about",
+      );
     },
   );
 });
