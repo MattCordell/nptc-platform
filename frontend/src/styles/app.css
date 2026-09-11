@@ -15,6 +15,16 @@
  * third-party font origin would work against all three. See
  * docs/adr/0025-frontend-styling.md.
  */
+/*
+ * Subsetting is intentionally asymmetric (PR #327 review): the serif/sans
+ * imports below cover six unicode-range subsets each (cyrillic-ext,
+ * cyrillic, greek, vietnamese, latin-ext, latin) so interface/body text
+ * degrades gracefully for any script; mono is latin-only, since SCTIDs,
+ * LOINC codes, versions and dates are always ASCII digits/punctuation. Each
+ * @font-face's unicode-range means a browser only ever fetches the subset
+ * it actually renders, so this is a dist/ asset-count difference, not an
+ * extra request per page load.
+ */
 @import "@fontsource-variable/source-serif-4/wght.css";
 @import "@fontsource-variable/ibm-plex-sans/standard.css";
 @import "@fontsource/ibm-plex-mono/latin-400.css";
@@ -35,7 +45,10 @@
 
   --color-text: #1e2a2c;
   --color-text-muted: #5a6462;
-  --color-text-tertiary: #8b9391;
+  /* #8b9391 as drafted is 3.14:1 on paper - below WCAG AA's 4.5:1 for normal
+     text (PR #327 review). Darkened within the same hue/saturation to
+     4.61:1, since #324/#325 use this for help/meta text, not just icons. */
+  --color-text-tertiary: #6e7774;
 
   --color-code-text: #4a5250;
   --color-code-bg: #efebe0;
@@ -48,10 +61,15 @@
   /* Status pills, distinct from the accent. Active reuses Published's pair
      and Withdrawn reuses Deprecated's - no separate colour was drafted for
      either. Neutral has its own pair (not a reuse) so every StatusBadge
-     tone is symmetrical in this table - see docs/architecture/design-system.md. */
-  --color-status-draft-text: #a86a3a;
+     tone is symmetrical in this table - see docs/architecture/design-system.md.
+     Draft and active's *-text values are darkened from the design notes'
+     drafted #a86a3a/#3f7d4e (3.59:1 / 4.13:1 on their backgrounds, both
+     below WCAG AA's 4.5:1 for StatusBadge's 12px text) to 4.60:1 / 4.65:1,
+     within the same hue/saturation family (PR #327 review) - deprecated and
+     neutral already pass (4.82:1 / 4.93:1) and are unchanged. */
+  --color-status-draft-text: #905b32;
   --color-status-draft-bg: #f4e6d9;
-  --color-status-active-text: #3f7d4e;
+  --color-status-active-text: #3b7448;
   --color-status-active-bg: #e3eee1;
   --color-status-deprecated-text: #6b6459;
   --color-status-deprecated-bg: #ece9e3;
