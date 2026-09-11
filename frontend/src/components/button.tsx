@@ -1,6 +1,6 @@
 import type { ComponentPropsWithoutRef } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "danger";
+export type ButtonVariant = "primary" | "secondary" | "danger";
 
 type ButtonProps = {
   variant?: ButtonVariant;
@@ -17,6 +17,16 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   danger:
     "bg-[var(--color-danger)] text-[var(--color-accent-contrast)] border-transparent",
 };
+
+/**
+ * The base + variant classes `Button` renders, exposed for call sites that
+ * need the same look on an element `Button` can't be - e.g. a router `Link`
+ * styled as a primary action - without a second, divergent copy of
+ * `VARIANT_CLASSES` drifting the next time this file restyles.
+ */
+export function buttonClassName(variant: ButtonVariant = "primary"): string {
+  return `rounded-md border px-4 py-2 text-sm font-medium ${VARIANT_CLASSES[variant]}`;
+}
 
 /**
  * A button that always declares its `type` explicitly (issue #148): inside
@@ -56,8 +66,7 @@ export function Button({
       disabled={disabled}
       aria-disabled={ariaDisabled}
       className={[
-        "rounded-md border px-4 py-2 text-sm font-medium",
-        VARIANT_CLASSES[variant],
+        buttonClassName(variant),
         unavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         className ?? "",
       ]
