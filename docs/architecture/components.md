@@ -44,6 +44,10 @@ raw-element mistakes (a missing label association, a non-interactive element wit
 handler, a positive `tabindex`) even where a screen does reach for a raw element for a
 genuine one-off. Review is still what catches "this should have been `<Button>`."
 
+Alongside "compose from `components/`", a screen also has to match the design system: see
+[design-system.md](design-system.md) for the palette, type and layout vocabulary these
+components draw their tokens from.
+
 ## The baseline components
 
 All in `frontend/src/components/`, each with a co-located `*.test.tsx` that asserts both
@@ -73,7 +77,14 @@ over rule configuration).
   browser does natively on top of it.
 - **`data-table.tsx` — `DataTable`.** A required `caption`, `scope="col"` on every column
   header, `scope="row"` on the column designated as the row header, and an explicit
-  empty-state row rather than a headers-only table when there are no results.
+  empty-state row rather than a headers-only table when there are no results. A column's
+  optional `align` sets both the header and data cell's text alignment, for the mono
+  left-aligned / numeric right-aligned convention in
+  [design-system.md](design-system.md#layout-patterns).
+- **`status-badge.tsx` — `StatusBadge`.** A lifecycle-status pill, taking a `tone` rather
+  than a catalogue status value so it stays a generic primitive — `statusToneFor` in
+  `frontend/src/catalogue/status-options.ts` maps the real `CatalogueEntryStatus` values
+  onto its four tones. See [design-system.md](design-system.md) for the tone colours.
 - **`live-region.tsx` — `LiveRegion`, paired with `use-announce.ts` — `useAnnounce`.** The
   region is always mounted, present and empty, rather than inserted into the DOM only at
   announce time — a screen reader reliably picks up a text change inside a region that was

@@ -65,6 +65,32 @@ describe("Button", () => {
     expect(button).not.toBeDisabled();
   });
 
+  // These two assert the Tailwind class contract, not rendered style - jsdom
+  // has no layout engine, so there is no hover state or computed colour to
+  // check (PR #327 review). They are change-detectors for the class string
+  // above them, not visual proof the hover state renders correctly.
+  it("fills the accent-hover colour on hover for the primary variant", () => {
+    render(
+      <Button type="button" variant="primary">
+        Save
+      </Button>,
+    );
+    expect(screen.getByRole("button", { name: "Save" }).className).toContain(
+      "hover:bg-[var(--color-accent-hover)]",
+    );
+  });
+
+  it("takes the accent border and text on hover for the secondary variant", () => {
+    render(
+      <Button type="button" variant="secondary">
+        Cancel
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "Cancel" });
+    expect(button.className).toContain("hover:border-[var(--color-accent)]");
+    expect(button.className).toContain("hover:text-[var(--color-accent)]");
+  });
+
   it.each(["primary", "secondary", "danger"] as const)(
     "has no automated accessibility violations for the %s variant",
     async (variant) => {

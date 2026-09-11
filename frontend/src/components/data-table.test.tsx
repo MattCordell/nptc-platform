@@ -53,6 +53,45 @@ describe("DataTable", () => {
     }
   });
 
+  // The next two assert the Tailwind class contract, not rendered style -
+  // jsdom has no layout engine, so there is no computed colour or hover
+  // state to check (PR #327 review). They are change-detectors for the
+  // class string in data-table.tsx, not visual proof of the styling; see
+  // frontend/tests/design-tokens-contrast.test.ts for the one place token
+  // *values* are checked.
+  it("styles the header row uppercase, small and muted, per the dense-table pattern", () => {
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={COLUMNS}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    const header = screen.getByRole("columnheader", { name: "Code" });
+    expect(header.className).toContain("uppercase");
+    expect(header.className).toContain("tracking-wide");
+    expect(header.className).toContain("text-[var(--color-text-muted)]");
+  });
+
+  it("fills the surface-sunken colour on row hover", () => {
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={COLUMNS}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    const row = screen.getByRole("rowheader", { name: "NPTC-1" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain("hover:bg-[var(--color-surface-sunken)]");
+  });
+
   it("gives the designated column scope=row on each data row", () => {
     render(
       <DataTable
@@ -101,6 +140,35 @@ describe("DataTable", () => {
     expect(
       screen.queryByRole("rowheader", { name: "Full blood count" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("right-aligns a column's header and data cells when align is right", () => {
+    const columnsWithAlignedStatus = [
+      { key: "id", header: "Code", isRowHeader: true, render: (row: Entry) => row.id },
+      {
+        key: "status",
+        header: "Status",
+        align: "right" as const,
+        render: (row: Entry) => row.status,
+      },
+    ];
+
+    render(
+      <DataTable
+        caption="Catalogue entries"
+        columns={columnsWithAlignedStatus}
+        rows={ENTRIES}
+        getRowKey={(row) => row.id}
+        emptyState="No entries"
+      />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Status" }).className).toContain(
+      "text-right",
+    );
+    expect(screen.getByRole("cell", { name: "Active" }).className).toContain(
+      "text-right",
+    );
   });
 
   it("shows the empty state, not a headers-only table, when there are no rows", () => {
