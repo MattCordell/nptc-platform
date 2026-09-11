@@ -1,10 +1,23 @@
 import type { StatusTone } from "../components/status-badge.tsx";
 
 /**
- * The four `CatalogueEntryStatus` values, matching
+ * The lifecycle values `statusToneFor` maps by name, matching
  * `nptc.catalogue.maintenance.MAINTENANCE_STATUSES` (derived from the same
- * enum server-side). Hardcoded, unlike every other facet
- * (`AdminCatalogueFilterPanel`'s own docstring), because this set is a
+ * enum server-side). Hand-written, not derived from `STATUS_OPTIONS` via
+ * `satisfies` (PR #327 second review): `satisfies` only checks a value's
+ * *shape*, not its literal type, against a target property typed `string` -
+ * `(typeof STATUS_OPTIONS)[number]["value"]` came out as plain `string`
+ * either way, so `CatalogueEntryStatus` was doing nothing and
+ * `statusToneFor`'s signature was unchanged from the plain `string` it
+ * replaced. Typing `STATUS_OPTIONS` *against* this union below (rather than
+ * deriving the union from it) is what actually catches a value added to one
+ * without the other agreeing.
+ */
+export type CatalogueEntryStatus = "draft" | "active" | "deprecated" | "withdrawn";
+
+/**
+ * The four `CatalogueEntryStatus` values. Hardcoded, unlike every other
+ * facet (`AdminCatalogueFilterPanel`'s own docstring), because this set is a
  * stable part of the domain model, not administrator-editable registry
  * state - there is nowhere on the wire to discover it from in browse mode
  * (facets, with counts, exist only on the search surface).
@@ -15,25 +28,18 @@ import type { StatusTone } from "../components/status-badge.tsx";
  * this exact fix. Shared by the filter panel and the active-filter-chip
  * label resolver on the list page, so both read the identical labels.
  *
- * `satisfies`, not a `: { value: string; label: string }[]` annotation: that
- * would widen every `value` to `string` and lose the literal types
- * `CatalogueEntryStatus` derives below - `satisfies` checks the shape
- * without widening it, and (unlike `as const`) keeps the array mutable, so
- * this stays assignable everywhere a plain `{ value; label }[]` is expected
- * (`AdminCatalogueFilterPanel`'s `FacetOption[]`).
+ * Typed against `CatalogueEntryStatus`, not `{ value: string; label: string
+ * }[]`: a value here that isn't already in that union fails to compile,
+ * rather than silently widening. Stays a plain mutable array (not `as
+ * const`), so this remains assignable to `AdminCatalogueFilterPanel`'s
+ * mutable `FacetOption[]`.
  */
-export const STATUS_OPTIONS = [
+export const STATUS_OPTIONS: { value: CatalogueEntryStatus; label: string }[] = [
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "deprecated", label: "Deprecated" },
   { value: "withdrawn", label: "Withdrawn" },
-] satisfies { value: string; label: string }[];
-
-/**
- * The lifecycle values `statusToneFor` maps by name, derived from
- * `STATUS_OPTIONS` so the two cannot silently drift apart (PR #327 review).
- */
-export type CatalogueEntryStatus = (typeof STATUS_OPTIONS)[number]["value"];
+];
 
 /**
  * Maps a `CatalogueEntryStatus` value to the `StatusBadge` tone that renders
