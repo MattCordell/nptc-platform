@@ -280,7 +280,13 @@ def find_retired_designation(
     `get_entry_by_code`'s own `business_key`, which is why this tiebreaker
     is `created_at`, not `id` (issue #322 review). `id ASC` remains the
     final tiebreaker after that, for the residual case of two rows sharing
-    both timestamps: two identical requests must never disagree."""
+    both timestamps: two identical requests must never disagree.
+
+    `created_at`'s own `server_default` is also transaction time, so it
+    only breaks a tie between rows created in *different* transactions; a
+    full add/retire cycle repeated twice within one transaction still ties
+    on both columns and falls through to `id ASC` (issue #322 review,
+    follow-up)."""
     from nptc.db.models.designation import Designation as _Designation
     from nptc.db.models.designation import DesignationStatus
 
