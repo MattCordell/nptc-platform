@@ -238,3 +238,31 @@ def test_api_settings_rejects_stripped_fsn_semantic_tag() -> None:
 def test_api_settings_rejects_an_unrecognised_fsn_semantic_tag_value() -> None:
     with pytest.raises(ValidationError):
         ApiSettings(fsn_semantic_tag="wat")
+
+
+@pytest.mark.req("FR-86")
+def test_api_settings_defaults_max_preferred_term_length_to_unset() -> None:
+    """Unset is the default and must stay the default (FR-86 acceptance
+    criterion) - with no maximum configured, no entry can ever produce a
+    length warning."""
+    assert ApiSettings().max_preferred_term_length is None
+
+
+@pytest.mark.req("FR-86")
+def test_api_settings_reads_max_preferred_term_length_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPTC_MAX_PREFERRED_TERM_LENGTH", "120")
+
+    assert ApiSettings().max_preferred_term_length == 120
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.parametrize("value", [0, -1])
+def test_api_settings_rejects_a_non_positive_max_preferred_term_length(value: int) -> None:
+    """A zero or negative maximum can never be a real length ceiling - fail
+    at settings-construction time, matching NPTC_TX_CHUNK_SIZE's own
+    fail-closed convention, rather than silently comparing every entry's
+    length against a nonsensical value."""
+    with pytest.raises(ValidationError, match="max_preferred_term_length"):
+        ApiSettings(max_preferred_term_length=value)
