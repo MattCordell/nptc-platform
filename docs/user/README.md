@@ -14,6 +14,8 @@
   until the public entry pages land.
 - [Searching the audit log](searching-the-audit-log.md) — issue #286, API-only until the
   audit log screen lands.
+- [Reading the preferred-term length distribution report](reading-the-length-distribution-report.md)
+  — issue #152, API-only; there is no admin screen for this report yet.
 
 [Roles](roles.md) covers Administrator and Reviewer — Member and Provisional have no
 screen of their own yet, and Anonymous/Observer use is self-explanatory from the public

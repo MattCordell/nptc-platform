@@ -594,6 +594,15 @@ current `=LEN()` formula counts a trailing non-breaking space, cleaning that
 whitespace reduces the published length for roughly one entry in five - covered
 directly on `CatalogueEntry.length` in `backend/tests/test_catalogue_designations.py`.
 
+**FR-86's configurable maximum (issue #152) adds no column either.** It is
+`ApiSettings.max_preferred_term_length` (`NPTC_MAX_PREFERRED_TERM_LENGTH`,
+[configuration.md](../operations/configuration.md)), compared against `CatalogueEntry.length`
+at write time in the designation-amendment route - never stored, and unset by default so
+no entry is ever warned until an operator sets one. FR-87's distribution report
+(`nptc.catalogue.length_report`) is likewise computed on demand, from
+`char_length(catalogue_entry.preferred_term)` in one aggregate statement, not a
+materialised or cached table.
+
 ### Where the preferred term lives (not duplicated)
 
 There are three preferred-term-shaped strings in this platform, in three different
