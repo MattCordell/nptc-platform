@@ -534,6 +534,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/admin/preferred-term-length-distribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The distribution of preferred-term lengths across the catalogue
+         * @description FR-87. Reachable by an administrator with no query to write by hand -
+         *     the acceptance criterion this route exists to satisfy.
+         *
+         *     Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every
+         *     other route in this module uses, rather than a new read-only permission -
+         *     see the module docstring for why: `ROLE_PERMISSIONS` is asserted
+         *     cell-by-cell against the PRD's own table, so minting one would need a PRD
+         *     change this issue does not ask for.
+         *
+         *     One statement (`nptc.catalogue.length_report.compute_length_distribution`,
+         *     issue #275's precedent) regardless of the catalogue's size - FR-87's own
+         *     acceptance criterion that this runs against the 20,000-entry design
+         *     ceiling without timing out.
+         */
+        get: operations["preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registry/properties": {
         parameters: {
             query?: never;
@@ -912,11 +944,17 @@ export interface components {
          *     has no version of its own, but amending one bumps the entry's counter
          *     via `nptc.catalogue.entries.entry_child_write`, the same way the
          *     preferred-term branch's `save_entry` always has.
+         *
+         *     `length_warning` (FR-86, issue #152) is set only on the preferred-term
+         *     branch, and only when a maximum is configured and exceeded - see
+         *     `LengthWarning`'s own docstring for why it is a separate field rather
+         *     than a member of `warnings`.
          */
         AmendDesignationResult: {
             designation: components["schemas"]["Designation"];
             /** Warnings */
             warnings: components["schemas"]["CollisionWarning"][];
+            length_warning?: components["schemas"]["LengthWarning"] | null;
             /** Row Version */
             row_version: number;
         };
@@ -1766,6 +1804,69 @@ export interface components {
         LabelProvenance: {
             designation: components["schemas"]["DesignationType"];
             semantic_tag: components["schemas"]["SemanticTagState"];
+        };
+        /**
+         * LengthDistributionBucket
+         * @description Every entry whose preferred term is exactly `length` characters long,
+         *     plus how many entries a maximum set to `length` would warn on (FR-86
+         *     warns when a term's length *exceeds* the configured maximum, so this
+         *     counts strictly greater - `nptc.catalogue.length_report.
+         *     LengthDistribution.affected_counts`'s own comparison).
+         *
+         *     One shape carrying both figures, rather than two parallel lists a caller
+         *     would have to zip back together by `length` themselves - FR-87 asks for
+         *     exactly this pairing: "the count of entries affected at each candidate
+         *     threshold", and every observed `length` is a candidate threshold.
+         */
+        LengthDistributionBucket: {
+            /** Length */
+            length: number;
+            /** Count */
+            count: number;
+            /** Entries Exceeding */
+            entries_exceeding: number;
+        };
+        /**
+         * LengthDistributionReport
+         * @description FR-87: the whole report an administrator needs to nominate a maximum
+         *     preferred-term length (FR-86, PRD open item OI-1) - the histogram plus
+         *     its maximum, with no query to run by hand.
+         */
+        LengthDistributionReport: {
+            /** Buckets */
+            buckets: components["schemas"]["LengthDistributionBucket"][];
+            /**
+             * Maximum
+             * @description The longest preferred term in the catalogue, or null when the catalogue is empty.
+             */
+            maximum: number | null;
+        };
+        /**
+         * LengthWarning
+         * @description FR-86 (issue #152): the catalogue's own preferred term now exceeds
+         *     the configured maximum length. Non-blocking, the same "warn, never
+         *     raise" shape as `CollisionWarning` - a hard block would make an
+         *     existing over-length entry uneditable, the specific failure FR-86
+         *     exists to prevent.
+         *
+         *     A separate field from `CollisionWarning`/`warnings`, not a member of
+         *     that list: `warning_collisions` only ever looks for another live
+         *     entry's active synonym, which has nothing to do with this entry's own
+         *     length, and `CollisionWarning`'s shape (a colliding entry's business
+         *     key, term, provenance) has no field this could honestly populate.
+         *
+         *     Only ever produced on `amend_designation_route`'s preferred-term
+         *     branch: FR-85's `length` is defined against the catalogue's own
+         *     preferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),
+         *     which lives on `catalogue_entry.preferred_term`, never on a
+         *     `designation` row (ADR-0022) - there is no other branch this could ever
+         *     apply to.
+         */
+        LengthWarning: {
+            /** Length */
+            length: number;
+            /** Max Length */
+            max_length: number;
         };
         /**
          * PatchEntryRequest
@@ -3740,6 +3841,44 @@ export interface operations {
             };
             /** @description The business key is not `NPTC-nnnnnn`. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LengthDistributionReport"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
