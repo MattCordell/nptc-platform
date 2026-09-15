@@ -1556,6 +1556,18 @@ def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
 
 
 def _set_max_preferred_term_length(api: ApiTestApp, value: int | None) -> None:
+    """The first per-test `ApiSettings` override in this suite (issue #152
+    review) - `api_app_support.py`'s `create_app(settings=...)` is wired into
+    CORS only, not into the `get_api_settings` dependency the routes
+    actually resolve, so there is no existing precedent to follow here the
+    way `get_auth_settings`/`get_token_verifier` have.
+
+    `max_preferred_term_length=value` wins for the field under test, but
+    every *other* `ApiSettings` field below still resolves from this
+    process's real environment (and any `.env` a developer has loaded) -
+    fine for the fields this test file actually reads, but worth flagging
+    for whoever copies this pattern for a field where that would not be
+    safe."""
     api.app.dependency_overrides[get_api_settings] = lambda: ApiSettings(
         max_preferred_term_length=value
     )
@@ -1626,6 +1638,41 @@ def test_a_term_exceeding_the_configured_maximum_still_saves_with_a_warning(
     }
     detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
     assert detail["preferred_term"] == "Full blood count, automated"
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.req("FR-85")
+@pytest.mark.integration
+def test_the_warning_reports_the_cleaned_length_not_the_raw_submission(api: ApiTestApp) -> None:
+    """PRD §6.5's own migration case (issue #152 review): a trailing
+    non-breaking space shortens the published length by one once `clean_term`
+    strips it, for roughly one entry in five. Every other test in this
+    section submits an ASCII term where `len(submitted) == entry.length`, so
+    none of them can tell `length_warning.length` apart from a warning built
+    off the raw request body rather than `entry.length` - this is the one
+    case where those two figures actually disagree."""
+    nbsp = chr(0x00A0)
+    raw_submission = f"Full blood count{nbsp}"
+    cleaned = "Full blood count"
+    assert len(raw_submission) == len(cleaned) + 1, "the NBSP must be the only difference"
+    _set_max_preferred_term_length(api, len(cleaned) - 1)
+    business_key = _seed_entry(api, preferred_term="Iron")
+    token = _admin_token(api, subject="sub-length-cleaned")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Iron",
+        new_term=raw_submission,
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designation"]["term"] == cleaned
+    assert body["length_warning"]["length"] == len(cleaned)
 
 
 @pytest.mark.req("FR-86")

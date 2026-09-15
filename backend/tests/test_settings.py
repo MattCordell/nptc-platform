@@ -24,6 +24,11 @@ def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPTC_DATABASE_URL", raising=False)
     monkeypatch.delenv("NPTC_MIGRATION_DATABASE_URL", raising=False)
     monkeypatch.delenv("NPTC_INDEXER_DATABASE_URL", raising=False)
+    # Issue #152 review: without this, a developer or runner with this
+    # variable exported makes ApiSettings() pick it up and
+    # test_api_settings_defaults_max_preferred_term_length_to_unset fail for
+    # a reason unrelated to the code under test.
+    monkeypatch.delenv("NPTC_MAX_PREFERRED_TERM_LENGTH", raising=False)
 
 
 def test_database_settings_reads_dsn_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

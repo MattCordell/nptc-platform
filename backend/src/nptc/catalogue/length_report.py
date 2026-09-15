@@ -29,6 +29,19 @@ value necessarily agree -
 `test_length_report_char_length_matches_preferred_term_length` in
 `backend/tests/test_catalogue_length_report.py` asserts that equivalence
 explicitly rather than assuming it silently.
+
+**Every status is counted, deliberately - this is not an oversight.**
+`build_length_histogram_statement` carries no `WHERE status = ...`, so a
+`draft`, `deprecated` or `withdrawn` entry's preferred term is in the
+histogram exactly as an `active` one's is. That is the population FR-86's
+warning can actually fire against: `POST .../designations/amendment`
+resolves the entry via `nptc.catalogue.entries.load_entry_for_update`, which
+itself carries no status filter (an editing surface needs the entry
+regardless of status - a draft has to be editable before it can ever become
+`active`). Scoping this report to `active` entries alone would therefore
+*undercount* what a chosen maximum affects, not merely report a different
+population - see `docs/user/reading-the-length-distribution-report.md` for
+the caller-facing statement of this.
 """
 
 from __future__ import annotations

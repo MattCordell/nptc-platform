@@ -163,6 +163,53 @@ def test_char_length_matches_preferred_term_length(app_session: Session) -> None
 
 
 @pytest.mark.req("FR-87")
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+def test_char_length_matches_preferred_term_length_for_a_non_ascii_term(
+    app_session: Session,
+) -> None:
+    """Issue #152 review: the equivalence above is only load-bearing for a
+    *non-ASCII* term - `char_length` and Python `len` cannot disagree over
+    plain ASCII, so `test_char_length_matches_preferred_term_length` alone
+    never actually exercises the divergence the module docstring is
+    guarding against (NFC composing a decomposed combining sequence, and
+    `char_length` counting characters rather than UTF-16 code units).
+
+    Crafts a term carrying both: a decomposed combining acute accent
+    (`"e" + U+0301`, which `normalise_for_comparison` composes to a single
+    `"é"`) and a trailing non-breaking space (PRD Appendix A.1's own
+    `clean_term` case) that gets stripped. Counted as a *delta* against this
+    test's own baseline at the resulting length, not an absolute bucket
+    lookup - the shared container may already hold other entries whose
+    cleaned length happens to coincide (CLAUDE.md's shared-container
+    convention).
+    """
+    nbsp = chr(0x00A0)
+    combining_acute = "́"
+    raw_term = f"Adenosine deaminase, cafe{combining_acute} quantitative{nbsp}"
+    before = _baseline(app_session)
+
+    entry = _new_entry(app_session, raw_term)
+    app_session.flush()
+    app_session.refresh(entry)
+
+    # The combining sequence must actually have composed and the NBSP must
+    # actually have been stripped - otherwise this test silently degrades
+    # into the ASCII-equivalent case it exists to improve on.
+    assert "e" + combining_acute not in entry.preferred_term
+    assert nbsp not in entry.preferred_term
+    cleaned_length = len(entry.preferred_term)
+
+    distribution = compute_length_distribution(app_session)
+    after_count = next(
+        (bucket.count for bucket in distribution.buckets if bucket.length == cleaned_length), 0
+    )
+
+    assert after_count - before.get(cleaned_length, 0) == 1
+    assert cleaned_length == preferred_term_length(entry.preferred_term)
+
+
+@pytest.mark.req("FR-87")
 @pytest.mark.integration
 def test_the_report_issues_exactly_one_statement(app_db: Connection, app_session: Session) -> None:
     """FR-87's own acceptance criterion: the report runs in one statement,

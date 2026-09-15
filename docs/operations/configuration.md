@@ -187,8 +187,14 @@ over-length entry never becomes uneditable.
 `GET /catalogue/admin/preferred-term-length-distribution` (gated on
 `catalogue.edit_published`, the same permission every other admin route in
 `catalogue_admin.py` uses) answers "how many entries would this maximum affect" without
-anyone writing a query by hand. Each bucket in its `buckets` array carries a `length`, how
-many entries (`count`) have a preferred term exactly that long, and `entries_exceeding` —
-how many entries a maximum set to that length would warn on. `maximum` is the longest
-preferred term currently in the catalogue, or `null` for an empty one. See
-[`docs/user/`](../user/) for how an administrator reads this report end to end.
+anyone writing a query by hand. Its `buckets` array has one row per preferred-term length
+that actually occurs in the catalogue — not every possible length — carrying that
+`length`, how many entries (`count`) have a preferred term exactly that long, and
+`entries_exceeding`: how many entries a maximum set to that length would warn on.
+`maximum` is the longest preferred term currently in the catalogue, or `null` for an empty
+one. Every entry counts regardless of status (draft and withdrawn as well as active):
+`POST .../designations/amendment` can warn on any of them, since it resolves an entry with
+no status filter of its own, so scoping the report to active entries alone would undercount
+what a chosen maximum affects. See [`docs/user/`](../user/) for how an administrator reads
+this report end to end, including how to read a candidate length the report has no exact
+row for.
