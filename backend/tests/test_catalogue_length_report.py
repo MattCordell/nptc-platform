@@ -185,7 +185,7 @@ def test_char_length_matches_preferred_term_length_for_a_non_ascii_term(
     convention).
     """
     nbsp = chr(0x00A0)
-    combining_acute = "́"
+    combining_acute = chr(0x0301)
     raw_term = f"Adenosine deaminase, cafe{combining_acute} quantitative{nbsp}"
     before = _baseline(app_session)
 
