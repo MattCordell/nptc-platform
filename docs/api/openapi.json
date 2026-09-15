@@ -2389,6 +2389,48 @@
         }
       }
     },
+    "/api/v1/catalogue/admin/preferred-term-length-distribution": {
+      "get": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "The distribution of preferred-term lengths across the catalogue",
+        "description": "FR-87. Reachable by an administrator with no query to write by hand -\nthe acceptance criterion this route exists to satisfy.\n\nGated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every\nother route in this module uses, rather than a new read-only permission -\nsee the module docstring for why: `ROLE_PERMISSIONS` is asserted\ncell-by-cell against the PRD's own table, so minting one would need a PRD\nchange this issue does not ask for.\n\nOne statement (`nptc.catalogue.length_report.compute_length_distribution`,\nissue #275's precedent) regardless of the catalogue's size - FR-87's own\nacceptance criterion that this runs against the 20,000-entry design\nceiling without timing out.",
+        "operationId": "preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LengthDistributionReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/registry/properties": {
       "get": {
         "tags": [
@@ -3878,6 +3920,16 @@
             "type": "array",
             "title": "Warnings"
           },
+          "length_warning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LengthWarning"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -3890,7 +3942,7 @@
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nnow advances on both branches (FR-38, issue #300): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nnow advances on both branches (FR-38, issue #300): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`length_warning` (FR-86, issue #152) is set only on the preferred-term\nbranch, and only when a maximum is configured and exceeded - see\n`LengthWarning`'s own docstring for why it is a separate field rather\nthan a member of `warnings`."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -5343,6 +5395,79 @@
         ],
         "title": "LabelProvenance",
         "description": "One field's provenance declaration: which designation it is, and -\nfor an FSN - whether the semantic tag is intact or stripped.\n\nFrozen, matching every other response model in this package\n(`nptc.api.routers.catalogue_shared`): provenance describes a field\nthat has already been assembled, never something a caller mutates."
+      },
+      "LengthDistributionBucket": {
+        "properties": {
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "entries_exceeding": {
+            "type": "integer",
+            "title": "Entries Exceeding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "length",
+          "count",
+          "entries_exceeding"
+        ],
+        "title": "LengthDistributionBucket",
+        "description": "Every entry whose preferred term is exactly `length` characters long,\nplus how many entries a maximum set to `length` would warn on (FR-86\nwarns when a term's length *exceeds* the configured maximum, so this\ncounts strictly greater - `nptc.catalogue.length_report.\nLengthDistribution.affected_counts`'s own comparison).\n\nOne shape carrying both figures, rather than two parallel lists a caller\nwould have to zip back together by `length` themselves - FR-87 asks for\nexactly this pairing: \"the count of entries affected at each candidate\nthreshold\", and every observed `length` is a candidate threshold."
+      },
+      "LengthDistributionReport": {
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/LengthDistributionBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum",
+            "description": "The longest preferred term in the catalogue, or null when the catalogue is empty."
+          }
+        },
+        "type": "object",
+        "required": [
+          "buckets",
+          "maximum"
+        ],
+        "title": "LengthDistributionReport",
+        "description": "FR-87: the whole report an administrator needs to nominate a maximum\npreferred-term length (FR-86, PRD open item OI-1) - the histogram plus\nits maximum, with no query to run by hand."
+      },
+      "LengthWarning": {
+        "properties": {
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "max_length": {
+            "type": "integer",
+            "title": "Max Length"
+          }
+        },
+        "type": "object",
+        "required": [
+          "length",
+          "max_length"
+        ],
+        "title": "LengthWarning",
+        "description": "FR-86 (issue #152): the catalogue's own preferred term now exceeds\nthe configured maximum length. Non-blocking, the same \"warn, never\nraise\" shape as `CollisionWarning` - a hard block would make an\nexisting over-length entry uneditable, the specific failure FR-86\nexists to prevent.\n\nA separate field from `CollisionWarning`/`warnings`, not a member of\nthat list: `warning_collisions` only ever looks for another live\nentry's active synonym, which has nothing to do with this entry's own\nlength, and `CollisionWarning`'s shape (a colliding entry's business\nkey, term, provenance) has no field this could honestly populate.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
       },
       "PatchEntryRequest": {
         "properties": {

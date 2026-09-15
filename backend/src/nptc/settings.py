@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -227,6 +227,18 @@ class ApiSettings(BaseSettings):
                 "exists, fsn_semantic_tag must stay 'intact'."
             )
         return value
+
+    #: FR-86 (issue #152): unset by default - RCPA-QAP has never had a
+    #: maximum to enforce, and PRD open item OI-1 records that the platform
+    #: owes them the length-distribution data (FR-87) before they can
+    #: nominate one. Every existing configuration knob in this codebase is
+    #: `pydantic-settings`-backed (`fsn_semantic_tag` above is the closest
+    #: analogue: an optional, validated, documented setting with a safe
+    #: default) - there is no settings table and no admin-config UI to add
+    #: this to instead. `nptc.catalogue.term_hygiene.preferred_term_length`
+    #: remains the one place `length` is computed; this only adds a ceiling
+    #: to compare it against, never a second implementation of it.
+    max_preferred_term_length: int | None = Field(default=None, ge=1)
 
     @field_validator("frontend_base_url")
     @classmethod

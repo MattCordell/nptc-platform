@@ -90,7 +90,7 @@ from fastapi import APIRouter, Body, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
+from nptc.api.dependencies import AuditContextDep, get_api_settings, get_session, permission_dep
 from nptc.api.errors import DesignationCollisionResponse, VersionConflictResponse
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, SYNONYM_PROVENANCE, LabelProvenance
 from nptc.api.prefix import API_PREFIX
@@ -121,6 +121,7 @@ from nptc.catalogue.entries import (
 from nptc.catalogue.term_hygiene import clean_term, validate_language_tag
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.designation import DesignationStatus, DesignationUse
+from nptc.settings import ApiSettings
 from nptc_shared.language import DEFAULT_LANGUAGE
 from nptc_shared.similarity import collision_key
 
@@ -336,6 +337,45 @@ def _collision_warning(collision: Collision) -> CollisionWarning:
     )
 
 
+class LengthWarning(BaseModel):
+    """FR-86 (issue #152): the catalogue's own preferred term now exceeds
+    the configured maximum length. Non-blocking, the same "warn, never
+    raise" shape as `CollisionWarning` - a hard block would make an
+    existing over-length entry uneditable, the specific failure FR-86
+    exists to prevent.
+
+    A separate field from `CollisionWarning`/`warnings`, not a member of
+    that list: `warning_collisions` only ever looks for another live
+    entry's active synonym, which has nothing to do with this entry's own
+    length, and `CollisionWarning`'s shape (a colliding entry's business
+    key, term, provenance) has no field this could honestly populate.
+
+    Only ever produced on `amend_designation_route`'s preferred-term
+    branch: FR-85's `length` is defined against the catalogue's own
+    preferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),
+    which lives on `catalogue_entry.preferred_term`, never on a
+    `designation` row (ADR-0022) - there is no other branch this could ever
+    apply to.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    length: int
+    max_length: int
+
+
+def _length_warning(entry: CatalogueEntry, settings: ApiSettings) -> LengthWarning | None:
+    """`None` whenever no maximum is configured (FR-86's unset-by-default
+    acceptance criterion) or the entry's length does not exceed it -
+    `entry.length` is read after `save_entry` has already written the
+    cleaned term, so this compares against the same value FR-85 publishes,
+    never a second computation of it."""
+    maximum = settings.max_preferred_term_length
+    if maximum is None or entry.length <= maximum:
+        return None
+    return LengthWarning(length=entry.length, max_length=maximum)
+
+
 class _WithLanguage(BaseModel):
     """Every request model below that carries a caller-supplied `language`
     inherits this rather than declaring the field itself, so all four get
@@ -494,12 +534,18 @@ class AmendDesignationResult(BaseModel):
     has no version of its own, but amending one bumps the entry's counter
     via `nptc.catalogue.entries.entry_child_write`, the same way the
     preferred-term branch's `save_entry` always has.
+
+    `length_warning` (FR-86, issue #152) is set only on the preferred-term
+    branch, and only when a maximum is configured and exceeded - see
+    `LengthWarning`'s own docstring for why it is a separate field rather
+    than a member of `warnings`.
     """
 
     model_config = ConfigDict(frozen=True)
 
     designation: Designation
     warnings: list[CollisionWarning]
+    length_warning: LengthWarning | None = None
     row_version: int
 
 
@@ -597,6 +643,7 @@ class CollisionAcknowledgementResponse(BaseModel):
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+ApiSettingsDep = Annotated[ApiSettings, Depends(get_api_settings)]
 _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 #: Declared as a value dependency, not just `dependencies=[...]`: unlike
 #: the other three routes, this one has to pass the resolved `Principal`
@@ -782,6 +829,7 @@ def _preferred_term_as_designation(entry: CatalogueEntry) -> Designation:
 def amend_designation_route(
     session: SessionDep,
     ctx: AuditContextDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
     body: Annotated[AmendDesignationRequest, Body()],
 ) -> AmendDesignationResult:
@@ -821,6 +869,7 @@ def amend_designation_route(
         return AmendDesignationResult(
             designation=_preferred_term_as_designation(entry),
             warnings=[],
+            length_warning=_length_warning(entry, settings),
             row_version=entry.row_version,
         )
 

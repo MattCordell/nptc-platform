@@ -30,6 +30,7 @@ values (NFR-26).
 | `KEYCLOAK_PORT` | `deploy/compose.yml`'s `keycloak` service (host port mapping) | `8080` | No | Change only if `8080` is already in use locally |
 | `NPTC_FRONTEND_BASE_URL` | `deploy/compose.yml`'s `keycloak` service → realm import (`deploy/keycloak/realm/nptc-realm.json`'s `${NPTC_FRONTEND_BASE_URL}` placeholder), **and** `nptc.settings.ApiSettings` (backend, issue #41) | `http://localhost:5173` | No | The default is fine for the Vite dev server; set it to the frontend's real origin in any other deployment. Since #41 it also names the single browser origin the API accepts cross-origin: ADR-0021 has the browser hold the access token and call the API directly, so this is load-bearing rather than cosmetic. One value deliberately, so the origin Keycloak redirects to and the origin the API accepts cannot drift apart |
 | `NPTC_FSN_SEMANTIC_TAG` | `nptc.settings.ApiSettings` (backend, issue #144, FR-98) | `intact` | No | Declares whether every served `fsn`'s semantic tag is intact or stripped (`nptc.api.labels.fsn_provenance`). `"intact"` is the only value accepted today - the read path has no stripper (FR-83's renderer, `nptc.exports.semantic_tag.render_display_term`, is reached only from the export surface), so `"stripped"` is refused at settings-construction time rather than silently making the served payload lie about what it serves. A placeholder for FR-66's own export configuration, which does not exist yet (P4) |
+| `NPTC_MAX_PREFERRED_TERM_LENGTH` | `nptc.settings.ApiSettings` (backend, issue #152, FR-86) | *(unset - no warning ever produced)* | No | The preferred-term length past which the designation-amendment route warns, without ever blocking the save. Unset is the default and must stay the default: no maximum has been nominated yet (PRD open item OI-1) - see [`GET /catalogue/admin/preferred-term-length-distribution`](#the-fr-87-length-distribution-report) for the report that informs choosing one. A value below 1 is refused at settings-construction time |
 | `VITE_OIDC_ISSUER` | `frontend/src/auth/config.ts` (browser, issue #41, NFR-01) | none - required at build time | No | The realm's issuer URL, as reachable **from the browser** rather than from inside the compose network. Inlined into the built bundle by Vite; the sign-in flow throws, naming this variable, if it is unset |
 | `VITE_OIDC_CLIENT_ID` | `frontend/src/auth/config.ts` (browser, issue #41, NFR-01) | none - required at build time | No | The realm's public client. Must match `nptc-frontend` in the committed realm (ADR-0014) |
 | `NPTC_TX_BASE_URL` | `nptc_shared.terminology` (backend and transform) | `https://tx.ontoserver.csiro.au/fhir` | No | The default is fine; point it at a local Ontoserver to work offline |
@@ -172,3 +173,28 @@ because a zero-sized chunk would let a sweep report a catalogue it never checked
 [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md) records why, and the
 procedure for tuning them against a real instance the first time a seeding transform is run
 against one.
+
+## Choosing a maximum preferred-term length (`NPTC_MAX_PREFERRED_TERM_LENGTH`)
+
+FR-86's maximum is deliberately unset out of the box: RCPA-QAP has never had one to
+enforce, and the platform owes them the data needed to choose one (PRD open item OI-1)
+before it makes sense to set anything. Once a value is set, saving a preferred term past
+it still succeeds — the response carries a warning, never a 4xx, so an existing
+over-length entry never becomes uneditable.
+
+### The FR-87 length distribution report
+
+`GET /catalogue/admin/preferred-term-length-distribution` (gated on
+`catalogue.edit_published`, the same permission every other admin route in
+`catalogue_admin.py` uses) answers "how many entries would this maximum affect" without
+anyone writing a query by hand. Its `buckets` array has one row per preferred-term length
+that actually occurs in the catalogue — not every possible length — carrying that
+`length`, how many entries (`count`) have a preferred term exactly that long, and
+`entries_exceeding`: how many entries a maximum set to that length would warn on.
+`maximum` is the longest preferred term currently in the catalogue, or `null` for an empty
+one. Every entry counts regardless of status (draft and withdrawn as well as active):
+`POST .../designations/amendment` can warn on any of them, since it resolves an entry with
+no status filter of its own, so scoping the report to active entries alone would undercount
+what a chosen maximum affects. See [`docs/user/`](../user/) for how an administrator reads
+this report end to end, including how to read a candidate length the report has no exact
+row for.
