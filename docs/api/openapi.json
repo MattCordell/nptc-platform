@@ -3878,6 +3878,16 @@
             "type": "array",
             "title": "Warnings"
           },
+          "length_warning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LengthWarning"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -3890,7 +3900,7 @@
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nnow advances on both branches (FR-38, issue #300): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (issue #224's own module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nnow advances on both branches (FR-38, issue #300): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`length_warning` (FR-86, issue #152) is set only on the preferred-term\nbranch, and only when a maximum is configured and exceeded - see\n`LengthWarning`'s own docstring for why it is a separate field rather\nthan a member of `warnings`."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -5343,6 +5353,25 @@
         ],
         "title": "LabelProvenance",
         "description": "One field's provenance declaration: which designation it is, and -\nfor an FSN - whether the semantic tag is intact or stripped.\n\nFrozen, matching every other response model in this package\n(`nptc.api.routers.catalogue_shared`): provenance describes a field\nthat has already been assembled, never something a caller mutates."
+      },
+      "LengthWarning": {
+        "properties": {
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "max_length": {
+            "type": "integer",
+            "title": "Max Length"
+          }
+        },
+        "type": "object",
+        "required": [
+          "length",
+          "max_length"
+        ],
+        "title": "LengthWarning",
+        "description": "FR-86 (issue #152): the catalogue's own preferred term now exceeds\nthe configured maximum length. Non-blocking, the same \"warn, never\nraise\" shape as `CollisionWarning` - a hard block would make an\nexisting over-length entry uneditable, the specific failure FR-86\nexists to prevent.\n\nA separate field from `CollisionWarning`/`warnings`, not a member of\nthat list: `warning_collisions` only ever looks for another live\nentry's active synonym, which has nothing to do with this entry's own\nlength, and `CollisionWarning`'s shape (a colliding entry's business\nkey, term, provenance) has no field this could honestly populate.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
       },
       "PatchEntryRequest": {
         "properties": {
