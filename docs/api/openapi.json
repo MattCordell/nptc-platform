@@ -2389,6 +2389,48 @@
         }
       }
     },
+    "/api/v1/catalogue/admin/preferred-term-length-distribution": {
+      "get": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "The distribution of preferred-term lengths across the catalogue",
+        "description": "FR-87. Reachable by an administrator with no query to write by hand -\nthe acceptance criterion this route exists to satisfy.\n\nGated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every\nother route in this module uses, rather than a new read-only permission -\nsee the module docstring for why: `ROLE_PERMISSIONS` is asserted\ncell-by-cell against the PRD's own table, so minting one would need a PRD\nchange this issue does not ask for.\n\nOne statement (`nptc.catalogue.length_report.compute_length_distribution`,\nissue #275's precedent) regardless of the catalogue's size - FR-87's own\nacceptance criterion that this runs against the 20,000-entry design\nceiling without timing out.",
+        "operationId": "preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LengthDistributionReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/registry/properties": {
       "get": {
         "tags": [
@@ -5353,6 +5395,60 @@
         ],
         "title": "LabelProvenance",
         "description": "One field's provenance declaration: which designation it is, and -\nfor an FSN - whether the semantic tag is intact or stripped.\n\nFrozen, matching every other response model in this package\n(`nptc.api.routers.catalogue_shared`): provenance describes a field\nthat has already been assembled, never something a caller mutates."
+      },
+      "LengthDistributionBucket": {
+        "properties": {
+          "length": {
+            "type": "integer",
+            "title": "Length"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "entries_exceeding": {
+            "type": "integer",
+            "title": "Entries Exceeding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "length",
+          "count",
+          "entries_exceeding"
+        ],
+        "title": "LengthDistributionBucket",
+        "description": "Every entry whose preferred term is exactly `length` characters long,\nplus how many entries a maximum set to `length` would warn on (FR-86\nwarns when a term's length *exceeds* the configured maximum, so this\ncounts strictly greater - `nptc.catalogue.length_report.\nLengthDistribution.affected_counts`'s own comparison).\n\nOne shape carrying both figures, rather than two parallel lists a caller\nwould have to zip back together by `length` themselves - FR-87 asks for\nexactly this pairing: \"the count of entries affected at each candidate\nthreshold\", and every observed `length` is a candidate threshold."
+      },
+      "LengthDistributionReport": {
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/LengthDistributionBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum",
+            "description": "The longest preferred term in the catalogue, or null when the catalogue is empty."
+          }
+        },
+        "type": "object",
+        "required": [
+          "buckets",
+          "maximum"
+        ],
+        "title": "LengthDistributionReport",
+        "description": "FR-87: the whole report an administrator needs to nominate a maximum\npreferred-term length (FR-86, PRD open item OI-1) - the histogram plus\nits maximum, with no query to run by hand."
       },
       "LengthWarning": {
         "properties": {

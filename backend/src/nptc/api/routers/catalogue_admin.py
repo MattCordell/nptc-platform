@@ -104,6 +104,7 @@ from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.catalogue.facets import load_facet_context, parse_filters
+from nptc.catalogue.length_report import compute_length_distribution
 from nptc.catalogue.maintenance import SortName
 from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.registry.handlers import DatatypeRegistry
@@ -144,6 +145,16 @@ _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
     403: _RESPONSE_403,
     404: _RESPONSE_404,
     422: _RESPONSE_422,
+}
+
+#: `GET /catalogue/admin/preferred-term-length-distribution` (FR-87, issue
+#: #152): takes no path parameter and cannot 404 or 422, matching the two
+#: collection routes' own `_RESPONSES_ADMIN_LISTING`/`_RESPONSES_ADMIN_SEARCH`
+#: reasoning above - the whole catalogue is either empty or it isn't, never a
+#: query the caller got wrong.
+_RESPONSES_ADMIN_LENGTH_REPORT: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
 }
 
 #: `GET /catalogue/admin/entries`' own 422 - it takes no `q`, so it cannot
@@ -532,4 +543,71 @@ def read_entry_any_status(
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
+    )
+
+
+class LengthDistributionBucket(BaseModel):
+    """Every entry whose preferred term is exactly `length` characters long,
+    plus how many entries a maximum set to `length` would warn on (FR-86
+    warns when a term's length *exceeds* the configured maximum, so this
+    counts strictly greater - `nptc.catalogue.length_report.
+    LengthDistribution.affected_counts`'s own comparison).
+
+    One shape carrying both figures, rather than two parallel lists a caller
+    would have to zip back together by `length` themselves - FR-87 asks for
+    exactly this pairing: "the count of entries affected at each candidate
+    threshold", and every observed `length` is a candidate threshold."""
+
+    model_config = ConfigDict(frozen=True)
+
+    length: int
+    count: int
+    entries_exceeding: int
+
+
+class LengthDistributionReport(BaseModel):
+    """FR-87: the whole report an administrator needs to nominate a maximum
+    preferred-term length (FR-86, PRD open item OI-1) - the histogram plus
+    its maximum, with no query to run by hand."""
+
+    model_config = ConfigDict(frozen=True)
+
+    buckets: list[LengthDistributionBucket]
+    maximum: int | None = Field(
+        description="The longest preferred term in the catalogue, or null when the catalogue is empty."
+    )
+
+
+@router.get(
+    "/admin/preferred-term-length-distribution",
+    summary="The distribution of preferred-term lengths across the catalogue",
+    responses=_RESPONSES_ADMIN_LENGTH_REPORT,
+    dependencies=[_EDIT],
+)
+def preferred_term_length_distribution(session: SessionDep) -> LengthDistributionReport:
+    """FR-87. Reachable by an administrator with no query to write by hand -
+    the acceptance criterion this route exists to satisfy.
+
+    Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every
+    other route in this module uses, rather than a new read-only permission -
+    see the module docstring for why: `ROLE_PERMISSIONS` is asserted
+    cell-by-cell against the PRD's own table, so minting one would need a PRD
+    change this issue does not ask for.
+
+    One statement (`nptc.catalogue.length_report.compute_length_distribution`,
+    issue #275's precedent) regardless of the catalogue's size - FR-87's own
+    acceptance criterion that this runs against the 20,000-entry design
+    ceiling without timing out.
+    """
+    distribution = compute_length_distribution(session)
+    return LengthDistributionReport(
+        buckets=[
+            LengthDistributionBucket(
+                length=bucket.length,
+                count=bucket.count,
+                entries_exceeding=distribution.affected_counts[bucket.length],
+            )
+            for bucket in distribution.buckets
+        ],
+        maximum=distribution.maximum,
     )
