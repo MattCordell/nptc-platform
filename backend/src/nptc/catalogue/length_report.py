@@ -88,7 +88,7 @@ class LengthDistribution:
     affected_counts: Mapping[int, int]
 
 
-def build_length_histogram_statement() -> Select[tuple[int, int]]:
+def build_length_histogram_statement() -> Select[int, int]:
     """The one statement: every distinct preferred-term length, and how many
     entries have it. Public and separate from `compute_length_distribution`,
     matching `facets.build_facet_count_statement`'s own precedent - a test

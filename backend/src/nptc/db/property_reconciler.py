@@ -298,7 +298,7 @@ def reconcile_property_indexes(
     """
     engine = get_indexer_engine(database_url)
     with engine.connect() as connection:
-        locked = connection.execute(_TRY_LOCK_SQL, {"key": RECONCILE_LOCK_KEY}).scalar_one()
+        locked: bool = connection.execute(_TRY_LOCK_SQL, {"key": RECONCILE_LOCK_KEY}).scalar_one()
         if not locked:
             return ReconciliationReport(skipped_locked=True)
         try:

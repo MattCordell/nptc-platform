@@ -228,7 +228,7 @@ def validate_audit_filters(filters: AuditEventFilter) -> None:
         raise OccurredRangeInvalidError("occurred_from must be strictly before occurred_to")
 
 
-def _select_events() -> Select[Any]:
+def _select_events() -> Select[*tuple[Any, ...]]:
     """The 13-column projection both `search_audit_events` and
     `_stream_audit_events` read - one statement builder rather than two
     copies, so a column added to one path cannot silently miss the other
