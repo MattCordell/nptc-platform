@@ -11,9 +11,9 @@ not itself guarantee:
   previous fetch. This module's own ``dict[str, tuple[PyJWK, float]]`` is
   what stops an *expired* cache plus a down IdP from rejecting a token
   whose key this process has already seen and validated before -
-  pinning ``pyjwt[crypto]>=2.14`` (see backend/pyproject.toml) is the
-  companion fix stopping a failed fetch from *wiping* PyJWKClient's own
-  cache outright (GHSA-fhv5-28vv-h8m8).
+  requiring ``pyjwt[crypto]>=2.13`` (see backend/pyproject.toml, which now
+  pins 2.14) is the companion fix stopping a failed fetch from *wiping*
+  PyJWKClient's own cache outright (GHSA-fhv5-28vv-h8m8).
 
   This fallback is deliberately narrow in two ways. First, it only
   triggers on ``PyJWKClientConnectionError`` (the endpoint could not be
@@ -85,10 +85,10 @@ class SigningKeys:
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         # PyJWT 2.14 added its own forced-refresh cooldown (default 30s on
-        # real time). It is off here so this class's cooldown, on the
-        # injectable clock, is the only one deciding when a refresh runs;
-        # otherwise a rotated-in key stays unknown to both layers for the
-        # longer of the two windows.
+        # real time). It is off on the client built here so this class's
+        # cooldown, on the injectable clock, decides when a refresh runs;
+        # otherwise a rotated-in key stays unknown until the longer of the
+        # two windows ends. An injected `client` keeps whatever it was given.
         self._client = client or PyJWKClient(
             jwks_url, lifespan=cache_seconds, timeout=timeout_seconds, cooldown_duration=0
         )

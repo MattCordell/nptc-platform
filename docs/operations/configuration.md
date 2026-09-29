@@ -21,7 +21,7 @@ values (NFR-26).
 | `NPTC_TRUSTED_ISSUERS` | `nptc.settings.AuthSettings` (backend) | *(empty - no issuer trusted)* | No | Comma-separated list of OIDC issuer URLs allowed to auto-link (NFR-05). Leave empty while federation is off (NFR-02) |
 | `NPTC_OIDC_ISSUER` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - no verifier can be constructed)* | No | The realm's issuer URL, e.g. `http://localhost:8080/realms/nptc`. Empty is fail-closed: `TokenVerifier.from_settings` refuses to construct rather than accept a token whose issuer was never checked |
 | `NPTC_OIDC_AUDIENCE` | `nptc.settings.AuthSettings` (backend, NFR-07) | `nptc-api` | No | Fixed by the committed realm's `nptc-api-audience` mapper (ADR-0014) - only change this alongside the realm |
-| `NPTC_JWKS_URL` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - resolved via OIDC discovery)* | No | Set only to skip discovery (air-gapped deployments) - normally left empty |
+| `NPTC_JWKS_URL` | `nptc.settings.AuthSettings` (backend, NFR-07) | *(empty - resolved via OIDC discovery)* | No | Set only to skip discovery (air-gapped deployments) - normally left empty. Must be the direct URL: PyJWT rejects redirects |
 | `NPTC_JWKS_CACHE_SECONDS` | `nptc.settings.AuthSettings` (backend, NFR-07) | `300` | No | How long `nptc.auth.jwks.SigningKeys` trusts a fetched JWKS before re-checking |
 | `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` | `nptc.settings.AuthSettings` (backend, NFR-07) | `30` | No | An unrecognised `kid` within this many seconds of the last refresh attempt is refused with no HTTP request, so a spray of unknown `kid`s cannot hammer the IdP |
 | `NPTC_MFA_ACR_VALUES` | `nptc.settings.AuthSettings` (backend, issue #44, NFR-06) | `2` | No | Comma-separated `acr` claim values that satisfy mandatory-MFA-for-administrators (`nptc.auth.principal.principal_for`). Must match the committed realm's `nptc loa-2 condition` authenticator config (`loa-condition-level`) - see [the permissions architecture doc](../architecture/permissions.md) |
@@ -92,7 +92,9 @@ actually checked. `NPTC_OIDC_AUDIENCE` defaults to `nptc-api` because that value
 committed realm's `nptc-api-audience` mapper (ADR-0014), not by a deployment - only change it
 alongside a realm change. `NPTC_JWKS_URL` is normally left empty so the JWKS endpoint is
 resolved via OIDC discovery against `NPTC_OIDC_ISSUER`; set it explicitly only for an
-air-gapped deployment that cannot reach a discovery endpoint. `NPTC_JWKS_CACHE_SECONDS` and
+air-gapped deployment that cannot reach a discovery endpoint. The URL must answer directly:
+PyJWT 2.14 and later treat a redirect as an unreachable endpoint, so the backend serves
+cached keys until the fallback age limit and only then rejects tokens. `NPTC_JWKS_CACHE_SECONDS` and
 `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` tune `nptc.auth.jwks.SigningKeys`'s own key cache and its
 refresh cooldown against `kid`-spraying (the same cooldown also covers retrying a known `kid`
 during an IdP outage, so it does not turn into a request-latency outage); the defaults are

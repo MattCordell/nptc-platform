@@ -56,8 +56,8 @@ the header *before* any JWKS request, so a malicious `alg` never causes network 
   endpoint could not be reached at all). `pyjwt>=2.14` (see `backend/pyproject.toml`'s
   dependency comment) is the companion fix stopping a *failed* fetch from wiping `PyJWKClient`'s
   own cache outright (GHSA-fhv5-28vv-h8m8, fixed in 2.13 — an earlier PyJWT wrote its fetch
-  result in a `finally:` block, so a failed fetch cached `None`); 2.14 adds the fix for
-  CVE-2026-102274 (one malformed JWK aborted parsing of the whole key set). This fallback map is what stops an
+  result in a `finally:` block, so a failed fetch cached `None`); 2.14 fixes CVE-2026-102274
+  (one malformed JWK aborted parsing of the whole key set). This fallback map is what stops an
   *expired* cache plus a down IdP from rejecting a token this process could still verify.
 
   The catch is deliberately narrow: a **successful** fetch that simply no longer lists a given
