@@ -38,17 +38,36 @@ repos:
       # keep the rev in step. One resolved version means no drift to detect.
       # scripts/tests/test_precommit_config.py guards this - do not "tidy" the
       # mirror back in.
+      #
+      # The entry and file selectors below mirror upstream's own
+      # .pre-commit-hooks.yaml, because the point is parity with CI:
+      #   --force-exclude - ruff honours [tool.ruff] `exclude` for paths passed
+      #     explicitly on the command line only under this flag, and pre-commit
+      #     always passes filenames explicitly. Without it, the first `exclude`
+      #     added to pyproject.toml would have pre-commit lint and autofix files
+      #     that CI's `ruff check .` skips.
+      #   types_or - CI's `.` is recursive over every file type ruff handles, so
+      #     narrowing these hooks to `[python]` would reopen #339's failure mode
+      #     from a new direction. `ruff format` formats Python code blocks in
+      #     markdown, and `ruff format --check .` already covers all 88 tracked
+      #     .md files (424 = 336 .py + 88 .md), so markdown is a live gap here,
+      #     not a hypothetical one. pyi/jupyter are latent - the repo has neither
+      #     today - and cost nothing to close now.
+      # require_serial: one `uv run` process over all files, not one per chunk.
+      # Ruff parallelises internally, so chunking only multiplies uv's startup.
       - id: ruff
         name: ruff check --fix (uv run)
-        entry: uv run ruff check --fix
+        entry: uv run ruff check --fix --force-exclude
         language: system
-        types: [python]
+        types_or: [python, pyi, jupyter]
+        require_serial: true
 
       - id: ruff-format
         name: ruff format (uv run)
-        entry: uv run ruff format
+        entry: uv run ruff format --force-exclude
         language: system
-        types: [python]
+        types_or: [python, pyi, jupyter, markdown]
+        require_serial: true
 
       # mypy needs the workspace's own resolved environment (SQLAlchemy /
       # Pydantic plugins, first-party packages), which the pre-commit-managed

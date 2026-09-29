@@ -31,6 +31,16 @@ def _config() -> dict[str, Any]:
     return loaded
 
 
+def _ruff_hooks() -> dict[str, dict[str, Any]]:
+    return {
+        hook["id"]: hook
+        for repo in _config()["repos"]
+        if repo["repo"] == "local"
+        for hook in repo["hooks"]
+        if hook["id"] in {"ruff", "ruff-format"}
+    }
+
+
 def _local_hook_ids() -> set[str]:
     return {
         hook["id"]
@@ -57,15 +67,49 @@ def test_ruff_runs_as_a_local_uv_hook() -> None:
 
 def test_the_local_ruff_hooks_invoke_uv() -> None:
     """`uv run` is what ties the hook to uv.lock's resolved ruff - a bare `ruff`
-    entry would pick up whatever happens to be on the contributor's PATH."""
-    entries = {
-        hook["id"]: hook["entry"]
-        for repo in _config()["repos"]
-        if repo["repo"] == "local"
-        for hook in repo["hooks"]
-        if hook["id"] in {"ruff", "ruff-format"}
+    entry would pick up whatever happens to be on the contributor's PATH.
+
+    Asserted as a prefix, not an exact string: flags may legitimately be added to
+    these entries (`--force-exclude` already is), and a test that forbids that
+    pins today's spelling rather than the invariant it exists to hold.
+    """
+    for hook_id, subcommand in (("ruff", "check"), ("ruff-format", "format")):
+        entry = _ruff_hooks()[hook_id]["entry"]
+        assert entry.startswith(f"uv run ruff {subcommand} "), (
+            f"the {hook_id} hook must run `uv run ruff {subcommand}`, so it resolves "
+            f"the ruff uv.lock pins rather than one from PATH; got {entry!r}"
+        )
+
+
+def test_the_local_ruff_hooks_force_exclude() -> None:
+    """pre-commit passes filenames explicitly, and ruff applies [tool.ruff]
+    `exclude` to explicitly-passed paths only under `--force-exclude`. Without the
+    flag, the first `exclude` added to pyproject.toml would have pre-commit lint
+    and autofix files CI's `ruff check .` skips - #339's divergence again."""
+    for hook_id, hook in _ruff_hooks().items():
+        assert "--force-exclude" in hook["entry"], (
+            f"the {hook_id} hook must pass --force-exclude, or a future "
+            "[tool.ruff] exclude will apply in CI but not in pre-commit"
+        )
+
+
+def test_the_local_ruff_hooks_cover_what_ci_covers() -> None:
+    """CI runs `ruff check .` / `ruff format --check .`, which recurse over every
+    file type ruff handles. These hooks see only what their selectors name, so a
+    narrower selector lets a file pass pre-commit and fail CI.
+
+    `ruff format` formats Python code blocks in markdown, and CI's own run already
+    covers every tracked .md file - so markdown is a live gap, not a hypothetical
+    one. The sets below match upstream ruff-pre-commit's .pre-commit-hooks.yaml.
+    """
+    expected = {
+        "ruff": ["python", "pyi", "jupyter"],
+        "ruff-format": ["python", "pyi", "jupyter", "markdown"],
     }
-    assert entries == {
-        "ruff": "uv run ruff check --fix",
-        "ruff-format": "uv run ruff format",
-    }
+    for hook_id, types_or in expected.items():
+        hook = _ruff_hooks()[hook_id]
+        assert "types" not in hook, (
+            f"the {hook_id} hook uses `types:`, which is an AND across tags and "
+            "cannot express 'python or pyi or jupyter' - use `types_or:`"
+        )
+        assert hook["types_or"] == types_or
