@@ -29,7 +29,7 @@ def test_the_template_itself_carries_the_placeholder() -> None:
 def test_an_unfilled_generated_migration_fails(tmp_path: Path) -> None:
     generated = tmp_path / "0008_scratch.py"
     generated.write_text(
-        '"""scratch\n\nIssue #NNN (FR-nn): <FILL IN - which issue and FR/NFR this migration lands>.\n"""\n',
+        '"""scratch\n\nRequirement (FR-nn or NFR-nn): <FILL IN - which requirement this migration implements>.\n"""\n',
         encoding="utf-8",
     )
     assert check.files_with_placeholder([str(generated)]) == [str(generated)]
