@@ -9,11 +9,14 @@ workbook for maintaining the National Pathology Test Catalogue (the SPIA Request
 terminology, curated by RCPA-QAP, published by NCTS as a SNOMED CT reference set and
 FHIR ValueSet).
 
-**Status: pre-alpha.** Every module under `backend/src/nptc/*` and
-`transform/src/nptc_transform/` is scaffolding (an `__init__.py` docstring describing
-what will live there, plus a CLI that only prints a version). Don't assume an entity,
-endpoint, or table described in the PRD already exists — check the actual module before
-writing code that depends on it.
+**Status: P1 (core catalogue) in progress.** The P0 seeding transform
+(`transform/src/nptc_transform/`) is complete, and the backend implements a large part of
+P1. Most packages for later phases are still stubs: an `__init__.py` whose docstring
+names the PRD phase that lands it. `docs/requirements/requirements.yaml` records each
+requirement's status (`implemented`, `in-progress`, `planned` or `deferred`). There is no
+application image yet, so the platform does not yet run as a single-command stack
+(NFR-41). Don't assume an entity, endpoint, or table described in the PRD already
+exists — check the actual module before writing code that depends on it.
 
 The authority for all behaviour is `docs/prd/NPTC-Catalogue-Platform-PRD.md`. Every
 requirement is cited as `FR-nn` (functional) or `NFR-nn` (non-functional) and those IDs
@@ -29,9 +32,8 @@ frontend, one shared root git repo.
 The `shared/` package (`nptc_shared`) is imported by BOTH `backend/` and `transform/`
 (SCTID/Verhoeff validation, terminology client contract) so there is never a second,
 divergent implementation (ADR-0001, FR-74). `scripts/` is repo governance tooling, not
-part of the app runtime. Each `backend/src/nptc/*` module is currently just an
-`__init__.py` stub — that file is the authoritative list of module responsibilities and
-which GitHub issue lands each one.
+part of the app runtime. Each `backend/src/nptc/*` package's `__init__.py` docstring
+states what that package is responsible for, including the stub packages not built yet.
 
 ## Technology stack (ADR-0001)
 
@@ -65,13 +67,32 @@ uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
 uv run pytest --req=FR-07            # tests tagged against a specific requirement (conftest.py; -m has no call syntax)
 ```
 
-Fast iteration vs. full sweep (issue #190): most of the wall time is the ~220
-`@pytest.mark.integration` tests (testcontainers Postgres), not the ~900 that need no
-container. Run the fast subset while iterating, and the full suite (optionally
-parallelised via `pytest-xdist`) once before pushing:
+Fast iteration vs. full sweep: over half of `backend/tests` is marked
+`@pytest.mark.integration` (testcontainers Postgres or Keycloak), and those tests take
+most of the wall time. No test in `transform/tests`, `shared/tests` or `scripts/tests`
+carries the marker. Counts as of 2026-09-29, as collected items (each parametrised case
+counts separately):
+
+| Tree | Collected | `integration` | Unmarked |
+|---|---:|---:|---:|
+| `backend/tests` | 1,850 | 1,035 | 815 |
+| `transform/tests`, `shared/tests`, `scripts/tests` | 832 | 0 | 832 |
+| Whole suite | 2,682 | 1,035 | 1,647 |
+
+To re-measure, run `uv run pytest --collect-only -q -m integration` (or
+`-m "not integration"`, optionally with a tree path); the last line gives the count.
+
+So `-m "not integration"` runs about three fifths of the whole suite but under half of
+`backend/tests`. For backend work it is a quick check, not a stand-in for the container
+tests. It also still needs a running Docker daemon: 65 unmarked backend tests request the
+Postgres container through the `app_db` fixture, until #369 derives the marker from
+fixture use.
+
+Run the fast subset while iterating, and the full suite (optionally parallelised via
+`pytest-xdist`) once before pushing:
 
 ```powershell
-uv run pytest -m "not integration"                       # no Docker, well under a minute
+uv run pytest -m "not integration"                       # fast subset; still starts Postgres until #369
 uv run pytest -m integration -n auto --dist loadscope     # container tests, parallel
 uv run pytest -n auto --dist loadscope                    # full sweep before pushing
 ```
@@ -80,9 +101,10 @@ uv run pytest -n auto --dist loadscope                    # full sweep before pu
 `backend/tests`: `postgres_container`/`owner_engine`/`app_engine` are session-scoped per
 *worker process*, so grouping by module is what keeps each module's tests on the one
 container `-n` gives that worker, rather than xdist spreading a module's tests (and their
-shared container assumptions) across workers. This is local-dev tooling only - CI's own
-`pytest` invocations are unchanged, since each CI job is already fast (~2-3 min) and one
-container per worker is a heavier ask of a CI runner than of a dev machine.
+shared container assumptions) across workers. This is local-dev tooling only: CI's own
+`pytest` invocations stay serial, because one container per worker is a heavier ask of a
+CI runner than of a dev machine. The two CI jobs that run `backend/tests` each took about
+8 minutes on 2026-09-29, against a 15-minute timeout (`.github/workflows/ci.yml`).
 
 Repo governance scripts (Python, at repo root, tested under `scripts/tests/`):
 
@@ -135,6 +157,10 @@ pre-commit run --all-files
   package (FR-77, ADR-0013) — not scattered across storage, export, or search code, and
   not elsewhere in `registry/` either. Enforced by `backend/tests/test_datatype_dispatch.py`.
 - No secrets, tokens, or personal information in code, logs, or fixtures (NFR-26, NFR-35).
+- A comment or docstring states only what is not obvious from the code: it never
+  restates the code, argues with a past reviewer, or cites an issue number. Review
+  feedback is resolved in the code or an ADR, never in a comment. See CONTRIBUTING.md's
+  "Code comments" section.
 
 ## Documentation is part of the change
 
@@ -144,7 +170,10 @@ CONTRIBUTING.md's table for which `docs/` path each kind of change touches (API/
 `docs/api/openapi.json` + `docs/architecture/`; DB schema →
 `docs/operations/upgrade.md` + `docs/architecture/data-model.md`; config/env var →
 `deploy/.env.example` + `docs/operations/configuration.md`; UI behaviour →
-`docs/user/`; a rejected-alternative decision → a new ADR).
+`docs/user/`; a rejected-alternative decision → a new ADR). New ADRs are paused until
+the P1 milestone closes, except for a decision that genuinely rejects an alternative that
+might be revisited; other decisions' reasoning goes in the PR description (see
+CONTRIBUTING.md).
 
 ## Backlog and issues
 
