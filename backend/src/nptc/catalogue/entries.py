@@ -121,7 +121,7 @@ def allocate_business_key(session: Session) -> str:
     The one mint point for a genuinely new (non-seeded) entry - see
     `nptc.db.models.catalogue_entry`'s module docstring for why this lives
     in Python rather than a column `server_default`."""
-    next_value = session.execute(
+    next_value: int = session.execute(
         text("SELECT nextval(:seq)"), {"seq": BUSINESS_KEY_SEQUENCE_NAME}
     ).scalar_one()
     return format_business_key(int(next_value))

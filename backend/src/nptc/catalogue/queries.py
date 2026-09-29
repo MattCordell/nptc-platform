@@ -263,7 +263,7 @@ def get_entry(session: Session, business_key: str) -> CatalogueEntry:
     return entry
 
 
-def _get_entry_by_code_statement(system: str, code: str) -> Select[tuple[CatalogueEntry]]:
+def _get_entry_by_code_statement(system: str, code: str) -> Select[CatalogueEntry]:
     """The statement `get_entry_by_code` runs, factored out so
     `test_db_code_binding_index_plan.py` can `EXPLAIN` the exact query
     rather than a hand-copied approximation of it (matching

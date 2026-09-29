@@ -73,6 +73,7 @@ is excluded from the digest as a consequence.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict
@@ -189,7 +190,7 @@ def acquire_append_lock(session: Session) -> None:
     """
     session.execute(_ACQUIRE_APPEND_LOCK_SQL, {"key": AUDIT_APPEND_LOCK_KEY})
 
-    isolation_level = session.execute(_CHECK_ISOLATION_LEVEL_SQL).scalar_one()
+    isolation_level: str = session.execute(_CHECK_ISOLATION_LEVEL_SQL).scalar_one()
     if isolation_level != _REQUIRED_ISOLATION_LEVEL:
         raise AuditIsolationLevelError(
             "append_audit_event requires READ COMMITTED isolation to keep the "
@@ -216,7 +217,7 @@ def append_audit_event(
     session.flush()
     prev_hash = _read_prev_hash(session)
 
-    occurred_at = session.execute(_CLOCK_TIMESTAMP_SQL).scalar_one()
+    occurred_at: datetime = session.execute(_CLOCK_TIMESTAMP_SQL).scalar_one()
     event_id = uuid.uuid4()
     actor_ip = canonicalise_actor_ip(ctx.actor_ip) if ctx.actor_ip is not None else None
 
