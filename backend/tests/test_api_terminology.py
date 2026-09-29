@@ -111,6 +111,24 @@ def _get(api: ApiTestApp, token: str | None, code: str = _CODE) -> Any:
 # --- happy paths -------------------------------------------------------
 
 
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_lookup_serves_the_injected_settings_not_the_environment(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`get_concept` used to call `get_api_settings()` itself, so an invalid
+    `NPTC_FSN_SEMANTIC_TAG` in the environment 500'd the route although the
+    app was built with good settings."""
+    _seed_concept(api)
+    token = _role_token(api, subject="sub-lookup-injected", role=Role.PROVISIONAL)
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+
+    response = _get(api, token)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["label_provenance"]["fsn"]["semantic_tag"] == "intact"
+
+
 @pytest.mark.req("FR-26")
 @pytest.mark.req("FR-98")
 @pytest.mark.integration

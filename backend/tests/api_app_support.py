@@ -45,11 +45,13 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.api.app import API_PREFIX, create_app
 from nptc.api.dependencies import (
+    get_api_settings,
     get_auth_settings,
     get_session,
     get_terminology_client,
@@ -81,6 +83,30 @@ AUDIENCE = "nptc-api"
 FRONTEND_ORIGIN = "http://localhost:5173"
 
 
+class _HermeticApiSettings(ApiSettings):
+    """`ApiSettings` that reads its constructor arguments and nothing else:
+    no `NPTC_*` variable and no `.env`, so a developer's or runner's
+    environment cannot change what a test app serves."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
+
+
+def hermetic_api_settings(**fields: Any) -> ApiSettings:
+    """Field defaults plus `fields`; never the process environment. Unlike
+    passing every field explicitly, a field added to `ApiSettings` later is
+    covered by its own default rather than by editing each caller."""
+    return _HermeticApiSettings(**fields)
+
+
 @dataclass
 class ApiTestApp:
     app: FastAPI
@@ -93,6 +119,14 @@ class ApiTestApp:
     #: responses on this directly, and can inspect `.requests` for the
     #: "exactly one upstream request" assertions FR-26/FR-52 both need.
     terminology: StubTerminologyClient
+
+    def set_api_settings(self, **fields: Any) -> ApiSettings:
+        """Replaces the `ApiSettings` this app serves for the rest of the
+        test - the same override `create_app` installs, so routes and helpers
+        that read settings all see the new object."""
+        api_settings = hermetic_api_settings(**fields)
+        self.app.dependency_overrides[get_api_settings] = lambda: api_settings
+        return api_settings
 
     @property
     def issuer(self) -> str:
@@ -125,8 +159,12 @@ def build_api_test_app(
     *,
     trusted_issuers: frozenset[str] | None = None,
     mfa_acr_values: frozenset[str] = frozenset({"2"}),
+    api_settings: ApiSettings | None = None,
 ) -> Iterator[ApiTestApp]:
     """Yields a `TestClient` over the production app.
+
+    `api_settings` defaults to `hermetic_api_settings()`, never an
+    env-reading `ApiSettings()`.
 
     A generator (not a plain function) so the `StubIdp`'s HTTP server is
     shut down deterministically rather than at GC time.
@@ -175,9 +213,7 @@ def build_api_test_app(
         # `@lru_cache`d, so a test overriding `mfa_acr_values` here would
         # otherwise build a step-up challenge from whichever `AuthSettings`
         # happened to be cached first, not from this test's own settings.
-        app = create_app(
-            settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN), auth_settings=settings
-        )
+        app = create_app(settings=api_settings or hermetic_api_settings(), auth_settings=settings)
         app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings

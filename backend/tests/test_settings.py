@@ -3,6 +3,10 @@
 No container, no network - pure environment-variable plumbing.
 """
 
+import importlib.util
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -18,17 +22,24 @@ _APP_DSN = "postgresql+psycopg://nptc_app_login:pw@localhost/nptc"
 _MIGRATION_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
 _INDEXER_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
 
+# Registered in sys.modules before exec_module - see
+# test_authz_negative_http.py for why @dataclass requires it.
+_support_spec = importlib.util.spec_from_file_location(
+    "api_app_support", Path(__file__).parent / "api_app_support.py"
+)
+assert _support_spec is not None and _support_spec.loader is not None
+_support = importlib.util.module_from_spec(_support_spec)
+sys.modules["api_app_support"] = _support
+_support_spec.loader.exec_module(_support)
+
+hermetic_api_settings = _support.hermetic_api_settings
+
 
 @pytest.fixture(autouse=True)
 def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPTC_DATABASE_URL", raising=False)
     monkeypatch.delenv("NPTC_MIGRATION_DATABASE_URL", raising=False)
     monkeypatch.delenv("NPTC_INDEXER_DATABASE_URL", raising=False)
-    # Issue #152 review: without this, a developer or runner with this
-    # variable exported makes ApiSettings() pick it up and
-    # test_api_settings_defaults_max_preferred_term_length_to_unset fail for
-    # a reason unrelated to the code under test.
-    monkeypatch.delenv("NPTC_MAX_PREFERRED_TERM_LENGTH", raising=False)
 
 
 def test_database_settings_reads_dsn_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,14 +216,14 @@ def test_api_settings_rejects_anything_that_is_not_a_bare_origin(value: str) -> 
 
 @pytest.mark.req("NFR-01")
 def test_api_settings_defaults_to_the_vite_dev_server() -> None:
-    assert ApiSettings().frontend_base_url == "http://localhost:5173"
+    assert hermetic_api_settings().frontend_base_url == "http://localhost:5173"
 
 
 @pytest.mark.req("FR-98")
 def test_api_settings_defaults_fsn_semantic_tag_to_intact() -> None:
     """The only value the read path can honestly serve today - see
     `ApiSettings.fsn_semantic_tag`'s own docstring."""
-    assert ApiSettings().fsn_semantic_tag == "intact"
+    assert hermetic_api_settings().fsn_semantic_tag == "intact"
 
 
 @pytest.mark.req("FR-98")
@@ -250,7 +261,7 @@ def test_api_settings_defaults_max_preferred_term_length_to_unset() -> None:
     """Unset is the default and must stay the default (FR-86 acceptance
     criterion) - with no maximum configured, no entry can ever produce a
     length warning."""
-    assert ApiSettings().max_preferred_term_length is None
+    assert hermetic_api_settings().max_preferred_term_length is None
 
 
 @pytest.mark.req("FR-86")

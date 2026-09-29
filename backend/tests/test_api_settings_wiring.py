@@ -9,14 +9,37 @@ half-configured.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import importlib.util
+import sys
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import Connection
 
 from nptc.api.app import create_app
 from nptc.api.dependencies import get_api_settings
+from nptc.api.labels import LabelProvenance
+from nptc.api.routers import catalogue_shared
 from nptc.settings import ApiSettings
+
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_api_support = _load("api_app_support")
+_seed = _load("public_catalogue_support")
+
+build_api_test_app = _api_support.build_api_test_app
+ApiTestApp = _api_support.ApiTestApp
 
 
 @pytest.fixture(autouse=True)
@@ -55,3 +78,52 @@ def test_create_app_fails_at_startup_on_a_bad_env_value(
 
     with pytest.raises(ValidationError, match="fsn_semantic_tag"):
         create_app()
+
+
+@pytest.fixture
+def api(app_db: Connection) -> Iterator[ApiTestApp]:
+    yield from build_api_test_app(app_db)
+
+
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_routes_ignore_an_invalid_env_value_when_settings_are_injected(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bug this closes: `NPTC_FSN_SEMANTIC_TAG=stripped` makes a fresh
+    `ApiSettings()` raise, so any route still resolving its own env-read
+    instance answered 500 even though the app was built with good settings."""
+    seeded = _seed.seed_public_catalogue(api.session)
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+
+    bindings = api.get(f"/catalogue/entries/{seeded.canonical}/bindings")
+    detail = api.get(f"/catalogue/entries/{seeded.canonical}")
+
+    assert bindings.status_code == 200, bindings.text
+    assert detail.status_code == 200, detail.text
+
+
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_one_request_reads_exactly_one_settings_object(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every consumer of `ApiSettings` inside one request receives the object
+    the factory installed - not an equal copy, not a second instance."""
+    seeded = _seed.seed_public_catalogue(api.session)
+    injected = api.set_api_settings(max_preferred_term_length=42)
+    seen: list[ApiSettings] = []
+    original: Callable[[ApiSettings], LabelProvenance] = catalogue_shared.fsn_provenance
+
+    def _record(settings: ApiSettings) -> LabelProvenance:
+        seen.append(settings)
+        return original(settings)
+
+    monkeypatch.setattr(catalogue_shared, "fsn_provenance", _record)
+
+    response = api.get(f"/catalogue/entries/{seeded.canonical}")
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["bindings"]) >= 2
+    assert seen, "the binding assembler never asked for settings"
+    assert all(settings is injected for settings in seen)
