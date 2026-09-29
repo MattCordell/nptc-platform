@@ -346,6 +346,26 @@ def test_retire_binding_audits_the_status_change_with_reason(api: ApiTestApp) ->
     assert event.reason == reason
 
 
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_binding_writes_serve_the_injected_settings_not_the_environment(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All three write routes re-read the row through `binding_from_row`; an
+    invalid `NPTC_FSN_SEMANTIC_TAG` in the environment must not reach them."""
+    business_key = _seed_entry(api)
+    token = _admin_token(api, subject="sub-bind-injected-settings")
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+
+    bound = _bind(api, business_key, token)
+    replaced = _replace(api, business_key, CODE_A, token)
+    retired = _retire(api, business_key, CODE_B, token)
+
+    assert bound.status_code == 201, bound.text
+    assert replaced.status_code == 200, replaced.text
+    assert retired.status_code == 200, retired.text
+
+
 @pytest.mark.req("FR-08")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
