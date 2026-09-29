@@ -167,8 +167,8 @@ The `comment-density` pre-commit hook enforces this rule. It runs
   allowance is the file's baseline prose in `scripts/comment_density_baseline.json`, plus
   0.5 lines for each code line added since the baseline. It is never below 0.5 prose lines
   per code line, and never below 10 lines. So a PR that only removes code never fails, a
-  lean file can grow to 0.5, and a new file is held to 0.5. A file that is moved keeps its
-  old path's baseline, because git detects the rename.
+  lean file can grow to 0.5, and a new file is held to 0.5. While a move is
+  unmerged, the file keeps its old path's baseline, because git detects the rename.
 - **Citation check** (all Python files). A comment or docstring line you add or edit may
   not cite an issue number or a review round. String literals are ignored, and so are
   `FR-nn`, `NFR-nn` and ADR citations. Lines the diff did not touch are ignored, and
@@ -190,6 +190,11 @@ To lower a baseline, run `uv run python scripts/comment_density.py --update-base
 sweep PR that removes the prose, and commit the result. Run it also where a reviewer accepts
 an increase, and when you split a file or git cannot pair a heavily edited file with its
 old path. Do not run it to silence a failure you have not discussed.
+
+A PR that moves or deletes a source file must run `--update-baseline` too. The rename
+mapping ends when the move merges, and a baseline entry for the old path then matches
+nothing. A test in `scripts/tests` fails while any baseline entry names a missing file, and
+CI runs it.
 
 ## Issue checklists
 

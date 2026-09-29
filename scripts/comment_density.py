@@ -389,6 +389,12 @@ def allowance(baseline: BaselineEntry | None, code: int) -> float:
     return max(earned, BASELINE_RATIO_FLOOR * code, MIN_ALLOWANCE_LINES)
 
 
+def stale_baseline_paths(root: Path, baseline: dict[str, BaselineEntry]) -> list[str]:
+    """Baseline entries whose file is gone. A move or a delete leaves one behind, and the
+    rename mapping in `baseline_for` covers only the diff that contains the move."""
+    return sorted(rel for rel in baseline if not (root / rel).is_file())
+
+
 def exceeds_ratchet(counts: Counts, baseline: BaselineEntry | None) -> bool:
     return counts.prose > allowance(baseline, counts.code)
 

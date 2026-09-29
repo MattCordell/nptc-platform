@@ -240,6 +240,14 @@ def test_the_committed_baseline_only_names_ratchet_scope_files() -> None:
     assert all(any(rel.startswith(f"{tree}/") for tree in cd.RATCHET_TREES) for rel in baseline)
 
 
+def test_every_committed_baseline_entry_names_a_file_on_disk() -> None:
+    stale = cd.stale_baseline_paths(ROOT, cd.load_baseline(cd.BASELINE_PATH))
+    assert stale == [], (
+        f"{stale} no longer exist. A PR that moves or deletes a source file must run "
+        "`uv run python scripts/comment_density.py --update-baseline` and commit the result."
+    )
+
+
 # --- the ratchet ------------------------------------------------------------------------
 
 
@@ -746,6 +754,48 @@ def test_a_moved_file_passes_once_its_own_baseline_is_recorded(repo: Path) -> No
     _stage(repo)
     _record_baseline(repo)
     assert _check(repo, "backend/src/other/moved.py") == (0, "")
+
+
+def test_once_the_move_has_merged_the_old_baseline_entry_is_stale_and_the_new_path_fails(
+    repo: Path,
+) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+    _move(repo, MOD, "backend/src/other/moved.py")
+    _commit(repo, "the merged move")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature")
+
+    baseline = cd.load_baseline(repo.parent / "baseline.json")
+    assert cd.stale_baseline_paths(repo, baseline) == [MOD]
+    status, _ = _check(repo, "backend/src/other/moved.py")
+    assert status == 1
+
+
+def test_updating_the_baseline_in_the_move_pr_clears_the_stale_entry(repo: Path) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+    _move(repo, MOD, "backend/src/other/moved.py")
+    _record_baseline(repo)
+    _commit(repo, "the merged move")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature")
+
+    baseline = cd.load_baseline(repo.parent / "baseline.json")
+    assert cd.stale_baseline_paths(repo, baseline) == []
+    assert _check(repo, "backend/src/other/moved.py") == (0, "")
+
+
+def test_a_deleted_file_leaves_a_stale_baseline_entry(repo: Path) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+    (repo / MOD).unlink()
+
+    baseline = cd.load_baseline(repo.parent / "baseline.json")
+    assert cd.stale_baseline_paths(repo, baseline) == [MOD]
 
 
 def test_a_file_split_in_two_is_held_to_the_floor_until_the_baseline_is_updated(
