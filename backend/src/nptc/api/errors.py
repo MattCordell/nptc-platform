@@ -57,8 +57,10 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final, Protocol, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -109,6 +111,12 @@ from nptc.catalogue.errors import (
 )
 from nptc.catalogue.facets import FilterRefusedError
 from nptc.catalogue.history import MalformedHistoryCursorError
+from nptc.catalogue.local_codes import (
+    InvalidLocalCodeSystemKeyError,
+    InvalidMatchStrengthError,
+    LocalCodeAlreadyDeprecatedError,
+    LocalCodeSystemAlreadyDeprecatedError,
+)
 from nptc.catalogue.maintenance import MalformedListingCursorError
 from nptc.catalogue.property_value_sources import (
     PropertyNotCodeTypeError,
@@ -118,6 +126,7 @@ from nptc.catalogue.property_value_sources import (
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
+from nptc.db.models.local_code_snomed_map import SnomedMapMatchStrength
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 from nptc.registry.definitions import (
     DeprecatedPropertyWriteError,
@@ -360,9 +369,9 @@ _DETAIL_SEARCH_CURSOR = (
     "search. Pass a `next_cursor` value back unmodified alongside the same query and "
     "filters, or start again from the first page."
 )
-#: Also served for `MalformedAuditCursorError` (`_handle_malformed_audit_
-#: cursor` below), not a byte-identical second constant - `nptc.api.
-#: routers.audit.AuditCursorQuery` copies `nptc.catalogue.history`'s own
+#: Also served for `MalformedAuditCursorError` (its row in `_REFUSALS`), not a
+#: byte-identical second constant - `nptc.api.routers.audit.AuditCursorQuery`
+#: copies `nptc.catalogue.history`'s own
 #: cursor shape verbatim (see that type's own docstring), so the refusal
 #: reads the same way too (PR #309 review).
 _DETAIL_HISTORY_CURSOR = (
@@ -477,42 +486,299 @@ _DETAIL_TERMINOLOGY_UNAVAILABLE = (
 _DETAIL_TERMINOLOGY_UPSTREAM = (
     "The terminology server's response could not be used. The problem has been logged."
 )
+_DETAIL_LOCAL_CODE_SYSTEM_ALREADY_DEPRECATED = "This local code system is already deprecated."
+_DETAIL_LOCAL_CODE_ALREADY_DEPRECATED = "This local code is already deprecated."
+_DETAIL_INVALID_LOCAL_CODE_SYSTEM_KEY = (
+    "A local code system key is 1 to 63 characters: a lowercase letter, then lowercase "
+    "letters, digits or underscores."
+)
+#: Built from the enum so a new match strength updates this text for free.
+_DETAIL_INVALID_MATCH_STRENGTH = (
+    f"The match strength must be one of: {', '.join(m.value for m in SnomedMapMatchStrength)}."
+)
 
 
-def _unauthenticated(detail: str) -> JSONResponse:
-    # WWW-Authenticate on a 401 and never on a 403 - the pair endpoints
-    # most reliably get backwards (assert_http_forbidden checks for it).
-    return JSONResponse(
-        status_code=401,
-        content={"detail": detail},
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+#: WWW-Authenticate on a 401 and never on a 403 - the pair endpoints most
+#: reliably get backwards (`assert_http_forbidden` checks for it).
+_BEARER_CHALLENGE: Final = {"WWW-Authenticate": "Bearer"}
+
+
+class _HasHttpStatus(Protocol):
+    http_status: int
+
+
+def _exc(exc: Exception) -> tuple[object, ...]:
+    return (exc,)
+
+
+def _name(exc: Exception) -> tuple[object, ...]:
+    return (type(exc).__name__,)
+
+
+def _name_and_exc(exc: Exception) -> tuple[object, ...]:
+    return (type(exc).__name__, exc)
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    """One plain refusal: a fixed client-facing `detail` and one log line.
+
+    `log_message=None` logs nothing. `status=None` reads `exc.http_status`
+    off the raised instance; a row sets `status` only for a class that
+    carries none.
+    """
+
+    detail: str
+    log_message: str | None
+    log_args: Callable[[Exception], tuple[object, ...]] = _exc
+    log_level: int = logging.INFO
+    status: int | None = None
+    headers: Mapping[str, str] | None = None
+
+
+def _handler_for(refusal: _Refusal) -> Callable[[Request, Exception], Awaitable[JSONResponse]]:
+    async def handle(_request: Request, exc: Exception) -> JSONResponse:
+        if refusal.log_message is not None:
+            _logger.log(refusal.log_level, refusal.log_message, *refusal.log_args(exc))
+        status = (
+            refusal.status
+            if refusal.status is not None
+            else cast("_HasHttpStatus", exc).http_status
+        )
+        return JSONResponse(
+            status_code=status, content={"detail": refusal.detail}, headers=refusal.headers
+        )
+
+    return handle
+
+
+# --- the plain refusals: one row each --------------------------------------
+#
+# Starlette serves a class from the row of its nearest registered base, so a
+# subclass needs no row of its own. Every class under `nptc` or `nptc_shared`
+# that carries an `http_status` must resolve to a row or to a function in
+# `register_exception_handlers` (`test_api_error_table.py` enforces it).
+#
+# A row logs at INFO unless it says otherwise: these are ordinary, expected
+# refusals. Where a row logs the class name alone (`_name`), the exception
+# message quotes caller-supplied text - a cursor, a term, a note, a filter -
+# and so stays out of the log (NFR-26, NFR-35). The response never carries
+# `str(exc)`.
+#
+# A refusal that builds its own body, or branches on the instance, is a
+# function in `register_exception_handlers` instead.
+
+_REFUSALS: Final[dict[type[Exception], _Refusal]] = {
+    # 401: we could not establish who you are. An expired token is the most
+    # common event on an authenticated API, so INFO. The message may name the
+    # issuer or audience, never the token.
+    TokenError: _Refusal(
+        _DETAIL_UNAUTHENTICATED,
+        "token refused: %s: %s",
+        _name_and_exc,
+        status=401,
+        headers=_BEARER_CHALLENGE,
+    ),
+    MalformedAuthorizationError: _Refusal(
+        _DETAIL_UNAUTHENTICATED,
+        "authorization header refused: %s",
+        status=401,
+        headers=_BEARER_CHALLENGE,
+    ),
+    CredentialRequiredError: _Refusal(
+        _DETAIL_SIGN_IN_REQUIRED,
+        "credential required: %s",
+        status=401,
+        headers=_BEARER_CHALLENGE,
+    ),
+    EntryNotFoundError: _Refusal(_DETAIL_NOT_FOUND, "entry not found: %s"),
+    CodeLookupNotFoundError: _Refusal(_DETAIL_CODE_LOOKUP_NOT_FOUND, "code lookup not found: %s"),
+    # Not logged: a blank search box on a public, unauthenticated endpoint is
+    # the most ordinary client mistake there is, and logging it invites
+    # filling the log with someone else's traffic.
+    EmptySearchQueryError: _Refusal(_DETAIL_SEARCH_QUERY_EMPTY, None),
+    MalformedSearchCursorError: _Refusal(_DETAIL_SEARCH_CURSOR, "search cursor refused: %s", _name),
+    MalformedHistoryCursorError: _Refusal(
+        _DETAIL_HISTORY_CURSOR, "history cursor refused: %s", _name
+    ),
+    MalformedListingCursorError: _Refusal(
+        _DETAIL_LISTING_CURSOR, "listing cursor refused: %s", _name
+    ),
+    MalformedAuditCursorError: _Refusal(_DETAIL_HISTORY_CURSOR, "audit cursor refused: %s", _name),
+    # Refused, never ignored: a filter the server dropped silently serves a
+    # page that looks like an answer to the question asked and answers a
+    # different one. The class tells an unknown key from a non-filterable one
+    # from a bad operator - worth having in a log, not in a response.
+    FilterRefusedError: _Refusal(_DETAIL_FILTER_REFUSED, "filter refused: %s", _name),
+    # A safety net for paths that bypass `create_app`'s eager registry build
+    # (a test app, a dependency override). The bad value goes to the log,
+    # never the response (NFR-26).
+    TerminologyConfigError: _Refusal(
+        _DETAIL_SERVER_MISCONFIGURED,
+        "terminology configuration refused: %s",
+        log_level=logging.ERROR,
+        status=500,
+    ),
+    # WARNING: unlike every other caller-facing refusal here, this is not a
+    # caller mistake. FR-82 guarantees every stored `fsn` came from the
+    # terminology server, so reaching here means a published entry broke that
+    # guarantee. Blanking the label and serving a 200 would hide it (FR-83).
+    # Both classes share one sentence: a caller can act on neither differently.
+    NotAServedFSNError: _Refusal(
+        _DETAIL_DISPLAY_TERM,
+        "display term could not be rendered: %s: %s",
+        _name_and_exc,
+        log_level=logging.WARNING,
+    ),
+    EmptyDisplayTermError: _Refusal(
+        _DETAIL_DISPLAY_TERM,
+        "display term could not be rendered: %s: %s",
+        _name_and_exc,
+        log_level=logging.WARNING,
+    ),
+    ChangelogNoteError: _Refusal(_DETAIL_CHANGELOG_NOTE, "changelog note refused: %s", _name),
+    TermCleaningError: _Refusal(_DETAIL_TERM_CLEANING, "term refused: %s", _name),
+    DesignationLanguageError: _Refusal(
+        _DETAIL_DESIGNATION_LANGUAGE, "designation language tag refused: %s"
+    ),
+    DesignationAlreadyRetiredError: _Refusal(
+        _DETAIL_ALREADY_RETIRED, "retire refused, already retired: %s"
+    ),
+    DesignationNotFoundError: _Refusal(
+        _DETAIL_DESIGNATION_NOT_FOUND, "designation not found: %s", _name
+    ),
+    DesignationNotRetiredError: _Refusal(
+        _DETAIL_DESIGNATION_NOT_RETIRED, "reinstatement refused, not retired: %s", _name
+    ),
+    DuplicateActiveTermError: _Refusal(
+        _DETAIL_DUPLICATE_ACTIVE_TERM, "designation refused, duplicate active term: %s", _name
+    ),
+    PreferredDesignationAlreadyActiveError: _Refusal(
+        _DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE,
+        "designation refused, preferred already active: %s",
+    ),
+    DesignationCollisionAcknowledgementConflictError: _Refusal(
+        _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT,
+        "collision acknowledgement refused, concurrent winner: %s",
+    ),
+    PropertyDefinitionNotFoundError: _Refusal(
+        _DETAIL_PROPERTY_DEFINITION_NOT_FOUND, "property definition not found: %s"
+    ),
+    PropertyNotCodeTypeError: _Refusal(
+        _DETAIL_PROPERTY_NOT_CODE_TYPE, "property values refused, not a coded property: %s"
+    ),
+    PropertyValueSelectionConflictError: _Refusal(
+        _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT,
+        "property values refused, conflicting selection: %s",
+    ),
+    # ERROR: the property's own stored `value_set_uri` could not be
+    # interpreted - a data fault in the definition, never a caller mistake.
+    PropertyValueSourceMisconfiguredError: _Refusal(
+        _DETAIL_SERVER_MISCONFIGURED,
+        "property values refused, value source misconfigured: %s",
+        log_level=logging.ERROR,
+    ),
+    # `nptc_shared` carries no `http_status`: it is a shared, non-API module.
+    InvalidSCTIDError: _Refusal(_DETAIL_INVALID_SCTID, "SCTID refused: %s", _name, status=422),
+    CodeBindingNotFoundError: _Refusal(_DETAIL_BINDING_NOT_FOUND, "code binding not found: %s"),
+    CodeBindingAlreadyRetiredError: _Refusal(
+        _DETAIL_BINDING_ALREADY_RETIRED, "retire refused, binding already retired: %s"
+    ),
+    CodeBindingAlreadyActiveError: _Refusal(
+        _DETAIL_BINDING_ALREADY_ACTIVE, "bind refused, entry already has an active binding: %s"
+    ),
+    # The message names the other entry's internal id; the response never
+    # does (NFR-04).
+    CodeBindingCodeAlreadyBoundError: _Refusal(
+        _DETAIL_BINDING_CODE_ALREADY_BOUND,
+        "bind refused, code already actively bound elsewhere: %s",
+    ),
+    CodeBindingNotRetiredError: _Refusal(
+        _DETAIL_BINDING_NOT_RETIRED, "replace refused, superseded binding is not retired: %s"
+    ),
+    CodeBindingSelfSupersessionError: _Refusal(
+        _DETAIL_BINDING_SELF_SUPERSESSION, "replace refused, self-supersession: %s"
+    ),
+    InvalidCodeBindingEditionHintError: _Refusal(
+        _DETAIL_INVALID_EDITION_HINT, "edition hint refused: %s"
+    ),
+    InvalidCodeBindingSystemError: _Refusal(_DETAIL_INVALID_SYSTEM, "code system refused: %s"),
+    # ERROR: never a caller mistake. A route's own re-read-after-write
+    # invariant broke, which is worth paging on, not just tracing.
+    CodeBindingWriteNotFoundError: _Refusal(
+        _DETAIL_BINDING_WRITE_NOT_FOUND,
+        "code binding write could not be verified: %s",
+        log_level=logging.ERROR,
+    ),
+    PropertyDefinitionDeleteRefusedError: _Refusal(
+        _DETAIL_PROPERTY_DEFINITION_DELETE_REFUSED, "property definition delete refused: %s"
+    ),
+    PropertyKeyImmutableError: _Refusal(
+        _DETAIL_PROPERTY_KEY_IMMUTABLE, "property key amendment refused: %s"
+    ),
+    PropertyAlreadyDeprecatedError: _Refusal(
+        _DETAIL_PROPERTY_ALREADY_DEPRECATED, "deprecate refused, already deprecated: %s"
+    ),
+    PropertyReactivationRefusedError: _Refusal(
+        _DETAIL_PROPERTY_REACTIVATION_REFUSED, "reactivation refused: %s"
+    ),
+    SystemPropertyDeprecationRefusedError: _Refusal(
+        _DETAIL_SYSTEM_PROPERTY_DEPRECATION_REFUSED, "deprecate refused, system property: %s"
+    ),
+    PropertyDefinitionKeyExistsError: _Refusal(
+        _DETAIL_PROPERTY_DEFINITION_KEY_EXISTS, "create refused, key already exists: %s"
+    ),
+    PropertyDatatypeUnknownError: _Refusal(
+        _DETAIL_PROPERTY_DATATYPE_UNKNOWN, "property write refused, unknown datatype: %s"
+    ),
+    PropertyConstraintsInvalidError: _Refusal(
+        _DETAIL_PROPERTY_CONSTRAINTS_INVALID, "property write refused, invalid constraints: %s"
+    ),
+    # The read-path twin of `PropertyDatatypeUnknownError`. That one is a
+    # caller-supplied `datatype` that does not resolve, a 422 on a write.
+    # This one is an already-stored definition naming a datatype this
+    # process's registry no longer knows: the request was well formed and the
+    # server-side state has drifted. ERROR, because the endpoint now fails for
+    # every caller until somebody looks.
+    UnknownDatatypeError: _Refusal(
+        _DETAIL_SERVER_MISCONFIGURED,
+        "read refused, definition names an unregistered datatype: %s",
+        log_level=logging.ERROR,
+        status=500,
+    ),
+    LocalCodeSystemAlreadyDeprecatedError: _Refusal(
+        _DETAIL_LOCAL_CODE_SYSTEM_ALREADY_DEPRECATED,
+        "deprecate refused, local code system already deprecated: %s",
+    ),
+    LocalCodeAlreadyDeprecatedError: _Refusal(
+        _DETAIL_LOCAL_CODE_ALREADY_DEPRECATED,
+        "deprecate refused, local code already deprecated: %s",
+    ),
+    InvalidLocalCodeSystemKeyError: _Refusal(
+        _DETAIL_INVALID_LOCAL_CODE_SYSTEM_KEY, "local code system key refused: %s", _name
+    ),
+    InvalidMatchStrengthError: _Refusal(
+        _DETAIL_INVALID_MATCH_STRENGTH, "match strength refused: %s", _name
+    ),
+    ConceptNotFoundError: _Refusal(
+        _DETAIL_CONCEPT_NOT_FOUND, "concept lookup refused, not found: %s"
+    ),
+    # ERROR: an unusable response from a conformant endpoint is a defect worth
+    # investigating, not an ordinary outage. See the exception's own docstring
+    # for why this is the catch-all rather than a 404.
+    TerminologyUpstreamError: _Refusal(
+        _DETAIL_TERMINOLOGY_UPSTREAM,
+        "terminology lookup refused, unusable response: %s",
+        log_level=logging.ERROR,
+    ),
+}
 
 
 def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> None:
+    for exc_class, refusal in _REFUSALS.items():
+        app.add_exception_handler(exc_class, _handler_for(refusal))
+
     step_up_challenge = _step_up_challenge(auth_settings.mfa_acr_values)
-
-    @app.exception_handler(TokenError)
-    async def _handle_token_error(_request: Request, exc: TokenError) -> JSONResponse:
-        # Logged at INFO, not WARNING: an expired token is the single most
-        # common event on any authenticated API and is not an anomaly.
-        # The message may name the issuer/audience but never the token.
-        _logger.info("token refused: %s: %s", type(exc).__name__, exc)
-        return _unauthenticated(_DETAIL_UNAUTHENTICATED)
-
-    @app.exception_handler(MalformedAuthorizationError)
-    async def _handle_malformed_authorization(
-        _request: Request, exc: MalformedAuthorizationError
-    ) -> JSONResponse:
-        _logger.info("authorization header refused: %s", exc)
-        return _unauthenticated(_DETAIL_UNAUTHENTICATED)
-
-    @app.exception_handler(CredentialRequiredError)
-    async def _handle_credential_required(
-        _request: Request, exc: CredentialRequiredError
-    ) -> JSONResponse:
-        _logger.info("credential required: %s", exc)
-        return _unauthenticated(_DETAIL_SIGN_IN_REQUIRED)
 
     @app.exception_handler(AuthorisationError)
     async def _handle_authorisation_error(
@@ -550,97 +816,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             content=body.model_dump(mode="json"),
         )
 
-    @app.exception_handler(EntryNotFoundError)
-    async def _handle_entry_not_found(_request: Request, exc: EntryNotFoundError) -> JSONResponse:
-        # Logged at INFO: a stale bookmark or a race with a since-deleted
-        # entry is ordinary, not an anomaly worth a louder level. The
-        # exception message may name the business_key; the response body
-        # never does, matching this module's own detail-string convention.
-        _logger.info("entry not found: %s", exc)
-        return JSONResponse(
-            status_code=EntryNotFoundError.http_status, content={"detail": _DETAIL_NOT_FOUND}
-        )
-
-    @app.exception_handler(CodeLookupNotFoundError)
-    async def _handle_code_lookup_not_found(
-        _request: Request, exc: CodeLookupNotFoundError
-    ) -> JSONResponse:
-        # Logged at INFO, matching _handle_entry_not_found: a mistyped code
-        # or an unregistered system_token is an ordinary client mistake, not
-        # an anomaly. The exception message may name the system/token/code;
-        # the response body never does, matching this module's own
-        # detail-string convention.
-        _logger.info("code lookup not found: %s", exc)
-        return JSONResponse(
-            status_code=CodeLookupNotFoundError.http_status,
-            content={"detail": _DETAIL_CODE_LOOKUP_NOT_FOUND},
-        )
-
-    @app.exception_handler(EmptySearchQueryError)
-    async def _handle_empty_search_query(
-        _request: Request, exc: EmptySearchQueryError
-    ) -> JSONResponse:
-        # Not logged at all beyond DEBUG-worthiness: a blank search box is
-        # the single most ordinary client mistake there is, and logging it
-        # at INFO on a public, unauthenticated endpoint is an invitation to
-        # fill the log with someone else's traffic.
-        return JSONResponse(
-            status_code=EmptySearchQueryError.http_status,
-            content={"detail": _DETAIL_SEARCH_QUERY_EMPTY},
-        )
-
-    @app.exception_handler(MalformedSearchCursorError)
-    async def _handle_malformed_search_cursor(
-        _request: Request, exc: MalformedSearchCursorError
-    ) -> JSONResponse:
-        # The class only, never `str(exc)`: the message quotes the cursor,
-        # which is caller-supplied text on a public endpoint (NFR-26/
-        # NFR-35), exactly like a changelog note below.
-        _logger.info("search cursor refused: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=MalformedSearchCursorError.http_status,
-            content={"detail": _DETAIL_SEARCH_CURSOR},
-        )
-
-    @app.exception_handler(MalformedHistoryCursorError)
-    async def _handle_malformed_history_cursor(
-        _request: Request, exc: MalformedHistoryCursorError
-    ) -> JSONResponse:
-        # The class only, never `str(exc)` - matching
-        # `_handle_malformed_search_cursor`'s own reasoning: the message
-        # quotes the caller-supplied cursor value.
-        _logger.info("history cursor refused: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=MalformedHistoryCursorError.http_status,
-            content={"detail": _DETAIL_HISTORY_CURSOR},
-        )
-
-    @app.exception_handler(MalformedListingCursorError)
-    async def _handle_malformed_listing_cursor(
-        _request: Request, exc: MalformedListingCursorError
-    ) -> JSONResponse:
-        # Issue #287. Covers `ListingCursorMismatchError` too, via the same
-        # polymorphic registration `_handle_malformed_search_cursor` already
-        # relies on for its own mismatch subclass - the class only, never
-        # `str(exc)`, matching that handler's own reasoning.
-        _logger.info("listing cursor refused: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=MalformedListingCursorError.http_status,
-            content={"detail": _DETAIL_LISTING_CURSOR},
-        )
-
-    @app.exception_handler(MalformedAuditCursorError)
-    async def _handle_malformed_audit_cursor(
-        _request: Request, exc: MalformedAuditCursorError
-    ) -> JSONResponse:
-        # The class only, never `str(exc)` - matching
-        # `_handle_malformed_history_cursor`'s own reasoning.
-        _logger.info("audit cursor refused: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=MalformedAuditCursorError.http_status,
-            content={"detail": _DETAIL_HISTORY_CURSOR},
-        )
-
     @app.exception_handler(AuditFilterError)
     async def _handle_audit_filter_error(_request: Request, exc: AuditFilterError) -> JSONResponse:
         # Discriminated by subclass, unlike most handlers in this module,
@@ -656,171 +831,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             else _DETAIL_OCCURRED_RANGE_INVALID
         )
         return JSONResponse(status_code=AuditFilterError.http_status, content={"detail": detail})
-
-    @app.exception_handler(FilterRefusedError)
-    async def _handle_filter_refused(_request: Request, exc: FilterRefusedError) -> JSONResponse:
-        # FR-16. Refused, never ignored: a filter the server did not
-        # understand and silently dropped serves the caller a page that
-        # looks like an answer to the question they asked and is an answer
-        # to a different one - undetectable from the response.
-        #
-        # The exception *class* only, never `str(exc)`: the message quotes
-        # the caller's own filter key and value, which is user-supplied text
-        # on a public endpoint (NFR-26/NFR-35), exactly like a search cursor
-        # above. The class is what distinguishes an unknown key from a
-        # non-filterable one from a bad operator, which is the distinction
-        # worth having in a log and not in a response.
-        _logger.info("filter refused: %s", type(exc).__name__)
-        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_FILTER_REFUSED})
-
-    @app.exception_handler(TerminologyConfigError)
-    async def _handle_terminology_config_error(
-        _request: Request, exc: TerminologyConfigError
-    ) -> JSONResponse:
-        # A safety net, not the fix. `nptc.api.app.create_app` builds the
-        # datatype registry eagerly precisely so a malformed `NPTC_TX_*`
-        # value fails start-up rather than a request; this handler exists
-        # for the paths that bypass the factory's warm-up (a test app, a
-        # dependency override) so the failure is still a deliberate 500
-        # with a logged cause rather than an unhandled traceback.
-        _logger.error("terminology configuration refused: %s", exc)
-        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
-
-    @app.exception_handler(NotAServedFSNError)
-    async def _handle_not_a_served_fsn(_request: Request, exc: NotAServedFSNError) -> JSONResponse:
-        # Reachable only from a *write* path (#149/#150), where the caller
-        # supplied the FSN and 422 is correct. The read path (issue #144,
-        # FR-98) no longer renders a display term at all, so this
-        # exception cannot reach a GET route any more - see
-        # `nptc.api.routers.catalogue_shared`'s own module docstring.
-        #
-        # WARNING, not INFO - unlike every other refusal in this module,
-        # this one is not a caller mistake at all: FR-82 guarantees every
-        # stored `fsn` came from the terminology server, so reaching here
-        # means that guarantee has been broken for a published entry and
-        # somebody needs to look. Blanking the label instead and serving a
-        # 200 would hide a corrupted binding indefinitely (FR-83).
-        _logger.warning("display term could not be rendered: %s: %s", type(exc).__name__, exc)
-        return JSONResponse(
-            status_code=NotAServedFSNError.http_status, content={"detail": _DETAIL_DISPLAY_TERM}
-        )
-
-    @app.exception_handler(EmptyDisplayTermError)
-    async def _handle_empty_display_term(
-        _request: Request, exc: EmptyDisplayTermError
-    ) -> JSONResponse:
-        # FR-83's second defensive assertion - same reasoning, same level,
-        # same detail string as `NotAServedFSNError` above: from a caller's
-        # point of view these are one fault ("this binding's FSN is not
-        # renderable"), and splitting the message would tell them nothing
-        # they could act on differently.
-        _logger.warning("display term could not be rendered: %s: %s", type(exc).__name__, exc)
-        return JSONResponse(
-            status_code=EmptyDisplayTermError.http_status, content={"detail": _DETAIL_DISPLAY_TERM}
-        )
-
-    @app.exception_handler(ChangelogNoteError)
-    async def _handle_changelog_note_error(
-        _request: Request, exc: ChangelogNoteError
-    ) -> JSONResponse:
-        # FR-37: a normal, expected refusal on a routine edit, not an
-        # anomaly - INFO, not WARNING. NFR-26/NFR-35: a changelog note is
-        # free text a user is exactly as likely to paste a name or a
-        # ticket-with-PII into as any other free-text field, so - unlike
-        # this module's other handlers, whose exception messages are safe
-        # to log - only the exception *class* is logged here, never
-        # `str(exc)`, which embeds the note itself.
-        _logger.info("changelog note refused: %s", type(exc).__name__)
-        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_CHANGELOG_NOTE})
-
-    @app.exception_handler(TermCleaningError)
-    async def _handle_term_cleaning_error(
-        _request: Request, exc: TermCleaningError
-    ) -> JSONResponse:
-        # FR-63: applies to both CatalogueEntry.preferred_term and
-        # Designation.term. The exception message quotes the term itself
-        # (with any invisible character escaped, never raw, per NFR-38
-        # test 2) - logged as the class only, not `str(exc)`, for the same
-        # reason `_handle_changelog_note_error` above does: a term typed
-        # directly into the platform is still user-supplied free text.
-        _logger.info("term refused: %s", type(exc).__name__)
-        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_TERM_CLEANING})
-
-    @app.exception_handler(DesignationLanguageError)
-    async def _handle_designation_language_error(
-        _request: Request, exc: DesignationLanguageError
-    ) -> JSONResponse:
-        _logger.info("designation language tag refused: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_LANGUAGE}
-        )
-
-    @app.exception_handler(DesignationAlreadyRetiredError)
-    async def _handle_designation_already_retired(
-        _request: Request, exc: DesignationAlreadyRetiredError
-    ) -> JSONResponse:
-        _logger.info("retire refused, already retired: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_ALREADY_RETIRED}
-        )
-
-    @app.exception_handler(DesignationNotFoundError)
-    async def _handle_designation_not_found(
-        _request: Request, exc: DesignationNotFoundError
-    ) -> JSONResponse:
-        # issue #224: a term already retired, or never added, is simply not
-        # addressable this way any more - not a caller mistake worth a
-        # WARNING, matching CodeBindingNotFoundError's own precedent. Logged
-        # as the class only, not `str(exc)`: the message quotes the
-        # submitted term itself, user-supplied free text (NFR-26/NFR-35).
-        _logger.info("designation not found: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_NOT_FOUND}
-        )
-
-    @app.exception_handler(DesignationNotRetiredError)
-    async def _handle_designation_not_retired(
-        _request: Request, exc: DesignationNotRetiredError
-    ) -> JSONResponse:
-        # issue #313: logged as the class only, matching every other
-        # designation handler here - the message quotes the submitted term
-        # itself, user-supplied free text (NFR-26/NFR-35).
-        _logger.info("reinstatement refused, not retired: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_DESIGNATION_NOT_RETIRED}
-        )
-
-    @app.exception_handler(DuplicateActiveTermError)
-    async def _handle_duplicate_active_term(
-        _request: Request, exc: DuplicateActiveTermError
-    ) -> JSONResponse:
-        # issue #224: logged as the class only, not `str(exc)` - the
-        # message quotes the submitted term itself, user-supplied free text
-        # exactly like a changelog note (NFR-26/NFR-35).
-        _logger.info("designation refused, duplicate active term: %s", type(exc).__name__)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_DUPLICATE_ACTIVE_TERM}
-        )
-
-    @app.exception_handler(PreferredDesignationAlreadyActiveError)
-    async def _handle_preferred_designation_already_active(
-        _request: Request, exc: PreferredDesignationAlreadyActiveError
-    ) -> JSONResponse:
-        _logger.info("designation refused, preferred already active: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE},
-        )
-
-    @app.exception_handler(DesignationCollisionAcknowledgementConflictError)
-    async def _handle_collision_acknowledgement_conflict(
-        _request: Request, exc: DesignationCollisionAcknowledgementConflictError
-    ) -> JSONResponse:
-        _logger.info("collision acknowledgement refused, concurrent winner: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT},
-        )
 
     @app.exception_handler(PropertyValidationError)
     async def _handle_property_validation_error(
@@ -856,54 +866,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             content=body.model_dump(mode="json"),
         )
 
-    @app.exception_handler(PropertyDefinitionNotFoundError)
-    async def _handle_property_definition_not_found(
-        _request: Request, exc: PropertyDefinitionNotFoundError
-    ) -> JSONResponse:
-        _logger.info("property definition not found: %s", exc)
-        return JSONResponse(
-            status_code=PropertyDefinitionNotFoundError.http_status,
-            content={"detail": _DETAIL_PROPERTY_DEFINITION_NOT_FOUND},
-        )
-
-    @app.exception_handler(PropertyNotCodeTypeError)
-    async def _handle_property_not_code_type(
-        _request: Request, exc: PropertyNotCodeTypeError
-    ) -> JSONResponse:
-        # issue #247: a routine, expected refusal - the caller named a real
-        # property that just isn't datatype == "code", not an anomaly.
-        _logger.info("property values refused, not a coded property: %s", exc)
-        return JSONResponse(
-            status_code=PropertyNotCodeTypeError.http_status,
-            content={"detail": _DETAIL_PROPERTY_NOT_CODE_TYPE},
-        )
-
-    @app.exception_handler(PropertyValueSelectionConflictError)
-    async def _handle_property_value_selection_conflict(
-        _request: Request, exc: PropertyValueSelectionConflictError
-    ) -> JSONResponse:
-        # issue #306: a routine, expected refusal - the caller mixed the
-        # two selection modes `/values` offers, not an anomaly.
-        _logger.info("property values refused, conflicting selection: %s", exc)
-        return JSONResponse(
-            status_code=PropertyValueSelectionConflictError.http_status,
-            content={"detail": _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT},
-        )
-
-    @app.exception_handler(PropertyValueSourceMisconfiguredError)
-    async def _handle_property_value_source_misconfigured(
-        _request: Request, exc: PropertyValueSourceMisconfiguredError
-    ) -> JSONResponse:
-        # issue #247: the property's own stored value_set_uri could not be
-        # interpreted - a data-integrity fault in the definition, never a
-        # caller mistake, matching `_handle_terminology_config_error`'s own
-        # posture and detail string above.
-        _logger.error("property values refused, value source misconfigured: %s", exc)
-        return JSONResponse(
-            status_code=PropertyValueSourceMisconfiguredError.http_status,
-            content={"detail": _DETAIL_SERVER_MISCONFIGURED},
-        )
-
     @app.exception_handler(DesignationCollisionError)
     async def _handle_designation_collision_error(
         _request: Request, exc: DesignationCollisionError
@@ -931,172 +893,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         )
         return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
 
-    @app.exception_handler(InvalidSCTIDError)
-    async def _handle_invalid_sctid(_request: Request, exc: InvalidSCTIDError) -> JSONResponse:
-        # issue #219: `nptc.catalogue.bindings.create_binding` calls
-        # `SCTID(code)` before ever adding a row - a malformed or
-        # Verhoeff-failing `code` is a routine, expected refusal on a
-        # normal edit, not an anomaly. `nptc_shared.sctid.InvalidSCTIDError`
-        # has no `http_status` ClassVar (it is a shared, non-API module),
-        # so 422 is hardcoded here rather than read off the exception,
-        # matching `TerminologyConfigError`'s handler above.
-        _logger.info("SCTID refused: %s", type(exc).__name__)
-        return JSONResponse(status_code=422, content={"detail": _DETAIL_INVALID_SCTID})
-
-    @app.exception_handler(CodeBindingNotFoundError)
-    async def _handle_code_binding_not_found(
-        _request: Request, exc: CodeBindingNotFoundError
-    ) -> JSONResponse:
-        # Logged at INFO, matching `_handle_entry_not_found` above: a
-        # caller addressing a code that has since been retired or never
-        # bound is an ordinary event on an editing surface, not an anomaly.
-        _logger.info("code binding not found: %s", exc)
-        return JSONResponse(
-            status_code=CodeBindingNotFoundError.http_status,
-            content={"detail": _DETAIL_BINDING_NOT_FOUND},
-        )
-
-    @app.exception_handler(CodeBindingAlreadyRetiredError)
-    async def _handle_code_binding_already_retired(
-        _request: Request, exc: CodeBindingAlreadyRetiredError
-    ) -> JSONResponse:
-        _logger.info("retire refused, binding already retired: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_ALREADY_RETIRED}
-        )
-
-    @app.exception_handler(CodeBindingAlreadyActiveError)
-    async def _handle_code_binding_already_active(
-        _request: Request, exc: CodeBindingAlreadyActiveError
-    ) -> JSONResponse:
-        # FR-08: the entry side of "at most one active binding" - see
-        # `CodeBindingCodeAlreadyBoundError`'s handler below for the code
-        # side. Logged at INFO: a routine, expected refusal on a normal
-        # edit, not an anomaly.
-        _logger.info("bind refused, entry already has an active binding: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_ALREADY_ACTIVE}
-        )
-
-    @app.exception_handler(CodeBindingCodeAlreadyBoundError)
-    async def _handle_code_binding_code_already_bound(
-        _request: Request, exc: CodeBindingCodeAlreadyBoundError
-    ) -> JSONResponse:
-        # issue #49's blocking severity, the code side of FR-08's "one
-        # active binding" - see `CodeBindingAlreadyActiveError`'s handler
-        # above. The exception message names the other entry's internal
-        # id; the response body never does (NFR-04), matching this
-        # module's own detail-string convention.
-        _logger.info("bind refused, code already actively bound elsewhere: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_CODE_ALREADY_BOUND}
-        )
-
-    @app.exception_handler(CodeBindingNotRetiredError)
-    async def _handle_code_binding_not_retired(
-        _request: Request, exc: CodeBindingNotRetiredError
-    ) -> JSONResponse:
-        _logger.info("replace refused, superseded binding is not retired: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_NOT_RETIRED}
-        )
-
-    @app.exception_handler(CodeBindingSelfSupersessionError)
-    async def _handle_code_binding_self_supersession(
-        _request: Request, exc: CodeBindingSelfSupersessionError
-    ) -> JSONResponse:
-        _logger.info("replace refused, self-supersession: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_SELF_SUPERSESSION}
-        )
-
-    @app.exception_handler(InvalidCodeBindingEditionHintError)
-    async def _handle_invalid_code_binding_edition_hint(
-        _request: Request, exc: InvalidCodeBindingEditionHintError
-    ) -> JSONResponse:
-        _logger.info("edition hint refused: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_INVALID_EDITION_HINT}
-        )
-
-    @app.exception_handler(InvalidCodeBindingSystemError)
-    async def _handle_invalid_code_binding_system(
-        _request: Request, exc: InvalidCodeBindingSystemError
-    ) -> JSONResponse:
-        _logger.info("code system refused: %s", exc)
-        return JSONResponse(status_code=exc.http_status, content={"detail": _DETAIL_INVALID_SYSTEM})
-
-    @app.exception_handler(CodeBindingWriteNotFoundError)
-    async def _handle_code_binding_write_not_found(
-        _request: Request, exc: CodeBindingWriteNotFoundError
-    ) -> JSONResponse:
-        # ERROR, not INFO: unlike every other handler in this module, this
-        # one is never a caller mistake - see the exception's own
-        # docstring. Reaching here means a route's own re-read-after-write
-        # invariant broke, which is worth paging on, not just tracing.
-        _logger.error("code binding write could not be verified: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_BINDING_WRITE_NOT_FOUND}
-        )
-
-    @app.exception_handler(PropertyDefinitionDeleteRefusedError)
-    async def _handle_property_definition_delete_refused(
-        _request: Request, exc: PropertyDefinitionDeleteRefusedError
-    ) -> JSONResponse:
-        _logger.info("property definition delete refused: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PROPERTY_DEFINITION_DELETE_REFUSED},
-        )
-
-    @app.exception_handler(PropertyKeyImmutableError)
-    async def _handle_property_key_immutable(
-        _request: Request, exc: PropertyKeyImmutableError
-    ) -> JSONResponse:
-        _logger.info("property key amendment refused: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_PROPERTY_KEY_IMMUTABLE}
-        )
-
-    @app.exception_handler(PropertyAlreadyDeprecatedError)
-    async def _handle_property_already_deprecated(
-        _request: Request, exc: PropertyAlreadyDeprecatedError
-    ) -> JSONResponse:
-        _logger.info("deprecate refused, already deprecated: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status, content={"detail": _DETAIL_PROPERTY_ALREADY_DEPRECATED}
-        )
-
-    @app.exception_handler(PropertyReactivationRefusedError)
-    async def _handle_property_reactivation_refused(
-        _request: Request, exc: PropertyReactivationRefusedError
-    ) -> JSONResponse:
-        _logger.info("reactivation refused: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PROPERTY_REACTIVATION_REFUSED},
-        )
-
-    @app.exception_handler(SystemPropertyDeprecationRefusedError)
-    async def _handle_system_property_deprecation_refused(
-        _request: Request, exc: SystemPropertyDeprecationRefusedError
-    ) -> JSONResponse:
-        _logger.info("deprecate refused, system property: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_SYSTEM_PROPERTY_DEPRECATION_REFUSED},
-        )
-
-    @app.exception_handler(PropertyDefinitionKeyExistsError)
-    async def _handle_property_definition_key_exists(
-        _request: Request, exc: PropertyDefinitionKeyExistsError
-    ) -> JSONResponse:
-        _logger.info("create refused, key already exists: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PROPERTY_DEFINITION_KEY_EXISTS},
-        )
-
     @app.exception_handler(DeprecatedPropertyWriteError)
     async def _handle_deprecated_property_write(
         _request: Request, exc: DeprecatedPropertyWriteError
@@ -1112,65 +908,6 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": _DETAIL_DEPRECATED_PROPERTY_WRITE},
-        )
-
-    @app.exception_handler(PropertyDatatypeUnknownError)
-    async def _handle_property_datatype_unknown(
-        _request: Request, exc: PropertyDatatypeUnknownError
-    ) -> JSONResponse:
-        _logger.info("property write refused, unknown datatype: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PROPERTY_DATATYPE_UNKNOWN},
-        )
-
-    @app.exception_handler(PropertyConstraintsInvalidError)
-    async def _handle_property_constraints_invalid(
-        _request: Request, exc: PropertyConstraintsInvalidError
-    ) -> JSONResponse:
-        _logger.info("property write refused, invalid constraints: %s", exc)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_PROPERTY_CONSTRAINTS_INVALID},
-        )
-
-    @app.exception_handler(UnknownDatatypeError)
-    async def _handle_unknown_datatype(
-        _request: Request, exc: UnknownDatatypeError
-    ) -> JSONResponse:
-        # issue #248: the *read*-path counterpart of `_handle_property_
-        # datatype_unknown` above. That handler covers `PropertyDatatypeUnknownError`,
-        # which `nptc.db.definitions` raises after translating this same
-        # `nptc.registry.handlers.UnknownDatatypeError` on a *write* - a
-        # caller-supplied `datatype` that does not resolve, correctly a 422.
-        # Reached directly (untranslated) only from a read path resolving an
-        # *already-stored* definition's own `datatype` against the live
-        # registry - `registry.py::_to_response`'s `form_control` lookup and
-        # `catalogue_shared.property_value_from_row`'s `serialise` call -
-        # where the request was well-formed and the fault is in server-side
-        # state (a stored `datatype` the running process's `DatatypeRegistry`
-        # no longer knows) - the same read-vs-write posture the now-removed
-        # `StoredFSNNotRenderableError` used to give FR-83 for the identical
-        # shape of problem, before issue #144 removed display-term rendering
-        # from the read path entirely.
-        # ERROR, not INFO: reaching here means a definition row and this
-        # process's registry have drifted, and the endpoint now fails for
-        # every caller until somebody looks - not a routine, expected
-        # refusal.
-        _logger.error("read refused, definition names an unregistered datatype: %s", exc)
-        return JSONResponse(status_code=500, content={"detail": _DETAIL_SERVER_MISCONFIGURED})
-
-    @app.exception_handler(ConceptNotFoundError)
-    async def _handle_concept_not_found(
-        _request: Request, exc: ConceptNotFoundError
-    ) -> JSONResponse:
-        # FR-26: a routine, expected outcome of a caller typing a code the
-        # server does not have - INFO, not WARNING, matching every other
-        # "not found" handler in this module.
-        _logger.info("concept lookup refused, not found: %s", exc)
-        return JSONResponse(
-            status_code=ConceptNotFoundError.http_status,
-            content={"detail": _DETAIL_CONCEPT_NOT_FOUND},
         )
 
     @app.exception_handler(TerminologyUnavailableError)
@@ -1199,18 +936,4 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             status_code=TerminologyUnavailableError.http_status,
             content={"detail": _DETAIL_TERMINOLOGY_UNAVAILABLE},
             headers=headers,
-        )
-
-    @app.exception_handler(TerminologyUpstreamError)
-    async def _handle_terminology_upstream(
-        _request: Request, exc: TerminologyUpstreamError
-    ) -> JSONResponse:
-        # ERROR, not WARNING: an unparseable or otherwise unusable response
-        # from a conformant endpoint is a defect worth investigating, not
-        # an ordinary outage - see this exception's own docstring for why
-        # this is the catch-all rather than a 404.
-        _logger.error("terminology lookup refused, unusable response: %s", exc)
-        return JSONResponse(
-            status_code=TerminologyUpstreamError.http_status,
-            content={"detail": _DETAIL_TERMINOLOGY_UPSTREAM},
         )

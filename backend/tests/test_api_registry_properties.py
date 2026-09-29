@@ -502,7 +502,7 @@ def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
     registry validation, since that validation is precisely what makes this
     row impossible to create through the API.
 
-    Asserts `detail` against `_handle_unknown_datatype`'s own constant
+    Asserts `detail` against `UnknownDatatypeError`'s own constant
     (round-2 review), not just the status code - a bare `500` would stay
     green for any unrelated server error the route happened to raise,
     including one that stopped exercising the drift this test exists to

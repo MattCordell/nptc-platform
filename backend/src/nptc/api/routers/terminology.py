@@ -113,7 +113,7 @@ _RESPONSE_503: Final[dict[str, Any]] = {
 #: builds the terminology client eagerly precisely so this is a start-up
 #: failure in normal operation; this response only documents the paths that
 #: bypass that warm-up (a dependency override, a lazily-configured client),
-#: matching `nptc.api.errors`'s own `_handle_terminology_config_error`.
+#: matching `nptc.api.errors`'s own `TerminologyConfigError` row.
 _RESPONSE_500: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
