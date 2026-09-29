@@ -9,11 +9,14 @@ workbook for maintaining the National Pathology Test Catalogue (the SPIA Request
 terminology, curated by RCPA-QAP, published by NCTS as a SNOMED CT reference set and
 FHIR ValueSet).
 
-**Status: pre-alpha.** Every module under `backend/src/nptc/*` and
-`transform/src/nptc_transform/` is scaffolding (an `__init__.py` docstring describing
-what will live there, plus a CLI that only prints a version). Don't assume an entity,
-endpoint, or table described in the PRD already exists — check the actual module before
-writing code that depends on it.
+**Status: P1 (core catalogue) in progress.** The P0 seeding transform
+(`transform/src/nptc_transform/`) is complete, and the backend implements a large part of
+P1. Most packages for later phases are still stubs: an `__init__.py` whose docstring
+names the PRD phase that lands it. `docs/requirements/requirements.yaml` records each
+requirement's status (`implemented`, `in-progress`, `planned` or `deferred`). There is no
+application image yet, so the platform does not yet run as a single-command stack
+(NFR-41). Don't assume an entity, endpoint, or table described in the PRD already
+exists — check the actual module before writing code that depends on it.
 
 The authority for all behaviour is `docs/prd/NPTC-Catalogue-Platform-PRD.md`. Every
 requirement is cited as `FR-nn` (functional) or `NFR-nn` (non-functional) and those IDs
@@ -29,9 +32,8 @@ frontend, one shared root git repo.
 The `shared/` package (`nptc_shared`) is imported by BOTH `backend/` and `transform/`
 (SCTID/Verhoeff validation, terminology client contract) so there is never a second,
 divergent implementation (ADR-0001, FR-74). `scripts/` is repo governance tooling, not
-part of the app runtime. Each `backend/src/nptc/*` module is currently just an
-`__init__.py` stub — that file is the authoritative list of module responsibilities and
-which GitHub issue lands each one.
+part of the app runtime. Each `backend/src/nptc/*` package's `__init__.py` docstring
+states what that package is responsible for, including the stub packages not built yet.
 
 ## Technology stack (ADR-0001)
 
