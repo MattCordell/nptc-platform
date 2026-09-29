@@ -9,8 +9,8 @@ Prose is comment plus docstring lines, and the ratio is prose divided by code.
 With no flags the script prints the report. `--check` is the pre-commit hook. It runs two
 checks over the files it is given:
 
-- the ratchet: a file under `RATCHET_TREES` may not gain prose past both its baseline and
-  its allowance (see `allowance`);
+- the ratchet: a file under `RATCHET_TREES` may not hold more prose than its allowance
+  (see `allowance`);
 - the citation check: a comment or docstring line added since the merge-base with
   `origin/main` may not cite an issue number or the review that prompted it.
 
@@ -66,6 +66,11 @@ REVIEW_PATTERNS = (
     re.compile(r"\breview[- ]round\b", re.IGNORECASE),
     re.compile(r"\breview[- ]finding", re.IGNORECASE),
 )
+FALLBACK_WARNING = (
+    f"comment_density: warning: no merge-base with {BASE_REF} (a shallow clone, or a "
+    "remote with another name?), so only changes since HEAD are checked for citations. "
+    f"Fetch {BASE_REF} for the full check."
+)
 CITATION_ADVICE = {
     ISSUE_CITATION: (
         "Put the issue number in the commit message or PR body. "
@@ -79,8 +84,8 @@ CITATION_ADVICE = {
 
 RATCHET_ADVICE = (
     "Remove comment or docstring text that restates the code. Where a reviewer accepts the "
-    "increase, run `uv run python scripts/comment_density.py --update-baseline` and commit "
-    "the result."
+    "increase, or the file was split or merged, run "
+    "`uv run python scripts/comment_density.py --update-baseline` and commit the result."
 )
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -374,26 +379,41 @@ def load_baseline(path: Path) -> dict[str, BaselineEntry]:
 
 
 def allowance(baseline: BaselineEntry | None, code: int) -> float:
-    """The prose lines a file may hold: its baseline ratio, but never less than the floor
-    ratio, and never fewer than the minimum line count."""
-    scaled = baseline.prose * code / baseline.code if baseline and baseline.code else 0.0
-    return max(scaled, BASELINE_RATIO_FLOOR * code, MIN_ALLOWANCE_LINES)
+    """The prose lines a file may hold: its baseline prose plus the floor ratio for each
+    code line added since, and never less than the floor ratio over all its code or the
+    minimum line count. Code added since the baseline earns the floor ratio, not the
+    file's own, so a file with almost no code cannot scale its prose."""
+    base_prose = baseline.prose if baseline else 0
+    base_code = baseline.code if baseline else 0
+    earned = base_prose + BASELINE_RATIO_FLOOR * max(code - base_code, 0)
+    return max(earned, BASELINE_RATIO_FLOOR * code, MIN_ALLOWANCE_LINES)
 
 
 def exceeds_ratchet(counts: Counts, baseline: BaselineEntry | None) -> bool:
-    if baseline is not None and counts.prose <= baseline.prose:
-        return False
     return counts.prose > allowance(baseline, counts.code)
 
 
-def parse_added_lines(diff: str) -> dict[str, set[int]]:
-    """Map each file to the 1-based line numbers a `git diff -U0` adds or edits."""
+@dataclass(frozen=True)
+class ParsedDiff:
+    added: dict[str, set[int]]
+    renames: dict[str, str]
+
+
+def parse_diff(diff: str) -> ParsedDiff:
+    """The 1-based lines a `git diff -U0` adds or edits in each file, and each renamed
+    file's old path."""
     added: dict[str, set[int]] = {}
+    renames: dict[str, str] = {}
     current: set[int] | None = None
+    rename_from: str | None = None
     in_header = False
     for line in diff.split("\n"):
         if line.startswith("diff --git "):
-            in_header, current = True, None
+            in_header, current, rename_from = True, None, None
+        elif in_header and line.startswith("rename from "):
+            rename_from = line.removeprefix("rename from ")
+        elif in_header and line.startswith("rename to ") and rename_from is not None:
+            renames[line.removeprefix("rename to ")] = rename_from
         elif in_header and line.startswith("+++ "):
             target = line[4:]
             current = None if target == "/dev/null" else added.setdefault(target[2:], set())
@@ -403,7 +423,7 @@ def parse_added_lines(diff: str) -> dict[str, set[int]]:
                 start = int(match[1])
                 length = 1 if match[2] is None else int(match[2])
                 current.update(range(start, start + length))
-    return added
+    return ParsedDiff(added, renames)
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -417,13 +437,15 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def diff_base(root: Path) -> str:
+def merge_base(root: Path) -> str | None:
     result = _git(root, "merge-base", "HEAD", BASE_REF)
     base = result.stdout.strip()
-    return base if result.returncode == 0 and base else "HEAD"
+    return base if result.returncode == 0 and base else None
 
 
-def added_lines(root: Path) -> dict[str, set[int]]:
+def read_diff(root: Path) -> tuple[ParsedDiff, bool]:
+    """The parsed diff, and whether it fell back to HEAD because there is no merge-base."""
+    base = merge_base(root)
     # The pathspec is every .py file, not just the files under check: rename detection
     # needs the old path in the diff to pair it with the new one.
     result = _git(
@@ -437,13 +459,13 @@ def added_lines(root: Path) -> dict[str, set[int]]:
         "--no-ext-diff",
         "--src-prefix=a/",
         "--dst-prefix=b/",
-        diff_base(root),
+        base or "HEAD",
         "--",
         "*.py",
     )
     if result.returncode != 0:
         raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
-    return parse_added_lines(result.stdout)
+    return parse_diff(result.stdout), base is None
 
 
 def find_citations(analysis: Analysis, added: set[int]) -> list[tuple[int, str, str]]:
@@ -520,13 +542,28 @@ def _in_ratchet_scope(rel: str) -> bool:
     return any(rel.startswith(f"{tree}/") for tree in RATCHET_TREES)
 
 
-def run_check(root: Path, baseline_path: Path, paths: Sequence[str]) -> list[str]:
+@dataclass(frozen=True)
+class CheckResult:
+    failures: list[str]
+    warnings: list[str]
+
+
+def baseline_for(
+    rel: str, baseline: dict[str, BaselineEntry], renames: dict[str, str]
+) -> BaselineEntry | None:
+    """A file's own entry, or its old path's entry when git sees it as a rename."""
+    if rel in baseline:
+        return baseline[rel]
+    return baseline.get(renames.get(rel, ""))
+
+
+def run_check(root: Path, baseline_path: Path, paths: Sequence[str]) -> CheckResult:
     files = [rel for rel in (repo_relative(root, raw) for raw in paths) if rel.endswith(".py")]
     files = [rel for rel in files if (root / rel).is_file()]
     if not files:
-        return []
+        return CheckResult([], [])
     baseline = load_baseline(baseline_path)
-    added = added_lines(root)
+    diff, used_fallback = read_diff(root)
     failures: list[str] = []
     for rel in files:
         try:
@@ -534,11 +571,12 @@ def run_check(root: Path, baseline_path: Path, paths: Sequence[str]) -> list[str
         except (SyntaxError, tokenize.TokenError) as error:
             failures.append(f"{rel}:1: cannot parse this file: {error}")
             continue
-        rows = added.get(rel, set())
+        rows = diff.added.get(rel, set())
         if _in_ratchet_scope(rel):
-            failures.extend(ratchet_failures(rel, analysis, baseline.get(rel), rows))
+            entry = baseline_for(rel, baseline, diff.renames)
+            failures.extend(ratchet_failures(rel, analysis, entry, rows))
         failures.extend(citation_failures(rel, analysis, rows))
-    return failures
+    return CheckResult(failures, [FALLBACK_WARNING] if used_fallback else [])
 
 
 def main(
@@ -565,13 +603,13 @@ def main(
 
     if args.check:
         try:
-            failures = run_check(root, baseline_path, args.files)
+            result = run_check(root, baseline_path, args.files)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"comment_density: {error}", file=sys.stderr)
             return 1
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        return 1 if failures else 0
+        for line in [*result.warnings, *result.failures]:
+            print(line, file=sys.stderr)
+        return 1 if result.failures else 0
 
     print(render_report(root, summary_only=args.summary))
     return 0

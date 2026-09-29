@@ -265,10 +265,19 @@ def test_adding_prose_to_a_heavy_file_fails_even_after_code_shrinks() -> None:
     assert cd.exceeds_ratchet(_counts(50, 141), baseline)
 
 
-def test_a_heavy_file_may_keep_its_ratio_as_code_grows() -> None:
+def test_code_added_to_a_heavy_file_earns_the_floor_ratio_not_the_files_own() -> None:
     baseline = cd.BaselineEntry(code=100, prose=140)
-    assert not cd.exceeds_ratchet(_counts(200, 280), baseline)
-    assert cd.exceeds_ratchet(_counts(200, 281), baseline)
+    assert cd.allowance(baseline, 200) == 190
+    assert not cd.exceeds_ratchet(_counts(200, 190), baseline)
+    assert cd.exceeds_ratchet(_counts(200, 191), baseline)
+
+
+@pytest.mark.parametrize(("code", "prose"), [(1, 26), (1, 20)])
+def test_a_file_with_almost_no_code_cannot_scale_its_prose(code: int, prose: int) -> None:
+    baseline = cd.BaselineEntry(code=code, prose=prose)
+    assert cd.allowance(baseline, code + 1) == prose + 0.5
+    assert not cd.exceeds_ratchet(_counts(code + 1, prose), baseline)
+    assert cd.exceeds_ratchet(_counts(code + 1, prose + 1), baseline)
 
 
 def test_a_lean_file_may_grow_to_the_floor_ratio() -> None:
@@ -443,19 +452,43 @@ rename to pkg/new_name.py
 
 
 def test_added_lines_are_read_from_hunk_headers() -> None:
-    added = cd.parse_added_lines(DIFF)
+    added = cd.parse_diff(DIFF).added
     assert added["pkg/mod.py"] == {4, 5, 12}
     assert added["pkg/new.py"] == {1, 2, 3}
 
 
 def test_a_content_line_that_looks_like_a_file_header_is_not_one() -> None:
-    assert "pkg/fake.py" not in cd.parse_added_lines(DIFF)
+    assert "pkg/fake.py" not in cd.parse_diff(DIFF).added
 
 
 def test_deleted_and_pure_renamed_files_add_nothing() -> None:
-    added = cd.parse_added_lines(DIFF)
+    added = cd.parse_diff(DIFF).added
     assert "pkg/removed.py" not in added
     assert not added.get("pkg/new_name.py")
+
+
+def test_renames_map_the_new_path_to_the_old_one() -> None:
+    assert cd.parse_diff(DIFF).renames == {"pkg/new_name.py": "pkg/old_name.py"}
+
+
+def test_a_rename_that_also_edits_the_file_keeps_both_facts() -> None:
+    diff = (
+        "diff --git a/a.py b/b.py\nsimilarity index 90%\nrename from a.py\nrename to b.py\n"
+        "index 1..2 100644\n--- a/a.py\n+++ b/b.py\n@@ -3,0 +4 @@\n+# added\n"
+    )
+    parsed = cd.parse_diff(diff)
+    assert parsed.renames == {"b.py": "a.py"}
+    assert parsed.added == {"b.py": {4}}
+
+
+def test_a_rename_is_looked_up_under_its_old_path_unless_it_has_its_own_entry() -> None:
+    old = cd.BaselineEntry(code=10, prose=20)
+    own = cd.BaselineEntry(code=10, prose=5)
+    renames = {"new.py": "old.py"}
+    assert cd.baseline_for("new.py", {"old.py": old}, renames) == old
+    assert cd.baseline_for("new.py", {"old.py": old, "new.py": own}, renames) == own
+    assert cd.baseline_for("new.py", {}, renames) is None
+    assert cd.baseline_for("other.py", {"old.py": old}, renames) is None
 
 
 # --- end to end against a throwaway repository ------------------------------------------
@@ -507,7 +540,12 @@ def _check(repo: Path, *files: str) -> tuple[int, str]:
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
         code = cd.main(["--check", *files], root=repo, baseline_path=baseline)
-    return code, err.getvalue()
+    lines = [
+        line
+        for line in err.getvalue().splitlines(keepends=True)
+        if line != cd.FALLBACK_WARNING + "\n"
+    ]
+    return code, "".join(lines)
 
 
 def _record_baseline(repo: Path) -> None:
@@ -666,8 +704,123 @@ def test_the_hook_reports_a_file_it_cannot_parse(repo: Path) -> None:
     assert err.startswith("scripts/broken.py:1: cannot parse")
 
 
+def _move(repo: Path, source: str, target: str) -> None:
+    (repo / target).parent.mkdir(parents=True, exist_ok=True)
+    _git(repo, "mv", source, target)
+
+
+def _heavy_file() -> str:
+    return "".join(f"x{i} = {i}\n" for i in range(40)) + "".join(f"# n{i}\n" for i in range(30))
+
+
+def test_moving_a_heavy_file_keeps_its_baseline(repo: Path) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+
+    _move(repo, MOD, "backend/src/other/moved.py")
+    _stage(repo)
+    assert _check(repo, "backend/src/other/moved.py") == (0, "")
+
+
+def test_a_moved_file_that_gains_prose_fails_against_the_old_baseline(repo: Path) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+
+    _move(repo, MOD, "backend/src/other/moved.py")
+    _write(repo / "backend/src/other/moved.py", _heavy_file() + "# one more\n")
+    _stage(repo)
+    status, err = _check(repo, "backend/src/other/moved.py")
+    assert status == 1
+    assert "baseline 30 prose over 40 code" in err
+
+
+def test_a_moved_file_passes_once_its_own_baseline_is_recorded(repo: Path) -> None:
+    _write(repo / MOD, _heavy_file())
+    _commit(repo, "base")
+    _record_baseline(repo)
+
+    _move(repo, MOD, "backend/src/other/moved.py")
+    _write(repo / "backend/src/other/moved.py", _heavy_file() + "# one more\n")
+    _stage(repo)
+    _record_baseline(repo)
+    assert _check(repo, "backend/src/other/moved.py") == (0, "")
+
+
+def test_a_file_split_in_two_is_held_to_the_floor_until_the_baseline_is_updated(
+    repo: Path,
+) -> None:
+    _write(repo / MOD, _heavy_file() * 2)
+    _commit(repo, "base")
+    _record_baseline(repo)
+
+    _write(repo / MOD, _heavy_file())
+    _write(repo / "backend/src/pkg/half.py", _heavy_file())
+    _stage(repo)
+    status, err = _check(repo, "backend/src/pkg/half.py")
+    assert status == 1
+    assert "--update-baseline" in err
+    assert "split or merged" in err
+
+
+def test_a_missing_origin_main_warns_that_only_uncommitted_changes_are_checked(
+    repo: Path,
+) -> None:
+    _write(repo / "backend/tests/test_x.py", "x = 1\n")
+    _commit(repo, "base")
+    _write(repo / "backend/tests/test_x.py", "x = 1\n# per issue 12\n")
+    _stage(repo)
+    baseline = repo.parent / "b.json"
+    baseline.write_text("{}\n", encoding="utf-8", newline="\n")
+
+    result = cd.run_check(repo, baseline, ["backend/tests/test_x.py"])
+    assert result.warnings == [cd.FALLBACK_WARNING]
+    assert "origin/main" in cd.FALLBACK_WARNING
+
+
+def test_the_warning_is_printed_before_the_failures(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(repo / "backend/tests/test_x.py", "x = 1\n")
+    _commit(repo, "base")
+    _write(repo / "backend/tests/test_x.py", "x = 1\n# per issue 12\n")
+    _stage(repo)
+    baseline = repo.parent / "b.json"
+    baseline.write_text("{}\n", encoding="utf-8", newline="\n")
+
+    status = cd.main(["--check", "backend/tests/test_x.py"], root=repo, baseline_path=baseline)
+    lines = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert lines[0] == cd.FALLBACK_WARNING
+    assert lines[1].startswith("backend/tests/test_x.py:2:")
+
+
+def test_a_warning_alone_does_not_fail_the_hook(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(repo / "backend/tests/test_x.py", "x = 1\n")
+    _commit(repo, "base")
+    baseline = repo.parent / "b.json"
+    baseline.write_text("{}\n", encoding="utf-8", newline="\n")
+
+    assert cd.main(["--check", "backend/tests/test_x.py"], root=repo, baseline_path=baseline) == 0
+    assert cd.FALLBACK_WARNING in capsys.readouterr().err
+
+
+def test_no_warning_when_origin_main_exists(repo: Path) -> None:
+    _write(repo / "backend/tests/test_x.py", "x = 1\n")
+    _commit(repo, "base")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    baseline = repo.parent / "b.json"
+    baseline.write_text("{}\n", encoding="utf-8", newline="\n")
+
+    assert cd.run_check(repo, baseline, ["backend/tests/test_x.py"]).warnings == []
+
+
 def test_the_hook_ignores_non_python_and_missing_files(tmp_path: Path) -> None:
-    assert cd.run_check(tmp_path, tmp_path / "baseline.json", ["README.md", "gone.py"]) == []
+    result = cd.run_check(tmp_path, tmp_path / "baseline.json", ["README.md", "gone.py"])
+    assert result == cd.CheckResult([], [])
 
 
 def test_the_hook_reports_a_missing_baseline(
