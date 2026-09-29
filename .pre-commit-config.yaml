@@ -4,7 +4,7 @@
 # PR, not to replace CI.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         # SPIA export cells must never carry trailing whitespace (FR-63,
@@ -27,15 +27,48 @@ repos:
         exclude: \.(ps1|psm1)$
       - id: detect-private-key
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.1
-    hooks:
-      - id: ruff
-        args: ["--fix"]
-      - id: ruff-format
-
   - repo: local
     hooks:
+      # Ruff runs through the workspace environment, not a pinned
+      # astral-sh/ruff-pre-commit mirror - same reason as mypy below. A second
+      # pinned ruff drifts from the one uv.lock resolves (issue #339: the mirror
+      # sat at v0.16.1 while uv.lock held 0.16.8, itself below pyproject.toml's
+      # own `ruff>=0.16.2` floor), and the disagreement surfaces only as a CI
+      # failure after a push, since Dependabot has no `pre-commit` ecosystem to
+      # keep the rev in step. One resolved version means no drift to detect.
+      # scripts/tests/test_precommit_config.py guards this - do not "tidy" the
+      # mirror back in.
+      #
+      # The entry and file selectors below mirror upstream's own
+      # .pre-commit-hooks.yaml, because the point is parity with CI:
+      #   --force-exclude - ruff honours [tool.ruff] `exclude` for paths passed
+      #     explicitly on the command line only under this flag, and pre-commit
+      #     always passes filenames explicitly. Without it, the first `exclude`
+      #     added to pyproject.toml would have pre-commit lint and autofix files
+      #     that CI's `ruff check .` skips.
+      #   types_or - CI's `.` is recursive over every file type ruff handles, so
+      #     narrowing these hooks to `[python]` would reopen #339's failure mode
+      #     from a new direction. `ruff format` formats Python code blocks in
+      #     markdown, and `ruff format --check .` already covers all 88 tracked
+      #     .md files (424 = 336 .py + 88 .md), so markdown is a live gap here,
+      #     not a hypothetical one. pyi/jupyter are latent - the repo has neither
+      #     today - and cost nothing to close now.
+      # require_serial: one `uv run` process over all files, not one per chunk.
+      # Ruff parallelises internally, so chunking only multiplies uv's startup.
+      - id: ruff
+        name: ruff check --fix (uv run)
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format (uv run)
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter, markdown]
+        require_serial: true
+
       # mypy needs the workspace's own resolved environment (SQLAlchemy /
       # Pydantic plugins, first-party packages), which the pre-commit-managed
       # mirror hooks don't have easy access to - run it via uv instead.
