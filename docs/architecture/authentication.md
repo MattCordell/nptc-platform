@@ -83,7 +83,7 @@ and a concurrent renewal would only race it.
 |---|---|
 | `app.py` | `create_app()`: CORS (exactly one origin), exception handlers, routers |
 | `dependencies.py` | `current_principal`, `permission_dep`, the per-request `AuditContext`, the session and verifier |
-| `errors.py` | `TokenError` → 401; `AuthorisationError` → its own `http_status` |
+| `errors.py` | `TokenError` → 401; `AuthorisationError` → its own `http_status`; every other domain exception from the `_REFUSALS` table |
 | `routers/auth.py` | `GET /api/v1/auth/me` |
 
 `current_principal` runs the chain exactly once per request:
