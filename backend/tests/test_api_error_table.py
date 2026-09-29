@@ -27,6 +27,7 @@ from nptc.api.errors import (
     _DETAIL_SERVER_MISCONFIGURED,
     _DETAIL_SIGN_IN_REQUIRED,
     _DETAIL_UNAUTHENTICATED,
+    _REFUSALS,
     register_exception_handlers,
 )
 from nptc.catalogue.errors import EntryNotFoundError
@@ -106,6 +107,16 @@ def test_every_exception_with_an_http_status_has_a_handler() -> None:
         "register_exception_handlers) for: "
         + ", ".join(f"{cls.__module__}.{cls.__qualname__}" for cls in unhandled)
     )
+
+
+def test_every_row_can_resolve_a_status() -> None:
+    without_status = [
+        cls
+        for cls, row in _REFUSALS.items()
+        if row.status is None and not hasattr(cls, "http_status")
+    ]
+
+    assert not without_status, f"set status= on the row for: {without_status}"
 
 
 def test_the_sweep_flags_a_class_no_handler_serves() -> None:
