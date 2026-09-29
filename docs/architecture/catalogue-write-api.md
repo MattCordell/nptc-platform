@@ -817,6 +817,20 @@ row-version and FR-89 preconditions both run before its savepoint opens, the sam
 "reject before mutating" posture every write path in this document takes. A no-op
 resubmission (see above) is not a rejection - it is a `200`.
 
+## Mapping a domain exception to a response
+
+Every exception under `nptc` or `nptc_shared` that names an `http_status` needs a handler.
+Most need only a row in `_REFUSALS` in `backend/src/nptc/api/errors.py`: a fixed `detail`
+sentence, one log line and a log level. A subclass is served by its base's row. A refusal
+that builds its own body, or branches on the raised instance, is a function in
+`register_exception_handlers` instead. `backend/tests/test_api_error_table.py` fails and
+names the class if a new exception has neither, and the `detail` sentence must never carry
+`str(exc)` (NFR-26).
+
+An exception with no `http_status` (such as `InvalidSCTIDError`, from a shared module) still
+needs a row with an explicit `status` if a route can raise it. That test finds only classes
+that name a status, so nothing checks for this case.
+
 ## What these issues do not cover
 
 - Entry creation over HTTP. `nptc.catalogue.entries.create_entry` is library-only -
