@@ -13,7 +13,10 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
+import sys
+import types
 from collections.abc import Iterable
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -39,6 +42,7 @@ from nptc.catalogue.local_codes import (
 )
 from nptc.catalogue.maintenance import ListingCursorMismatchError, MalformedListingCursorError
 from nptc.catalogue.search import EmptySearchQueryError
+from nptc.db.models.local_code_snomed_map import SnomedMapMatchStrength
 from nptc.settings import AuthSettings
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
@@ -63,10 +67,19 @@ def _client_raising(exc: Exception) -> TestClient:
     return TestClient(app)
 
 
+def _import_all(package: types.ModuleType) -> None:
+    """Imports every module under `package`, subpackages included.
+
+    `walk_packages` alone would skip a subpackage whose `__init__` fails to
+    import; importing each name it yields is what makes that a failure.
+    """
+    for module in pkgutil.walk_packages(package.__path__, f"{package.__name__}."):
+        importlib.import_module(module.name)
+
+
 def _import_first_party() -> None:
     for package in (nptc, nptc_shared):
-        for module in pkgutil.walk_packages(package.__path__, f"{package.__name__}."):
-            importlib.import_module(module.name)
+        _import_all(package)
 
 
 def _all_subclasses(cls: type[Exception]) -> set[type[Exception]]:
@@ -117,6 +130,50 @@ def test_every_row_can_resolve_a_status() -> None:
     ]
 
     assert not without_status, f"set status= on the row for: {without_status}"
+
+
+def test_the_sweep_fails_when_a_subpackage_will_not_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "sweep_probe_pkg"
+    (root / "broken").mkdir(parents=True)
+    (root / "__init__.py").write_text("")
+    (root / "broken" / "__init__.py").write_text("raise ImportError('probe')")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        package = importlib.import_module("sweep_probe_pkg")
+
+        with pytest.raises(ImportError, match="probe"):
+            _import_all(package)
+    finally:
+        sys.modules.pop("sweep_probe_pkg", None)
+
+
+def test_every_row_log_message_fits_its_log_arguments() -> None:
+    """`logging` swallows a bad format string to stderr, so a mismatched row
+    would lose its log line while the response still looked right."""
+    mismatched = []
+    for cls, row in _REFUSALS.items():
+        if row.log_message is None:
+            continue
+        try:
+            row.log_message % row.log_args(Exception("probe"))
+        except TypeError:
+            mismatched.append(cls.__name__)
+
+    assert not mismatched, f"log_message and log_args disagree for: {mismatched}"
+
+
+def test_the_match_strength_sentence_names_exactly_the_stored_strengths() -> None:
+    prefix = "The match strength must be one of: "
+    detail = _REFUSALS[InvalidMatchStrengthError].detail
+
+    named = set(detail.removeprefix(prefix).removesuffix(".").split(", "))
+
+    assert named == {m.value for m in SnomedMapMatchStrength}, (
+        "update the sentence in nptc/api/errors.py together with the CHECK constraint migration"
+    )
 
 
 def test_the_sweep_flags_a_class_no_handler_serves() -> None:

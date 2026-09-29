@@ -126,7 +126,6 @@ from nptc.catalogue.property_value_sources import (
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
-from nptc.db.models.local_code_snomed_map import SnomedMapMatchStrength
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 from nptc.registry.definitions import (
     DeprecatedPropertyWriteError,
@@ -492,9 +491,8 @@ _DETAIL_INVALID_LOCAL_CODE_SYSTEM_KEY = (
     "A local code system key is 1 to 63 characters: a lowercase letter, then lowercase "
     "letters, digits or underscores."
 )
-#: Built from the enum so a new match strength updates this text for free.
 _DETAIL_INVALID_MATCH_STRENGTH = (
-    f"The match strength must be one of: {', '.join(m.value for m in SnomedMapMatchStrength)}."
+    "The match strength must be one of: exact, narrower, broader, ambiguous."
 )
 
 

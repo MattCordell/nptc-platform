@@ -820,7 +820,9 @@ resubmission (see above) is not a rejection - it is a `200`.
 ## Mapping a domain exception to a response
 
 Every exception under `nptc` or `nptc_shared` that names an `http_status` needs a handler.
-Most need only a row in `_REFUSALS` in `backend/src/nptc/api/errors.py`: a fixed `detail`
+An exception with no `http_status` (such as `InvalidSCTIDError`, from a shared module) still
+needs a row with an explicit `status` if a route can raise it, and nothing checks for that:
+the test below finds only classes that name a status. Most need only a row in `_REFUSALS` in `backend/src/nptc/api/errors.py`: a fixed `detail`
 sentence, one log line and a log level. A subclass is served by its base's row. A refusal
 that builds its own body, or branches on the raised instance, is a function in
 `register_exception_handlers` instead. `backend/tests/test_api_error_table.py` fails and
