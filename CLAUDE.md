@@ -71,7 +71,7 @@ Fast iteration vs. full sweep: over half of `backend/tests` is marked
 `@pytest.mark.integration` (testcontainers Postgres or Keycloak), and those tests take
 most of the wall time. No test in `transform/tests`, `shared/tests` or `scripts/tests`
 carries the marker. Counts as of 2026-09-29, as collected items (each parametrised case
-counts once):
+counts separately):
 
 | Tree | Collected | `integration` | Unmarked |
 |---|---:|---:|---:|
@@ -85,8 +85,8 @@ To re-measure, run `uv run pytest --collect-only -q -m integration` (or
 So `-m "not integration"` runs about three fifths of the whole suite but under half of
 `backend/tests`. For backend work it is a quick check, not a stand-in for the container
 tests. It also still needs a running Docker daemon: 65 unmarked backend tests request the
-Postgres container through the `db`/`app_db` fixtures, until #369 derives the marker
-from fixture use.
+Postgres container through the `app_db` fixture, until #369 derives the marker from
+fixture use.
 
 Run the fast subset while iterating, and the full suite (optionally parallelised via
 `pytest-xdist`) once before pushing:
