@@ -9,7 +9,26 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
+      # Typeshed stubs version as <semver>.<date> - types-pyyaml went
+      # 6.0.12.20260815 -> 6.0.12.20260906. Dependabot's semver_segments() reads
+      # only segments[0..2], so a date-segment bump is neither a "minor" nor a
+      # "patch" and falls through to an individual PR (#173, #334, #122, #234;
+      # #334 then collided with grouped PR #337 on uv.lock). Stubs therefore
+      # need a group with no update-types filter - which means this group takes
+      # stub updates at every level, majors included. That is deliberate: any
+      # update-types filter here would reinstate the semver check the group
+      # exists to bypass. The cost is that a breaking stub major arrives
+      # alongside unrelated stub patches, so a red CI run blocks the lot until
+      # the group is split by hand.
+      python-type-stubs:
+        patterns: ["types-*"]
+      # exclude-patterns is load-bearing, not tidy-up. Group criteria are ANDed,
+      # and a group with no patterns scores 500 for specificity against 93 for
+      # "types-*", so without this exclusion python-minor-and-patch wins every
+      # stub and then rejects it on semver - reproducing the bug above in either
+      # config order. Do not remove it.
       python-minor-and-patch:
+        exclude-patterns: ["types-*"]
         update-types: ["minor", "patch"]
     labels: ["infra", "dependencies"]
 
