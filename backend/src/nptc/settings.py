@@ -243,11 +243,8 @@ class ApiSettings(BaseSettings):
     @field_validator("max_preferred_term_length", mode="before")
     @classmethod
     def _blank_max_preferred_term_length_is_unset(cls, value: object) -> object:
-        """A blank `NPTC_MAX_PREFERRED_TERM_LENGTH=` is the written-down form
-        of "unset" (a compose file or `.env` template), so it must not reach
-        the `int` parser. Only this field: `env_ignore_empty` class-wide
-        would let a blank `NPTC_FRONTEND_BASE_URL` fall back to localhost
-        in production instead of failing."""
+        """Blank means unset. Per field, not `env_ignore_empty`: a blank
+        `NPTC_FRONTEND_BASE_URL` must keep failing, not fall back to localhost."""
         if isinstance(value, str) and not value.strip():
             return None
         return value
