@@ -263,6 +263,43 @@ def test_api_settings_reads_max_preferred_term_length_from_env(
 
 
 @pytest.mark.req("FR-86")
+@pytest.mark.parametrize("value", ["", "   "])
+def test_api_settings_treats_a_blank_max_preferred_term_length_env_as_unset(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """`NPTC_MAX_PREFERRED_TERM_LENGTH=` is how a compose file or `.env`
+    template leaves the documented "unset" state written down. Without this
+    the empty string reaches the `int` parser and fails start-up."""
+    monkeypatch.setenv("NPTC_MAX_PREFERRED_TERM_LENGTH", value)
+
+    assert ApiSettings().max_preferred_term_length is None
+
+
+@pytest.mark.req("FR-86")
+def test_api_settings_still_rejects_a_non_numeric_max_preferred_term_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a *blank* value means unset - a typo must stay loud."""
+    monkeypatch.setenv("NPTC_MAX_PREFERRED_TERM_LENGTH", "abc")
+
+    with pytest.raises(ValidationError, match="max_preferred_term_length"):
+        ApiSettings()
+
+
+@pytest.mark.req("FR-86")
+def test_api_settings_blank_frontend_base_url_env_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The blank-means-unset rule is per field, not class-wide: a blank
+    origin silently falling back to localhost in production would be worse
+    than the loud failure."""
+    monkeypatch.setenv("NPTC_FRONTEND_BASE_URL", "")
+
+    with pytest.raises(ValidationError, match="frontend_base_url"):
+        ApiSettings()
+
+
+@pytest.mark.req("FR-86")
 @pytest.mark.parametrize("value", [0, -1])
 def test_api_settings_rejects_a_non_positive_max_preferred_term_length(value: int) -> None:
     """A zero or negative maximum can never be a real length ceiling - fail
