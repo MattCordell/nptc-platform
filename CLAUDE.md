@@ -169,7 +169,10 @@ CONTRIBUTING.md's table for which `docs/` path each kind of change touches (API/
 `docs/api/openapi.json` + `docs/architecture/`; DB schema →
 `docs/operations/upgrade.md` + `docs/architecture/data-model.md`; config/env var →
 `deploy/.env.example` + `docs/operations/configuration.md`; UI behaviour →
-`docs/user/`; a rejected-alternative decision → a new ADR).
+`docs/user/`; a rejected-alternative decision → a new ADR). New ADRs are paused until
+the P1 milestone closes, except for a decision that genuinely rejects an alternative that
+might be revisited; other decisions' reasoning goes in the PR description (see
+CONTRIBUTING.md).
 
 ## Backlog and issues
 

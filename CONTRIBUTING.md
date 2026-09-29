@@ -109,9 +109,14 @@ Silence is not an option, and CI enforces that.
 | Configuration or an env var | `deploy/.env.example` **and** `docs/operations/configuration.md` |
 | Jobs, backups, sweeps, exports | `docs/operations/runbooks/` |
 | Anything a Reviewer or Admin does in the UI | `docs/user/` |
-| A design decision with a rejected alternative | A new ADR in `docs/adr/` |
+| A design decision with a rejected alternative | A new ADR in `docs/adr/`, subject to the P1 pause below |
 | A clinical safety consideration | `docs/governance/hazard-log.md` |
 | Setup, quickstart or prerequisites | `README.md`, `CONTRIBUTING.md` |
+
+**New ADRs are paused until the "P1 — Core catalogue" milestone closes.** During the
+pause, write a new ADR only when a decision genuinely rejects an alternative that might be
+revisited: a fork in the road, not an implementation detail. Record any other decision's
+reasoning in the PR description. Amending or superseding an existing ADR is not affected.
 
 ### A schema change's prose has one home each
 
