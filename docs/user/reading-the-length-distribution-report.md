@@ -3,10 +3,14 @@
 > **This page describes API behaviour, not a screen yet.** There is no admin screen for
 > this report — it is reachable today by a developer or administrator reading the API
 > directly. See issue #152.
+>
+> **Editors do not see the warning yet.** The platform returns the over-length warning
+> in the API response when an entry's preferred term is saved, but the editing screen
+> does not display it. Issue #367 adds that.
 
 ## What this report is for
 
-RCPA-QAP can set a maximum preferred-term length, above which saving a term produces a
+RCPA-QAP can set a maximum preferred-term length, above which saving a term returns a
 warning rather than being blocked. No maximum is set by default. This report counts, for
 each length that actually occurs in the catalogue, how many entries a maximum set to that
 length would affect — so RCPA-QAP can choose a sensible value instead of guessing.
@@ -15,10 +19,10 @@ Call `GET /catalogue/admin/preferred-term-length-distribution` with an Administr
 credential (the same one used for every other entry-editing action) to fetch it.
 
 **The count includes every entry, whatever its status** — draft and withdrawn entries as
-well as active ones. That matches who can actually be warned: an editor can amend a draft's
-preferred term before it is ever published, and the warning applies exactly the same way
-there as it does on an active entry. A report scoped to active entries alone would
-undercount what a chosen maximum affects.
+well as active ones. That matches which entries the warning applies to: an editor can
+amend a draft's preferred term before it is ever published, and the warning applies
+exactly the same way there as it does on an active entry. A report scoped to active
+entries alone would undercount what a chosen maximum affects.
 
 ## What the response tells you
 
@@ -29,7 +33,7 @@ has. For each length, it gives you:
 - **How many entries have a preferred term exactly that long.**
 - **How many entries are longer than it.** This is the number that matters when choosing a
   maximum: if you set the maximum to this length, this is how many existing entries would
-  start showing a warning.
+  return a warning the next time their preferred term is saved.
 
 The response also gives the length of the longest preferred term currently in the
 catalogue, so you can see the top of the range without scanning the whole list.
