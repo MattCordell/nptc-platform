@@ -74,6 +74,7 @@ StubIdp = _jwt_support.StubIdp
 running_stub_idp = _jwt_support.running_stub_idp
 mint_token = _jwt_support.mint_token
 generate_rsa_key = _jwt_support.generate_rsa_key
+shared_rsa_key = _jwt_support.shared_rsa_key
 
 KID = "test-key-1"
 AUDIENCE = "nptc-api"
@@ -131,7 +132,7 @@ def build_api_test_app(
     shut down deterministically rather than at GC time.
     """
     with running_stub_idp() as idp:
-        key = generate_rsa_key()
+        key = shared_rsa_key()
         idp.add_key(KID, key)
         issuer = idp.issuer_url
 

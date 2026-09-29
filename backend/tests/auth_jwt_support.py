@@ -19,6 +19,7 @@ import json
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
@@ -34,6 +35,13 @@ CERTS_PATH = f"{REALM_PATH}/protocol/openid-connect/certs"
 
 def generate_rsa_key() -> RSAPrivateKey:
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@cache
+def shared_rsa_key() -> RSAPrivateKey:
+    """Every caller gets the same key. A test that needs a key distinct
+    from another must call `generate_rsa_key()`."""
+    return generate_rsa_key()
 
 
 class StubIdp:
