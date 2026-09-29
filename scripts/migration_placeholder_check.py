@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Pre-commit gate: fail if a committed migration still carries
-`backend/migrations/script.py.mako`'s unfilled `<FILL IN` placeholder (issue #191).
+`backend/migrations/script.py.mako`'s unfilled `<FILL IN` placeholder.
 
 The mako template's docstring skeleton prompts every new migration's author for the
-issue/FR reference and the design rationale, so the convention in CONTRIBUTING.md's
+requirement reference and the design rationale, so the convention in CONTRIBUTING.md's
 "A schema change's prose has one home each" is the default rather than something an
 author has to remember. Nothing else stopped an unedited placeholder from landing on
 `main` looking authored - this script is that stop.

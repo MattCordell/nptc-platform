@@ -4,7 +4,7 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 
-Issue #NNN (FR-nn): <FILL IN - which issue and FR/NFR this migration lands>.
+Requirement (FR-nn or NFR-nn): <FILL IN - which requirement this migration implements>.
 
 <FILL IN - why, not what: the invariants this DDL enforces and the shape rejected
 instead. This docstring is the primary, most detailed account (see CONTRIBUTING.md's

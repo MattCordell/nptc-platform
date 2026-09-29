@@ -110,6 +110,8 @@ Repo governance scripts (Python, at repo root, tested under `scripts/tests/`):
 
 ```powershell
 uv run python scripts/traceability_check.py      # regenerate docs/requirements/traceability.md
+uv run python scripts/comment_density.py          # prose-to-code report (--summary for totals)
+uv run python scripts/comment_density.py --update-baseline   # lower the ratchet baseline in a sweep PR
 ```
 
 Before pushing (also run by `pre-commit run --all-files`, and mirrored by CI):
@@ -159,7 +161,8 @@ pre-commit run --all-files
 - No secrets, tokens, or personal information in code, logs, or fixtures (NFR-26, NFR-35).
 - A comment or docstring states only what is not obvious from the code: it never
   restates the code, argues with a past reviewer, or cites an issue number. Review
-  feedback is resolved in the code or an ADR, never in a comment. See CONTRIBUTING.md's
+  feedback is resolved in the code or an ADR, never in a comment. The `comment-density`
+  pre-commit hook enforces the citation half and a prose ratchet; see CONTRIBUTING.md's
   "Code comments" section.
 
 ## Documentation is part of the change

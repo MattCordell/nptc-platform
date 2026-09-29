@@ -85,6 +85,16 @@ repos:
         language: system
         files: ^backend/migrations/versions/.*\.py$
 
+      # Two checks in one hook so the script diffs against the merge-base once. It is
+      # given every Python file and sorts them into ratchet scope and citation scope
+      # itself (scripts/comment_density.py).
+      - id: comment-density
+        name: prose ratchet and no issue or review citations in comments (uv run)
+        entry: uv run python scripts/comment_density.py --check
+        language: system
+        types: [python]
+        require_serial: true
+
       - id: openapi-document-is-current
         name: docs/api/openapi.json is up to date (uv run)
         entry: uv run python scripts/generate_openapi.py --check

@@ -157,6 +157,45 @@ resolved by adding a comment explaining why the reviewer was answered.
   line; it doesn't need to fix the rest of the file. Older comments are removed by
   dedicated sweep PRs.
 
+### The prose ratchet and the citation check
+
+The `comment-density` pre-commit hook enforces this rule. It runs
+`scripts/comment_density.py --check` and applies two checks.
+
+- **Prose ratchet** (`backend/src`, `transform/src`, `shared/src`). Prose means comment
+  lines plus docstring lines. A file fails when its prose exceeds its allowance. The
+  allowance is the file's baseline prose in `scripts/comment_density_baseline.json`, plus
+  0.5 lines for each code line added since the baseline. It is never below 0.5 prose lines
+  per code line, and never below 10 lines. So a PR that only removes code never fails, a
+  lean file can grow to 0.5, and a new file is held to 0.5. While a move is
+  unmerged, the file keeps its old path's baseline, because git detects the rename.
+- **Citation check** (all Python files). A comment or docstring line you add or edit may
+  not cite an issue number or a review round. String literals are ignored, and so are
+  `FR-nn`, `NFR-nn` and ADR citations. Lines the diff did not touch are ignored, and
+  the diff is taken against the merge-base with `origin/main`.
+
+Each failure prints `path:line:` and what to do instead. Put an issue or review reference in
+the commit message or PR body.
+
+The hook diffs against the merge-base with `origin/main`. When that merge-base is missing,
+for example in a shallow clone, it warns on stderr and checks citations only in changes
+since `HEAD`. The hook runs on your machine only. No CI step runs it, so `git commit
+--no-verify` skips both checks.
+
+To see the numbers, run `uv run python scripts/comment_density.py` (add `--summary` for
+per-tree totals). The report also covers `frontend/src`, as an approximation that never
+feeds the hook.
+
+To lower a baseline, run `uv run python scripts/comment_density.py --update-baseline` in the
+sweep PR that removes the prose, and commit the result. Run it also where a reviewer accepts
+an increase, and when you split a file or git cannot pair a heavily edited file with its
+old path. Do not run it to silence a failure you have not discussed.
+
+A PR that moves or deletes a source file must run `--update-baseline` too. The rename
+mapping ends when the move merges, and a baseline entry for the old path then matches
+nothing. A test in `scripts/tests` fails while any baseline entry names a missing file, and
+CI runs it.
+
 ## Issue checklists
 
 The GitHub issue is the source of truth for what a unit of work covers and which of its
