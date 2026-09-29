@@ -94,7 +94,8 @@ alongside a realm change. `NPTC_JWKS_URL` is normally left empty so the JWKS end
 resolved via OIDC discovery against `NPTC_OIDC_ISSUER`; set it explicitly only for an
 air-gapped deployment that cannot reach a discovery endpoint. The URL must answer directly:
 PyJWT 2.14 and later treat a redirect as an unreachable endpoint, so the backend serves
-cached keys until the fallback age limit and only then rejects tokens. `NPTC_JWKS_CACHE_SECONDS` and
+already-cached keys until the fallback age limit. A process that has not yet fetched the set
+rejects every token immediately. `NPTC_JWKS_CACHE_SECONDS` and
 `NPTC_JWKS_REFRESH_COOLDOWN_SECONDS` tune `nptc.auth.jwks.SigningKeys`'s own key cache and its
 refresh cooldown against `kid`-spraying (the same cooldown also covers retrying a known `kid`
 during an IdP outage, so it does not turn into a request-latency outage); the defaults are

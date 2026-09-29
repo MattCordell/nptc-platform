@@ -12,7 +12,7 @@ not itself guarantee:
   what stops an *expired* cache plus a down IdP from rejecting a token
   whose key this process has already seen and validated before -
   requiring ``pyjwt[crypto]>=2.13`` (see backend/pyproject.toml, which now
-  pins 2.14) is the companion fix stopping a failed fetch from *wiping*
+  sets a 2.14 floor) is the companion fix stopping a failed fetch from *wiping*
   PyJWKClient's own cache outright (GHSA-fhv5-28vv-h8m8).
 
   This fallback is deliberately narrow in two ways. First, it only
