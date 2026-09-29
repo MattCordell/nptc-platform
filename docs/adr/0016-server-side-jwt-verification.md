@@ -38,9 +38,12 @@ unmaintained upstream past 2021; `joserfc` is capable but would be this reposito
 consumer, with no compensating benefit over PyJWT's much wider adoption and simpler API for the
 one thing this issue needs (`decode` plus a `PyJWKClient`).
 
-**`pyjwt[crypto]>=2.13`, not "a recent PyJWT".** Before 2.13, `PyJWKClient.fetch_data` wrote its
-result in a `finally:` block, so a failed fetch cached `None` and wiped a perfectly good JWKS
-(GHSA-fhv5-28vv-h8m8) — precisely acceptance criterion 4 ("does not fail open", "does not
+**`pyjwt[crypto]>=2.14`, not "a recent PyJWT".** The 2.14 part is twofold. It fixes
+CVE-2026-102274, where one malformed JWK aborted parsing of the whole key set. It also adds
+`PyJWKClient`'s `cooldown_duration` argument, which `SigningKeys` passes, so on 2.13 its
+constructor raises `TypeError`. The 2.13 part is this: before 2.13, `PyJWKClient.fetch_data`
+wrote its result in a `finally:` block, so a failed fetch cached `None` and wiped a perfectly
+good JWKS (GHSA-fhv5-28vv-h8m8) — precisely acceptance criterion 4 ("does not fail open", "does not
 discard valid cached keys"). The floor is stated with a comment in `backend/pyproject.toml`
 naming the CVE, so a future contributor relaxing it sees why not to.
 
