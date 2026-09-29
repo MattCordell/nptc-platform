@@ -90,7 +90,7 @@ from fastapi import APIRouter, Body, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import AuditContextDep, get_api_settings, get_session, permission_dep
+from nptc.api.dependencies import ApiSettingsDep, AuditContextDep, get_session, permission_dep
 from nptc.api.errors import DesignationCollisionResponse, VersionConflictResponse
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, SYNONYM_PROVENANCE, LabelProvenance
 from nptc.api.prefix import API_PREFIX
@@ -643,7 +643,6 @@ class CollisionAcknowledgementResponse(BaseModel):
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
-ApiSettingsDep = Annotated[ApiSettings, Depends(get_api_settings)]
 _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 #: Declared as a value dependency, not just `dependencies=[...]`: unlike
 #: the other three routes, this one has to pass the resolved `Principal`

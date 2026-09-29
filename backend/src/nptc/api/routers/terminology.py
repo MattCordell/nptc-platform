@@ -60,7 +60,7 @@ from typing import Annotated, Any, Final
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from nptc.api.dependencies import get_api_settings, get_terminology_client, permission_dep
+from nptc.api.dependencies import ApiSettingsDep, get_terminology_client, permission_dep
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance, fsn_provenance
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
@@ -181,7 +181,7 @@ class ConceptLookup(BaseModel):
     responses=_RESPONSES,
     dependencies=[_READ],
 )
-def get_concept(client: TerminologyClientDep, code: str) -> ConceptLookup:
+def get_concept(client: TerminologyClientDep, settings: ApiSettingsDep, code: str) -> ConceptLookup:
     resolved = resolve_concept(client, code)
     return ConceptLookup(
         system=resolved.system,
@@ -192,7 +192,7 @@ def get_concept(client: TerminologyClientDep, code: str) -> ConceptLookup:
         edition=resolved.edition,
         resolved_version=resolved.resolved_version,
         label_provenance={
-            "fsn": fsn_provenance(get_api_settings()),
+            "fsn": fsn_provenance(settings),
             "au_preferred_term": AU_PREFERRED_TERM_PROVENANCE,
         },
     )

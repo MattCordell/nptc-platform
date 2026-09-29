@@ -67,7 +67,6 @@ from fastapi import Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import get_api_settings
 from nptc.api.labels import (
     AU_PREFERRED_TERM_PROVENANCE,
     PREFERRED_VARIANT_PROVENANCE,
@@ -88,6 +87,7 @@ from nptc.catalogue.facets import (
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
+from nptc.settings import ApiSettings
 
 __all__ = [
     "Binding",
@@ -333,25 +333,10 @@ class BindingList(BaseModel):
     items: list[Binding]
 
 
-def binding_from_row(row: queries.BindingRow) -> Binding:
-    """`get_api_settings()` reads the same process-wide cached
-    `ApiSettings` singleton every other read-path consumer of settings
-    does (`nptc.api.dependencies`, `lru_cache`d) - a plain call, not a
-    FastAPI `Depends`, because this is an assembler function, not a route
-    handler, and `get_api_settings` takes no request-scoped argument to
-    inject in the first place.
-
-    **A deliberate, temporary trade** (review, issue #144): calling it
-    directly means `app.dependency_overrides` cannot reach this call the
-    way it reaches `get_auth_settings`/`get_session`/`get_terminology_
-    client` in the test harness (`api_app_support.py`). Harmless today -
-    `ApiSettings` refuses any `fsn_semantic_tag` but `"intact"` at
-    construction time, so there is only one value this could ever read -
-    but it will need revisiting once FR-66 makes the setting legitimately
-    vary and a test wants to serve `"stripped"` without a real environment
-    variable.
-    """
-    settings = get_api_settings()
+def binding_from_row(row: queries.BindingRow, settings: ApiSettings) -> Binding:
+    """`settings` is the request's own `ApiSettingsDep`, never a fresh
+    `get_api_settings()` call, so a binding's FSN provenance cannot disagree
+    with the settings the rest of the request read."""
     return Binding(
         system=row.system,
         code=row.code,
@@ -649,7 +634,7 @@ def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySu
 
 
 def build_entry_detail(
-    session: Session, registry: DatatypeRegistry, entry: CatalogueEntry
+    session: Session, registry: DatatypeRegistry, entry: CatalogueEntry, settings: ApiSettings
 ) -> EntryDetail:
     """Assembles the one `EntryDetail` shape every FR-17 URL form serves for
     the same entry (issue #140) - `catalogue.py`'s business-key route and
@@ -672,7 +657,9 @@ def build_entry_detail(
         designations=[
             designation_from_row(row) for row in queries.load_designations(session, entry_ids)
         ],
-        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
+        bindings=[
+            binding_from_row(row, settings) for row in queries.load_bindings(session, entry_ids)
+        ],
         properties=[
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)

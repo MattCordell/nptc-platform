@@ -33,6 +33,7 @@ from sqlalchemy.engine import Connection
 
 from nptc.api.app import create_app
 from nptc.api.labels import LabelProvenance
+from nptc.settings import ApiSettings
 
 
 # `backend/tests` has no `__init__.py` (pytest's `--import-mode=importlib`),
@@ -366,7 +367,7 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         retirement_reason=None,
         replaced_by_code=None,
     )
-    binding = binding_from_row(binding_row)
+    binding = binding_from_row(binding_row, ApiSettings())
     assert {k: v.model_dump() for k, v in binding.label_provenance.items()} == {
         "fsn": {"designation": "fsn", "semantic_tag": "intact"},
         "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
