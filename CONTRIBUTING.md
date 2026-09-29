@@ -135,6 +135,23 @@ why some revisions have no `upgrade.md` section at all — it isn't a gap, and i
 make the doc-impact declaration above optional). See `0007_designation.py` and its
 `upgrade.md`/`data-model.md` entries for a worked example.
 
+## Code comments
+
+A comment may state what is not obvious from the code. It may not restate the code, argue
+with a past reviewer, or cite an issue number. Point to the ADR instead of restating it.
+
+Review feedback is resolved by changing the code or by writing an ADR. It is never
+resolved by adding a comment explaining why the reviewer was answered.
+
+- **Docstrings count.** The rule covers docstrings as well as `#` comments.
+- **Stable identifiers are fine.** A comment may cite `FR-nn`, `NFR-nn` or an ADR number,
+  because those identifiers are stable (see [The requirement
+  identifiers](#the-requirement-identifiers)). An issue number or a review round belongs
+  in the commit message or PR body, where `git blame` leads a reader anyway.
+- **It applies to the comments you write or edit.** A PR brings its own comments into
+  line; it doesn't need to fix the rest of the file. Older comments are removed by
+  dedicated sweep PRs.
+
 ## Issue checklists
 
 The GitHub issue is the source of truth for what a unit of work covers and which of its
@@ -181,6 +198,8 @@ an admin bypass, and a bypass that's always used is not a control.
 - A write path that does not emit an audit event (NFR-08).
 - `switch`/`match` on property datatype outside `registry/datatypes/` (FR-77, ADR-0013).
 - Business logic in database triggers or functions (PRD §14.1).
+- A comment that restates the code, answers a past reviewer, or cites an issue number
+  (see [Code comments](#code-comments)).
 - A test that requires network access to a terminology server (NFR-37).
 - Secrets, tokens or personal information in code, logs or fixtures (NFR-26, NFR-35).
 

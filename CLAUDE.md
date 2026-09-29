@@ -157,6 +157,9 @@ pre-commit run --all-files
   package (FR-77, ADR-0013) — not scattered across storage, export, or search code, and
   not elsewhere in `registry/` either. Enforced by `backend/tests/test_datatype_dispatch.py`.
 - No secrets, tokens, or personal information in code, logs, or fixtures (NFR-26, NFR-35).
+- A comment or docstring states only what the code cannot: it never restates the code,
+  answers a past reviewer, or cites an issue number. Review feedback is resolved in the
+  code or an ADR, never in a comment. See CONTRIBUTING.md's "Code comments" section.
 
 ## Documentation is part of the change
 
