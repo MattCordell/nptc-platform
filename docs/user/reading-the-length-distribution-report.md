@@ -3,10 +3,10 @@
 > **This page describes API behaviour, not a screen yet.** There is no admin screen for
 > this report — it is reachable today by a developer or administrator reading the API
 > directly. See issue #152.
-
-> **Editors do not see the warning yet.** The platform returns the over-length warning in
-> the API response when an entry's preferred term is saved, but the editing screen does not
-> display it. Issue #367 adds that.
+>
+> **Editors do not see the warning yet.** The platform returns the over-length warning
+> in the API response when an entry's preferred term is saved, but the editing screen
+> does not display it. Issue #367 adds that.
 
 ## What this report is for
 
@@ -19,10 +19,10 @@ Call `GET /catalogue/admin/preferred-term-length-distribution` with an Administr
 credential (the same one used for every other entry-editing action) to fetch it.
 
 **The count includes every entry, whatever its status** — draft and withdrawn entries as
-well as active ones. That matches who can actually receive the warning: an editor can amend a draft's
-preferred term before it is ever published, and the warning applies exactly the same way
-there as it does on an active entry. A report scoped to active entries alone would
-undercount what a chosen maximum affects.
+well as active ones. That matches which entries the warning applies to: an editor can
+amend a draft's preferred term before it is ever published, and the warning applies
+exactly the same way there as it does on an active entry. A report scoped to active
+entries alone would undercount what a chosen maximum affects.
 
 ## What the response tells you
 
