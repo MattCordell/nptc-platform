@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nptc.api.dependencies import get_auth_settings, get_terminology_client
+from nptc.api.dependencies import get_api_settings, get_auth_settings, get_terminology_client
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers import (
@@ -43,7 +43,13 @@ def create_app(
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=f"{API_PREFIX}/docs",
     )
-    api_settings = settings or ApiSettings()
+    # Resolved here, not on first use, so a bad `NPTC_*` value is a start-up
+    # failure: `lru_cache` does not cache a raised exception, so a lazy
+    # `get_api_settings()` would turn it into a 500 on every request. The
+    # override makes this the one `ApiSettings` every `Depends(get_api_settings)`
+    # sees, instead of a second, env-read instance next to the one used for CORS.
+    api_settings = settings or get_api_settings()
+    app.dependency_overrides[get_api_settings] = lambda: api_settings
     # Not resolved via `Depends(get_auth_settings)`: `register_exception_handlers`
     # runs at app-construction time, before any request exists for FastAPI's DI
     # to resolve against. `get_auth_settings()` is the same process-wide
