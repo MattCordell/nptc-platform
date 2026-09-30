@@ -50,7 +50,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
-      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:5173}
+      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:8081}
     volumes:
       - ./keycloak/realm:/opt/keycloak/data/import:ro
     ports:
@@ -150,6 +150,32 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+    networks:
+      - nptc
+
+  # The single entry point: Caddy serves the built SPA and proxies /api/* to
+  # the backend. The VITE_* values are baked into the bundle at build time, so
+  # changing either means rebuilding this image, not restarting it.
+  web:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_OIDC_ISSUER: ${VITE_OIDC_ISSUER:-http://localhost:8080/realms/nptc}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-nptc-frontend}
+    image: nptc-frontend:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${NPTC_WEB_PORT:-8081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks:
       - nptc
 
