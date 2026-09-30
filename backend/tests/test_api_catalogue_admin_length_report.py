@@ -23,13 +23,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import literal, select
 from sqlalchemy.engine import Connection
 
+import nptc.catalogue.length_report as length_report
+from nptc.api.routers.catalogue_admin import LengthDistributionBucket, LengthDistributionReport
+from nptc.api.routers.catalogue_designations import AmendDesignationResult
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
+from nptc.catalogue.length_report import build_length_histogram_statement
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 
@@ -118,8 +123,11 @@ def test_the_report_reflects_entries_this_test_created(api: ApiTestApp) -> None:
     assert after["maximum"] is not None
     assert after["maximum"] >= len(long)
     # `entries_exceeding` at `short`'s length counts `long` (strictly
-    # greater), not itself.
-    exceeding_short_before = before_buckets.get(len(short), {}).get("entries_exceeding", 0)
+    # greater), not itself. The baseline is a suffix sum over the buckets
+    # already present, because `short`'s own bucket may not exist yet.
+    exceeding_short_before = sum(
+        bucket["count"] for length, bucket in before_buckets.items() if length > len(short)
+    )
     assert after_buckets[len(short)]["entries_exceeding"] - exceeding_short_before == 1, (
         "the newly created longer entry should count as exceeding the shorter one's length"
     )
@@ -137,6 +145,61 @@ def test_the_longest_bucket_never_exceeds_itself(api: ApiTestApp) -> None:
 
     assert body["maximum"] == max(buckets)
     assert buckets[body["maximum"]]["entries_exceeding"] == 0
+
+
+@pytest.mark.req("FR-87")
+@pytest.mark.integration
+def test_an_empty_catalogue_serialises_no_maximum_as_null(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared container is never empty across a full run, so the
+    histogram statement is narrowed to match nothing - what a truly empty
+    catalogue returns - and the real route and serialiser run against it."""
+    token = _admin_token(api, subject="sub-length-report-empty")
+    monkeypatch.setattr(
+        length_report,
+        "build_length_histogram_statement",
+        lambda: build_length_histogram_statement().where(literal(False)),
+    )
+
+    response = _report(api, token)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"buckets": [], "maximum": None}
+
+
+# --- response contract -------------------------------------------------
+
+
+@pytest.mark.req("FR-87")
+def test_the_report_response_is_immutable_and_hashable() -> None:
+    """`frozen=True` alone would leave a `list` field appendable, so the
+    buckets are a `tuple`: the model is hashable only if every field is."""
+    report = LengthDistributionReport(
+        buckets=(LengthDistributionBucket(length=4, count=2, entries_exceeding=1),),
+        maximum=4,
+    )
+
+    assert isinstance(report.buckets, tuple)
+    assert hash(report) == hash(report.model_copy())
+
+
+@pytest.mark.req("FR-87")
+@pytest.mark.req("FR-86")
+@pytest.mark.parametrize(
+    ("model", "field"),
+    [
+        (LengthDistributionReport, "maximum"),
+        (AmendDesignationResult, "length_warning"),
+    ],
+)
+def test_a_nullable_report_field_is_required_so_null_is_always_deliberate(
+    model: type[BaseModel], field: str
+) -> None:
+    """Both fields may be `null`, and neither may be omitted: a default of
+    `None` would let a forgotten value read as "empty catalogue" or "no
+    warning"."""
+    assert model.model_fields[field].is_required()
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) ------------------------------

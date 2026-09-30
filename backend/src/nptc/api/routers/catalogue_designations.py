@@ -545,7 +545,7 @@ class AmendDesignationResult(BaseModel):
 
     designation: Designation
     warnings: list[CollisionWarning]
-    length_warning: LengthWarning | None = None
+    length_warning: LengthWarning | None
     row_version: int
 
 
@@ -918,6 +918,7 @@ def amend_designation_route(
     return AmendDesignationResult(
         designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
+        length_warning=None,
         # The entry's, bumped by `entry_child_write` above - a `designation`
         # row has no version of its own, so this write takes the entry's
         # lock instead (FR-38, issue #300).

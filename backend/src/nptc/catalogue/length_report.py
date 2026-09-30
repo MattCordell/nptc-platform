@@ -46,7 +46,7 @@ the caller-facing statement of this.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import Select, func
@@ -60,24 +60,26 @@ __all__ = [
     "LengthDistribution",
     "build_length_histogram_statement",
     "compute_length_distribution",
+    "distribution_from_buckets",
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class LengthBucket:
-    """Every entry whose preferred term is exactly `length` characters long."""
+    """Every entry whose preferred term is exactly `length` characters long,
+    and how many entries a maximum set to `length` would affect (FR-86 warns
+    an entry whose length *exceeds* the configured maximum, so
+    `entries_exceeding` counts strictly greater, matching
+    `catalogue_designations._length_warning`'s own comparison)."""
 
     length: int
     count: int
+    entries_exceeding: int
 
 
 @dataclass(frozen=True, slots=True)
 class LengthDistribution:
-    """The whole report: the histogram, its maximum, and - for every length
-    that actually occurs - how many entries a maximum set to that length
-    would affect (FR-86 warns an entry whose length *exceeds* the configured
-    maximum, so this counts strictly greater, matching
-    `catalogue_designations._length_warning`'s own comparison).
+    """The whole report: the histogram, ascending by length, and its maximum.
 
     `maximum` is `None` only for an empty catalogue - there is no longest
     term to report.
@@ -85,7 +87,6 @@ class LengthDistribution:
 
     buckets: tuple[LengthBucket, ...]
     maximum: int | None
-    affected_counts: Mapping[int, int]
 
 
 def build_length_histogram_statement() -> Select[int, int]:
@@ -101,30 +102,39 @@ def build_length_histogram_statement() -> Select[int, int]:
     """
     length = func.char_length(CatalogueEntry.preferred_term).label("length")
     bucket_count = func.count().label("bucket_count")
-    return sa_select(length, bucket_count).group_by(length).order_by(length)
+    return sa_select(length, bucket_count).group_by(length)
+
+
+def distribution_from_buckets(histogram: Iterable[tuple[int, int]]) -> LengthDistribution:
+    """Builds the report from `(length, count)` pairs in any order: sorts
+    them ascending, then derives every length's `entries_exceeding` as a
+    suffix sum over the histogram already in hand.
+
+    The sort lives here, not in the statement's `ORDER BY`, so the result
+    never depends on the order the database returns rows and the database
+    does no sort of its own - a histogram has one row per *distinct* length,
+    a few dozen at most.
+    """
+    ascending = sorted(histogram)
+    exceeding = 0
+    descending: list[LengthBucket] = []
+    for length, count in reversed(ascending):
+        descending.append(LengthBucket(length=length, count=count, entries_exceeding=exceeding))
+        exceeding += count
+    buckets = tuple(reversed(descending))
+    return LengthDistribution(
+        buckets=buckets, maximum=max((bucket.length for bucket in buckets), default=None)
+    )
 
 
 def compute_length_distribution(session: Session) -> LengthDistribution:
-    """Runs `build_length_histogram_statement` once, then derives the
-    maximum and every length's "entries exceeding it" count as a suffix sum
-    over the histogram already in hand - no second query.
+    """Runs `build_length_histogram_statement` once and hands the rows to
+    `distribution_from_buckets` - no second query.
 
     The catalogue's design ceiling (20,000 entries, PRD's planning figure)
-    bounds this to one aggregate scan of `catalogue_entry`; the number of
-    *distinct* lengths a histogram this size can ever produce is smaller
-    still, so the suffix sum below is cheap regardless.
+    bounds this to one aggregate scan of `catalogue_entry`.
     """
-    buckets = tuple(
-        LengthBucket(length=row.length, count=row.bucket_count)
+    return distribution_from_buckets(
+        (row.length, row.bucket_count)
         for row in session.execute(build_length_histogram_statement()).all()
-    )
-    if not buckets:
-        return LengthDistribution(buckets=(), maximum=None, affected_counts={})
-    affected_counts: dict[int, int] = {}
-    running = 0
-    for bucket in reversed(buckets):
-        affected_counts[bucket.length] = running
-        running += bucket.count
-    return LengthDistribution(
-        buckets=buckets, maximum=buckets[-1].length, affected_counts=affected_counts
     )
