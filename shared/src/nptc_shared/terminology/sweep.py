@@ -22,7 +22,7 @@ below and the tests assert it by call count:
    chunks. One disjunction for the whole catalogue is too large to send
    (about 340KB of percent-encoded ECL at the ceiling; ADR-0005).
 5. **``confirm_labels`` (FR-97)** probes only the labels ``designation_check.py``
-   could not settle against ``SweepResult.designations``, reusing pass 3's
+   could not settle against ``SweepResult.designations``, reusing item 3's
    batching.
 
 Retry and backoff live in ``OntoserverClient``. Failure is always an
@@ -129,7 +129,8 @@ class LabelConfirmation:
     bulk ``$expand`` returned, never one call per catalogue row (FR-52).
 
     ``matched`` is the server's ``result`` boolean as FHIR R4 defines it, never
-    qualified by ``message``. That is what keeps the probe monotone (ADR-0006).
+    qualified by ``message``. Trusting ``result`` alone, and its cost, are
+    recorded in ADR-0006's 2026-09-30 amendment.
     """
 
     code: str

@@ -176,9 +176,10 @@ def _local_verdict(
 
     A label matching the FSN **with its tag intact** counts the same as the
     tag-stripped form: both are the concept's own FSN, never
-    ``OTHER_DESIGNATION``. The workbook column rarely carries a tag (PRD
-    Appendix A.8), but if it falls through to that branch, ``_drift_finding``'s
-    "is not the FSN of this code" would be false.
+    ``OTHER_DESIGNATION``. The workbook column never carries a tag in practice
+    (PRD Appendix A.8), but a tagged label is still the concept's own FSN. If it
+    fell through to ``OTHER_DESIGNATION``, ``_drift_finding``'s "is not the FSN
+    of this code" would be false.
     """
     tag_stripped_fsns: set[str] = set()
     full_fsns: set[str] = set()

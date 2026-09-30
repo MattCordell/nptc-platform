@@ -103,7 +103,8 @@ def normalise_for_comparison(text: str) -> str:
     SIGN to U+03BC GREEK SMALL LETTER MU, ligatures, superscripts), all of which
     occur in pathology designations. Folding them would make two different
     strings compare equal, turning a real designation defect into a false
-    match, the one direction with no report. NFC only reorders combining marks.
+    match, the one direction with no report. NFC only brings combining sequences
+    into one canonical composed form; it never changes what the string means.
 
     No casefolding either: a case difference between a published label and a
     served designation is a real editorial difference.
