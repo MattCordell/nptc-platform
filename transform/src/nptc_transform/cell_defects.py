@@ -1,24 +1,23 @@
 """Detects PRD Appendix A.1-A.3 cell-level defects and turns them into findings.
 
-Detection only - nothing here corrects a value. Each defect is reported under
-one of two codes chosen here, by shape, so that ``bands.band_for`` can assign
-a severity band from the code alone without inspecting content (FR-70,
-FR-71): an invisible character normalises deterministically to a space
-(auto-correctable) or it doesn't (requires a human decision); a whitespace-
-padded cell strips deterministically to its content (auto-correctable) or
-stripping empties it entirely (requires a human decision); a non-text code
-cell holding a number coerces deterministically to a string (auto-
-correctable) or holds a date/boolean/formula/error, for which no coercion to
-a valid SCTID exists (data defect).
+Detection only: nothing here corrects a value. Each defect is reported under one
+of two codes chosen by shape, so ``bands.band_for`` can assign a severity band
+from the code alone (FR-70, FR-71):
 
-The structural scans this module added for P0-9/#31 (``_scan_empty_synonym``,
-``_scan_compound_value``, ``_scan_specimen``) split ``cell.text`` after
-running it through ``corrections.apply_corrections`` first, the same
-normalisation ``dataset.py`` applies before splitting the same cell for
-emission. Splitting the raw text here while emission splits the corrected
-text would let an interior invisible character make the two disagree about
-how many values a cell holds - report-only claiming one outcome,
-``--emit-dataset`` producing another for the identical cell.
+- an invisible character normalises to a space (auto-correctable) or has no
+  single repair (needs a human decision);
+- a whitespace-padded cell strips to its content (auto-correctable) or strips to
+  nothing (needs a human decision);
+- a non-text code cell holding a number coerces to a string (auto-correctable),
+  while a date, boolean, formula or error has no coercion to a valid SCTID
+  (data defect).
+
+The structural scans (``_scan_empty_synonym``, ``_scan_compound_value``,
+``_scan_specimen``) split ``cell.text`` after ``corrections.apply_corrections``,
+the normalisation ``dataset.py`` applies before splitting the same cell for
+emission. Splitting raw text here would let an interior invisible character make
+the two disagree on how many values a cell holds, so report-only would claim one
+outcome and ``--emit-dataset`` produce another.
 """
 
 from __future__ import annotations
@@ -41,42 +40,35 @@ from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
 # PRD §2.1: "any SCTID of 16 digits or more entered into a numeric cell is
-# silently corrupted" - a 15-digit value is exactly representable (Excel's
-# ceiling is 15 significant decimal digits), so the finding fires at 16, not
-# at the ceiling itself.
+# silently corrupted". Excel keeps 15 significant digits exactly, so the finding
+# fires at 16, not at the ceiling.
 NUMERIC_PRECISION_RISK_THRESHOLD = 16
 
-# ALT+ENTER produces a literal U+000A inside a cell's own text - legitimate
-# multi-line formatting in these two free-text roles (FR-63's ``Usage
-# guidance`` and ``History`` columns), not an Appendix A.1 defect. U+000D is
-# exempted alongside it for the same reason (a Windows-origin paste can leave
-# a bare \r or a \r\n pair). Scoped to these two roles, not to
-# ``nptc_shared.text.is_invisible`` itself: a line break inside a preferred
-# term, FSN or code cell is never legitimate, and that module is shared with
-# the backend's entry-time prohibition (FR-74), which must not lose the
-# ability to catch it.
+# ALT+ENTER puts a literal U+000A in a cell: legitimate multi-line formatting in
+# these two free-text roles (FR-63's ``Usage guidance`` and ``History``), not an
+# Appendix A.1 defect. U+000D is exempt too, because a Windows-origin paste can
+# leave a bare \r or a \r\n pair. Scoped to these roles, not to
+# ``nptc_shared.text.is_invisible``: a line break in a preferred term, FSN or
+# code cell is never legitimate, and the backend's entry-time prohibition
+# (FR-74) shares that module and must still catch it.
 _FREE_TEXT_ROLES = frozenset({ColumnRole.GUIDANCE, ColumnRole.HISTORY})
 _LEGITIMATE_LINE_BREAKS = frozenset({"U+000A", "U+000D"})
 
-# FR-63 documents exactly one worksheet, by this exact name, that is
-# hand-written prose rather than SPIA data. Resolving zero SPIA column roles
-# is not itself evidence a sheet isn't SPIA data - a data sheet whose FR-63
-# header row has drifted entirely (for example, an inserted banner row above
-# it) produces the identical signal - so this positive allowlist, not the
-# absence of a recognised column, is what gates the informational band.
-# Anything else that resolves zero roles is unrecognised layout and blocks.
+# FR-63 documents exactly one worksheet, by this name, that is hand-written prose
+# rather than SPIA data. Resolving zero SPIA column roles is not evidence of that,
+# because a data sheet whose header row has drifted entirely (an inserted banner
+# row, say) gives the same signal. This allowlist, not the absence of a
+# recognised column, gates the informational band; any other sheet that resolves
+# zero roles is unrecognised layout and blocks.
 _NON_SPIA_DATA_SHEET_NAMES = frozenset({"Rev History"})
 
-# FR-04/P0-9: FR-63's documented delimiter is a semicolon; comma-space is
-# accepted as a fallback only when no semicolon is present at all, since at
-# least one published row (PRD Appendix A.10's "ADA RBC, ADA red cells")
-# uses it as its sole delimiter. The fallback requires the space - a bare
-# comma with no following space is ordinary SPIA vocabulary (e.g.
-# "1,25-dihydroxyvitamin D"), not a delimiter, and splitting on it would
-# shatter a real analyte name into two bogus designations. Plain ``str.split``
-# (not a regex collapsing runs of delimiters) is deliberate: a doubled
-# delimiter must produce an empty part here so ``has_empty_synonym_part`` can
-# detect it, not be silently absorbed before detection ever runs.
+# FR-04: FR-63's delimiter is a semicolon. Comma-space is a fallback only when no
+# semicolon is present, because a published row (PRD Appendix A.10's "ADA RBC,
+# ADA red cells") uses it alone. The fallback needs the space: a bare comma is
+# ordinary SPIA vocabulary ("1,25-dihydroxyvitamin D"), and splitting on it would
+# shatter an analyte name. Plain ``str.split``, not a regex collapsing runs, is
+# deliberate: a doubled delimiter must leave an empty part for
+# ``has_empty_synonym_part`` to detect.
 _SYNONYM_DELIMITER = ";"
 _SYNONYM_FALLBACK_DELIMITER = ", "
 
@@ -92,11 +84,9 @@ _SPECIMEN_DELIMITER = ";"
 _SPECIMEN_ANY = "any"
 
 #: Every ``SpecimenGroup.terms`` surface form, casefolded, to the group it
-#: names - an *exact*-match index, deliberately not the word-boundary
-#: substring matching ``semantic_drift.py`` uses for its own free-text
-#: heuristic: seeding a specimen *code* requires certainty a heuristic
-#: cannot provide (see the module docstring's "verbatim always, code only
-#: where certain" precedent, FR-88/FR-92).
+#: names. An exact-match index, not the word-boundary substring matching
+#: ``semantic_drift.py`` uses for its free-text heuristic: seeding a specimen
+#: *code* needs certainty a heuristic cannot give (FR-88, FR-92).
 _SPECIMEN_TERMS_TO_GROUP: dict[str, SpecimenGroup] = {
     term: group for group in SPECIMEN_TABLE for term in group.terms
 }
@@ -105,10 +95,9 @@ _SPECIMEN_TERMS_TO_GROUP: dict[str, SpecimenGroup] = {
 def split_synonyms(text: str) -> tuple[str, ...]:
     """Splits a ``RCPA Synonyms`` cell into individual designation values (FR-04).
 
-    Empty parts produced by a doubled delimiter (``'Zovirax;;Cyclir'``) are
-    dropped silently here - ``has_empty_synonym_part`` is the function that
-    records one was found, so the two stay independently testable and the
-    emitted dataset never carries an empty designation.
+    Empty parts from a doubled delimiter (``'Zovirax;;Cyclir'``) are dropped
+    here. ``has_empty_synonym_part`` records that one was found, so the two stay
+    independently testable and the dataset never carries an empty designation.
     """
     delimiter = _SYNONYM_DELIMITER if _SYNONYM_DELIMITER in text else _SYNONYM_FALLBACK_DELIMITER
     parts = (part.strip() for part in text.split(delimiter))
@@ -146,19 +135,16 @@ def resolve_specimen_term(value: str) -> SpecimenGroup | None:
 def resolves_code_column(sheet: Sheet) -> bool:
     """True if ``sheet``'s header row resolves the code column.
 
-    The same gate ``_scan_layout`` uses to decide a sheet gets cell-level
-    scanning at all - exported so ``dataset.py`` can restrict entry-building
-    to the identical set of sheets, rather than a second, independently
-    drifting notion of "this sheet is SPIA data".
+    The gate ``_scan_layout`` uses to decide a sheet gets cell-level scanning,
+    exported so ``dataset.py`` builds entries from the same set of sheets.
     """
     roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
     return ColumnRole.CODE in roles
 
 
 def _digit_count(value: int) -> int:
-    """Counts the digits in ``abs(value)``. Assumes a finite value - callers
-    that may see a non-finite float (see ``_scan_numeric_precision_risk``)
-    check that first."""
+    """Counts the digits in ``abs(value)``. Assumes a finite value; callers that
+    may see a non-finite float (``_scan_numeric_precision_risk``) check first."""
     return len(str(abs(value)))
 
 
@@ -216,18 +202,16 @@ def _scan_code_cell_type(cell: Cell) -> Finding | None:
     if cell.role is not ColumnRole.CODE or cell.cell_type is CellType.TEXT:
         return None
     if cell.cell_type is CellType.NUMBER:
-        # The only case FR-71 names as auto-correctable: the digits are
-        # intact (unless NUMERIC_PRECISION_RISK also fires on this cell,
-        # which blocks the row regardless), so coercing to a string
-        # deterministically recovers the SCTID.
+        # The one case FR-71 names as auto-correctable: the digits are intact
+        # (unless NUMERIC_PRECISION_RISK also fires, which blocks the row), so
+        # coercing to a string recovers the SCTID.
         return Finding(
             code=FindingCode.CODE_CELL_NOT_TEXT,
             location=cell.reference,
             message=f"code cell stored as {cell.cell_type.value}, not text (FR-06)",
         )
-    # A date, boolean, formula or error in the code column has no
-    # deterministic coercion to a valid SCTID string - unlike a number, there
-    # is no value to recover, only a wrong one to report (FR-06, FR-70).
+    # A date, boolean, formula or error has no coercion to a valid SCTID: unlike a
+    # number, there is no value to recover (FR-06, FR-70).
     return Finding(
         code=FindingCode.CODE_CELL_INVALID_TYPE,
         location=cell.reference,
@@ -239,30 +223,23 @@ def _scan_code_cell_type(cell: Cell) -> Finding | None:
 
 
 def _scan_code_well_formed(cell: Cell) -> Finding | None:
-    """Reports a text-typed code cell whose corrected text isn't a
-    well-formed SCTID (FR-06), so ``--emit-dataset`` alone (no
-    ``--check-terminology``) never seeds an unvalidated code.
+    """Reports a text-typed code cell whose corrected text isn't a well-formed
+    SCTID (FR-06), so ``--emit-dataset`` without ``--check-terminology`` never
+    seeds an unvalidated code.
 
-    Checks ``apply_corrections(cell.text)`` - the same text ``dataset.py``
-    seeds - not the raw text, so an interior invisible character that
-    collapses to a space (e.g. a code with an interior NBSP) is caught here
-    rather than slipping through as a "well-formed" cell. The message still
-    quotes the *raw*, escaped text: the corrected form is what the check
-    runs against, but it is the raw form an operator has to find in the
-    workbook and fix.
+    Checks ``apply_corrections(cell.text)``, the text ``dataset.py`` seeds, so an
+    interior invisible character that collapses to a space (a code with an
+    interior NBSP) is caught. The message quotes the *raw*, escaped text, because
+    that is what an operator has to find in the workbook.
 
-    Only for ``CellType.TEXT``: a NUMBER or other-typed code cell is already
-    reported by ``_scan_code_cell_type`` (``CODE_CELL_NOT_TEXT`` or
-    ``CODE_CELL_INVALID_TYPE``), and checking well-formedness there too would
-    add a second, redundant finding for the same cell.
+    Only for ``CellType.TEXT``: ``_scan_code_cell_type`` already reports a NUMBER
+    or other-typed code cell, and a second finding would be redundant.
 
-    Never called on a cell that's blank once stripped (that's
-    ``WHITESPACE_ONLY_CELL``, a different, requires-human-decision defect -
-    #132 owns deciding whether an absent code should also be
-    ``CODE_NOT_WELL_FORMED``) or one carrying a non-normalisable invisible
-    character (``INVISIBLE_CHARACTER_AMBIGUOUS`` already blocks emission,
-    and the code may well be well-formed once that character is resolved -
-    reporting both asks for two different remediations on one cell).
+    Skips a cell that is blank once stripped (``WHITESPACE_ONLY_CELL``, a
+    different needs-a-human defect) and one carrying a non-normalisable invisible
+    character (``INVISIBLE_CHARACTER_AMBIGUOUS`` already blocks emission, and the
+    code may be well-formed once that is resolved; reporting both asks for two
+    remedies on one cell).
     """
     if cell.role is not ColumnRole.CODE or cell.cell_type is not CellType.TEXT:
         return None
@@ -286,16 +263,15 @@ def _scan_code_well_formed(cell: Cell) -> Finding | None:
 def _scan_numeric_precision_risk(cell: Cell) -> Finding | None:
     if cell.cell_type is not CellType.NUMBER:
         return None
-    # A NUMBER-typed cell's raw value is always int or float - that mapping is
-    # workbook.py's own contract (_DATA_TYPE_TO_CELL_TYPE / _cell_type).
+    # A NUMBER-typed cell's raw value is always int or float: that is workbook.py's
+    # contract (_DATA_TYPE_TO_CELL_TYPE / _cell_type).
     assert isinstance(cell.raw, int | float)
     header = escape_invisible(cell.header)
 
     if isinstance(cell.raw, float) and not math.isfinite(cell.raw):
-        # openpyxl's _cast_number returns inf without raising for a numeric
-        # cell's raw XML text that overflows a double (e.g. "1E400") - the
-        # original number is unrecoverable, so say that rather than
-        # fabricating a digit count for a value that isn't a number.
+        # openpyxl's _cast_number returns inf, without raising, for raw XML text
+        # that overflows a double (e.g. "1E400"). The number is unrecoverable, so
+        # say so rather than invent a digit count.
         return Finding(
             code=FindingCode.NUMERIC_PRECISION_RISK,
             location=cell.reference,
@@ -384,28 +360,25 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
 def _row_has_code(row: SourceRow) -> bool:
     """True if ``row`` resolves a non-empty code binding.
 
-    A code cell that exists but holds only empty/whitespace text does not
-    count - the same ``.strip()`` test ``terminology_check.collect_code_bindings``
-    and ``dataset._has_code_binding`` already apply, so every place that asks
-    "does this row have a code binding" agrees on the answer (#132). Shared
-    by both row-level scans below so neither can drift from the other's
-    notion of "has a code" and both fire, or neither does, for the same row.
+    A code cell holding only empty or whitespace text does not count. This is the
+    ``.strip()`` test ``terminology_check.collect_code_bindings`` and
+    ``dataset._has_code_binding`` apply, so every "has a code binding" question
+    agrees. Both row-level scans below share it, so for any row both fire or
+    neither does.
     """
     code_cell = row.cells.get(ColumnRole.CODE)
     return code_cell is not None and bool(code_cell.text.strip())
 
 
 def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
-    """A row that resolves a code binding but carries no 'RCPA Preferred
-    term' value has nothing to seed a designation from at all (P0-9/#31).
+    """A row that resolves a code binding but carries no 'RCPA Preferred term'
+    value has nothing to seed a designation from.
 
-    Row-level, not cell-level: there is no single defective cell to point
-    at, since the defect is the *absence* of one. Reported against the code
-    cell's own reference, the only cell on the row this check can be certain
-    exists - never silently dropping the row the way ``build_dataset`` did
-    before this code existed (ADR-0010 §8's own "nothing downstream can
-    distinguish 'every row is clean' from 'some rows were silently dropped'"
-    concern, applied to the report itself, not only to the dataset).
+    Row-level, not cell-level: the defect is the *absence* of a cell. Reported
+    against the code cell, the only cell on the row known to exist, so the row is
+    never silently dropped. ADR-0010 §8's concern applies to the report as well as
+    the dataset: nothing downstream can tell "every row is clean" from "some rows
+    were silently dropped".
     """
     if not _row_has_code(row) or ColumnRole.PREFERRED_TERM in row.cells:
         return None
@@ -420,15 +393,12 @@ def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
 
 def _scan_missing_code_binding(row: SourceRow) -> Finding | None:
     """A row that carries a 'RCPA Preferred term' value but resolves no code
-    binding at all has nothing to bind an entry to (#132).
+    binding has nothing to bind an entry to.
 
-    Mirror of ``_scan_missing_preferred_term`` for the opposite column.
-    Row-level, not cell-level, for the same reason: the defect is the
-    *absence* of a cell. Reported against the preferred-term cell's own
-    reference, the only cell on the row this check can be certain exists.
-    Unlike ``MISSING_PREFERRED_TERM``, ``build_dataset`` does not seed this
-    row at all - a code-less row is judged more likely to be layout (a
-    heading, a continuation line) than a genuine entry awaiting a code.
+    The mirror of ``_scan_missing_preferred_term``, row-level for the same reason,
+    and reported against the preferred-term cell. Unlike ``MISSING_PREFERRED_TERM``,
+    ``build_dataset`` does not seed this row: a code-less row is more likely
+    layout (a heading, a continuation line) than an entry awaiting a code.
     """
     if ColumnRole.PREFERRED_TERM not in row.cells or _row_has_code(row):
         return None
@@ -460,19 +430,15 @@ def _scan_cell(cell: Cell) -> tuple[Finding, ...]:
 
 
 def _scan_layout(sheet: Sheet) -> Finding | None:
-    """Reports a sheet the code column can't be found on - splitting *why*.
+    """Reports a sheet the code column can't be found on, and *why*.
 
-    Only a sheet named in ``_NON_SPIA_DATA_SHEET_NAMES`` (FR-63's own ``Rev
-    History`` worksheet is the sole documented case: hand-written prose, not
-    SPIA data) that also resolves zero SPIA column roles is treated as not
-    being SPIA data - reported so an operator can see the sheet was skipped,
-    but not blocking. Every other sheet that fails to resolve the code
-    column - whether it resolves some SPIA columns and not the code column,
-    or resolves none at all - has drifted (FR-63) and every one of its rows
-    went unscanned for Appendix A.2/A.3 defects; that's the case FR-71's
-    data-defect band exists for, so the message says how many rows were
-    skipped rather than letting a low ``finding_count`` read as "nearly
-    clean".
+    A sheet named in ``_NON_SPIA_DATA_SHEET_NAMES`` (FR-63's ``Rev History``, the
+    one documented hand-written prose sheet) that also resolves zero SPIA column
+    roles is reported as not SPIA data, without blocking. Every other sheet
+    lacking the code column has drifted (FR-63): all its rows went unscanned for
+    Appendix A.2/A.3 defects, which is what FR-71's data-defect band is for. The
+    message gives the skipped row count so a low ``finding_count`` does not read
+    as "nearly clean".
     """
     if not sheet.cells:
         return None
@@ -503,15 +469,12 @@ def _scan_layout(sheet: Sheet) -> Finding | None:
 def scan_workbook(sheets: tuple[Sheet, ...]) -> tuple[Finding, ...]:
     """Scans every sheet's cells for PRD Appendix A.1-A.3 defects.
 
-    Only a sheet that resolves a code column gets cell-level scanning - a
-    sheet that doesn't already gets exactly one finding from ``_scan_layout``
-    (``SHEET_NOT_SPIA_DATA`` or ``UNRECOGNISED_LAYOUT``, depending on whether
-    it looks like SPIA data at all), and scanning its cells for A.1/A.3 would
-    just add noise, not defects. Every sheet that *does* also gets two
-    row-level passes, one per column - ``_scan_missing_preferred_term``
-    (P0-9/#31) and ``_scan_missing_code_binding`` (#132) - each a defect
-    that is the absence of a cell, not the content of one, so neither can be
-    found by ``_scan_cell`` iterating cells alone.
+    Only a sheet that resolves a code column gets cell-level scanning. One that
+    doesn't gets exactly one finding from ``_scan_layout``
+    (``SHEET_NOT_SPIA_DATA`` or ``UNRECOGNISED_LAYOUT``), and scanning its cells
+    for A.1/A.3 would add noise. A sheet that does also gets two row-level
+    passes, ``_scan_missing_preferred_term`` and ``_scan_missing_code_binding``.
+    Each finds the absence of a cell, which ``_scan_cell`` iterating cells cannot.
     """
     findings: list[Finding] = []
     codeable_sheets: list[Sheet] = []

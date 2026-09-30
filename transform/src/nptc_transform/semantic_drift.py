@@ -1,44 +1,36 @@
 """FR-75/H-03: reports a semantic mismatch between the RCPA preferred term's
-own specimen/timing wording and the bound SNOMED concept's modelled
-``Has specimen`` value (issue #29, P0-7).
+specimen/timing wording and the bound SNOMED concept's modelled ``Has specimen``
+value.
 
-This is a **seeding-only, candidate-generating** concern, the same shape as
-``designation_check.py`` (FR-97) and ``misspelling.py`` (FR-79): every finding
-here is ``Band.INFORMATIONAL`` - "a candidate for editorial review, not a
-confirmed defect" (see ``bands.py``) - because the check is a heuristic over
-free text, calibrated against PRD Annex A.9's own worked examples, which show
-roughly as many benign rows as genuine ones. A blocking band would be
-indefensible at that false-positive rate.
+Seeding-only and candidate-generating, like ``designation_check.py`` (FR-97) and
+``misspelling.py`` (FR-79). Every finding is ``Band.INFORMATIONAL``, "a candidate
+for editorial review, not a confirmed defect" (``bands.py``), because the check
+is a heuristic over free text. PRD Annex A.9's worked examples show roughly as
+many benign rows as genuine ones, so a blocking band would be indefensible.
 
-**Unlike FR-97, a hierarchy violation (FR-84) is deliberately not excluded
-here.** A term's specimen/timing drift finding is about the term's own
-content, and survives whatever rebinding would fix the hierarchy violation -
-the two findings describe different remediations of the same cell, and both
-should be able to fire together.
+**Unlike FR-97, a hierarchy violation (FR-84) is deliberately not excluded.** A
+drift finding is about the term's own content and survives whatever rebinding
+would fix the hierarchy violation. The two findings need different remedies for
+the same cell, so both may fire.
 
-**Request shape (ADR-0008).** Every code this pass classifies is resolved
-against ``SNOMED_CT_AU`` specifically, never the dual-edition set
-``terminology_check.DEFAULT_EDITIONS`` iterates for FR-74's own check: the
+**Request shape (ADR-0008).** Every code is resolved against ``SNOMED_CT_AU``
+only, not the dual-edition ``terminology_check.DEFAULT_EDITIONS``: the
 workbook's code-binding column is ``Terminology binding (SNOMED CT-AU)``, and
-every specimen concept this module compares against was verified live in the
-AU edition (see ``specimen_table.py``). One ``describe()`` call resolves the
-whole specimen table's own designation sets (for the visibility filter and
-for messages); one ``codes_without_attribute`` call and one
-``codes_with_attribute_value`` call *per distinct group still asserted by an
-unresolved row* classify the delta the visibility filter didn't already
-settle - see ``check_semantic_drift``'s own docstring for why this is not
-literally "1 + G" the way ADR-0008 first framed it, and why that is a
-deliberate, documented deviation rather than a miscount.
+every specimen concept compared against was verified live in AU
+(``specimen_table.py``). One ``describe()`` call resolves the specimen table's
+designation sets. One ``codes_without_attribute`` call, plus one
+``codes_with_attribute_value`` call per distinct group still asserted by an
+unresolved row, classify the delta the visibility filter left. The total is
+``2 + G`` (ADR-0008 Decision 6).
 
 **The specimen table is an allowlist, never a finding generator.** A term
-asserting a specimen no group in ``specimen_table.SPECIMEN_TABLE`` covers is
-silently never inspected for that aspect - this module's principal failure
-mode. The mitigation is a coverage *audit*, never an assertion source: the
-workbook's own ``Specimen`` column (a free-text field, not controlled
-vocabulary - see ADR-0008's rejected alternatives) is checked only for how
-many of its distinct values map to no group, rendered as
-``DriftRun.specimen_column_values_unmapped``, so a systematically-uncovered
-specimen never degrades to a silent zero findings with nothing to show for it.
+asserting a specimen no ``specimen_table.SPECIMEN_TABLE`` group covers is never
+inspected for that aspect: this module's principal failure mode. The mitigation
+is a coverage *audit*, never an assertion source. The workbook's free-text
+``Specimen`` column (ADR-0008's rejected alternatives) is checked only for how
+many distinct values map to no group, reported as
+``DriftRun.specimen_column_values_unmapped``, so an uncovered specimen cannot
+hide as a silent zero findings.
 """
 
 from __future__ import annotations
@@ -61,20 +53,16 @@ from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup, all_spe
 from nptc_transform.terminology_check import CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
-#: Excluded from the ``Specimen`` column coverage audit (module docstring):
-#: FR-75's own plan names these as having separate findings elsewhere, so
-#: counting them here as "unmapped" would double-count a gap this module
-#: does not own.
+#: Excluded from the ``Specimen`` column coverage audit: FR-75 gives these
+#: separate findings elsewhere, so counting them as "unmapped" would
+#: double-count a gap this module does not own.
 _EXCLUDED_SPECIMEN_COLUMN_VALUES = frozenset({"any", "fluids"})
 
-#: A timing assertion in a free-text label: 1-3 digits, optional dash/space,
-#: then an hour/day unit word, at a word boundary. ``(?<![\w.])`` before the
-#: digits is what keeps this from matching inside "B12", "Vitamin D3" or
-#: "1,25 dihydroxy...": in each of those the digit run is preceded by a word
-#: character or a decimal point, never by whitespace/punctuation/start-of-
-#: string, and the unit alternation's trailing ``\b`` keeps "dihydroxy" from
-#: matching the bare "d" branch (no boundary between "d" and the following
-#: "i"). Verified against all three by test, not merely asserted.
+#: A timing assertion in a free-text label: 1-3 digits, optional dash or space,
+#: then an hour or day unit word at a word boundary. ``(?<![\w.])`` keeps it from
+#: matching inside "B12", "Vitamin D3" or "1,25 dihydroxy...", where the digits
+#: follow a word character or decimal point. The trailing ``\b`` keeps
+#: "dihydroxy" from matching the bare "d" unit. A test covers all three.
 _TIMING_RE = re.compile(
     r"(?<![\w.])(\d{1,3})\s*-?\s*(h|hr|hrs|hour|hours|d|day|days)\b", re.IGNORECASE
 )
@@ -88,41 +76,37 @@ class DriftRun:
     """What the semantic-drift pass covered, for the report's provenance block."""
 
     #: Rows with a checkable code, a usable preferred-term label, and a code
-    #: resolved in at least one edition - the pass ran either way, whether or
-    #: not it found anything.
+    #: resolved in at least one edition: the pass ran, whether or not it found
+    #: anything.
     rows_examined: int = 0
     #: Rows excluded before classification: no checkable code binding, no
-    #: preferred-term cell, a blank/whitespace-only label, or a code absent/
-    #: inactive in every edition (already owned by CODE_NOT_FOUND/CODE_INACTIVE).
+    #: preferred-term cell, a blank label, or a code absent or inactive in every
+    #: edition (owned by CODE_NOT_FOUND/CODE_INACTIVE).
     rows_excluded: int = 0
     term_specimen_not_modelled_count: int = 0
     term_specimen_differs_count: int = 0
     term_timing_not_modelled_count: int = 0
-    #: Specimen-table SCTIDs ``describe()`` resolved nothing for - see
-    #: ``TerminologyRun.unresolved_fsn_count``'s identical "the check did not
-    #: actually run for that many, not a silent pass" reasoning. That group
-    #: still functions on its hand-typed terms alone, just without server
-    #: augmentation.
+    #: Specimen-table SCTIDs ``describe()`` resolved nothing for: the check did
+    #: not run for that many, which is not a silent pass (see
+    #: ``TerminologyRun.unresolved_fsn_count``). The group still works on its
+    #: hand-typed terms, without server augmentation.
     specimen_table_entries_unresolved: int = 0
-    #: Distinct non-empty ``Specimen`` column values that map to no group in
-    #: ``specimen_table.SPECIMEN_TABLE`` (excluding ``Any``/``Fluids``) - the
-    #: coverage audit for this module's own allowlist blind spot. Purely an
-    #: audit counter: never fed back into classification.
+    #: Distinct non-empty ``Specimen`` column values that map to no
+    #: ``specimen_table.SPECIMEN_TABLE`` group (excluding ``Any``/``Fluids``): the
+    #: coverage audit for this module's allowlist blind spot. Never fed back
+    #: into classification.
     specimen_column_values_unmapped: int = 0
-    #: ``$expand``-style requests issued resolving the specimen table's own
-    #: designations (``TerminologySweep.describe``) - always at most
-    #: ``ceil(len(specimen table) / chunk_size)``, never catalogue-scale.
+    #: ``$expand``-style requests resolving the specimen table's designations
+    #: (``TerminologySweep.describe``): at most ``ceil(len(specimen table) /
+    #: chunk_size)``, never catalogue-scale.
     describe_requests: int = 0
-    #: ``$expand``-style requests issued classifying the delta the visibility
-    #: filter didn't already settle (``codes_without_attribute`` plus one
-    #: ``codes_with_attribute_value`` per distinct group still asserted by an
-    #: unresolved row) - see ``check_semantic_drift``'s docstring for why this
-    #: is not literally "describe_requests + classification_requests == 1 + G".
+    #: ``$expand``-style requests classifying the delta the visibility filter
+    #: left (``codes_without_attribute`` plus one ``codes_with_attribute_value``
+    #: per distinct group still asserted by an unresolved row).
     classification_requests: int = 0
-    #: Every fully qualified version URI resolved across this pass's
-    #: ``describe``/``codes_without_attribute``/``codes_with_attribute_value``
-    #: calls (FR-48) - the same provenance ``SweepResult.resolved_versions``
-    #: carries for the terminology pass proper.
+    #: Every fully qualified version URI resolved across this pass's calls
+    #: (FR-48), the provenance ``SweepResult.resolved_versions`` carries for the
+    #: terminology pass.
     resolved_versions: tuple[str, ...] = ()
 
 
@@ -146,12 +130,10 @@ class _Candidate:
 
 
 def _fold(text: str) -> str:
-    """``normalise_for_comparison(text).casefold()`` - a substring heuristic
-    over free text, where case is noise, not FR-97's identity comparison
-    against a served designation (which deliberately never casefolds, since a
-    case difference there is a real editorial signal). Here the label is
-    being scanned for a specimen/timing *word*, not compared for equality, so
-    folding case out is the right choice for this pass specifically.
+    """``normalise_for_comparison(text).casefold()``. This pass scans a label for
+    a specimen or timing *word* rather than comparing for equality, so case is
+    noise. FR-97's comparison against a served designation never casefolds,
+    because a case difference there is an editorial signal.
     """
     return normalise_for_comparison(text).casefold()
 
@@ -162,11 +144,7 @@ def _word_boundary_pattern(term: str) -> re.Pattern[str]:
 
 def _rows_by_role(sheet: Sheet) -> dict[int, dict[ColumnRole, Cell]]:
     """Groups ``sheet.cells`` by row, keeping the code, preferred-term and
-    specimen-column cells.
-
-    A thin, role-filtered wrapper over ``rows.group_rows`` (issue #31, P0-9) -
-    see ``designation_check._rows_by_role``'s identical wrapper.
-    """
+    specimen-column cells (see ``designation_check._rows_by_role``)."""
     rows: dict[int, dict[ColumnRole, Cell]] = defaultdict(dict)
     for source_row in group_rows((sheet,)):
         for role in (ColumnRole.CODE, ColumnRole.PREFERRED_TERM, ColumnRole.SPECIMEN):
@@ -185,10 +163,9 @@ def _entries_for_code(
 
 
 def _longest_match(folded_text: str, table: Sequence[SpecimenGroup]) -> SpecimenGroup | None:
-    """The group whose hand-typed term is the longest one matching
-    ``folded_text`` at a word boundary; ties broken by ``table``'s own
-    declaration order (never by iteration order of some derived set, so this
-    stays deterministic - FR-73).
+    """The group whose hand-typed term is the longest one matching ``folded_text``
+    at a word boundary. Ties go to ``table``'s declaration order, never a derived
+    set's iteration order (FR-73).
     """
     best: tuple[int, SpecimenGroup] | None = None
     for group in table:
@@ -205,9 +182,8 @@ def _any_term_matches(folded_text: str, terms: Iterable[str]) -> bool:
 
 
 def _extract_timing(folded_label: str) -> str | None:
-    """The label's own timing assertion, canonicalised so ``24h``/``24 hr``/
-    ``24 hour`` all produce the identical string - see the module-level regex
-    for why ``B12``, ``Vitamin D3`` and ``1,25 dihydroxy...`` never match."""
+    """The label's timing assertion, canonicalised so ``24h``/``24 hr``/``24 hour``
+    all give the same string (see ``_TIMING_RE`` for what never matches)."""
     match = _TIMING_RE.search(folded_label)
     if match is None:
         return None
@@ -218,24 +194,21 @@ def _extract_timing(folded_label: str) -> str | None:
 
 
 def _timing_visible_in(texts: Iterable[str], timing: str) -> bool:
-    """True if any of ``texts`` carries the same canonicalised timing
-    assertion as ``timing``.
+    """True if any of ``texts`` carries the same canonicalised timing as ``timing``.
 
-    Runs each text through ``_extract_timing`` rather than word-boundary
-    matching the canonical string (``"24 h"``) literally: a served
-    designation reading ``"24 hour urine specimen"`` or ``"24h urine"``
-    contains ``"24 h"`` as a substring with no word boundary between the "h"
-    and the following letter, so a literal match would never fire on wording
-    that plainly does carry the timing - the exact false positive this check
+    Runs each text through ``_extract_timing`` instead of word-boundary matching
+    the canonical string (``"24 h"``). A served ``"24 hour urine specimen"`` or
+    ``"24h urine"`` has no word boundary after the "h", so a literal match would
+    miss wording that does carry the timing: the false positive this check
     exists to prevent.
     """
     return any(_extract_timing(text) == timing for text in texts)
 
 
 def _designation_texts(entries: Mapping[str, ConceptDesignations]) -> list[str]:
-    """Every folded FSN/display/designation-value string ``entries`` carries,
-    across every edition - the search space for both the specimen visibility
-    filter and the timing check."""
+    """Every folded FSN, display and designation value in ``entries``, across every
+    edition: the search space for the specimen visibility filter and the timing
+    check."""
     texts: list[str] = []
     for entry in entries.values():
         if entry.fully_specified_name is not None:
@@ -291,8 +264,8 @@ def _timing_not_modelled_finding(candidate: _Candidate) -> Finding:
 
 def _specimen_column_unmapped_count(sheets: Sequence[Sheet], table: Sequence[SpecimenGroup]) -> int:
     """FR-75's principal-failure-mode mitigation: how many distinct, non-empty
-    ``Specimen`` column values map to no group at all. Purely a coverage
-    audit - see the module docstring - never fed back into classification."""
+    ``Specimen`` column values map to no group. A coverage audit only (see the
+    module docstring)."""
     distinct_values: set[str] = set()
     for sheet in sheets:
         for cell in sheet.cells:
@@ -314,29 +287,17 @@ def check_semantic_drift(
     results: Mapping[str, SweepResult],
 ) -> SemanticDriftOutcome:
     """Reconciles every row's RCPA preferred term against its bound concept's
-    modelled ``Has specimen`` value and any timing wording (FR-75, issue #29).
+    modelled ``Has specimen`` value and any timing wording (FR-75).
 
     ``bindings`` and ``results`` are ``terminology_check.check_terminology``'s
-    own output for the same workbook - reused rather than recomputed (FR-74),
-    the same convention ``designation_check.check_designations`` follows.
+    output for the same workbook, reused rather than recomputed (FR-74), as in
+    ``designation_check.check_designations``.
 
-    **On the "1 + G" request-count question this pass was specced against.**
-    ADR-0008's classification step needs two structurally distinct pieces of
-    server data that cannot be merged into one call: (1) the specimen table's
-    own designation sets (``sweep.describe``, for the visibility filter and
-    for messages - always exactly one logical call, however many chunks the
-    table's own size requires), and (2) which asserting codes constrain *no*
-    ``Has specimen`` value at all (``sweep.codes_without_attribute``, one
-    call over every still-unresolved asserting code, however many groups they
-    span) - without (2), ``TERM_SPECIMEN_NOT_MODELLED`` and
-    ``TERM_SPECIMEN_DIFFERS`` could not be told apart. Only the *third* piece
-    - "does code X's value agree with group G specifically"
-    (``sweep.codes_with_attribute_value``) - scales with ``G``, the number of
-    distinct groups still asserted after the visibility filter. The total is
-    therefore ``2 + G``, not ``1 + G``: this module's own request-count test
-    asserts exactly that, and this docstring records the deviation rather
-    than forcing an artificial merge that would either lose the visibility
-    filter's vocabulary or collapse the NOT_MODELLED/DIFFERS distinction.
+    Request count is ``2 + G`` (ADR-0008 Decision 6): ``describe`` for the
+    specimen table, one ``codes_without_attribute`` over every unresolved
+    asserting code to separate ``TERM_SPECIMEN_NOT_MODELLED`` from
+    ``TERM_SPECIMEN_DIFFERS``, and one ``codes_with_attribute_value`` per
+    distinct group still asserted. The request-count test asserts it.
     """
     checkable_locations: set[CellRef] = {binding.location for binding in bindings}
     designations_by_label: dict[str, dict[str, ConceptDesignations]] = {
@@ -363,8 +324,8 @@ def check_semantic_drift(
             code = code_cell.text.strip()
             entries = _entries_for_code(code, designations_by_label)
             if not entries:
-                # Absent/inactive in every edition - CODE_NOT_FOUND/
-                # CODE_INACTIVE already own it (see terminology_check.py).
+                # Absent or inactive in every edition: CODE_NOT_FOUND/
+                # CODE_INACTIVE own it (see terminology_check.py).
                 rows_excluded += 1
                 continue
             asserted_group = _longest_match(folded_label, SPECIMEN_TABLE)
@@ -419,11 +380,9 @@ def check_semantic_drift(
 
     groups_by_key = {group.key: group for group in SPECIMEN_TABLE}
 
-    # Keyed by (code, group.key), not code alone: the same SCTID can be bound
-    # by rows asserting different specimen groups (duplicate bindings occur
-    # in the workbook), and agreement is a per-(code, group) question - a
-    # code that agrees with group A but not group B must not have group B's
-    # verdict bleed into group A's row.
+    # Keyed by (code, group.key), not code alone: rows asserting different
+    # specimen groups can bind the same SCTID, and agreement is per (code, group).
+    # A code agreeing with group A but not B must not carry B's verdict into A's row.
     not_modelled: set[tuple[str, str]] = set()
     differs: set[tuple[str, str]] = set()
     classification_requests = 0
@@ -472,8 +431,8 @@ def check_semantic_drift(
             findings.append(_specimen_differs_finding(candidate, asserted))
             term_specimen_differs_count += 1
             continue
-        # Specimen aspect is either not asserted, or agrees/was suppressed by
-        # the visibility filter - only now does timing get its own check.
+        # The specimen aspect is not asserted, agrees, or was suppressed by the
+        # visibility filter; only now does timing get its own check.
         if candidate.timing is None:
             continue
         own_texts = _designation_texts(candidate.entries)

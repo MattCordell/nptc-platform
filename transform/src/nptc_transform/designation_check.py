@@ -1,82 +1,43 @@
 """FR-97: reconciles each workbook row's published label against the
-designation set of the concept its code is bound to (issue #28, P0-6).
+designation set of the concept its code is bound to.
 
-This is a **seeding-only** concern (PRD:847): once designations are stored as
-served (FR-82), every stored value came from the server by construction, so
-"matches nothing" cannot arise again. It arises here because the workbook's
-``SNOMED CT Fully Specified Name`` column - despite its header - holds neither
-FSNs nor preferred terms consistently (PRD Appendix A.10): it is free text a
-human typed over more than a decade, validatable only against the bound
-concept's whole designation *set*.
+Seeding-only. Once designations are stored as served (FR-82), every stored value
+came from the server, so "matches nothing" cannot arise again. It arises here
+because the workbook's ``SNOMED CT Fully Specified Name`` column holds neither
+FSNs nor preferred terms consistently (PRD Appendix A.10): free text typed over
+a decade, validatable only against the bound concept's whole designation *set*.
 
-Two independent axes, both handled here:
+ADR-0006 records the strategy: local-first classification, a monotone server
+probe, a workbook-scoped index for outcome 3, and benign outcomes as a union
+across editions. What is specific to this module:
 
-1. **The four-outcome classification** (FR-97's own table). A label matching
-   the tag-stripped FSN is seeded silently (no finding at all); one matching
-   another active designation is informational (``LABEL_DESIGNATION_DRIFT``);
-   one matching a designation of a *different* bound concept
-   (``LABEL_BOUND_TO_OTHER_CONCEPT``) or of no concept at all
-   (``LABEL_MATCHES_NO_DESIGNATION``) is a blocking data defect - FR-71's own
-   words for "the most dangerous outcome", a plausible label paired with the
-   wrong code.
+1. **The four-outcome classification** (FR-97's table). A label matching the
+   tag-stripped FSN seeds silently. One matching another active designation is
+   informational (``LABEL_DESIGNATION_DRIFT``). One matching a *different* bound
+   concept (``LABEL_BOUND_TO_OTHER_CONCEPT``) or no concept
+   (``LABEL_MATCHES_NO_DESIGNATION``) blocks: FR-71's "most dangerous outcome", a
+   plausible label paired with the wrong code.
 2. **The AU-preferred-term-differs list** (``LABEL_DIFFERS_FROM_PREFERRED_TERM``),
-   always informational, reported only for rows the first axis found benign -
-   PRD Appendix A.10/A.11's arithmetic is 8 drift-only rows plus 1 defect row,
-   not 9 rows in both lists (row 22 is the defect and is excluded from the
-   drift list; row 45 is on the drift list despite being axis-1-clean,
-   because its label equals the tag-stripped FSN while the AU preferred term
-   has since diverged from *both*).
+   always informational, only for rows the first axis found benign. PRD Appendix
+   A.10/A.11 counts 8 drift-only rows plus 1 defect row, not 9 in both lists. Row
+   22 is the defect and is excluded; row 45 is on the list although axis-1-clean,
+   because its label equals the tag-stripped FSN while the AU preferred term has
+   since diverged from both.
 
-**Request shape.** Classification is local first, against
-``SweepResult.designations`` - the designation set the FR-52 batch sweep's
-bulk ``$expand`` already fetched, at zero extra request cost. Only a label
-matching nothing locally is escalated to one ``CodeSystem/$validate-code``
-per unique ``(code, label)`` pair (``TerminologySweep.confirm_labels``) - the
-delta, never every row (FR-52's discipline, and ``client.py``'s own
-``validate_code`` docstring: "one call per row is legitimate only in the
-seeding transform's designation-reconciliation pass, where the delta is the
-workload").
+The AU edition is authoritative for the quoted FSN and the probe, because the
+workbook's code-binding column is ``Terminology binding (SNOMED CT-AU)``. The
+fallback is the first edition in sorted label order that resolved the code. The
+preferred-term check is AU-only (FR-82) and skipped for a code that did not
+resolve in AU.
 
-**The probe is monotone: it can only make an outcome more benign, never less.**
-No local match -> probe. Probe says the display matches -> downgrade to
-informational (outcome 2). Probe says it doesn't -> the local verdict stands
-and outcome 3/4 discrimination proceeds exactly as it would have without a
-probe at all. This is what makes the design safe against a server whose
-``$validate-code`` display matching is itself imperfect: it can never turn a
-benign label into a false abort, only fail to rescue a genuine defect from
-one.
-
-**Outcome 3 is workbook-scoped.** There is no reverse designation search in
-the FR-53 client contract, and a server-side term filter would be per-row and
-non-deterministic (FR-73) rather than an equality check. Instead this module
-indexes every designation value the sweep resolved, across every code bound
-anywhere in the workbook, and reports outcome 3 when an unmatched label hits
-a *different* bound code's designation. A label belonging to a concept this
-workbook does not bind anywhere is therefore reported as outcome 4, not
-outcome 3 - both block, so this narrows *why*, never *whether*.
-
-**Dual-edition handling.** A label matching a designation in *any* swept
-edition is benign (mirrors FR-71's own "not resolving in either edition" -
-resolving in one is the expected shape of an Australian extension code, FR-47).
-The AU edition is authoritative for the FSN quoted in a message and for the
-probe, since the workbook's own code-binding column is
-``Terminology binding (SNOMED CT-AU)`` - falling back to the first edition in
-sorted label order that resolved the code. The preferred-term check is
-scoped to the AU edition specifically (FR-82), and is skipped entirely for a
-code that did not resolve in AU at all.
-
-**What this module does not re-decide.** A code absent or inactive in every
-edition never appears in any edition's ``SweepResult.designations`` (it is
-only populated from the bulk ``$expand``'s *active* results), so it is
-silently excluded here - it is already ``CODE_NOT_FOUND``/``CODE_INACTIVE``,
-and reconciling it too would both double-report and waste a probe on a code
-the server has already disowned. Likewise a non-text or Verhoeff-invalid code
-cell is excluded via ``bindings`` (the same checkable set
-``terminology_check.check_terminology`` built) rather than a second,
-independently drifting notion of "checkable". A hierarchy violation
-(FR-84) is deliberately **not** excluded, unlike FR-99's tag check: a label
-defect on that cell survives the rebinding that would fix the hierarchy
-violation, so the two findings describe different remediations.
+Not re-decided here. A code absent or inactive in every edition never appears in
+``SweepResult.designations``, which holds only the bulk ``$expand``'s active
+results. It is already ``CODE_NOT_FOUND``/``CODE_INACTIVE``, and reconciling it
+would double-report and waste a probe. A non-text or Verhoeff-invalid code cell
+is excluded through ``bindings``, the set ``terminology_check.check_terminology``
+built. A hierarchy violation (FR-84) is deliberately *not* excluded, unlike
+FR-99's tag check: a label defect survives the rebinding that would fix the
+hierarchy violation, so the findings need different remedies.
 """
 
 from __future__ import annotations
@@ -112,22 +73,22 @@ _MAX_SERVER_MESSAGE_LENGTH = 240
 class DesignationRun:
     """What the reconciliation pass covered, for the report's provenance block.
 
-    Mirrors ``TerminologyRun``'s own reasoning: a pass that silently skipped
-    most of the workbook must not read as one that reconciled all of it.
+    As with ``TerminologyRun``, a pass that skipped most of the workbook must
+    not read as one that reconciled all of it.
     """
 
     #: Rows with a checkable code and a usable label that reached
-    #: classification - benign or defect, the pass ran either way.
+    #: classification, benign or defect.
     labels_reconciled: int = 0
-    #: Rows with a checkable code that could not be classified at all: no
-    #: label, a label reduced to nothing by whitespace, a label still
-    #: carrying an invisible character after edge-stripping (already owned
-    #: by ``cell_defects.py``), or a code absent/inactive in every edition
-    #: (already owned by ``CODE_NOT_FOUND``/``CODE_INACTIVE``).
+    #: Rows with a checkable code that could not be classified: no label, a
+    #: label reduced to nothing by whitespace, a label still carrying an
+    #: invisible character after edge-stripping (owned by ``cell_defects.py``),
+    #: or a code absent/inactive in every edition (owned by
+    #: ``CODE_NOT_FOUND``/``CODE_INACTIVE``).
     labels_not_reconciled: int = 0
-    #: ``CodeSystem/$validate-code`` requests actually issued - the only
-    #: per-row request in the whole tool, and the number that makes "the
-    #: delta is the workload" (``client.py``) auditable rather than asserted.
+    #: ``CodeSystem/$validate-code`` requests actually issued: the only per-row
+    #: request in the tool, which makes "the delta is the workload"
+    #: (``client.py``) auditable rather than asserted.
     label_confirmations: int = 0
 
 
@@ -161,10 +122,8 @@ class _Candidate:
 def _rows_by_role(sheet: Sheet) -> dict[int, dict[ColumnRole, Cell]]:
     """Groups ``sheet.cells`` by row, keeping only the code and FSN cells.
 
-    A thin, role-filtered wrapper over ``rows.group_rows`` (issue #31, P0-9) -
-    that function groups every role on a row; this keeps only the two this
-    pass reads, which is the only reason this wrapper still exists rather
-    than every call site using ``group_rows`` directly.
+    A role-filtered wrapper over ``rows.group_rows``, which groups every role on
+    a row. This keeps only the two roles this pass reads.
     """
     rows: dict[int, dict[ColumnRole, Cell]] = defaultdict(dict)
     for source_row in group_rows((sheet,)):
@@ -187,13 +146,12 @@ def _index_designation_values(
     designations_by_label: Mapping[str, Mapping[str, ConceptDesignations]],
 ) -> dict[str, set[str]]:
     """Every designation value resolved anywhere in this run, to the set of
-    codes it belongs to - the workbook-scoped material for outcome 3.
+    codes it belongs to: the workbook-scoped material for outcome 3.
 
     Includes each concept's tag-stripped FSN alongside its raw designation
-    values, for the same reason ``_local_verdict`` checks both for a code's
-    *own* entries: the workbook column never carries a tag (PRD Appendix
-    A.8), so the realistic transcription error is a label matching the
-    tag-stripped FSN of the *wrong* concept, not its tagged form.
+    values, as ``_local_verdict`` does for a code's own entries. The workbook
+    column never carries a tag (PRD Appendix A.8), so the realistic
+    transcription error matches the tag-stripped FSN of the *wrong* concept.
     """
     index: dict[str, set[str]] = defaultdict(set)
     for entries in designations_by_label.values():
@@ -212,20 +170,15 @@ def _local_verdict(
 ) -> _LocalVerdict:
     """Classifies ``normalised_label`` against ``entries`` alone, no request.
 
-    A union across every edition the code resolved in - the same "not
-    resolving in *either* edition" logic FR-71 applies to code status
-    (``terminology_check._findings_for``), so a label valid in one edition is
-    never a defect merely because a different edition's designation set
-    doesn't happen to carry it too.
+    A union across every edition the code resolved in, as FR-71 does for code
+    status (``terminology_check._findings_for``): a label valid in one edition
+    is not a defect because another edition's set lacks it.
 
-    A label matching the FSN **with its tag intact** is treated the same as
-    matching the tag-stripped form - both are "this is genuinely the
-    concept's own FSN", never ``OTHER_DESIGNATION``. The workbook column
-    never carries a tag in practice (PRD Appendix A.8), but a label that
-    happens to is unambiguously the concept's own designation, not a
-    different, merely-active one - and ``_drift_finding``'s message asserts
-    "is not the FSN of this code", which would be false for exactly this
-    case if it fell through to that branch.
+    A label matching the FSN **with its tag intact** counts the same as the
+    tag-stripped form: both are the concept's own FSN, never
+    ``OTHER_DESIGNATION``. The workbook column rarely carries a tag (PRD
+    Appendix A.8), but if it falls through to that branch, ``_drift_finding``'s
+    "is not the FSN of this code" would be false.
     """
     tag_stripped_fsns: set[str] = set()
     full_fsns: set[str] = set()
@@ -247,9 +200,8 @@ def _local_verdict(
 def _preferred_entry(entries: Mapping[str, ConceptDesignations]) -> tuple[str, ConceptDesignations]:
     """The (edition label, entry) to quote in a message and to probe.
 
-    AU is authoritative when it resolved the code - the workbook's own
-    code-binding column is ``Terminology binding (SNOMED CT-AU)`` - otherwise
-    the first edition in sorted label order that did.
+    AU when it resolved the code, otherwise the first edition in sorted label
+    order that did (see the module docstring).
     """
     if SNOMED_CT_AU.label in entries:
         return SNOMED_CT_AU.label, entries[SNOMED_CT_AU.label]
@@ -327,10 +279,9 @@ def _preferred_term_finding(candidate: _Candidate) -> Finding | None:
     """FR-97's separate, always-informational list: the current AU preferred
     term differs from the published label.
 
-    Scoped to the AU edition specifically (FR-82 is the AU langrefset) and
-    skipped entirely for a code that did not resolve in AU at all - the
-    workbook's own code-binding column names AU as the bound edition, so a
-    non-AU ``display`` here is not the preferred term FR-82 means.
+    AU only (FR-82 is the AU language reference set), and skipped for a code that
+    did not resolve in AU, since a non-AU ``display`` is not the preferred term
+    FR-82 means.
     """
     entry = candidate.entries.get(SNOMED_CT_AU.label)
     if entry is None or entry.display is None:
@@ -385,9 +336,8 @@ def check_designations(
     """Reconciles every row's published label against its bound concept.
 
     ``bindings`` and ``results`` are ``terminology_check.check_terminology``'s
-    own output for the same workbook and editions - reused rather than
-    recomputed, so "which code cells are checkable" and "what did each
-    edition resolve" are decided exactly once (FR-74).
+    output for the same workbook and editions, reused so "which code cells are
+    checkable" and "what did each edition resolve" are decided once (FR-74).
     """
     checkable_locations: set[CellRef] = {binding.location for binding in bindings}
     designations_by_label: dict[str, dict[str, ConceptDesignations]] = {
@@ -410,23 +360,19 @@ def check_designations(
                 continue
             normalised_label = normalise_for_comparison(fsn_cell.text)
             if not normalised_label or find_invisible_characters(normalised_label):
-                # Blank/whitespace-only (WHITESPACE_ONLY_CELL, blocking), or a
-                # genuinely ambiguous invisible character with no
-                # deterministic repair (INVISIBLE_CHARACTER_AMBIGUOUS,
-                # blocking) - never a merely auto-correctable one, since
-                # normalise_for_comparison already collapses those (a
-                # non-breaking space, wherever it occurs) before this check
-                # runs. Skipping on a code that survives *that* would exempt
-                # a row from FR-97 through a non-blocking path, silently
-                # dropping the very transcription-error check H-07 exists for.
+                # Blank (WHITESPACE_ONLY_CELL) or carrying an invisible
+                # character with no deterministic repair
+                # (INVISIBLE_CHARACTER_AMBIGUOUS); both block. Never an
+                # auto-correctable one, which normalise_for_comparison has
+                # already collapsed: skipping on that would exempt a row from
+                # FR-97 through a non-blocking path.
                 labels_not_reconciled += 1
                 continue
             code = code_cell.text.strip()
             entries = _entries_for_code(code, designations_by_label)
             if not entries:
-                # Absent or inactive in every edition - CODE_NOT_FOUND/
-                # CODE_INACTIVE already own it; reconciling it too would
-                # double-report and waste a probe on a disowned code.
+                # Absent or inactive in every edition: CODE_NOT_FOUND/
+                # CODE_INACTIVE own it (see the module docstring).
                 labels_not_reconciled += 1
                 continue
             candidates.append(
