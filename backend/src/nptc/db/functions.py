@@ -13,8 +13,10 @@ these is a licence for the next.
   ``nptc_shared.sctid`` over an exhaustive corpus.
 - ``nptc_search_text``, ``nptc_search_document`` and ``nptc_search_query``
   (FR-14, FR-15, FR-20) are search normalisation with no catalogue rule in
-  them. An index expression must be ``IMMUTABLE``, so each has to be a
-  function (ADR-0024, ADR-0029).
+  them. The first two are index expressions, which must be ``IMMUTABLE``, so
+  each has to be a function. ``nptc_search_query`` is in no index; it exists so
+  the text search configuration is named once for both index and query
+  (ADR-0024, ADR-0029).
 - ``nptc_numeric_or_null`` (FR-13) is the cast-safe numeric index expression
   (ADR-0027).
 
@@ -31,9 +33,10 @@ pg_temp``, so an unqualified reference to a ``public`` object makes ``CREATE
 INDEX`` fail. A ``SET search_path`` clause on the function would stop it
 inlining, so the objects are qualified instead (ADR-0024).
 
-**``IMMUTABLE`` is honest only for a fixed dictionary or configuration.** The
-one-argument ``unaccent`` and ``to_tsvector`` read a setting and are only
-``STABLE``, so these functions use the two-argument forms with a constant. If
+**The search functions are ``IMMUTABLE`` only for a fixed dictionary or
+configuration.** The one-argument ``unaccent`` and ``to_tsvector`` read a
+setting and are only ``STABLE``, so these functions use the two-argument forms
+with a constant. If
 the ``unaccent`` rules or the ``english`` configuration change under a running
 database, the indexes must be ``REINDEX``ed (``docs/operations/upgrade.md``).
 """

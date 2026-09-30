@@ -162,8 +162,9 @@ def create_statement(desired: DesiredIndex) -> sql.Composed:
     """The `CREATE INDEX CONCURRENTLY` for one desired index, as a
     `psycopg.sql.Composed`, never a string.
 
-    `property_key` is a literal, not a bind parameter, so the partial index is
-    usable under a generic plan (`test_db_property_index_plan.py` proves it).
+    `property_key` is rendered as a literal, not a bind parameter, so the
+    partial-index predicate can match; `test_db_property_index_plan.py` checks
+    the plan.
 
     The JSONB empty-path literal is spelled `'{{}}'` because `sql.SQL.format`
     uses `str.format` placeholders, so a literal brace must be doubled.

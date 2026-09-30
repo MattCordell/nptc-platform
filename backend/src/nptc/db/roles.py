@@ -4,13 +4,17 @@ Imported by **both** the migration that creates the role and grants and the
 tests that assert them, so the granted and asserted privilege sets cannot drift
 apart.
 
-**Grant model.** Each table gets a table-level ``SELECT, INSERT`` grant. Its
-mutable columns get a column-level ``UPDATE`` grant that leaves out the
-immutable ones (keys, parents, ``created_at``). No table gets ``DELETE`` or
-``TRUNCATE`` unless its constant says so. Each of these is a privilege-level
-invariant, not an application convention: a violating statement fails with
-``42501`` whatever the ORM or a future contributor believes. A constant's
-comment therefore names only what is special about that table.
+**Grant model.** Most tables get a table-level ``SELECT, INSERT`` grant. Where
+rows are edited, ``UPDATE`` is column-level and leaves out the immutable
+columns (keys, parents, ``created_at``); ``user_identity`` and
+``property_value`` are the exceptions, with table-level ``UPDATE``. Append-only
+tables get no ``UPDATE``, and ``validation_finding`` gets ``SELECT`` only.
+``DELETE`` is granted on ``user_identity``, ``user_role`` and
+``property_value`` alone, and ``TRUNCATE`` is revoked everywhere. Each of these
+is a privilege-level invariant, not an application convention: a violating
+statement fails with ``42501`` whatever the ORM or a future contributor
+believes. A constant's comment therefore names only what is special about that
+table.
 
 **A shipped constant is frozen.** A migration replays its grant constant on
 every fresh migrate from empty, so widening a constant in place would grant a
@@ -64,7 +68,8 @@ GRANT_APP_USER_UPDATE_SQL = (
 REVOKE_APP_USER_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE app_user FROM nptc_app;"
 
 #: NFR-17 needs ``DELETE``: closing an account removes its linked identities
-#: outright, because a link row has no tombstone shape.
+#: outright, because a link row has no tombstone shape. ``UPDATE`` is
+#: table-level.
 GRANT_USER_IDENTITY_SQL = "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE user_identity TO nptc_app;"
 REVOKE_USER_IDENTITY_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE user_identity FROM nptc_app;"
 
@@ -190,7 +195,7 @@ GRANT_PROPERTY_DEFINITION_LOCAL_CODE_SYSTEM_KEY_UPDATE_SQL = (
 
 #: FR-09, FR-10 (ADR-0012). `DELETE` is granted because a value is ordinary
 #: editable content: removing a specimen from an entry is normal editing, not
-#: the case FR-11 protects.
+#: the case FR-11 protects. ``UPDATE`` is table-level.
 GRANT_PROPERTY_VALUE_SQL = (
     "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE property_value TO nptc_app;"
 )

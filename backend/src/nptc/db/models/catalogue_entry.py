@@ -14,10 +14,10 @@ immutability" and "Optimistic locking". In short:
   `nptc.db.roles` is the guarantee; the `@validates` guard below fails loudly
   before flush.
 - `business_key` is never reissued (FR-03): its sequence is monotonic, it is
-  `UNIQUE`, and no role holds `DELETE` or `TRUNCATE` on the table.
+  `UNIQUE`, and `nptc_app` holds no `DELETE` or `TRUNCATE` on the table.
 - `preferred_term` is cleaned at entry (FR-63). `length` (FR-85, FR-24) is
-  computed from it and never stored, because it counts the catalogue's own
-  preferred term, not a `designation` row (ADR-0022).
+  computed, never stored. It counts the catalogue's own preferred term, not a
+  `designation` row (ADR-0022).
 - `preferred_term_key` (FR-05) is derived by the same `@validates` hook, so no
   path sets one without the other. It is stored and indexed because
   `nptc.catalogue.collisions` needs an equality lookup, and it is

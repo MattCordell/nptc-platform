@@ -4,12 +4,13 @@ A leaf module (ADR-0013 SS2): it imports only `nptc_shared`, the stdlib and
 sibling `nptc.registry` modules, never `nptc.db` or another `nptc` package.
 `nptc.db.definitions` is the ORM-touching half.
 
-Each error here is the fail-loud service-level layer of an invariant whose
-storage-level layer sits in the database (a `@validates` guard or a missing
-grant), so a caller gets a typed 4xx instead of a driver error. The
-deprecation lifecycle is in `docs/architecture/data-model.md`. Refusing to
-deprecate an `origin = 'system'` property is an assumption the PRD does not
-state, and that page records it too.
+Several errors here are the service-level layer of an invariant the database
+also enforces (a `@validates` guard, a missing grant or a unique constraint),
+so a caller gets a typed 4xx instead of a driver error. The rest (for example
+reactivation, repeat or system-property deprecation, unknown datatype, invalid
+constraints) are enforced only here. The deprecation lifecycle is in
+`docs/architecture/data-model.md`. Refusing to deprecate an `origin = 'system'`
+property is an assumption the PRD does not state, and that page records it too.
 
 `PropertyDefinitionNotFoundError` (404) is not redefined here:
 `nptc.catalogue.property_values` defines it and every caller shares that one.
