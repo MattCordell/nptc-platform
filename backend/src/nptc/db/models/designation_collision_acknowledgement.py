@@ -1,14 +1,12 @@
 """The `designation_collision_acknowledgement` table: FR-05's warning-severity acknowledgement. See
 PRD SS6.3.
 
-**Not the FR-55 `ValidationFinding` lifecycle**
-(`nptc.db.models.validation_finding.ValidationFinding`). PRD SS6.1 draws `ValidationFinding` as the
-general acknowledgement mechanism for every terminology-validation finding. It is still read-only,
-because the P3 sweep and acknowledge/resolve endpoints have not landed, while FR-05 collision
-detection was P1. This table is a narrow acknowledgement for one finding shape, the same synonym on
-multiple live entries, so P1 did not wait on P3. `ValidationFinding` is expected to subsume it once
-its lifecycle lands; `docs/architecture/data-model.md` records that, and the migration is
-not attempted yet.
+**Not the FR-55 `ValidationFinding` lifecycle** (`nptc.db.models.validation_finding`). PRD SS6.1
+draws `ValidationFinding` as the general acknowledgement mechanism, but it is still read-only (the
+P3 sweep and endpoints have not landed) while FR-05 collision detection was P1. This table is a
+narrow acknowledgement for one finding shape, the same synonym on multiple live entries.
+`ValidationFinding` is expected to subsume it once its lifecycle lands
+(`docs/architecture/data-model.md`); that migration is not attempted yet.
 
 **Scope: (entry, term_key, language), not (term_key, language) alone.** An acknowledgement silences
 the warning for the entry it was made against. A fourth entry joining an acknowledged group (PRD
