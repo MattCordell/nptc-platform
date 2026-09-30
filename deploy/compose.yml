@@ -81,6 +81,78 @@ services:
     networks:
       - nptc
 
+  # One-shot: applies every migration as the owning role, then creates the
+  # app runtime login. It is the only service that receives the owner DSN, so
+  # the long-running API never holds a credential that can run DDL (NFR-09).
+  # Both DSNs are built here, not read from .env: the .env values point at
+  # localhost for a backend run on the host, and inside the network the
+  # database is `postgres`. Passwords must be URL-safe (no @ : / ? # %).
+  migrate:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: nptc-backend:local
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && python -m nptc.db.provision_login
+    environment:
+      NPTC_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NPTC_APP_DB_PASSWORD: ${NPTC_APP_DB_PASSWORD:?set NPTC_APP_DB_PASSWORD in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nptc
+
+  # Not published on a host port: the browser reaches it through the frontend
+  # service's reverse proxy, so the SPA and the API share one origin.
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: nptc-backend:local
+    restart: unless-stopped
+    environment:
+      NPTC_DATABASE_URL: postgresql+psycopg://nptc_app_login:${NPTC_APP_DB_PASSWORD:?set NPTC_APP_DB_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB}
+      # The issuer is what the browser sees (Keycloak puts the request host in
+      # `iss`), so it stays on localhost. The API fetches signing keys from
+      # the internal address instead, which also skips OIDC discovery.
+      NPTC_OIDC_ISSUER: ${NPTC_OIDC_ISSUER:-http://localhost:8080/realms/nptc}
+      NPTC_OIDC_AUDIENCE: ${NPTC_OIDC_AUDIENCE:-nptc-api}
+      NPTC_JWKS_URL: http://keycloak:8080/realms/nptc/protocol/openid-connect/certs
+      NPTC_JWKS_CACHE_SECONDS: ${NPTC_JWKS_CACHE_SECONDS:-300}
+      NPTC_JWKS_REFRESH_COOLDOWN_SECONDS: ${NPTC_JWKS_REFRESH_COOLDOWN_SECONDS:-30}
+      NPTC_MFA_ACR_VALUES: ${NPTC_MFA_ACR_VALUES:-2}
+      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:8081}
+      NPTC_FSN_SEMANTIC_TAG: ${NPTC_FSN_SEMANTIC_TAG:-intact}
+      NPTC_MAX_PREFERRED_TERM_LENGTH: ${NPTC_MAX_PREFERRED_TERM_LENGTH:-}
+      NPTC_TX_BASE_URL: ${NPTC_TX_BASE_URL:-https://tx.ontoserver.csiro.au/fhir}
+      NPTC_TX_TOKEN: ${NPTC_TX_TOKEN:-}
+      NPTC_TX_TIMEOUT_SECONDS: ${NPTC_TX_TIMEOUT_SECONDS:-30}
+      NPTC_TX_MAX_RETRIES: ${NPTC_TX_MAX_RETRIES:-3}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # No liveness endpoint exists yet, so probe the OpenAPI document: it is
+      # served only once the app factory has built every router. The image
+      # has no curl.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/openapi.json', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - nptc
+
 volumes:
   postgres-data:
 

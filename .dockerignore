@@ -1,0 +1,17 @@
+# Build context for backend/Dockerfile and frontend/Dockerfile is the repo root.
+# Keep secrets, local state and other machines' build output out of it.
+.git
+.github
+.claude
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+**/__pycache__
+**/node_modules
+frontend/dist
+docs
+
+# Every real dotenv; only *.env.example is meant to be read.
+.env
+**/.env
