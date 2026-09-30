@@ -47,7 +47,6 @@ from fastapi import FastAPI
 
 from nptc.api.app import create_app
 from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL
-from nptc.settings import ApiSettings
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
@@ -65,6 +64,7 @@ def _load(name: str):
 
 
 _inventory = _load("route_inventory_support")
+hermetic_api_settings = _load("hermetic_settings_support").hermetic_api_settings
 RouteKey = _inventory.RouteKey
 mutating_routes_with_endpoints = _inventory.mutating_routes_with_endpoints
 
@@ -103,7 +103,7 @@ def real_app_routes() -> dict[object, APIRoute]:
     per test - `create_app()` does real construction work (settings
     validation, terminology client setup) that four separate tests gain
     nothing from repeating."""
-    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    app = create_app(settings=hermetic_api_settings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
     return mutating_routes_with_endpoints(app)
 
 

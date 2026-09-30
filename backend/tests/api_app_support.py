@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session
 
 from nptc.api.app import API_PREFIX, create_app
 from nptc.api.dependencies import (
+    get_api_settings,
     get_auth_settings,
     get_session,
     get_terminology_client,
@@ -69,6 +70,16 @@ assert _support_spec is not None and _support_spec.loader is not None
 _jwt_support = importlib.util.module_from_spec(_support_spec)
 sys.modules["auth_jwt_support"] = _jwt_support
 _support_spec.loader.exec_module(_jwt_support)
+
+_hermetic_spec = importlib.util.spec_from_file_location(
+    "hermetic_settings_support", Path(__file__).parent / "hermetic_settings_support.py"
+)
+assert _hermetic_spec is not None and _hermetic_spec.loader is not None
+_hermetic = importlib.util.module_from_spec(_hermetic_spec)
+sys.modules["hermetic_settings_support"] = _hermetic
+_hermetic_spec.loader.exec_module(_hermetic)
+
+hermetic_api_settings = _hermetic.hermetic_api_settings
 
 StubIdp = _jwt_support.StubIdp
 running_stub_idp = _jwt_support.running_stub_idp
@@ -93,6 +104,15 @@ class ApiTestApp:
     #: responses on this directly, and can inspect `.requests` for the
     #: "exactly one upstream request" assertions FR-26/FR-52 both need.
     terminology: StubTerminologyClient
+
+    def set_api_settings(self, **fields: Any) -> ApiSettings:
+        """Replaces the `ApiSettings` this app serves for the rest of the
+        test, keeping every field not named in `fields` - the same override
+        `create_app` installs, so routes and helpers all see the new object."""
+        current = self.app.dependency_overrides[get_api_settings]()
+        api_settings = hermetic_api_settings(**{**current.model_dump(), **fields})
+        self.app.dependency_overrides[get_api_settings] = lambda: api_settings
+        return api_settings
 
     @property
     def issuer(self) -> str:
@@ -125,8 +145,12 @@ def build_api_test_app(
     *,
     trusted_issuers: frozenset[str] | None = None,
     mfa_acr_values: frozenset[str] = frozenset({"2"}),
+    api_settings: ApiSettings | None = None,
 ) -> Iterator[ApiTestApp]:
     """Yields a `TestClient` over the production app.
+
+    `api_settings` defaults to `hermetic_api_settings()`, never an
+    env-reading `ApiSettings()`.
 
     A generator (not a plain function) so the `StubIdp`'s HTTP server is
     shut down deterministically rather than at GC time.
@@ -175,9 +199,7 @@ def build_api_test_app(
         # `@lru_cache`d, so a test overriding `mfa_acr_values` here would
         # otherwise build a step-up challenge from whichever `AuthSettings`
         # happened to be cached first, not from this test's own settings.
-        app = create_app(
-            settings=ApiSettings(frontend_base_url=FRONTEND_ORIGIN), auth_settings=settings
-        )
+        app = create_app(settings=api_settings or hermetic_api_settings(), auth_settings=settings)
         app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings

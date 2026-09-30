@@ -55,6 +55,9 @@ def get_api_settings() -> ApiSettings:
     return ApiSettings()
 
 
+ApiSettingsDep = Annotated[ApiSettings, Depends(get_api_settings)]
+
+
 @lru_cache(maxsize=1)
 def get_token_verifier() -> TokenVerifier:
     """Built once per process, not per request: constructing it may

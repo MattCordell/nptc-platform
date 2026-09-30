@@ -69,7 +69,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
+from nptc.api.dependencies import ApiSettingsDep, get_datatype_registry, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BindingList,
@@ -440,10 +440,11 @@ def search(
 def read_entry(
     session: SessionDep,
     registry: RegistryDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     entry = queries.get_entry(session, business_key)
-    return build_entry_detail(session, registry, entry)
+    return build_entry_detail(session, registry, entry, settings)
 
 
 @router.get(
@@ -455,6 +456,7 @@ def read_entry(
 def read_entry_by_code(
     session: SessionDep,
     registry: RegistryDep,
+    settings: ApiSettingsDep,
     system_token: SystemTokenPath,
     code: CodePath,
 ) -> EntryDetail:
@@ -470,7 +472,7 @@ def read_entry_by_code(
     the identical 404 (see `PUBLIC_CODE_LOOKUP_ERROR_RESPONSES`)."""
     system = code_systems.system_for_token(system_token)
     entry = queries.get_entry_by_code(session, system, code)
-    return build_entry_detail(session, registry, entry)
+    return build_entry_detail(session, registry, entry, settings)
 
 
 @router.get(
@@ -482,6 +484,7 @@ def read_entry_by_code(
 def read_entry_by_system_and_code(
     session: SessionDep,
     registry: RegistryDep,
+    settings: ApiSettingsDep,
     system: Annotated[
         str,
         Query(
@@ -503,7 +506,7 @@ def read_entry_by_system_and_code(
     identical sentence an unregistered `system_token` gets."""
     registered_system = code_systems.require_registered_system(system)
     entry = queries.get_entry_by_code(session, registered_system, code)
-    return build_entry_detail(session, registry, entry)
+    return build_entry_detail(session, registry, entry, settings)
 
 
 @router.get(
@@ -530,6 +533,7 @@ def read_designations(
 )
 def read_bindings(
     session: SessionDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
 ) -> BindingList:
     """Retired bindings are included (FR-08): a client holding a code that
@@ -537,7 +541,9 @@ def read_bindings(
     successor code."""
     entry = queries.get_entry(session, business_key)
     return BindingList(
-        items=[binding_from_row(row) for row in queries.load_bindings(session, (entry.id,))]
+        items=[
+            binding_from_row(row, settings) for row in queries.load_bindings(session, (entry.id,))
+        ]
     )
 
 

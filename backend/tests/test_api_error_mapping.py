@@ -31,7 +31,6 @@ from nptc.auth.errors_authorisation import (
 )
 from nptc.auth.permissions import Permission, Role
 from nptc.auth.principal import Principal
-from nptc.settings import ApiSettings
 from nptc_shared.terminology import TerminologyConfigError
 
 #: A `TerminologyConfig.from_env` numeric variable, named here so the tests
@@ -301,7 +300,7 @@ def test_a_malformed_terminology_config_fails_app_construction(
     get_terminology_client.cache_clear()
     try:
         with pytest.raises(TerminologyConfigError):
-            create_app(settings=ApiSettings(frontend_base_url="http://localhost:5173"))
+            create_app(settings=_support.hermetic_api_settings())
     finally:
         get_terminology_client.cache_clear()
 

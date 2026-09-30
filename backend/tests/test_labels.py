@@ -5,6 +5,10 @@ No container, no network - pure enum/model/helper plumbing.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -17,7 +21,14 @@ from nptc.api.labels import (
     SemanticTagState,
     fsn_provenance,
 )
-from nptc.settings import ApiSettings
+
+_spec = importlib.util.spec_from_file_location(
+    "hermetic_settings_support", Path(__file__).parent / "hermetic_settings_support.py"
+)
+assert _spec is not None and _spec.loader is not None
+_hermetic = importlib.util.module_from_spec(_spec)
+sys.modules["hermetic_settings_support"] = _hermetic
+_spec.loader.exec_module(_hermetic)
 
 
 @pytest.mark.req("FR-98")
@@ -63,7 +74,7 @@ def test_fixed_provenance_constants_are_never_applicable_for_a_semantic_tag() ->
 def test_fsn_provenance_reads_the_configured_semantic_tag_state() -> None:
     """The read path never inspects the FSN string itself - only the
     setting decides what `semantic_tag` reports."""
-    provenance = fsn_provenance(ApiSettings())
+    provenance = fsn_provenance(_hermetic.hermetic_api_settings())
 
     assert provenance.designation == DesignationType.FSN
     assert provenance.semantic_tag == SemanticTagState.INTACT

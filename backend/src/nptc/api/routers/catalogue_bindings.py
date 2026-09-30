@@ -86,7 +86,7 @@ from fastapi import APIRouter, Body, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
+from nptc.api.dependencies import ApiSettingsDep, AuditContextDep, get_session, permission_dep
 from nptc.api.errors import VersionConflictResponse
 from nptc.api.prefix import API_PREFIX
 from nptc.api.routers.auth import ErrorResponse
@@ -107,6 +107,7 @@ from nptc.catalogue.bindings import (
 from nptc.catalogue.bindings import retire_binding as _retire_binding
 from nptc.catalogue.entries import entry_child_write, load_entry_for_update
 from nptc.db.models.code_binding import CodeBindingEditionHint
+from nptc.settings import ApiSettings
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
 
@@ -312,6 +313,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 def bind_code(
     session: SessionDep,
     ctx: AuditContextDep,
+    settings: ApiSettingsDep,
     response: Response,
     business_key: BusinessKeyPath,
     body: Annotated[BindCodeRequest, Body()],
@@ -336,7 +338,7 @@ def bind_code(
     # version of this header pointed at the unfollowable, unprefixed path).
     response.headers["Location"] = f"{API_PREFIX}{router.prefix}/entries/{business_key}"
     return BindingWriteResult(
-        binding=_row_to_binding(session, entry_id=entry.id, binding_id=binding.id),
+        binding=_row_to_binding(session, settings, entry_id=entry.id, binding_id=binding.id),
         row_version=entry.row_version,
     )
 
@@ -350,6 +352,7 @@ def bind_code(
 def retire_binding(
     session: SessionDep,
     ctx: AuditContextDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
     code: str,
     body: Annotated[RetireBindingRequest, Body()],
@@ -364,7 +367,7 @@ def retire_binding(
         binding = load_active_binding(session, entry_id=entry.id, code=code)
         _retire_binding(session, ctx, binding=binding, reason=body.reason)
     return BindingWriteResult(
-        binding=_row_to_binding(session, entry_id=entry.id, binding_id=binding.id),
+        binding=_row_to_binding(session, settings, entry_id=entry.id, binding_id=binding.id),
         row_version=entry.row_version,
     )
 
@@ -378,6 +381,7 @@ def retire_binding(
 def replace_binding(
     session: SessionDep,
     ctx: AuditContextDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
     code: str,
     body: Annotated[ReplaceBindingRequest, Body()],
@@ -423,14 +427,16 @@ def replace_binding(
         )
     return BindingReplacementResult(
         items=[
-            _row_to_binding(session, entry_id=entry.id, binding_id=superseded.id),
-            _row_to_binding(session, entry_id=entry.id, binding_id=successor.id),
+            _row_to_binding(session, settings, entry_id=entry.id, binding_id=superseded.id),
+            _row_to_binding(session, settings, entry_id=entry.id, binding_id=successor.id),
         ],
         row_version=entry.row_version,
     )
 
 
-def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.UUID) -> Binding:
+def _row_to_binding(
+    session: Session, settings: ApiSettings, *, entry_id: uuid.UUID, binding_id: uuid.UUID
+) -> Binding:
     """Re-reads the just-written row through `nptc.catalogue.queries.
     load_bindings` rather than building a `Binding` from the ORM instance
     directly - that is what resolves `replaced_by_binding_id` to the
@@ -445,7 +451,7 @@ def _row_to_binding(session: Session, *, entry_id: uuid.UUID, binding_id: uuid.U
     ambiguous between two retired rows (issue #219 review)."""
     for row in queries.load_bindings(session, (entry_id,)):
         if row.id == binding_id:
-            return binding_from_row(row)
+            return binding_from_row(row, settings)
     raise CodeBindingWriteNotFoundError(
         f"just-written code binding {binding_id} not found on re-read"
     )

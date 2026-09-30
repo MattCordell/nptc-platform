@@ -226,3 +226,18 @@ def app_login_credentials(migrated: None) -> tuple[str, str]:
     lets such a module depend on `migrated` (the role actually existing)
     through the fixture graph rather than a bare module-level import."""
     return APP_LOGIN_ROLE, APP_LOGIN_PASSWORD
+
+
+@pytest.fixture
+def hostile_api_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Exports an `NPTC_FSN_SEMANTIC_TAG` that makes any fresh `ApiSettings()`
+    raise, with `get_api_settings`' process-wide cache emptied on the way in
+    and out. Without the clear, an earlier test that warmed the cache would
+    let a route that regressed to calling `get_api_settings()` directly still
+    answer 200, so the test would pass for the wrong reason."""
+    from nptc.api.dependencies import get_api_settings
+
+    get_api_settings.cache_clear()
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+    yield
+    get_api_settings.cache_clear()

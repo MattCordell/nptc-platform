@@ -27,7 +27,6 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
-from nptc.api.dependencies import get_api_settings
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
@@ -40,7 +39,6 @@ from nptc.db.models.designation_collision_acknowledgement import (
 )
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
-from nptc.settings import ApiSettings
 
 
 def _load(name: str) -> Any:
@@ -1555,30 +1553,12 @@ def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
 # compare a maximum against.
 
 
-def _set_max_preferred_term_length(api: ApiTestApp, value: int | None) -> None:
-    """The first per-test `ApiSettings` override in this suite (issue #152
-    review) - `api_app_support.py`'s `create_app(settings=...)` is wired into
-    CORS only, not into the `get_api_settings` dependency the routes
-    actually resolve, so there is no existing precedent to follow here the
-    way `get_auth_settings`/`get_token_verifier` have.
-
-    `max_preferred_term_length=value` wins for the field under test, but
-    every *other* `ApiSettings` field below still resolves from this
-    process's real environment (and any `.env` a developer has loaded) -
-    fine for the fields this test file actually reads, but worth flagging
-    for whoever copies this pattern for a field where that would not be
-    safe."""
-    api.app.dependency_overrides[get_api_settings] = lambda: ApiSettings(
-        max_preferred_term_length=value
-    )
-
-
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_no_maximum_configured_never_produces_a_length_warning(api: ApiTestApp) -> None:
     """The acceptance criterion FR-86 exists to guarantee: unset (the
     default) must never warn, however long the term."""
-    _set_max_preferred_term_length(api, None)
+    api.set_api_settings(max_preferred_term_length=None)
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = _admin_token(api, subject="sub-length-unset")
     version = _row_version(api, business_key, token)
@@ -1598,7 +1578,7 @@ def test_no_maximum_configured_never_produces_a_length_warning(api: ApiTestApp) 
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_a_term_within_the_configured_maximum_is_not_warned(api: ApiTestApp) -> None:
-    _set_max_preferred_term_length(api, 20)
+    api.set_api_settings(max_preferred_term_length=20)
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = _admin_token(api, subject="sub-length-within")
     version = _row_version(api, business_key, token)
@@ -1617,7 +1597,7 @@ def test_a_term_exceeding_the_configured_maximum_still_saves_with_a_warning(
     """A hard block would make an existing over-length entry uneditable -
     the specific failure FR-86 exists to prevent, so this is a 200, not a
     4xx, and the term is actually saved."""
-    _set_max_preferred_term_length(api, 10)
+    api.set_api_settings(max_preferred_term_length=10)
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = _admin_token(api, subject="sub-length-exceeded")
     version = _row_version(api, business_key, token)
@@ -1655,7 +1635,7 @@ def test_the_warning_reports_the_cleaned_length_not_the_raw_submission(api: ApiT
     raw_submission = f"Full blood count{nbsp}"
     cleaned = "Full blood count"
     assert len(raw_submission) == len(cleaned) + 1, "the NBSP must be the only difference"
-    _set_max_preferred_term_length(api, len(cleaned) - 1)
+    api.set_api_settings(max_preferred_term_length=len(cleaned) - 1)
     business_key = _seed_entry(api, preferred_term="Iron")
     token = _admin_token(api, subject="sub-length-cleaned")
     version = _row_version(api, business_key, token)
@@ -1681,7 +1661,7 @@ def test_a_term_exactly_at_the_configured_maximum_is_not_warned(api: ApiTestApp)
     """The boundary is inclusive: a term whose length equals the maximum has
     not exceeded it."""
     term = "Full blood count"
-    _set_max_preferred_term_length(api, len(term))
+    api.set_api_settings(max_preferred_term_length=len(term))
     business_key = _seed_entry(api, preferred_term="Iron")
     token = _admin_token(api, subject="sub-length-boundary")
     version = _row_version(api, business_key, token)
@@ -1700,7 +1680,7 @@ def test_amending_a_synonym_never_carries_a_length_warning(api: ApiTestApp) -> N
     """FR-85's length is never defined against a designation row (ADR-0022)
     - a synonym amendment has no length ceiling to compare against, however
     low the configured maximum is."""
-    _set_max_preferred_term_length(api, 1)
+    api.set_api_settings(max_preferred_term_length=1)
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = _admin_token(api, subject="sub-length-synonym")
     _add(api, business_key, token, terms=["FBC"])

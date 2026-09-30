@@ -83,7 +83,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import get_datatype_registry, get_session, permission_dep
+from nptc.api.dependencies import ApiSettingsDep, get_datatype_registry, get_session, permission_dep
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
@@ -510,6 +510,7 @@ def search_any_status(
 def read_entry_any_status(
     session: SessionDep,
     registry: RegistryDep,
+    settings: ApiSettingsDep,
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
@@ -538,7 +539,9 @@ def read_entry_any_status(
             designation_from_row(row)
             for row in queries.load_designations_any_status(session, entry_ids)
         ],
-        bindings=[binding_from_row(row) for row in queries.load_bindings(session, entry_ids)],
+        bindings=[
+            binding_from_row(row, settings) for row in queries.load_bindings(session, entry_ids)
+        ],
         properties=[
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)

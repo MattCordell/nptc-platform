@@ -366,7 +366,7 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         retirement_reason=None,
         replaced_by_code=None,
     )
-    binding = binding_from_row(binding_row)
+    binding = binding_from_row(binding_row, _api_support.hermetic_api_settings())
     assert {k: v.model_dump() for k, v in binding.label_provenance.items()} == {
         "fsn": {"designation": "fsn", "semantic_tag": "intact"},
         "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},

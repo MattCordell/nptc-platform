@@ -18,9 +18,11 @@ package rather than fetching it.
 
 from __future__ import annotations
 
+import importlib.util
 import itertools
 import json
 import re
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,7 +34,14 @@ from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 
 from nptc.api.app import create_app
 from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL, build_document, render
-from nptc.settings import ApiSettings
+
+_hermetic_spec = importlib.util.spec_from_file_location(
+    "hermetic_settings_support", Path(__file__).parent / "hermetic_settings_support.py"
+)
+assert _hermetic_spec is not None and _hermetic_spec.loader is not None
+_hermetic = importlib.util.module_from_spec(_hermetic_spec)
+sys.modules["hermetic_settings_support"] = _hermetic
+_hermetic_spec.loader.exec_module(_hermetic)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_PATH = REPO_ROOT / "docs" / "api" / "openapi.json"
@@ -274,7 +283,9 @@ def test_served_document_matches_the_committed_document() -> None:
     """The served copy and the committed copy must be the same build - not
     merely equal as parsed JSON, but byte-identical once rendered the same way
     (issue #143's acceptance criterion 4)."""
-    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    app = create_app(
+        settings=_hermetic.hermetic_api_settings(frontend_base_url=GENERATION_FRONTEND_BASE_URL)
+    )
     with TestClient(app) as client:
         served = client.get("/api/v1/openapi.json").json()
 

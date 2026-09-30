@@ -21,7 +21,6 @@ from fastapi import FastAPI
 
 from nptc.api.app import create_app
 from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL
-from nptc.settings import ApiSettings
 
 
 def _load(name: str):
@@ -36,6 +35,7 @@ def _load(name: str):
 
 
 _inventory = _load("route_inventory_support")
+hermetic_api_settings = _load("hermetic_settings_support").hermetic_api_settings
 RouteKey = _inventory.RouteKey
 mutating_routes = _inventory.mutating_routes
 assert_inventory_covers_every_mutating_route = (
@@ -177,5 +177,5 @@ def test_the_real_app_has_no_uncovered_mutating_route() -> None:
     `assert_inventory_covers_every_mutating_route`'s own docstring - so a
     write route added without updating `COVERED_WRITE_ROUTES` is caught
     here, not discovered later as a gap in negative-auth testing."""
-    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    app = create_app(settings=hermetic_api_settings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
     assert_inventory_covers_every_mutating_route(app, covered=COVERED_WRITE_ROUTES)
