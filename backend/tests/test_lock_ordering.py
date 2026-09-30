@@ -2,8 +2,10 @@
 the audit append lock (`nptc.audit.writer.acquire_append_lock`) before it
 can take either a `catalogue_entry` row lock or the collision-key advisory
 lock (`nptc.catalogue.collisions.assert_no_error_collisions`) - as the
-*literal first statement* of the function, before any other operation
-(round-2 review: a narrower placement, taking the lock only once some
+first session-touching statement of the function, before any other
+operation that reads or writes the database - only `_SESSION_FREE_PRECHECKS`
+(validation that never sees a session) may run ahead of it, so a request
+rejected by one of them takes no lock (issue #360). (round-2 review: a narrower placement, taking the lock only once some
 earlier precondition had already passed, still left an ORM `select()` or
 two in between - each of which autoflushes any already-pending
 `catalogue_entry` mutation by default, so a later-placed lock could still
@@ -54,7 +56,7 @@ to clean up the `audit_event` rows each test's real, committed writes
 leave behind (see that fixture's own docstring) - not because either
 assertion here depends on the table being empty.
 
-A third test, `test_acquire_append_lock_is_the_literal_first_statement`,
+A third test, `test_acquire_append_lock_precedes_every_session_touching_statement`,
 is a pure-`ast` guard proving the invariant the two concurrency tests above
 rely on: it does not itself prove absence of a deadlock (that is what the
 concurrency tests are for), but it does mean a future change that moves
@@ -77,11 +79,12 @@ from __future__ import annotations
 import ast
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -89,8 +92,9 @@ import nptc.catalogue.designations as designations_module
 import nptc.catalogue.entries as entries_module
 import nptc.catalogue.property_values as property_values_module
 from nptc.audit.writer import AuditContext
+from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
-from nptc.catalogue.designations import add_designation
+from nptc.catalogue.designations import add_designation, add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, entry_child_write, save_entry
 from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
@@ -180,24 +184,52 @@ def _assigns_row_version(func_def: ast.FunctionDef) -> bool:
     return False
 
 
-def _first_statement_is_acquire_append_lock(func_def: ast.FunctionDef) -> bool:
-    """Whether `func_def`'s body, after skipping a leading docstring,
-    starts with a bare `acquire_append_lock(<something>)` call -
-    syntactic, like `test_datatype_dispatch.py`'s own guard: it checks the
-    called name, not which module a given `acquire_append_lock` was
-    imported from."""
+#: Calls a writer may make before `acquire_append_lock` because none of them
+#: reads or writes the database: a request rejected by one of them then takes
+#: no lock (issue #360). Adding a name here is a review decision - confirm the
+#: function never touches a session, directly or through an argument.
+_SESSION_FREE_PRECHECKS = frozenset(
+    {"validate_changelog_note", "clean_term", "validate_language_tag"}
+)
+
+
+def _is_session_free_precheck(stmt: ast.stmt) -> bool:
+    """Whether `stmt` is `name = <allowed precheck>(...)` with no argument
+    naming `session`."""
+    if not (
+        isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Name)
+        and stmt.value.func.id in _SESSION_FREE_PRECHECKS
+    ):
+        return False
+    return not any(isinstance(n, ast.Name) and n.id == "session" for n in ast.walk(stmt.value))
+
+
+def _is_acquire_append_lock_call(stmt: ast.stmt) -> bool:
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Name)
+        and stmt.value.func.id == "acquire_append_lock"
+    )
+
+
+def _acquires_lock_before_session_use(func_def: ast.FunctionDef) -> bool:
+    """Whether `func_def`'s body, after skipping a leading docstring, reaches
+    a bare `acquire_append_lock(<something>)` call having run only
+    `_SESSION_FREE_PRECHECKS` assignments - syntactic, like
+    `test_datatype_dispatch.py`'s own guard: it checks the called name, not
+    which module a given `acquire_append_lock` was imported from."""
     body = func_def.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
-    if not body:
-        return False
-    first = body[0]
-    return (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Call)
-        and isinstance(first.value.func, ast.Name)
-        and first.value.func.id == "acquire_append_lock"
-    )
+    for stmt in body:
+        if _is_acquire_append_lock_call(stmt):
+            return True
+        if not _is_session_free_precheck(stmt):
+            return False
+    return False
 
 
 def _derive_required_functions() -> dict[str, ast.FunctionDef]:
@@ -214,7 +246,7 @@ def _derive_required_functions() -> dict[str, ast.FunctionDef]:
     `save_entries` and `add_synonyms` are each a per-entry/per-term loop
     around a base-set function and so join through this pass, not the
     first one. Every function this scan finds - base or closure - is
-    required to itself satisfy `_first_statement_is_acquire_append_lock`,
+    required to itself satisfy `_acquires_lock_before_session_use`,
     never merely "the call it delegates to satisfies it": that keeps this
     check a flat, one-shape rule (see `add_synonyms`'s and `save_entries`'
     own docstrings for why each still calls it directly despite every
@@ -248,23 +280,63 @@ def _derive_required_functions() -> dict[str, ast.FunctionDef]:
     return {name: func_defs[name] for name in required - _EXEMPT_FUNCTIONS}
 
 
-def test_acquire_append_lock_is_the_literal_first_statement() -> None:
+def test_acquire_append_lock_precedes_every_session_touching_statement() -> None:
     """Enforces the invariant `test_bulk_and_singular_property_writes_do_
     not_deadlock` and `test_save_entry_and_entry_child_write_do_not_
     deadlock_on_the_same_collision_key` below both rely on for their own
     determinism (see the module docstring): every function `_derive_
-    required_functions` finds must call `acquire_append_lock` before
-    anything else, not merely "early" or "before its own collision/row
-    lock". A placement that is still correct by that looser reading (e.g.
-    after a no-op precondition check) would make those two tests flaky
-    rather than reliably red, which is a worse failure mode than this
-    guard failing loudly and immediately."""
+    required_functions` finds must call `acquire_append_lock` before any
+    statement that could touch the session, not merely "early" or "before
+    its own collision/row lock". A placement that is still correct by that
+    looser reading (e.g. after a no-op precondition check) would make those
+    two tests flaky rather than reliably red, which is a worse failure mode
+    than this guard failing loudly and immediately. Only
+    `_SESSION_FREE_PRECHECKS` may run first."""
     violations = sorted(
         name
         for name, func_def in _derive_required_functions().items()
-        if not _first_statement_is_acquire_append_lock(func_def)
+        if not _acquires_lock_before_session_use(func_def)
     )
     assert violations == []
+
+
+def _parse_function(source: str) -> ast.FunctionDef:
+    node = ast.parse(source).body[0]
+    assert isinstance(node, ast.FunctionDef)
+    return node
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_accepts_session_free_prechecks_before_the_lock() -> None:
+    func_def = _parse_function(
+        "def write(session, reason):\n"
+        '    """Docstring."""\n'
+        "    validated_reason = validate_changelog_note(reason)\n"
+        "    acquire_append_lock(session)\n"
+    )
+    assert _acquires_lock_before_session_use(func_def)
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    session.execute(query)\n    acquire_append_lock(session)\n",
+        "    entry = load_entry_for_update(session, key)\n    acquire_append_lock(session)\n",
+        "    value = clean_term(session.scalar(query))\n    acquire_append_lock(session)\n",
+        "    other = some_helper(reason)\n    acquire_append_lock(session)\n",
+        "    validated_reason = validate_changelog_note(reason)\n",
+    ],
+    ids=[
+        "session-call",
+        "session-argument-helper",
+        "precheck-reading-session",
+        "unlisted-call",
+        "lock-never-taken",
+    ],
+)
+def test_guard_rejects_session_use_before_the_lock(body: str) -> None:
+    assert not _acquires_lock_before_session_use(_parse_function(f"def write(session):\n{body}"))
 
 
 def _inputs(*values: object) -> list[PropertyValueInput]:
@@ -566,3 +638,148 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
                 text("DELETE FROM catalogue_entry WHERE id IN (:x, :y)"),
                 {"x": str(entry_x_id), "y": str(entry_y_id)},
             )
+
+
+# --- Rejected input takes no lock (issue #360) ------------------------------
+
+
+@pytest.fixture
+def app_session(app_db: Connection) -> Session:
+    return Session(bind=app_db, join_transaction_mode="create_savepoint")
+
+
+def _captured_lock_statements(connection: Connection, action: Callable[[], object]) -> list[str]:
+    """Runs `action` and returns the audit-lock statements it issued."""
+    statements: list[str] = []
+
+    def _record(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if "pg_advisory_xact_lock" in statement:
+            statements.append(statement)
+
+    event.listen(connection, "before_cursor_execute", _record)
+    try:
+        action()
+    finally:
+        event.remove(connection, "before_cursor_execute", _record)
+    return statements
+
+
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+def test_a_valid_note_takes_the_append_lock(app_session: Session, app_db: Connection) -> None:
+    """Control for the test below: proves the capture sees the lock at all,
+    so an empty result there cannot be a listener that never fires."""
+    statements = _captured_lock_statements(
+        app_db,
+        lambda: create_entry(
+            app_session,
+            AuditContext.system(),
+            preferred_term=f"Lock control entry {uuid.uuid4()}",
+            reason="Created to prove the lock statement is captured",
+        ),
+    )
+    assert statements
+
+
+def _call_add_designation(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return add_designation(
+        session, AuditContext.system(), entry=entry, term="Synonym", use="synonym", reason=reason
+    )
+
+
+def _call_add_synonyms(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return add_synonyms(
+        session, AuditContext.system(), entry=entry, terms=["Synonym"], reason=reason
+    )
+
+
+def _call_create_entry(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return create_entry(
+        session, AuditContext.system(), preferred_term="Never created", reason=reason
+    )
+
+
+def _call_save_entry(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return save_entry(
+        session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        changes=EntryChanges(preferred_term="Never saved"),
+        reason=reason,
+    )
+
+
+def _call_save_property_values(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return save_property_values(
+        session,
+        AuditContext.system(),
+        entry=entry,
+        property_key="any_property",
+        values=_inputs("value"),
+        reason=reason,
+        registry=_registry(session),
+        expected_row_version=entry.row_version,
+    )
+
+
+def _call_save_property_values_for_entries(
+    session: Session, entry: CatalogueEntry, reason: str
+) -> object:
+    return save_property_values_for_entries(
+        session,
+        AuditContext.system(),
+        targets=[
+            EntryPropertyTarget(
+                business_key=entry.business_key, expected_row_version=entry.row_version
+            )
+        ],
+        property_key="any_property",
+        values=_inputs("value"),
+        reason=reason,
+        registry=_registry(session),
+    )
+
+
+@pytest.mark.req("FR-37")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "writer",
+    [
+        _call_add_designation,
+        _call_add_synonyms,
+        _call_create_entry,
+        _call_save_entry,
+        _call_save_property_values,
+        _call_save_property_values_for_entries,
+    ],
+    ids=lambda writer: writer.__name__.removeprefix("_call_"),
+)
+def test_a_rejected_changelog_note_takes_no_append_lock(
+    writer: Callable[[Session, CatalogueEntry, str], object],
+    app_session: Session,
+    app_db: Connection,
+) -> None:
+    """A request the note check rejects must not queue on the global audit
+    lock: it will never write, so holding the lock only delays writers that
+    will (issue #360). Asserts on the statements this test itself issues,
+    never on the state of the audit table."""
+    entry = create_entry(
+        app_session,
+        AuditContext.system(),
+        preferred_term=f"Rejected note entry {uuid.uuid4()}",
+        reason="Created for the rejected-note lock test",
+    )
+
+    def _rejected() -> None:
+        with pytest.raises(ChangelogNoteError):
+            writer(app_session, entry, "")
+
+    assert _captured_lock_statements(app_db, _rejected) == []

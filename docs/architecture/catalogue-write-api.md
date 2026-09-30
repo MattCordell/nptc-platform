@@ -747,8 +747,9 @@ while that writer blocks on the same advisory lock. `save_property_values_for_en
 the singular `save_property_values`, `nptc.catalogue.entries.create_entry`/`save_entry`/
 `save_entries`, and `nptc.catalogue.designations.add_designation`/`amend_designation`/
 `add_synonyms`/`retire_designation` (`nptc.audit.writer.acquire_append_lock`) each acquire
-the lock as their own **literal first statement**, not merely "before" the row/collision
-lock or "once, before a loop" - two rounds of review on this same fix each found that a
+the lock before **any session-touching statement** (only session-free input checks such as
+`validate_changelog_note` may run first, so a rejected note takes no lock), not merely
+"before" the row/collision lock or "once, before a loop" - two rounds of review on this same fix each found that a
 later placement still left an ORM `select()` or two in between (the bulk seam's own
 property-definition lookup included), each of which autoflushes any already-pending
 `catalogue_entry` mutation by default. Every catalogue-entry writer now acquires the append
@@ -756,7 +757,7 @@ lock before any row lock or collision lock it can also take, closing the cycle r
 narrowing it to bulk-vs-bulk. See ADR-0035's own addendum for the full history, and
 `backend/tests/test_lock_ordering.py` for both the concurrency regression coverage and a
 pure-`ast` guard that derives, from these three modules' own source, every function
-required to satisfy the "literal first statement" invariant - not a hand-maintained list,
+required to satisfy the "lock before any session-touching statement" invariant - not a hand-maintained list,
 so a new writer added later is checked automatically.
 
 ### Errors (bulk property-value write)

@@ -381,8 +381,10 @@ def add_designation(
     branching would otherwise silently take the wrong path for a
     caller-supplied `en-au` (issue #224 review finding 2).
 
-    **`acquire_append_lock` runs as the literal first statement (issue #281
-    round-2 review).** Every existing caller today reaches this function
+    **`reason`, `term` and `language` are validated first, then
+    `acquire_append_lock` runs before any session-touching statement (issue
+    #281 round-2 review).** None of those three checks touches the session,
+    so a rejected input takes no lock. Every existing caller today reaches this function
     already wrapped in `nptc.catalogue.entries.entry_child_write` (issue
     #60/#300), which takes the same lock first - so this call is a cheap,
     safe re-assertion of a lock already held, not a second acquisition.
@@ -394,13 +396,13 @@ def add_designation(
     order a concurrent `entry_child_write`-wrapped caller uses. Making the
     invariant hold at this function's own boundary, rather than relying on
     every caller to wrap it correctly, is what closes that gap for good."""
+    validated_reason = validate_changelog_note(reason)
+    cleaned_term = clean_term(term)
+    canonical_language = validate_language_tag(language)
     acquire_append_lock(session)
 
     from nptc.db.models.designation import Designation
 
-    validated_reason = validate_changelog_note(reason)
-    cleaned_term = clean_term(term)
-    canonical_language = validate_language_tag(language)
     assert_no_error_collisions(
         session, entry=entry, term=cleaned_term, language=canonical_language, use=use
     )
@@ -475,18 +477,20 @@ def add_synonyms(
     not by the order `terms` was given in - #149's caller should not rely
     on positional correspondence between `terms` and the return value.
 
-    `acquire_append_lock` runs as the literal first statement, for the same
-    reason `retire_designation` now does (issue #281 round-3 review): every
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock. `acquire_append_lock` then
+    runs before any session-touching statement, for the same reason
+    `retire_designation` does (issue #281 round-3 review): every
     `add_designation` call below already re-asserts the same lock on this
     function's behalf, so this call is itself a cheap, safe re-assertion,
-    not a second acquisition - kept anyway so this function's own first
-    statement satisfies the uniform invariant `test_lock_ordering.py`'s
-    derived guard checks, the same as every other writer in this module,
-    rather than relying on a reader (or that guard) reasoning transitively
-    through the loop below to see that nothing unsafe happens before the
-    first `add_designation` call."""
-    acquire_append_lock(session)
+    not a second acquisition - kept anyway so this function satisfies the
+    uniform invariant `test_lock_ordering.py`'s derived guard checks, the
+    same as every other writer in this module, rather than relying on a
+    reader (or that guard) reasoning transitively through the loop below to
+    see that nothing unsafe happens before the first `add_designation`
+    call."""
     validated_reason = validate_changelog_note(reason)
+    acquire_append_lock(session)
     seen: set[str] = set()
     deduplicated: list[tuple[str, str]] = []
     for term in terms:

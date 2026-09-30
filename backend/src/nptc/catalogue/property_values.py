@@ -77,15 +77,16 @@ concurrent-singular-write case: `save_property_values` (the singular
 writer) itself acquired the lock only via `record_snapshot_change`'s own
 `append_audit_event` call, after the row-locking flush below, not before
 it. Issue #281 closes that gap: `save_property_values` now calls
-`acquire_append_lock` itself, as its own first statement (round-2 review of
+`acquire_append_lock` itself, before any session-touching statement (round-2 review of
 that fix found that a narrower placement - after the row-version check, just
 before the row-locking flush - still left several ORM `select()` calls
 in between, each of which autoflushes any already-pending `catalogue_entry`
 mutation by default). Round-3 review found the same gap in this bulk seam
 itself: acquiring the lock after `_load_active_property_definition`'s own
 `select()` had exactly the same autoflush hazard, just one call further
-out - `save_property_values_for_entries` now also acquires it as its own
-first statement, before that or any other query. Every caller of this
+out - `save_property_values_for_entries` now also acquires it before that
+or any other query. Only session-free validation (the changelog note) runs
+ahead of the lock, so a rejected request takes no lock. Every caller of this
 module - bulk or singular - now takes the append lock before any
 `catalogue_entry` row lock, closing the cycle for good rather than
 narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
@@ -484,24 +485,26 @@ def save_property_values(
 
     Returns the newly inserted rows, ordered by ordinal.
 
-    `acquire_append_lock` runs as the literal first statement, before even
-    `reason` validation - matching `entry_child_write`'s own precedent
-    (issue #281 round-2 review). A narrower placement (after the no-op
-    short-circuit below, taking the lock only once a real change is
-    confirmed) was tried first, but every one of the steps between here and
-    there - the identity flush below, `_load_active_property_definition`'s
-    own `select()`, the `existing` query - is an ORM statement that
-    autoflushes by default: any `catalogue_entry` mutation already pending
-    in this session (from earlier in the same transaction) would flush,
-    taking a row lock, before a later-placed `acquire_append_lock` ever
-    ran. Acquiring first, unconditionally, is what makes the guarantee hold
-    at this function's own boundary rather than depending on every caller
-    entering with a clean session - the same trade-off `save_entry` now
-    makes, giving up "a no-op resubmission takes no lock" for a guarantee
-    that does not depend on caller discipline.
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock. `acquire_append_lock` then
+    runs before any statement that does touch it - matching
+    `entry_child_write`'s own precedent (issue #281 round-2 review). A
+    narrower placement (after the no-op short-circuit below, taking the lock
+    only once a real change is confirmed) was tried first, but every one of
+    the steps between here and there - the identity flush below,
+    `_load_active_property_definition`'s own `select()`, the `existing`
+    query - is an ORM statement that autoflushes by default: any
+    `catalogue_entry` mutation already pending in this session (from
+    earlier in the same transaction) would flush, taking a row lock, before
+    a later-placed `acquire_append_lock` ever ran. Acquiring before all of
+    them, unconditionally, is what makes the guarantee hold at this
+    function's own boundary rather than depending on every caller entering
+    with a clean session - the same trade-off `save_entry` now makes, giving
+    up "a no-op resubmission takes no lock" for a guarantee that does not
+    depend on caller discipline.
     """
-    acquire_append_lock(session)
     validated_reason = validate_changelog_note(reason)
+    acquire_append_lock(session)
 
     # `entry.id` is read into every query/insert below - a brand-new,
     # not-yet-flushed `entry` has no identity yet, which would either match
@@ -693,14 +696,16 @@ def save_property_values_for_entries(
     whole transaction on any exception that reaches it, discarding any
     entry already applied earlier in the loop too.
 
-    `acquire_append_lock` runs as the literal first statement (issue #281
-    round-3 review): a placement after `_load_active_property_definition`'s
-    own `select()` - the shape this function used until this round - is
-    exactly the autoflush-before-lock gap that round's own fix to
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock. `acquire_append_lock` then
+    runs before any statement that does touch it (issue #281 round-3
+    review): a placement after `_load_active_property_definition`'s own
+    `select()` - the shape this function used until this round - is exactly
+    the autoflush-before-lock gap that round's own fix to
     `save_property_values` itself closed; the bulk seam had the identical
     gap, just one call further out. Acquired once, unconditionally, before
-    any other statement runs - not left to whichever entry's own audit
-    append happens to acquire it first, which would otherwise defer
+    any session-touching statement runs - not left to whichever entry's own
+    audit append happens to acquire it first, which would otherwise defer
     acquisition arbitrarily for a batch whose earliest entries are all
     `unchanged`.
 
@@ -716,6 +721,7 @@ def save_property_values_for_entries(
     emits no audit event" posture and keeping a client that retries a stale
     selection from appending one permanent audit row per attempt.
     """
+    validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
 
     # Deferred to break an import cycle: `nptc.catalogue.entries` imports
@@ -724,7 +730,6 @@ def save_property_values_for_entries(
     # initialised module rather than a clean cycle error.
     from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
 
-    validated_reason = validate_changelog_note(reason)
     definition = _load_active_property_definition(session, property_key)
     preflight = _preflight_property_write(definition, values, registry)
     if preflight.write_issues:
