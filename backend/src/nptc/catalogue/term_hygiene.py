@@ -127,3 +127,8 @@ def preferred_term_length(term: str) -> int:
     collapses to nothing after `.strip()`, for roughly one entry in five.
     """
     return len(normalise_for_comparison(term))
+
+
+def exceeds_maximum_length(length: int, maximum: int) -> bool:
+    """FR-86: a length equal to `maximum` is within it."""
+    return length > maximum

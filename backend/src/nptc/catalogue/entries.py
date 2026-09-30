@@ -60,6 +60,7 @@ validation on its own merits rather than bypassing it.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections.abc import Iterator, Sequence
@@ -86,7 +87,7 @@ from nptc.catalogue.errors import (
     FieldConflict,
 )
 from nptc.catalogue.property_values import assert_specimen_flag_allowed
-from nptc.catalogue.term_hygiene import clean_term
+from nptc.catalogue.term_hygiene import clean_term, exceeds_maximum_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.designation import DesignationUse
@@ -184,6 +185,26 @@ class EntryChanges:
         }
 
 
+_logger = logging.getLogger(__name__)
+
+
+_LOGGED_KEY_LIMIT = 10
+
+
+def _is_over_maximum_length(entry: CatalogueEntry, maximum: int) -> bool:
+    return exceeds_maximum_length(entry.length, maximum)
+
+
+def _log_over_maximum_length(entry: CatalogueEntry, maximum: int) -> None:
+    """FR-86: logs the business key and length, never the term text."""
+    _logger.warning(
+        "preferred term over the configured maximum length: business_key=%s length=%d maximum=%d",
+        entry.business_key,
+        entry.length,
+        maximum,
+    )
+
+
 def create_entry(
     session: Session,
     ctx: AuditContext,
@@ -193,11 +214,14 @@ def create_entry(
     status: CatalogueEntryStatus | str = CatalogueEntryStatus.DRAFT,
     specimen_unconstrained: bool = False,
     business_key: str | None = None,
+    max_preferred_term_length: int | None = None,
 ) -> CatalogueEntry:
     """Creates a new entry. `business_key` is minted via
     `allocate_business_key` unless the caller supplies one explicitly - the
     seeded-import path (ADR-0010) supplies its own, positionally-derived
-    key rather than minting.
+    key rather than minting. Every bulk loader must come through here: a
+    Core `insert()` or `COPY` skips `clean_term`, so the FR-87 report's
+    `char_length` would disagree with the length FR-85 publishes.
 
     `reason` (FR-37) is validated before the append lock and before
     anything is added to the session - see the module docstring. FR-05's
@@ -244,6 +268,10 @@ def create_entry(
         kind=ChangeKind.CREATED,
         reason=validated_reason,
     )
+    if max_preferred_term_length is not None and _is_over_maximum_length(
+        entry, max_preferred_term_length
+    ):
+        _log_over_maximum_length(entry, max_preferred_term_length)
     return entry
 
 
@@ -592,6 +620,8 @@ def save_entry(
     expected_row_version: int,
     changes: EntryChanges,
     reason: str,
+    max_preferred_term_length: int | None = None,
+    over_maximum_keys: list[str] | None = None,
 ) -> CatalogueEntry:
     """Applies `changes` to the entry identified by `business_key`,
     enforcing FR-38 optimistic locking. Raises `EntryVersionConflictError`
@@ -600,6 +630,10 @@ def save_entry(
     `version_id_col` backstop for a genuine concurrent race - see the
     module docstring for why neither path ever leaves an audit event
     behind.
+
+    A preferred term that changed to one over `max_preferred_term_length` is
+    logged, or its business key appended to `over_maximum_keys` when a batch
+    caller wants one record for the lot.
 
     `reason` (FR-37) is validated first, before the lock and before the
     entry is loaded: that check never touches the session, so a rejected
@@ -684,6 +718,7 @@ def save_entry(
     # to the database and clear SQLAlchemy's attribute history before
     # record_change ever gets to read it - turning every save into a
     # spurious AuditNoOpError regardless of whether it actually conflicts.
+    previous_term = entry.preferred_term
     savepoint = session.begin_nested()
     try:
         for name, value in changes.as_dict().items():
@@ -719,6 +754,15 @@ def save_entry(
             )
         ) from None
 
+    if (
+        max_preferred_term_length is not None
+        and entry.preferred_term != previous_term
+        and _is_over_maximum_length(entry, max_preferred_term_length)
+    ):
+        if over_maximum_keys is None:
+            _log_over_maximum_length(entry, max_preferred_term_length)
+        else:
+            over_maximum_keys.append(entry.business_key)
     return entry
 
 
@@ -728,6 +772,7 @@ def save_entries(
     *,
     updates: Sequence[tuple[str, int, EntryChanges]],
     reason: str,
+    max_preferred_term_length: int | None = None,
 ) -> list[CatalogueEntry]:
     """Applies a batch of `(business_key, expected_row_version, changes)`
     updates, one `save_entry` call - and one savepoint - per entry (FR-39's
@@ -750,7 +795,8 @@ def save_entries(
     this package does."""
     validate_changelog_note(reason)
     acquire_append_lock(session)
-    return [
+    over_maximum_keys: list[str] = []
+    saved = [
         save_entry(
             session,
             ctx,
@@ -758,6 +804,19 @@ def save_entries(
             expected_row_version=expected_row_version,
             changes=changes,
             reason=reason,
+            max_preferred_term_length=max_preferred_term_length,
+            over_maximum_keys=over_maximum_keys,
         )
         for business_key, expected_row_version, changes in updates
     ]
+    if over_maximum_keys:
+        shown = ", ".join(over_maximum_keys[:_LOGGED_KEY_LIMIT])
+        if len(over_maximum_keys) > _LOGGED_KEY_LIMIT:
+            shown += f", ... ({len(over_maximum_keys) - _LOGGED_KEY_LIMIT} more)"
+        _logger.warning(
+            "%d preferred terms over the configured maximum length: maximum=%d business_keys=%s",
+            len(over_maximum_keys),
+            max_preferred_term_length,
+            shown,
+        )
+    return saved

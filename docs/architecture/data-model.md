@@ -597,11 +597,15 @@ directly on `CatalogueEntry.length` in `backend/tests/test_catalogue_designation
 **FR-86's configurable maximum (issue #152) adds no column either.** It is
 `ApiSettings.max_preferred_term_length` (`NPTC_MAX_PREFERRED_TERM_LENGTH`,
 [configuration.md](../operations/configuration.md)), compared against `CatalogueEntry.length`
-at write time in the designation-amendment route - never stored, and unset by default so
-no entry is ever warned until an operator sets one. FR-87's distribution report
+at write time, by `nptc.catalogue.term_hygiene.exceeds_maximum_length`, in the
+designation-amendment route (and in `nptc.catalogue.entries` for a writer that passes the
+maximum) - never stored, and unset by
+default so no entry is ever warned until an operator sets one. FR-87's distribution report
 (`nptc.catalogue.length_report`) is likewise computed on demand, from
 `char_length(catalogue_entry.preferred_term)` in one aggregate statement, not a
-materialised or cached table.
+materialised or cached table. That `char_length` equals FR-85's length only for a row written
+through the ORM, which runs `clean_term`; a bulk loader must use `create_entry` rather than
+a Core `insert()` or `COPY`.
 
 ### Where the preferred term lives (not duplicated)
 

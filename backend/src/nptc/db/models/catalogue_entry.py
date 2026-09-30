@@ -262,4 +262,10 @@ class CatalogueEntry(Base):
         same whitespace cleaning applied at entry - computed here, never
         stored, never settable. See the module docstring for why this is
         the field FR-85 is actually about."""
-        return preferred_term_length(self.preferred_term)
+        term = self.preferred_term
+        memo = self.__dict__.get("_length_memo")
+        if memo is not None and memo[0] == term:
+            return int(memo[1])
+        length = preferred_term_length(term)
+        self.__dict__["_length_memo"] = (term, length)
+        return length
