@@ -272,18 +272,11 @@ by issue #146 — now resolve to real screens at the same paths.
 
 Two things a deployment must get right that this issue cannot enforce itself:
 
-- **SPA fallback.** Every non-asset path is a client-side route. `deploy/` has no
-  Caddyfile yet (only `compose.yml`, `.env`, the Keycloak realm), so whichever issue adds
-  the Caddy service must include a fallback, e.g.:
-
-  ```caddyfile
-  handle /api/* { reverse_proxy api:8000 }
-  handle {
-    root * /srv/frontend
-    try_files {path} /index.html
-    file_server
-  }
-  ```
+- **SPA fallback.** Every non-asset path is a client-side route.
+  [`deploy/caddy/Caddyfile`](../../deploy/caddy/Caddyfile) provides the fallback
+  (`try_files {path} /index.html`) for everything except `/api/*` and `/assets/*`. A missing
+  file under `/assets/` returns 404 on purpose, so a stale hashed URL never receives
+  `index.html`. Any other reverse proxy in front of the SPA must do the same.
 
   Without it, deep-linking to `/catalogue/NPTC-000247` in a fresh session 404s at the
   proxy in production only — `vite dev`/`vite preview`'s default `appType: "spa"` already

@@ -1,17 +1,17 @@
-# NPTC platform - local stack (Foundation issue F-7, NFR-41/42).
+# NPTC platform stack (NFR-41/42).
 #
-# `docker compose -f deploy/compose.yml up` brings Postgres and Keycloak up
-# healthy from a clean volume, with only deploy/.env.example copied to
-# deploy/.env - no other manual steps (NFR-41). Everything else in the
-# eventual stack (the API, the worker, the frontend, Caddy) lands with the
-# backlog issues that build them; this file is deliberately just the two
-# stateful services nothing else can be developed against without.
+# `docker compose -f deploy/compose.yml up -d --build` takes a clean checkout
+# to a working platform with only deploy/.env.example copied to deploy/.env
+# (NFR-41): Postgres, Keycloak, a one-shot `migrate` service, the API
+# (`backend`) and `web`, which serves the SPA and proxies /api. Open
+# http://localhost:8081. See docs/operations/deployment.md.
 #
-# No compose.dev.yml/compose.prod.yml overlay exists yet: there is only one
-# environment so far (this one) and nothing container-specific to
-# differentiate. compose.dev.yml lands once the backend/frontend containers
-# exist and need dev-only bind mounts or hot reload; the hardened production
-# overlay (non-root, read-only containers) is P5 per the delivery plan.
+# This is a development-grade stack: HTTP only, Keycloak in start-dev with no
+# volume, open registration. No compose.dev.yml/compose.prod.yml overlay exists
+# yet; the hardened production overlay (TLS, read-only containers, Keycloak
+# persistence) is P5 per the delivery plan. Both application images already
+# run as a non-root user. There is no worker
+# service because nothing under backend/src/nptc/jobs/ exists before P3.
 
 name: nptc
 
@@ -23,6 +23,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Read only when the data directory is first initialised, so it never
+      # changes an existing volume. No locale is pinned: the property indexes
+      # were verified against the image's default collation.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -50,7 +54,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME_STRICT: "false"
-      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:5173}
+      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:8081}
     volumes:
       - ./keycloak/realm:/opt/keycloak/data/import:ro
     ports:
@@ -78,6 +82,104 @@ services:
       timeout: 5s
       retries: 15
       start_period: 30s
+    networks:
+      - nptc
+
+  # One-shot: applies every migration as the owning role, then creates the
+  # app runtime login. It is the only service that receives the owner DSN, so
+  # the long-running API never holds a credential that can run DDL (NFR-09).
+  # Both DSNs are built here, not read from .env: the .env values point at
+  # localhost for a backend run on the host, and inside the network the
+  # database is `postgres`. Passwords must be URL-safe (no @ : / ? # %).
+  migrate:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: nptc-backend:local
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && python -m nptc.db.provision_login
+    environment:
+      NPTC_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NPTC_APP_DB_PASSWORD: ${NPTC_APP_DB_PASSWORD:?set NPTC_APP_DB_PASSWORD in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nptc
+
+  # Not published on a host port: the browser reaches it through the frontend
+  # service's reverse proxy, so the SPA and the API share one origin.
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: nptc-backend:local
+    restart: unless-stopped
+    environment:
+      NPTC_DATABASE_URL: postgresql+psycopg://nptc_app_login:${NPTC_APP_DB_PASSWORD:?set NPTC_APP_DB_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB}
+      # The issuer is what the browser sees (Keycloak puts the request host in
+      # `iss`), so it stays on localhost. The API fetches signing keys from
+      # the internal address instead, which also skips OIDC discovery.
+      NPTC_OIDC_ISSUER: ${NPTC_OIDC_ISSUER:-http://localhost:8080/realms/nptc}
+      NPTC_OIDC_AUDIENCE: ${NPTC_OIDC_AUDIENCE:-nptc-api}
+      NPTC_JWKS_URL: http://keycloak:8080/realms/nptc/protocol/openid-connect/certs
+      NPTC_JWKS_CACHE_SECONDS: ${NPTC_JWKS_CACHE_SECONDS:-300}
+      NPTC_JWKS_REFRESH_COOLDOWN_SECONDS: ${NPTC_JWKS_REFRESH_COOLDOWN_SECONDS:-30}
+      NPTC_MFA_ACR_VALUES: ${NPTC_MFA_ACR_VALUES:-2}
+      NPTC_FRONTEND_BASE_URL: ${NPTC_FRONTEND_BASE_URL:-http://localhost:8081}
+      NPTC_FSN_SEMANTIC_TAG: ${NPTC_FSN_SEMANTIC_TAG:-intact}
+      NPTC_MAX_PREFERRED_TERM_LENGTH: ${NPTC_MAX_PREFERRED_TERM_LENGTH:-}
+      NPTC_TX_BASE_URL: ${NPTC_TX_BASE_URL:-https://tx.ontoserver.csiro.au/fhir}
+      NPTC_TX_TOKEN: ${NPTC_TX_TOKEN:-}
+      NPTC_TX_TIMEOUT_SECONDS: ${NPTC_TX_TIMEOUT_SECONDS:-30}
+      NPTC_TX_MAX_RETRIES: ${NPTC_TX_MAX_RETRIES:-3}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # No liveness endpoint exists yet, so probe the OpenAPI document: it is
+      # served only once the app factory has built every router. The image
+      # has no curl.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/openapi.json', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - nptc
+
+  # The single entry point: Caddy serves the built SPA and proxies /api/* to
+  # the backend. The VITE_* values are baked into the bundle at build time, so
+  # changing either means rebuilding this image, not restarting it.
+  web:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_OIDC_ISSUER: ${VITE_OIDC_ISSUER:-http://localhost:8080/realms/nptc}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-nptc-frontend}
+    image: nptc-frontend:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${NPTC_WEB_PORT:-8081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks:
       - nptc
 

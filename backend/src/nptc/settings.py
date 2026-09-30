@@ -22,8 +22,10 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_URL_DELIMITERS = ("@", ":", "/", "?", "#", "%")
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -287,6 +289,30 @@ class MigrationSettings(BaseSettings):
     @classmethod
     def _not_blank(cls, value: str) -> str:
         return _require_non_blank(value, "migration_database_url")
+
+
+class AppLoginSettings(BaseSettings):
+    """The password `nptc.db.provision_login` sets on the app runtime login
+    role. Required, so a missing value fails naming the variable (NFR-26).
+    A `SecretStr`, so it never appears in a repr or a traceback.
+
+    Compose splices it unencoded into `NPTC_DATABASE_URL`, which SQLAlchemy
+    percent-decodes: a URL delimiter would provision, then fail to log in."""
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    app_db_password: SecretStr
+
+    @field_validator("app_db_password")
+    @classmethod
+    def _url_safe_and_not_blank(cls, value: SecretStr) -> SecretStr:
+        secret = _require_non_blank(value.get_secret_value(), "app_db_password")
+        if any(char in secret for char in _URL_DELIMITERS):
+            raise ValueError(
+                f"app_db_password must not contain any of {' '.join(_URL_DELIMITERS)} "
+                "because compose places it inside a database URL"
+            )
+        return value
 
 
 class IndexerSettings(BaseSettings):

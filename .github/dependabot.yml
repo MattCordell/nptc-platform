@@ -81,10 +81,23 @@ updates:
   # ecosystem reads Dockerfiles and Kubernetes manifests only and failed every
   # run here with `dependency_file_not_found: No Dockerfiles nor Kubernetes
   # YAML found in /deploy`. Compose files are a separate ecosystem, GA since
-  # February 2025. Add a "docker" entry alongside this one when our own
-  # Dockerfiles land with the backend/frontend container images in P4/P5.
+  # February 2025. The two entries below cover our own Dockerfiles.
   - package-ecosystem: "docker-compose"
     directory: "/deploy"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["infra", "dependencies"]
+
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["infra", "dependencies"]
+
+  - package-ecosystem: "docker"
+    directory: "/frontend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

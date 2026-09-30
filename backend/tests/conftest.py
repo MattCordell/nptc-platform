@@ -50,16 +50,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine, make_url
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.db.provision_login import APP_LOGIN_ROLE, provision_app_login
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
 PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
 
-#: The login role a real operator creates out-of-band (see
-#: docs/operations/upgrade.md), reproduced here so the app-role tests
-#: authenticate through a genuinely separate login rather than a superuser
-#: connection with SET ROLE, which would still bypass some privilege
-#: checks and so would not prove the grant.
-APP_LOGIN_ROLE = "nptc_app_login"
 #: Obviously-synthetic, local-only credential - this role exists only
 #: inside a disposable test container, never a real deployment (NFR-26).
 APP_LOGIN_PASSWORD = "nptc-app-login-test-only-not-a-real-secret"
@@ -90,13 +86,18 @@ def _alembic_config() -> Config:
 def postgres_container() -> Iterator[PostgresContainer]:
     # driver="psycopg" (v3), not testcontainers' own default of psycopg2 -
     # psycopg2 is not a dependency anywhere in this workspace.
-    with PostgresContainer(
+    container = PostgresContainer(
         image_from_compose(),
         username="nptc_owner",
         password="nptc-owner-test-only-not-a-real-secret",
         dbname="nptc_test",
         driver="psycopg",
-    ) as container:
+    )
+    # The initdb flags compose gives the real database, so the suite runs on
+    # the same encoding the deployed stack pins.
+    initdb_args = compose_config()["services"]["postgres"]["environment"]["POSTGRES_INITDB_ARGS"]
+    container.with_env("POSTGRES_INITDB_ARGS", initdb_args)
+    with container:
         yield container
 
 
@@ -116,11 +117,10 @@ def migrated(owner_engine: Engine) -> None:
     migrations themselves running, and create_all would never execute their
     GRANT/REVOKE statements at all.
 
-    Also provisions nptc_app_login exactly as a real operator would
-    out-of-band: `CREATE ROLE ... LOGIN`, then `GRANT nptc_app TO ...`. A
-    superuser connection using SET ROLE would still bypass some privilege
-    checks, so only a genuinely separate authenticated login proves the
-    grant is real.
+    Also provisions nptc_app_login through the same function the deployable
+    stack's `migrate` service runs. A superuser connection using SET ROLE
+    would still bypass some privilege checks, so only a genuinely separate
+    authenticated login proves the grant is real.
 
     Deliberately not `autouse`: a test needing neither a container nor a
     connection (test_settings.py, test_sql_parameterisation.py) must not be
@@ -132,18 +132,8 @@ def migrated(owner_engine: Engine) -> None:
     with owner_engine.connect() as connection:
         config.attributes["connection"] = connection
         command.upgrade(config, "head")
-        # The role name and password are both fixed module constants, never
-        # runtime/user data, and CREATE ROLE/GRANT can't take a bound
-        # parameter in the first place - this is the one deliberate
-        # exception to NFR-22's guard, and it sits just outside
-        # backend/tests/test_sql_parameterisation.py's SCAN_DIRS (backend/src,
-        # backend/migrations) for exactly that reason. Do not copy this
-        # f-string shape into backend/src.
-        connection.execute(
-            text(f"CREATE ROLE {APP_LOGIN_ROLE} LOGIN PASSWORD '{APP_LOGIN_PASSWORD}'")
-        )
-        connection.execute(text(f"GRANT nptc_app TO {APP_LOGIN_ROLE}"))
         connection.commit()
+    provision_app_login(owner_engine, APP_LOGIN_PASSWORD)
 
 
 @pytest.fixture(scope="session")

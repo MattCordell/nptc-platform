@@ -13,9 +13,9 @@ FHIR ValueSet).
 (`transform/src/nptc_transform/`) is complete, and the backend implements a large part of
 P1. Most packages for later phases are still stubs: an `__init__.py` whose docstring
 names the PRD phase that lands it. `docs/requirements/requirements.yaml` records each
-requirement's status (`implemented`, `in-progress`, `planned` or `deferred`). There is no
-application image yet, so the platform does not yet run as a single-command stack
-(NFR-41). Don't assume an entity, endpoint, or table described in the PRD already
+requirement's status (`implemented`, `in-progress`, `planned` or `deferred`). The whole
+stack runs from one command (`docker compose -f deploy/compose.yml up -d --build`,
+NFR-41), documented in `docs/operations/deployment.md`. Don't assume an entity, endpoint, or table described in the PRD already
 exists — check the actual module before writing code that depends on it.
 
 The authority for all behaviour is `docs/prd/NPTC-Catalogue-Platform-PRD.md`. Every
@@ -42,7 +42,7 @@ states what that package is responsible for, including the stub packages not bui
 | Database | PostgreSQL 16+ (`pg_trgm`, `unaccent`) — one datastore, no Elasticsearch/vector store |
 | Identity | Keycloak (OIDC auth code flow + PKCE) |
 | Background jobs | Postgres-backed queue, not Celery/Redis |
-| Packaging | Docker Compose (single-command stack is NFR-41, lands with issue F-7) |
+| Packaging | Docker Compose (`deploy/compose.yml`: single-command stack, NFR-41) |
 
 Languages, frameworks and versions live in the package manifests; ADR-0001 records why
 each was chosen and what was rejected.
