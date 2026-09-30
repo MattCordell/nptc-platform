@@ -1,32 +1,18 @@
-"""FR-83's one legitimate semantic-tag strip - the export renderer.
+"""FR-83's one legitimate semantic-tag strip: the export renderer.
 
-Landed with issue #48 rather than a later export-renderer issue, so the
-"exactly one call site" guarantee (FR-83, the double-strip hazard) exists
-from the moment a served FSN first has anywhere to live at all
-(`nptc.db.models.code_binding`). `backend/tests/test_catalogue_bindings.py`
-asserts structurally that `render_display_term`, and the shared
-`semantic_tag`/`strip_semantic_tag` functions it wraps, are referenced from
-no module outside this package across `backend/src`, `transform/src` and
-`shared/src` combined - except two pre-existing FR-97 seeding-
-reconciliation call sites (ADR-0006) that predate this issue, and the
-shared package's own re-export of the functions. "Exactly one call site"
-is therefore this package's own claim about *itself*, not a claim that
-`strip_semantic_tag`/`semantic_tag` have no other legitimate caller
-anywhere in the monorepo.
+`backend/tests/test_catalogue_bindings.py` asserts that `render_display_term`
+and the shared `semantic_tag`/`strip_semantic_tag` are referenced from no module
+outside this package across `backend/src`, `transform/src` and `shared/src`. The
+exceptions are the shared package's re-export and two FR-97
+seeding-reconciliation call sites (ADR-0006). "Exactly one call site" is
+therefore this package's claim about itself.
 
-**Why this can't just call `nptc_shared.terminology.strip_semantic_tag`
-directly.** That function already exists for a second, narrowly scoped
-purpose (FR-97's seeding-time reconciliation, ADR-0006) and deliberately
-*returns its input unchanged, never raising*, when there is no trailing
-parenthesised group - the right behaviour for a seeding comparison that
-already counts that case separately, but the wrong one for an export that
-runs unattended on every release. FR-83 requires the export to fail loudly
-instead, because a value with no tag at all is not a served FSN (FR-82
-guarantees every stored `fsn` came from the server, and a served FSN always
-carries exactly one tag) - so this module adds that assertion on top rather
-than duplicating the strip rule itself, which stays defined exactly once, in
-`nptc_shared.terminology._SEMANTIC_TAG`, shared by `semantic_tag`,
-`strip_semantic_tag` and this function.
+**Why not call `nptc_shared.terminology.strip_semantic_tag` alone.** It returns
+its input unchanged when there is no trailing parenthesised group, which suits a
+seeding comparison that counts that case separately (ADR-0006). An export that
+runs unattended on every release must fail loudly instead, because every stored
+`fsn` came from the server (FR-82) and a served FSN always carries a tag. This module adds that assertion and leaves the
+strip rule defined once, in `nptc_shared.terminology.snomed`.
 """
 
 from __future__ import annotations
@@ -39,43 +25,35 @@ __all__ = ["EmptyDisplayTermError", "NotAServedFSNError", "render_display_term"]
 
 
 class NotAServedFSNError(ValueError):
-    """Raised by `render_display_term` when its input carries no trailing
-    parenthesised group - PRD FR-83's first defensive assertion: the value
-    is then not a served FSN (FR-82 guarantees every stored `fsn` is), and
-    the export MUST fail loudly rather than publish it."""
+    """Raised by `render_display_term` when its input has no trailing
+    parenthesised group (FR-83's first assertion). FR-82 guarantees a stored
+    `fsn` is a served FSN, which always has one, so the export must fail rather
+    than publish this value."""
 
     http_status: ClassVar[int] = 422
 
 
 class EmptyDisplayTermError(ValueError):
-    """Raised by `render_display_term` when stripping the semantic tag
-    would leave nothing - PRD FR-83's second defensive assertion. A plain
-    `AssertionError` here would read as a bug in this module rather than a
-    data-validation failure in the input it was given; this carries the
-    same `http_status` convention as `NotAServedFSNError` so a caller can
-    treat both the same way."""
+    """Raised by `render_display_term` when stripping the semantic tag would
+    leave nothing (FR-83's second assertion). An `AssertionError` would read as
+    a bug in this module; `http_status` matches `NotAServedFSNError` so a caller
+    handles both alike."""
 
     http_status: ClassVar[int] = 422
 
 
 def render_display_term(fsn: str) -> str:
-    """FR-83's one legitimate strip: `fsn`'s final parenthesised group
-    (its semantic tag) removed, exactly once. `fsn` MUST be read directly
-    from `code_binding.fsn` - by FR-82, that column always holds a served
-    FSN, so this is the only place this transformation is permitted at all.
+    """FR-83's one legitimate strip: `fsn` with its final parenthesised group
+    (its semantic tag) removed, once. `fsn` must be read directly from
+    `code_binding.fsn`, which holds a served FSN (FR-82).
 
-    Raises `NotAServedFSNError` if `fsn` carries no trailing parenthesised
-    group (PRD FR-83's first defensive assertion) - a stripped or otherwise
-    non-served value must never reach this function silently. Raises
-    `EmptyDisplayTermError` if the result is empty (PRD FR-83's second
-    defensive assertion) - both are FR-83's guardrails against a bad input
-    publishing something worse than a loud failure.
+    Raises `NotAServedFSNError` when `fsn` has no trailing group, and
+    `EmptyDisplayTermError` when the result is empty. A stripped or non-served
+    value must never pass silently.
 
-    `391483001`'s FSN, `"Microscopy (acid fast bacilli) (procedure)"`,
-    renders as `"Microscopy (acid fast bacilli)"` - the regression fixture
-    PRD SS6.4/NFR-38 test 11 names explicitly, and the reason the rule is
-    "remove the *final* parenthesised group", not "remove every
-    parenthesised group".
+    `391483001`'s FSN, `"Microscopy (acid fast bacilli) (procedure)"`, renders as
+    `"Microscopy (acid fast bacilli)"` (PRD SS6.4, NFR-38 test 11). That is why
+    the rule removes the *final* group, not every group.
     """
     if semantic_tag(fsn) is None:
         raise NotAServedFSNError(

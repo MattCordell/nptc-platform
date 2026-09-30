@@ -1,22 +1,13 @@
 """HTTP-status-bearing errors for FR-26's live concept lookup route.
 
-`nptc_shared.terminology.errors` carries no `http_status` - it is a
-non-API package shared with the transform (FR-74), which has no HTTP
-surface at all. These three wrap that package's `TerminologyError`
-hierarchy exactly once, at the one place its classification becomes an
-HTTP response (`nptc.terminology.concepts.resolve_concept`), following
-`nptc.catalogue.bindings`'s own convention of a typed exception per
-response family rather than an if/elif ladder at the route body.
+`nptc_shared.terminology.errors` carries no `http_status` because the transform
+shares it (FR-74). These three types wrap its `TerminologyError` hierarchy once,
+in `nptc.terminology.concepts.classify_terminology_error`.
 
-Two conditions in FR-26's error table need no new type here: a malformed
-or Verhoeff-failing SCTID is `nptc_shared.sctid.InvalidSCTIDError`, already
-mapped to 422 by `nptc.api.errors`, and a malformed `NPTC_TX_*` value is
-`nptc_shared.terminology.TerminologyConfigError`, already mapped to 500.
-The latter claim holds only because `resolve_concept` re-raises a
-`TerminologyConfigError` before it ever reaches the classification that
-produces the three types below - it is itself a `TerminologyError`
-subclass, and without that carve-out it would be folded into
-`TerminologyUpstreamError`'s 502 catch-all instead.
+Two conditions in FR-26's error table need no type here. A malformed or
+Verhoeff-failing SCTID is `nptc_shared.sctid.InvalidSCTIDError` (422), and a
+malformed `NPTC_TX_*` value is `nptc_shared.terminology.TerminologyConfigError`
+(500). Both already map in `nptc.api.errors`.
 """
 
 from __future__ import annotations
@@ -28,28 +19,23 @@ class ConceptNotFoundError(Exception):
     """The terminology server does not have this code.
 
     Raised for a 404 from a conformant server, or a 4xx `OperationOutcome`
-    that says as much (`nptc_shared.terminology.errors.is_concept_absence`)
-    - never for an unrecognised failure, which is exactly what
-    `TerminologyUpstreamError` below exists to catch instead. Reading an
-    unclassified failure as "not found" would let an unseeded
-    `StubTerminologyClient` make a test pass vacuously (see
-    `nptc.terminology.concepts`'s own module docstring)."""
+    that says as much (`nptc_shared.terminology.errors.is_concept_absence`).
+    Never raised for an unrecognised failure: that is `TerminologyUpstreamError`.
+    """
 
     http_status: ClassVar[int] = 404
 
 
 class TerminologyUnavailableError(Exception):
-    """The server could not be reached, or refused with a status that
-    stayed retryable through every retry `OntoserverClient` already
-    attempted - a timeout, a transport failure, a 5xx, or a 429/503 that
-    persisted.
+    """The server could not be reached, or stayed retryable through every retry
+    `OntoserverClient` made: a timeout, a transport failure, a 5xx, or a
+    persisted 429/503.
 
-    FR-54's bounded, explained refusal: nothing here degrades a result,
-    it only tells the caller the live check could not run. `retry_after`
-    carries `TerminologyRateLimitError.retry_after` through when the
-    failure was a persisted 429/503, so the route can echo it as a
-    `Retry-After` header (`nptc.api.errors`); `None` for every other
-    retryable failure, which has no server-supplied wait time to report.
+    This is FR-54's bounded refusal: no result is degraded, the live check
+    simply could not run. `retry_after` carries
+    `TerminologyRateLimitError.retry_after` for a persisted 429/503, so the
+    route can echo it as `Retry-After` (`nptc.api.errors`). It is `None` for
+    every other failure.
     """
 
     http_status: ClassVar[int] = 503
@@ -61,15 +47,13 @@ class TerminologyUnavailableError(Exception):
 
 class TerminologyUpstreamError(Exception):
     """Every other terminology failure: an unparseable 2xx, a 2xx
-    `OperationOutcome`, a 4xx that is not itself an absence answer, or the
-    stub's own `StubNotSeededError` (a bare `TerminologyError`, neither a
-    status nor a transport failure).
+    `OperationOutcome`, a 4xx that is not an absence answer, or the stub's
+    `StubNotSeededError` (a bare `TerminologyError`).
 
-    Deliberately the catch-all rather than `ConceptNotFoundError` - the
-    hazard this class exists to avoid is named in
-    `nptc.terminology.concepts`'s module docstring: a widened "not found"
-    branch would make an unseeded stub, or a genuinely malformed upstream
-    response, read as a clean absence instead of the defect either one
-    actually is."""
+    This is the catch-all and is never a 404. Reading an unclassified failure
+    as "not found" would let an unseeded `StubTerminologyClient` answer every
+    lookup with a clean absence. It would also make a malformed upstream
+    response look like a missing code. Both are defects, not absences.
+    """
 
     http_status: ClassVar[int] = 502
