@@ -4,6 +4,11 @@ Written for an operator who did not build the system — this is what makes hand
 the development team to RCPA-QAP (or whoever the eventual operator is, per open issue
 OI-7) possible rather than theoretical (PRD NFR-36).
 
+[`deployment.md`](deployment.md) is the guide to build, run and stop the compose stack,
+from a clean checkout to a signed-in browser (NFR-41). [`local-development.md`](local-development.md)
+covers running the API and web app on your own machine against that stack's database and
+sign-in service.
+
 [`repo-configuration.md`](repo-configuration.md) records the exact commands that configure
 labels, milestones and the branch protection ruleset.
 
@@ -16,9 +21,9 @@ reads, kept in step with `deploy/.env.example`, including its
 exports and releases - starting with [`runbooks/transform.md`](runbooks/transform.md) for the
 P0 seeding transform CLI.
 
-[`upgrade.md`](upgrade.md) documents running Alembic migrations, the two database DSNs,
-out-of-band app-role login provisioning, and the deliberate downgrade/role asymmetry
-(issue #33).
+[`upgrade.md`](upgrade.md) documents running Alembic migrations (which the compose
+`migrate` service does for you), the two database DSNs, app-role login provisioning, and
+the deliberate downgrade/role asymmetry (issue #33).
 
 The rest will hold, as the corresponding work lands:
 
