@@ -68,14 +68,10 @@ class PositiveIntHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
-        `cast(column, Integer)` - see `decimal.py`'s `filter_clause` for
-        why (issue #54, FR-13, ADR-0027). `nptc_numeric_or_null` returns
-        `numeric`, not `integer`; comparing a `numeric` column against an
-        `int`-typed bind parameter (`EQUALS`/`IN`/`RANGE` all pass Python
-        `int`s here) is exactly what Postgres's own numeric/integer
-        implicit comparison already handles, so no further cast is
-        needed."""
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not `cast(column, Integer)`; see
+        `decimal.py`'s `filter_clause` (FR-13, ADR-0027). The function returns `numeric`, not
+        `integer`, and Postgres compares a `numeric` with an `int` bind parameter natively, so
+        no further cast is needed."""
         numeric_column = func.nptc_numeric_or_null(jsonb_root_as_text(column))
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", numeric_column == value)
@@ -87,13 +83,10 @@ class PositiveIntHandler:
         raise UnsupportedFilterOpError(f"positiveInt handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
-        `cast(column, Integer)` (issue #54 review): a direct
-        `CAST(value AS integer)` raises outright for a retained non-numeric
-        value - the exact failure mode ADR-0027 exists to close for
-        `filter_clause` above, left unfixed here would defeat the point of
-        fixing it there. Returns `numeric`, not `integer` - the same
-        widening `filter_clause` already accepts."""
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not `cast(column, Integer)`:
+        `CAST(value AS integer)` raises on a retained non-numeric value, the failure ADR-0027
+        closes for `filter_clause`. Returns `numeric`, the same widening `filter_clause`
+        accepts."""
         return type_cast(
             "ColumnElement[Any]", func.nptc_numeric_or_null(jsonb_root_as_text(column))
         )

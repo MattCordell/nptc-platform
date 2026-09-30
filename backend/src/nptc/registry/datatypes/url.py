@@ -27,7 +27,7 @@ _DEFAULT_SCHEMES: tuple[str, ...] = ("https",)
 
 
 class UrlHandler:
-    """A URI. `constraints` may carry `schemes` (defaults to `["https"])`)."""
+    """A URI. `constraints` may carry `schemes` (defaults to `["https"]`)."""
 
     datatype = "url"
 
@@ -85,8 +85,8 @@ class UrlHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        """`jsonb_root_as_text(column)`, not `cast(column, String)` - see
-        `string.py`'s `filter_clause` for why (issue #54, FR-13)."""
+        """`jsonb_root_as_text(column)`, not `cast(column, String)`; see `string.py`'s
+        `filter_clause` (FR-13)."""
         text_value = jsonb_root_as_text(column)
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", text_value == value)
@@ -98,6 +98,6 @@ class UrlHandler:
         raise UnsupportedFilterOpError(f"url handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        """`jsonb_root_as_text(column)`, not `cast(column, String)` - see
-        `string.py`'s `facet_expression` for why (issue #54 review)."""
+        """`jsonb_root_as_text(column)`, not `cast(column, String)`; see `string.py`'s
+        `facet_expression`."""
         return jsonb_root_as_text(column)

@@ -65,15 +65,11 @@ class DecimalHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not
-        `cast(column, Numeric)` (issue #54, FR-13, ADR-0027): a direct
-        `CAST(value AS NUMERIC)` on a JSONB *string* (e.g. a value retained
-        from before a `string` -> `decimal` datatype amendment) raises
-        "cannot cast jsonb string to type numeric" outright rather than
-        excluding that row - verified directly against `postgres:18.6`.
-        `nptc_numeric_or_null` returns `NULL` for exactly that case instead,
-        matching `nptc.db.property_indexes.create_statement`'s identical
-        `NUMERIC_SCALAR` index expression."""
+        """`nptc_numeric_or_null(jsonb_root_as_text(column))`, not `cast(column, Numeric)`
+        (FR-13, ADR-0027). `CAST(value AS NUMERIC)` on a JSONB *string* (a value retained from
+        before a `string` to `decimal` amendment) raises instead of excluding the row.
+        `nptc_numeric_or_null` returns `NULL` for that case, matching the `NUMERIC_SCALAR` index
+        expression in `nptc.db.property_indexes.create_statement`."""
         numeric_column = func.nptc_numeric_or_null(jsonb_root_as_text(column))
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", numeric_column == value)
