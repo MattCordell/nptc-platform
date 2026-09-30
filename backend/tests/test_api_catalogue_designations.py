@@ -17,6 +17,7 @@ its own test here, not just the happy path.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import re
 import sys
 from collections.abc import Iterator
@@ -27,11 +28,13 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
+import nptc.db.models.catalogue_entry as catalogue_entry_module
 from nptc.api.routers.catalogue_designations import AmendDesignationResult
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
+from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.designation import Designation
@@ -1673,6 +1676,64 @@ def test_a_term_exactly_at_the_configured_maximum_is_not_warned(api: ApiTestApp)
 
     assert response.status_code == 200, response.text
     assert response.json()["length_warning"] is None
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.req("FR-85")
+@pytest.mark.integration
+@pytest.mark.parametrize("maximum", [None, 10], ids=["no-maximum", "maximum-set"])
+def test_an_amendment_computes_the_length_once_whether_or_not_a_maximum_is_set(
+    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch, maximum: int | None
+) -> None:
+    """The response always carries `Designation.length`, so one computation
+    is the floor. Neither the write path's check nor the route's warning may
+    add a second."""
+    api.set_api_settings(max_preferred_term_length=maximum)
+    business_key = _seed_entry(api, preferred_term="Iron")
+    token = _admin_token(api, subject=f"sub-length-once-{maximum}")
+    version = _row_version(api, business_key, token)
+    calls: list[str] = []
+
+    def _counted(term: str) -> int:
+        calls.append(term)
+        return preferred_term_length(term)
+
+    monkeypatch.setattr(catalogue_entry_module, "preferred_term_length", _counted)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        term="Iron",
+        new_term="Full blood count, automated",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == ["Full blood count, automated"]
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.integration
+def test_an_over_length_amendment_is_logged_by_the_write_path_and_still_saves(
+    api: ApiTestApp, caplog: pytest.LogCaptureFixture
+) -> None:
+    api.set_api_settings(max_preferred_term_length=10)
+    business_key = _seed_entry(api, preferred_term="Iron")
+    token = _admin_token(api, subject="sub-length-logged")
+    version = _row_version(api, business_key, token)
+    new_term = "Full blood count, automated"
+
+    with caplog.at_level(logging.WARNING, logger="nptc.catalogue.entries"):
+        response = _amend(
+            api, business_key, token, term="Iron", new_term=new_term, expected_row_version=version
+        )
+
+    assert response.status_code == 200, response.text
+    records = [r for r in caplog.records if r.name == "nptc.catalogue.entries"]
+    assert len(records) == 1
+    assert business_key in records[0].getMessage()
+    assert new_term not in records[0].getMessage()
 
 
 @pytest.mark.req("FR-86")

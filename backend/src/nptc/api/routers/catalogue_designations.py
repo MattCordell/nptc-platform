@@ -118,7 +118,11 @@ from nptc.catalogue.entries import (
     load_entry_for_update,
     save_entry,
 )
-from nptc.catalogue.term_hygiene import clean_term, validate_language_tag
+from nptc.catalogue.term_hygiene import (
+    clean_term,
+    exceeds_maximum_length,
+    validate_language_tag,
+)
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.designation import DesignationStatus, DesignationUse
 from nptc.settings import ApiSettings
@@ -366,14 +370,17 @@ class LengthWarning(BaseModel):
 
 def _length_warning(entry: CatalogueEntry, settings: ApiSettings) -> LengthWarning | None:
     """`None` whenever no maximum is configured (FR-86's unset-by-default
-    acceptance criterion) or the entry's length does not exceed it -
-    `entry.length` is read after `save_entry` has already written the
-    cleaned term, so this compares against the same value FR-85 publishes,
-    never a second computation of it."""
+    acceptance criterion) or the entry's length does not exceed it.
+    `entry.length` is read only once a maximum exists, and after `save_entry`
+    has written the cleaned term, so this compares against the value FR-85
+    publishes."""
     maximum = settings.max_preferred_term_length
-    if maximum is None or entry.length <= maximum:
+    if maximum is None:
         return None
-    return LengthWarning(length=entry.length, max_length=maximum)
+    length = entry.length
+    if not exceeds_maximum_length(length, maximum):
+        return None
+    return LengthWarning(length=length, max_length=maximum)
 
 
 class _WithLanguage(BaseModel):
@@ -859,6 +866,7 @@ def amend_designation_route(
             expected_row_version=body.expected_row_version,
             changes=EntryChanges(preferred_term=body.new_term),
             reason=body.reason,
+            max_preferred_term_length=settings.max_preferred_term_length,
         )
         session.flush()
         # No `warnings`, for the same reason `add_designations`' preferred
