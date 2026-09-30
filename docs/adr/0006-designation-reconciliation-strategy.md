@@ -122,3 +122,16 @@ non-AU `display` value is not the preferred term FR-82 means.
   [transform runbook](../operations/runbooks/transform.md#interpreting-a-designation-finding-fr-97)).
 - A future FR-83 reviewer will find a second call site for tag-stripping and needs this
   ADR to know it was a deliberate, scoped exception rather than drift.
+
+## Amendments
+
+- 2026-09-30: **`LabelConfirmation.matched` is the server's `result` boolean, never
+  qualified by `message`.** FHIR R4 defines `result` as whether the code (and display) is
+  valid, and documents `message` only as error detail when `result` is false. It defines no
+  meaning for a message that disagrees with a `true` result, so inspecting free text would
+  guess at an undefined contract. The cost is accepted: a non-conformant server that
+  returns `result=true` for a display it does not really recognise turns a blocking FR-97
+  outcome into informational drift. That follows from the monotone probe in Decision 1,
+  which is a rescue and never an additional way to fail. Guarding against such a server is
+  a separate, deliberate decision about the terminology client's trust boundary, not
+  something to add as text matching in the sweep.
