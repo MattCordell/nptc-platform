@@ -1,16 +1,16 @@
 """Value types for the FR-53 terminology client contract.
 
 Every field here that carries a SNOMED CT identifier is a ``str``. Wire-level
-types keep the code exactly as the server returned it - a malformed code
-arriving from the server must surface as a finding at the caller (FR-45), not
-as a parse-time crash in this client. Where the platform is the one
-*asserting* an identifier - most notably ``nptc_shared.terminology.snomed``
-building an ECL query out of a chunk of catalogue codes - it validates with
-``nptc_shared.sctid.has_valid_format`` rather than repeating that check here.
+types keep the code exactly as the server returned it: a malformed code from
+the server must surface as a finding at the caller (FR-45), not as a parse-time
+crash in this client. Where the platform itself asserts an identifier, most
+notably ``nptc_shared.terminology.snomed`` building ECL from catalogue codes, it
+validates with ``nptc_shared.sctid.has_valid_format`` rather than repeating the
+check here.
 
 Designations are carried verbatim (FR-82): no stripping, no normalisation, no
 semantic-tag removal. FR-83 puts the one legitimate strip in the export
-renderer, which is not this package and never will be.
+renderer, which is not this package.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from enum import StrEnum
 SNOMED_SYSTEM = "http://snomed.info/sct"
 
 #: The SNOMED CT concept ($lookup ``use``) marking a designation as the Fully
-#: Specified Name, so ``Designation.is_fully_specified_name`` can be derived
-#: from the server's own coding rather than a display-string heuristic.
+#: Specified Name, so ``Designation.is_fully_specified_name`` comes from the
+#: server's own coding rather than a display-string heuristic.
 FSN_USE_CODE = "900000000000003001"
 
 #: RCPA's AU language reference set (PRD FR-82). A ``$lookup``/``$expand``
@@ -34,8 +34,8 @@ AU_LANGUAGE_TAG = "en-x-sctlang-32570271-00003610-6"
 PROCEDURE_ROOT_CODE = "71388002"
 
 #: |Has specimen (attribute)| - the relationship FR-75's semantic-drift check
-#: reads off a bound concept to compare against the RCPA preferred term's own
-#: specimen wording (issue #29, P0-7).
+#: reads off a bound concept to compare with the RCPA preferred term's specimen
+#: wording.
 HAS_SPECIMEN_ATTRIBUTE = "116686009"
 
 
@@ -64,23 +64,18 @@ class SubsumptionOutcome(StrEnum):
 class Edition:
     """A SNOMED CT edition, optionally pinned to a release (FR-48, FR-49).
 
-    ``version`` is the release's effective time as a ``str`` ("20260531"),
-    never an ``int`` - the same FR-06 discipline applied to the one other
-    all-digits token in this domain, and the value is only ever concatenated
-    into a URI. ``None`` means "no version parameter": FR-49's normal
-    operation, where the server resolves the latest release and reports which
-    one it used via ``system_version_uri`` on the response - that reported
-    URI is what FR-48 requires be recorded, not this field.
+    ``version`` is the release's effective time as a ``str`` ("20260531"), never
+    an ``int`` (FR-06), and is only ever concatenated into a URI. ``None`` means
+    no version parameter: FR-49's normal operation, where the server resolves the
+    latest release and reports it via ``system_version_uri`` on the response.
+    That reported URI is what FR-48 requires be recorded, not this field.
 
-    ``display_language`` is which edition's preferred term a ``display``
-    value on a response actually is (FR-82) - an edition-level fact, since a
-    language reference set belongs to one edition and not another.
-    ``AU_LANGUAGE_TAG`` does not exist in the International edition, so it is
-    set only on ``SNOMED_CT_AU``: sending it on both would leave a caller
-    unable to tell "the server does not recognise this language reference set
-    and silently fell back to some other preferred term" from "this really is
-    the AU preferred term", which FR-97's designation reconciliation and its
-    AU-preferred-term-differs report both depend on getting right.
+    ``display_language`` names which edition's preferred term a response's
+    ``display`` is (FR-82). ``AU_LANGUAGE_TAG`` does not exist in the
+    International edition, so it is set only on ``SNOMED_CT_AU``. Sending it on
+    both would leave a caller unable to tell a silent fallback to another
+    preferred term from a real AU preferred term, which FR-97's reconciliation
+    depends on.
     """
 
     module_id: str
@@ -130,10 +125,9 @@ class Designation:
 class ConceptProperty:
     """One ``$lookup`` property, its value carried in lexical form.
 
-    ``value`` is always a ``str`` - ``"true"``/``"false"`` for a boolean, the
-    digits for a code. Keeping the lexical form is what stops a historical
-    association's target (``SAME AS`` -> an SCTID, FR-46) from ever being
-    routed through ``int``.
+    ``value`` is always a ``str``: ``"true"``/``"false"`` for a boolean, the
+    digits for a code. That keeps a historical association's target (``SAME
+    AS`` to an SCTID, FR-46) from being routed through ``int``.
     """
 
     code: str
@@ -157,11 +151,8 @@ class Expansion:
     """The result of one ``ValueSet/$expand``.
 
     An *empty* expansion means the server answered and nothing matched a
-    request that was itself well-formed - for example, FR-84's compliance
-    check when every code is in scope. A failure never produces one: see
-    ``errors.py``. That distinction is FR-54's whole hazard in miniature - an
-    outage that reads as a clean result is worse than an outage that reads as
-    an outage.
+    well-formed request. A failure never produces one (see ``errors.py``): an
+    outage that reads as a clean result is FR-54's hazard.
     """
 
     concepts: tuple[ExpandedConcept, ...] = ()
@@ -180,13 +171,10 @@ class Expansion:
     def is_complete(self) -> bool:
         """False if ``concepts`` is a page, not the whole result.
 
-        A single ``expand`` call is not guaranteed to return everything a
-        chunk's ``total`` promises - a server-side page-size ceiling can cap
-        ``contains`` below ``count``, and a truncated page looks identical to
-        a genuinely short result unless a caller checks this. Paging with
-        ``offset`` to fetch the rest is the caller's responsibility (issue
-        #27's chunked sweep); this client makes exactly one request per
-        ``expand`` call and never pages on its own.
+        A server-side page-size ceiling can cap ``concepts`` below ``total``, and
+        a truncated page looks like a short result unless a caller checks this.
+        Paging with ``offset`` is the caller's job: each ``expand`` call makes
+        exactly one request.
         """
         return self.total is None or len(self.concepts) >= self.total
 
@@ -207,9 +195,8 @@ class LookupResult:
     def fully_specified_name(self) -> str | None:
         """The served FSN, semantic tag intact (FR-82).
 
-        ``None`` if the server returned no FSN designation - never a guess,
-        and never a fallback to ``display``, which is a preferred term and a
-        different thing.
+        ``None`` if the server returned no FSN designation: never a guess, and
+        never a fallback to ``display``, which is a preferred term.
         """
         for designation in self.designations:
             if designation.is_fully_specified_name:

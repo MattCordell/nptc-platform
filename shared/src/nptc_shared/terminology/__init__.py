@@ -9,10 +9,8 @@ it against a real FHIR R4 terminology server. One test suite,
 ``shared/tests/test_terminology_contract.py``, runs against both.
 
 ``sweep.py`` is the one caller of that contract both the backend and the
-transform share (FR-74): FR-52's chunked status resolution and FR-84's
-single-request hierarchy check, over any of the three.
-
-Landed with backlog issues P0-4 (GitHub issue #26) and P0-5 (#27).
+transform share (FR-74): FR-52's chunked status resolution and FR-84's chunked
+hierarchy check, over any of the three.
 """
 
 from __future__ import annotations
