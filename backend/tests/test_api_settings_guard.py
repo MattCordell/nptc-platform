@@ -1,11 +1,13 @@
 """FR-86/FR-98 guard: `ApiSettings` reaches request code only through
 `Depends(get_api_settings)`.
 
-A direct `get_api_settings()` call in a route or helper bypasses
-`app.dependency_overrides`, so the request would read the process-wide
-env-read instance instead of the one `create_app` was given - the two-object
-hazard this guard keeps closed. `nptc/api/app.py` is the one caller: it is
-the factory that installs the override.
+A direct `get_api_settings()` call or `ApiSettings(...)` construction in a
+route or helper bypasses `app.dependency_overrides`, so the request would
+read an env-read instance instead of the one `create_app` was given - the
+two-object hazard this guard keeps closed. Each form has an allow-list:
+`app.py` is the factory that installs the override, `dependencies.py` is
+where `get_api_settings` builds the process-wide instance, and
+`openapi_document.py` builds settings to hand to `create_app`.
 
 Pure ``ast`` over ``backend/src/nptc/api``, modelled on
 ``test_token_verification_guard.py``, with a positive control over an inline
@@ -22,45 +24,54 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "backend" / "src" / "nptc" / "api"
 
-_FACTORY_PATH = "backend/src/nptc/api/app.py"
-_GUARDED_NAME = "get_api_settings"
+_ALLOWED_PATHS = {
+    "get_api_settings": {"backend/src/nptc/api/app.py"},
+    "ApiSettings": {
+        "backend/src/nptc/api/dependencies.py",
+        "backend/src/nptc/api/openapi_document.py",
+    },
+}
 
 
 def _display(path: Path) -> str:
     return path.relative_to(REPO_ROOT).as_posix()
 
 
-def _is_guarded_call(node: ast.Call) -> bool:
+def _called_name(node: ast.Call) -> str | None:
     func = node.func
     if isinstance(func, ast.Name):
-        return func.id == _GUARDED_NAME
-    return isinstance(func, ast.Attribute) and func.attr == _GUARDED_NAME
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
 
-def _direct_calls(source: str, display_path: str) -> list[str]:
-    if display_path == _FACTORY_PATH:
-        return []
-    return [
-        f"{display_path}:{node.lineno}: direct {_GUARDED_NAME}() call"
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call) and _is_guarded_call(node)
-    ]
+def _direct_uses(source: str, display_path: str) -> list[str]:
+    violations = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _called_name(node)
+        if name in _ALLOWED_PATHS and display_path not in _ALLOWED_PATHS[name]:
+            violations.append(f"{display_path}:{node.lineno}: direct {name}() call")
+    return violations
 
 
 @pytest.mark.req("FR-86")
-def test_no_api_module_calls_get_api_settings_directly() -> None:
+def test_no_api_module_resolves_api_settings_outside_the_allow_list() -> None:
     violations = [
         violation
         for path in sorted(API_DIR.rglob("*.py"))
-        for violation in _direct_calls(path.read_text(encoding="utf-8"), _display(path))
+        for violation in _direct_uses(path.read_text(encoding="utf-8"), _display(path))
     ]
 
     assert not violations, (
-        "Inject ApiSettingsDep instead of calling get_api_settings():\n" + "\n".join(violations)
+        "Inject ApiSettingsDep instead of resolving or building ApiSettings:\n"
+        + "\n".join(violations)
     )
 
 
-def test_guard_flags_a_direct_call_and_ignores_depends() -> None:
+def test_guard_flags_direct_use_and_ignores_depends() -> None:
     source = """
 from fastapi import Depends
 from nptc.api import dependencies
@@ -71,8 +82,12 @@ def bare():
 def qualified():
     return dependencies.get_api_settings()
 
+def constructed():
+    return ApiSettings(frontend_base_url="http://localhost:5173")
+
 def injected(settings=Depends(get_api_settings)):
     return settings
 """
-    assert len(_direct_calls(source, "backend/src/nptc/api/routers/x.py")) == 2
-    assert _direct_calls(source, _FACTORY_PATH) == []
+    assert len(_direct_uses(source, "backend/src/nptc/api/routers/x.py")) == 3
+    assert len(_direct_uses(source, "backend/src/nptc/api/app.py")) == 1
+    assert len(_direct_uses(source, "backend/src/nptc/api/dependencies.py")) == 2

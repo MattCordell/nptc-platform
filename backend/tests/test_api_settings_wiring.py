@@ -53,7 +53,7 @@ def _fresh_settings_cache() -> Iterator[None]:
 
 @pytest.mark.req("FR-86")
 def test_create_app_installs_the_injected_settings_as_the_dependency_override() -> None:
-    injected = ApiSettings(frontend_base_url="http://localhost:5173")
+    injected = _api_support.hermetic_api_settings()
 
     app = create_app(settings=injected)
 
@@ -88,13 +88,12 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
 @pytest.mark.req("FR-98")
 @pytest.mark.integration
 def test_routes_ignore_an_invalid_env_value_when_settings_are_injected(
-    api: ApiTestApp, monkeypatch: pytest.MonkeyPatch
+    api: ApiTestApp, hostile_api_settings_env: None
 ) -> None:
     """The bug this closes: `NPTC_FSN_SEMANTIC_TAG=stripped` makes a fresh
     `ApiSettings()` raise, so any route still resolving its own env-read
     instance answered 500 even though the app was built with good settings."""
     seeded = _seed.seed_public_catalogue(api.session)
-    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
 
     bindings = api.get(f"/catalogue/entries/{seeded.canonical}/bindings")
     detail = api.get(f"/catalogue/entries/{seeded.canonical}")
@@ -127,3 +126,24 @@ def test_one_request_reads_exactly_one_settings_object(
     assert len(response.json()["bindings"]) >= 2
     assert seen, "the binding assembler never asked for settings"
     assert all(settings is injected for settings in seen)
+
+
+@pytest.mark.req("FR-86")
+def test_hermetic_settings_reject_a_mistyped_field_name() -> None:
+    """Otherwise `max_preferred_term_lenght=20` is dropped and a length-warning
+    test asserts the unset behaviour while passing for the wrong reason."""
+    with pytest.raises(ValidationError, match="max_preferred_term_lenght"):
+        _api_support.hermetic_api_settings(max_preferred_term_lenght=20)
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.integration
+def test_set_api_settings_keeps_the_fields_it_is_not_given(app_db: Connection) -> None:
+    configured = _api_support.hermetic_api_settings(max_preferred_term_length=9)
+
+    for api in build_api_test_app(app_db, api_settings=configured):
+        replaced = api.set_api_settings(frontend_base_url="https://other.example")
+
+        assert replaced.max_preferred_term_length == 9
+        assert replaced.frontend_base_url == "https://other.example"
+        assert api.app.dependency_overrides[get_api_settings]() is replaced

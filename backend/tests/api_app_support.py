@@ -45,7 +45,6 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -72,6 +71,16 @@ _jwt_support = importlib.util.module_from_spec(_support_spec)
 sys.modules["auth_jwt_support"] = _jwt_support
 _support_spec.loader.exec_module(_jwt_support)
 
+_hermetic_spec = importlib.util.spec_from_file_location(
+    "hermetic_settings_support", Path(__file__).parent / "hermetic_settings_support.py"
+)
+assert _hermetic_spec is not None and _hermetic_spec.loader is not None
+_hermetic = importlib.util.module_from_spec(_hermetic_spec)
+sys.modules["hermetic_settings_support"] = _hermetic
+_hermetic_spec.loader.exec_module(_hermetic)
+
+hermetic_api_settings = _hermetic.hermetic_api_settings
+
 StubIdp = _jwt_support.StubIdp
 running_stub_idp = _jwt_support.running_stub_idp
 mint_token = _jwt_support.mint_token
@@ -81,30 +90,6 @@ shared_rsa_key = _jwt_support.shared_rsa_key
 KID = "test-key-1"
 AUDIENCE = "nptc-api"
 FRONTEND_ORIGIN = "http://localhost:5173"
-
-
-class _HermeticApiSettings(ApiSettings):
-    """`ApiSettings` that reads its constructor arguments and nothing else:
-    no `NPTC_*` variable and no `.env`, so a developer's or runner's
-    environment cannot change what a test app serves."""
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (init_settings,)
-
-
-def hermetic_api_settings(**fields: Any) -> ApiSettings:
-    """Field defaults plus `fields`; never the process environment. Unlike
-    passing every field explicitly, a field added to `ApiSettings` later is
-    covered by its own default rather than by editing each caller."""
-    return _HermeticApiSettings(**fields)
 
 
 @dataclass
@@ -122,9 +107,10 @@ class ApiTestApp:
 
     def set_api_settings(self, **fields: Any) -> ApiSettings:
         """Replaces the `ApiSettings` this app serves for the rest of the
-        test - the same override `create_app` installs, so routes and helpers
-        that read settings all see the new object."""
-        api_settings = hermetic_api_settings(**fields)
+        test, keeping every field not named in `fields` - the same override
+        `create_app` installs, so routes and helpers all see the new object."""
+        current = self.app.dependency_overrides[get_api_settings]()
+        api_settings = hermetic_api_settings(**{**current.model_dump(), **fields})
         self.app.dependency_overrides[get_api_settings] = lambda: api_settings
         return api_settings
 
