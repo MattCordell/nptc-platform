@@ -1,16 +1,10 @@
-"""Resolving an OIDC identity to an internal `app_user`, and account
-closure (issue #42).
+"""Resolving an OIDC identity to an internal `app_user`, and account closure
+(NFR-05, NFR-17).
 
-Every function here takes a ``sqlalchemy.orm.Session`` as an explicit
-argument - there is no engine, no sessionmaker and no FastAPI app in this
-module or anywhere else in this issue's scope (#41/#43/#44 own those).
-Tests bind a ``Session(bind=app_db)`` to the existing testcontainers
-fixture connection (the standard join-an-external-transaction pattern), so
-the fixture's rollback-per-test semantics are untouched.
-
-Outcomes are returned as a result object, never raised as control-flow
-exceptions, so #43 can map each one to an HTTP response without a
-try/except ladder.
+Every function here takes a ``sqlalchemy.orm.Session`` explicitly; this module
+owns no engine or sessionmaker. Outcomes are returned as a result object, never
+raised as control-flow exceptions, so the caller maps each one to an HTTP
+response without a try/except ladder.
 """
 
 from __future__ import annotations
@@ -40,10 +34,9 @@ from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
-#: Bounded retries for the username-collision fallback in `_create_user`
-#: below - large enough that a real collision streak is astronomically
-#: unlikely, small enough that a genuine bug (e.g. a broken random source)
-#: fails fast instead of spinning.
+#: Large enough that a real collision streak is astronomically unlikely, small
+#: enough that a genuine bug (e.g. a broken random source) fails fast instead of
+#: spinning in `_create_user`'s username-collision fallback.
 _MAX_USERNAME_ATTEMPTS = 5
 
 
@@ -57,8 +50,8 @@ class LinkOutcome(StrEnum):
 @dataclass(frozen=True)
 class Resolution:
     outcome: LinkOutcome
-    #: None only for MANUAL_LINK_REQUIRED - there is deliberately no user
-    #: to hand back until a human resolves the conflict.
+    #: None only for MANUAL_LINK_REQUIRED: there is no user to hand back until
+    #: a human resolves the conflict.
     user: User | None
 
 
@@ -73,19 +66,16 @@ def _find_candidate_user_ids(
     session: Session, email: str | None, trusted_issuers: frozenset[str]
 ) -> list[uuid.UUID]:
     """Users with a verified email matching `email`, asserted by an
-    identity whose *own* issuer is trusted - not merely an issuer trusted
-    by the *incoming* claim. Without that second check here, a first
-    registration through any untrusted issuer could plant a verified email
-    that a later, genuinely trusted login would then auto-link into (the
-    PRD's stated failure mode: "anyone who can mint a token asserting an
-    administrator's email inherits that administrator's privileges" -
-    minting it once, on day one, through an untrusted issuer, is exactly
-    such a token).
+    identity whose *own* issuer is trusted, not merely an issuer trusted by
+    the *incoming* claim. Without that second check, a first registration
+    through an untrusted issuer could plant a verified email that a later,
+    genuinely trusted login would auto-link into: exactly the failure mode
+    NFR-05 exists to prevent, set up by a single token from an untrusted
+    issuer.
 
-    Returns every distinct matching user, not just one: more than one
-    match means the auto-link target is ambiguous, and the caller must
-    treat that as `MANUAL_LINK_REQUIRED` rather than guess via query plan
-    order.
+    Returns every distinct matching user. More than one match means the
+    auto-link target is ambiguous, which the caller treats as
+    `MANUAL_LINK_REQUIRED` instead of guessing by query plan order.
     """
     if not email or not trusted_issuers:
         return []
@@ -107,27 +97,23 @@ _USERNAME_UNIQUE_CONSTRAINT = "uq_app_user_username"
 
 
 def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) -> str:
-    # Deliberately never derived from `claims.email`: `username` is one of
-    # the four fields `UserRef` exposes externally, and a user who never
-    # chose a handle should not have one silently minted from an address
-    # they supplied only for verification (NFR-26/NFR-35 posture). A blank
-    # `preferred_username` (whitespace-only, still truthy) is treated the
-    # same as a missing one - `app_user.username` carries no CHECK against
-    # blank content the way `user_identity.issuer`/`subject` do.
+    # Never derived from `claims.email`: `username` is one of the four fields
+    # `UserRef` exposes, and a user who never chose a handle should not have one
+    # minted from an address supplied only for verification (NFR-26, NFR-35). A
+    # whitespace-only `preferred_username` counts as missing, because
+    # `app_user.username` has no CHECK against blank content.
     base = claims.preferred_username.strip() if claims.preferred_username else ""
     base = base or f"user-{uuid.uuid4().hex[:12]}"
     return base if suffix is None else f"{base}-{suffix}"
 
 
 def _is_username_collision(exc: IntegrityError) -> bool:
-    """True only for the specific, retryable collision `_create_user`
-    exists to recover from: a duplicate `app_user.username`. A blank
-    `subject` (`ck_user_identity_subject_not_blank`) or a duplicate
-    `(issuer, subject)` from a concurrent first login
-    (`uq_user_identity_issuer`) are different failures with different
-    causes - retrying with a new username suffix cannot fix either, and
-    reporting them as a username-allocation failure would misdirect
-    whoever reads the eventual error."""
+    """True only for the retryable collision `_create_user` recovers from:
+    a duplicate `app_user.username`. A blank `subject`
+    (`ck_user_identity_subject_not_blank`) or a duplicate `(issuer, subject)`
+    from a concurrent first login (`uq_user_identity_issuer`) cannot be fixed
+    by a new username suffix, and reporting them as a username-allocation
+    failure would misdirect whoever reads the error."""
     return unique_violation_constraint(exc) == _USERNAME_UNIQUE_CONSTRAINT
 
 
@@ -135,19 +121,14 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
     """Creates the `app_user` (plus its first `user_identity` row) for a
     subject seen for the first time.
 
-    Retried, with a randomised username suffix, on a `uq_app_user_username`
-    collision specifically - see `_is_username_collision` - rather than
-    letting an ordinary, unremarkable IdP input (a `preferred_username`
-    someone else already holds, or no `preferred_username`/`display_name`
-    claim at all - both of which real IdPs routinely omit or duplicate)
-    surface as a raw `IntegrityError` on first login. Any other constraint
-    violation is re-raised immediately: retrying under a different
-    username can't fix a blank subject or a racing duplicate `(iss, sub)`.
-    Each attempt runs inside its own `SAVEPOINT` so a failed attempt aborts
-    only that attempt, not the caller's whole transaction - including the
-    `user_identity.created` audit event emitted below, so a rolled-back
-    collision retry never leaves a record of an insert that did not
-    happen.
+    Retries with a randomised username suffix on a `uq_app_user_username`
+    collision (see `_is_username_collision`), because real IdPs routinely omit
+    or duplicate `preferred_username` and that must not surface as a raw
+    `IntegrityError` on first login. Any other constraint violation is
+    re-raised at once. Each attempt runs inside its own `SAVEPOINT`, so a
+    failed attempt aborts only itself, including the `user_identity.created`
+    audit event: a rolled-back retry never leaves a record of an insert that
+    did not happen.
     """
     display_name = claims.display_name or claims.preferred_username
     suffix: str | None = None
@@ -170,9 +151,8 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
                     email_verified=claims.email_verified,
                 )
                 session.add(identity)
-                # record_change(kind=CREATED) flushes the session itself -
-                # see its docstring - so this must run before anything else
-                # flushes `identity` out of `session.new`.
+                # record_change(kind=CREATED) flushes the session, so it must run
+                # before anything else flushes `identity` out of `session.new`.
                 record_change(
                     session,
                     audit,
@@ -180,16 +160,9 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
                     instance=identity,
                     kind=ChangeKind.CREATED,
                 )
-                # PRD Section 4.3: a newly registered user *is* Provisional
-                # - a real user_role row, not an implicit "no grants means
-                # Provisional" default, so FR-40's user dashboard can
-                # answer "what roles does this user hold" with one query,
-                # and so Observer (a demotion below the default) is
-                # representable at all rather than only as an absence.
-                # Inside the same SAVEPOINT as the identity insert above:
-                # a username-collision retry must not leave an orphan
-                # user_role.granted event for an app_user row that gets
-                # rolled back.
+                # PRD Section 4.3: a new user is Provisional, as a real
+                # user_role row (ADR-0019). It sits inside the SAVEPOINT so a
+                # collision retry leaves no orphan user_role.granted event.
                 grant_role_unchecked(
                     session,
                     target_user_id=user.id,
@@ -219,15 +192,13 @@ def resolve_user_for_claims(
     if existing is not None:
         user = session.get(User, existing.user_id)
         if user is None or user.status == UserStatus.CLOSED:
-            # Defence in depth: closure normally deletes the identity row
-            # outright, so this should not be reachable in practice.
+            # Defence in depth: closure deletes the identity row outright, so
+            # this should not be reachable.
             return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
-        # Safe to refresh unconditionally, regardless of whether
-        # claims.issuer is itself trusted: this identity's own issuer is
-        # exactly what `_find_candidate_user_ids` checks before any other
-        # user can ever auto-link against it, so an untrusted issuer
-        # asserting `email_verified=True` here does not create a usable
-        # auto-link target.
+        # Safe to refresh whether or not claims.issuer is trusted:
+        # `_find_candidate_user_ids` checks this identity's own issuer before
+        # any other user can auto-link against it, so an untrusted issuer
+        # asserting email_verified=True creates no usable auto-link target.
         identity_changed = (
             existing.email != claims.email or existing.email_verified != claims.email_verified
         )
@@ -235,10 +206,8 @@ def resolve_user_for_claims(
         existing.email = claims.email
         existing.email_verified = claims.email_verified
         if identity_changed:
-            # Guarded rather than unconditional: an ordinary repeat login
-            # changes nothing, and record_change refuses an empty diff by
-            # design (AuditNoOpError) - this is the caller-side
-            # short-circuit that refusal assumes.
+            # record_change refuses an empty diff (AuditNoOpError), so an
+            # ordinary repeat login must skip it.
             record_change(
                 session,
                 audit,
@@ -246,14 +215,10 @@ def resolve_user_for_claims(
                 instance=existing,
                 kind=ChangeKind.UPDATED,
             )
-        # `user.display_name` must be assigned *after* the identity's
-        # record_change above, not before: append_audit_event flushes the
-        # session before reading the chain tail, and a flush commits away
-        # the attribute history diff_instance needs. Assigning here first
-        # would make this event's own diff empty - AuditNoOpError - the
-        # exact ordering close_account already follows (identity/role
-        # events first, `user` mutated last). Do not hoist this back above
-        # the identity block.
+        # Assign `user.display_name` after the identity's record_change, not
+        # before: append_audit_event flushes the session, and a flush discards
+        # the attribute history diff_instance needs, so this event's own diff
+        # would be empty (AuditNoOpError). close_account follows the same order.
         if name_changed:
             user.display_name = claims.display_name
             record_change(
@@ -291,10 +256,9 @@ def resolve_user_for_claims(
     )
     user = session.get(User, candidate_user_id)
     if user is None:
-        # FK-guaranteed not to happen: candidate_user_id came from a join
-        # against app_user in the same transaction. Raising makes that
-        # guarantee load-bearing rather than silently handing #43 a
-        # `Resolution(AUTO_LINKED, user=None)` its own type says can't occur.
+        # Not reachable: candidate_user_id came from a join against app_user in
+        # this transaction. Raising keeps `Resolution(AUTO_LINKED, user=None)`,
+        # which the type says cannot occur, from reaching the caller.
         raise AssertionError(f"candidate user {candidate_user_id} vanished mid-resolution")
     return Resolution(outcome=LinkOutcome.AUTO_LINKED, user=user)
 
@@ -302,44 +266,32 @@ def resolve_user_for_claims(
 def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> None:
     """Pseudonymises the user and removes every linked identity (NFR-17).
 
-    Never deletes the ``app_user`` row - the privilege grants in migration
-    0003 make that structurally impossible even if this function tried.
-    Idempotent: closing an already-closed account is a no-op, and emits no
-    audit event in that case - nothing changed, so there is nothing to
-    record. That early return is exactly the pattern
-    ``nptc.audit.recording.record_change``'s loud refusal on an empty diff
-    assumes: a caller with a genuinely idempotent path short-circuits
-    *before* reaching the audit layer, rather than relying on the diff
-    coming back empty.
+    Never deletes the ``app_user`` row: the privilege grants in migration 0003
+    make that structurally impossible. Idempotent: closing an already-closed
+    account is a no-op and emits no audit event. The early return happens
+    *before* the audit layer because ``nptc.audit.recording.record_change``
+    refuses an empty diff, so a genuinely idempotent path must not rely on the
+    diff coming back empty.
 
     Emits one ``user_identity.deleted`` event per linked identity, then a
-    single ``user.closed`` event (NFR-08, NFR-10, issue #37's field-level
-    diff - see ``docs/adr/0018-field-level-audit-diffing.md``). Neither
-    ``before`` nor ``after`` ever carries the identifying values themselves
-    (NFR-26/NFR-35): that withholding is each model's own
-    ``nptc.audit.policy`` guarantee (``__audit_withheld_fields__``), not
-    this function's own care - ``record_change`` records ``User``'s
-    pre-closure ``status`` change and each ``UserIdentity``'s
-    ``email_verified`` in full, and the remaining identifying fields by
-    name only (under ``_redacted``), since ``audit_event`` is
-    INSERT/SELECT-only for the app role (NFR-09) and anything written into
-    ``before`` is permanent.
+    single ``user.closed`` event (NFR-08, NFR-10; see
+    ``docs/adr/0018-field-level-audit-diffing.md``). The events never carry
+    the identifying values (NFR-26, NFR-35): each model's
+    ``__audit_withheld_fields__`` guarantees that, not this function.
+    ``audit_event`` is INSERT/SELECT-only for the app role (NFR-09), so
+    anything written into ``before`` is permanent.
 
-    The identities are deleted one row at a time via the ORM (not a single
-    bulk ``DELETE``) specifically so ``record_change`` can read each row's
-    attribute history before it disappears - a bulk statement never
-    materialises the per-row instances that diff needs.
+    Identities and grants are deleted one row at a time through the ORM, not a
+    bulk ``DELETE``, so ``record_change`` can read each row's attribute history
+    before it disappears.
 
     **FR-01**: closure is a role-removal path even though it never calls
-    ``nptc.auth.grants.revoke_role`` - ``assert_not_last_administrator``
-    runs first, before anything else, so that closing your own account is
-    never the trivial bypass of "the system MUST prevent removal of the
-    last remaining administrator". Every ``user_role`` grant is then
-    revoked (``user_role.revoked``, one row at a time, same reasoning as
-    the identity deletions above) - a closed user has no identities left
-    to authenticate with, so a lingering grant would be unreachable but
-    not actually gone, which is exactly the state FR-01's guard must never
-    be fooled by.
+    ``nptc.auth.grants.revoke_role``, so ``assert_not_last_administrator`` runs
+    first. Otherwise closing your own account would bypass "the system MUST
+    prevent removal of the last remaining administrator". Every ``user_role``
+    grant is then revoked: a closed user has no identities left to
+    authenticate with, so a lingering grant would be unreachable but not gone,
+    which is the state FR-01's guard must not be fooled by.
     """
     user = session.get(User, user_id)
     if user is None or user.status == UserStatus.CLOSED:
@@ -379,10 +331,9 @@ def close_account(session: Session, user_id: uuid.UUID, audit: AuditContext) -> 
 
 class UserRef(BaseModel):
     """The NFR-04 serialisation boundary: what any API response or export
-    is allowed to say about a user. No ``id`` field, ever - the internal
-    UUID must never escape past this type. #43/#142/#143 route through
-    this structurally instead of relying on reviewer memory that the UUID
-    must not leak.
+    is allowed to say about a user. There is no ``id`` field, ever: the
+    internal UUID must not escape past this type, so a route that returns a
+    ``UserRef`` cannot leak it.
     """
 
     model_config = ConfigDict(frozen=True)
