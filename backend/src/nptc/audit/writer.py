@@ -19,7 +19,7 @@ the state change it records commit together.
     `'read committed'`, or `AuditIsolationLevelError` is raised. Under `REPEATABLE READ` or
     `SERIALIZABLE` the snapshot is fixed at or before the first statement, so an appender that
     wins the lock after the previous holder commits can still read a tail that predates that
-    commit. The lock stops the appends running concurrently, not forking.
+    commit. The lock stops the appends running at the same time, but not from forking.
 2. `session.flush()`, then read the tail (`ORDER BY sequence DESC LIMIT 1`). Without the
    flush, an earlier append in the same transaction is invisible to the `SELECT` and the chain
    forks within one request.
