@@ -219,7 +219,7 @@ both lock pairs (append-vs-row and append-vs-collision) at once.
 **Issue #281 closes both cases above.** `nptc.catalogue.entries.create_entry`/`save_entry`,
 `nptc.catalogue.property_values.save_property_values` (the singular writer), and
 `nptc.catalogue.designations.add_designation`/`amend_designation` now call
-`acquire_append_lock` as their own **literal first statement** — not merely "early" or
+`acquire_append_lock` before **any statement that touches the session** — not merely "early" or
 "before the collision/row lock", which a round-2 review of this fix itself found was not
 strong enough: a placement after some earlier precondition check still left one or more ORM
 `select()` calls in between (`_load_active_property_definition`, the existing-values query,
@@ -235,9 +235,9 @@ Every catalogue-entry writer now acquires the append lock before it can take eit
 lock or the collision lock, so the residual bulk-vs-singular and collision-lock cycles this
 addendum accepted above are closed, not merely narrowed: `backend/tests/
 test_lock_ordering.py` proves both directly with two genuine concurrent Postgres sessions,
-plus a pure-`ast` guard (`test_acquire_append_lock_is_the_literal_first_statement`) pinning
-the "literal first statement" invariant itself, so a future change that moves the lock later
-in any of these five functions fails that guard immediately rather than only occasionally
+plus a pure-`ast` guard (`test_acquire_append_lock_precedes_every_session_touching_statement`) pinning
+the "lock before any session-touching statement" invariant itself, so a future change that
+moves the lock later in any of these five functions fails that guard immediately rather than only occasionally
 failing a flaky concurrency test. (A `threading.Barrier`-only version of the concurrency
 tests, against a version of this fix that took the lock merely "before the row/collision
 lock" rather than as the literal first statement, was verified not to reproduce either
@@ -250,9 +250,18 @@ single `pg_advisory_xact_lock` shared by every audit append in the application; 
 held from before `create_entry`'s own `pg_trgm`-backed collision scan and across the whole
 of `save_entry`/`save_property_values`/`add_designation`/`amend_designation`, including
 their own no-op paths that previously took no lock at all. Because the lock now precedes
-both `reason` validation and the row-version check in every one of these functions, a
-rejected changelog note (422) or a stale `expected_row_version` (409) each hold it until
-the request's transaction unwinds too — not only a successful write. Every catalogue write
+the row-version check in every one of these functions, a stale `expected_row_version` (409)
+holds it until the request's transaction unwinds too — not only a successful write.
+**Issue #360 exempts input checks that never see a session.** `validate_changelog_note`,
+`clean_term` and `validate_language_tag` run before the lock, so a rejected changelog note
+(422) or term takes no lock. That covers `save_entries`, `amend_designation`,
+`retire_designation` and `reinstate_designation` too, and the designation and binding routes
+pass their request's note to `entry_child_write(..., reason=...)`, which validates it ahead
+of its own lock because the wrapped writers only run once that lock is held. One visible
+effect: an empty note on an already-retired designation now returns 422, where it returned 409.
+They cannot take a row or collision lock ahead of the append
+lock, so the ordering above still holds; the guard allows exactly those named calls ahead of
+the lock (`_SESSION_FREE_PRECHECKS` in `test_lock_ordering.py`) and nothing else. Every catalogue write
 now serialises against every other on this one lock for a longer window than before this
 issue. `add_synonyms`' own per-term loop re-asserts the same already-held lock once per
 term (via each `add_designation` call) rather than once per batch — each re-assertion
