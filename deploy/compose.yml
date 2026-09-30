@@ -8,8 +8,9 @@
 #
 # This is a development-grade stack: HTTP only, Keycloak in start-dev with no
 # volume, open registration. No compose.dev.yml/compose.prod.yml overlay exists
-# yet; the hardened production overlay (TLS, non-root, read-only containers,
-# Keycloak persistence) is P5 per the delivery plan. There is no worker
+# yet; the hardened production overlay (TLS, read-only containers, Keycloak
+# persistence) is P5 per the delivery plan. Both application images already
+# run as a non-root user. There is no worker
 # service because nothing under backend/src/nptc/jobs/ exists before P3.
 
 name: nptc

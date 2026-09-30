@@ -22,6 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
 ENV_EXAMPLE = REPO_ROOT / "deploy" / ".env.example"
 BACKEND_DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
+FRONTEND_DOCKERFILE = REPO_ROOT / "frontend" / "Dockerfile"
+CADDYFILE = REPO_ROOT / "deploy" / "caddy" / "Caddyfile"
 
 _conftest_spec = importlib.util.spec_from_file_location(
     "_test_deploy_compose_conftest", Path(__file__).parent / "conftest.py"
@@ -155,11 +157,24 @@ def test_env_example_frontend_origin_matches_the_published_web_port() -> None:
 
 
 @pytest.mark.req("NFR-41")
-def test_backend_image_does_not_run_as_root() -> None:
-    users = re.findall(r"^USER\s+(\S+)", BACKEND_DOCKERFILE.read_text(encoding="utf-8"), re.M)
+@pytest.mark.parametrize(
+    "dockerfile", [BACKEND_DOCKERFILE, FRONTEND_DOCKERFILE], ids=lambda p: p.parent.name
+)
+def test_images_do_not_run_as_root(dockerfile: Path) -> None:
+    users = re.findall(r"^USER\s+(\S+)", dockerfile.read_text(encoding="utf-8"), re.M)
 
-    assert users, "the backend Dockerfile never drops root"
+    assert users, f"{dockerfile.parent.name}/Dockerfile never drops root"
     assert users[-1] not in {"root", "0"}
+
+
+@pytest.mark.req("NFR-41")
+def test_caddy_blocks_cross_site_framing_but_allows_the_spas_own_silent_renewal_frame() -> None:
+    """`silentAuthorize` loads /auth/callback in a hidden same-origin iframe, so
+    `DENY` would break token renewal and step-up with no server-side error."""
+    headers = CADDYFILE.read_text(encoding="utf-8")
+
+    assert re.search(r"^\s*X-Frame-Options\s+SAMEORIGIN\s*$", headers, re.M)
+    assert not re.search(r"X-Frame-Options\s+DENY", headers)
 
 
 @pytest.mark.req("NFR-41")

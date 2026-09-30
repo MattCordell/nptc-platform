@@ -36,6 +36,9 @@
 
 	header {
 		X-Content-Type-Options nosniff
+		# SAMEORIGIN, not DENY: silent renewal and step-up load /auth/callback
+		# in a hidden iframe on this same origin. Other sites may not frame us.
+		X-Frame-Options SAMEORIGIN
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
 	}

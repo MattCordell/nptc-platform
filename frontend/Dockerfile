@@ -31,6 +31,16 @@ ENV VITE_OIDC_ISSUER=$VITE_OIDC_ISSUER \
 RUN pnpm --filter nptc-frontend build
 
 FROM caddy:2.11.4-alpine AS runtime
+# The base image declares /data and /config as root-owned volumes, so Caddy's
+# state goes to a directory this user owns. The official binary carries the
+# capability to bind port 80 without root.
+RUN addgroup -S -g 10001 nptc \
+    && adduser -S -u 10001 -G nptc -H nptc \
+    && mkdir -p /tmp/caddy/data /tmp/caddy/config \
+    && chown -R nptc:nptc /tmp/caddy
+ENV XDG_DATA_HOME=/tmp/caddy/data \
+    XDG_CONFIG_HOME=/tmp/caddy/config
 COPY deploy/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/frontend/dist /srv
+USER nptc
 EXPOSE 80
