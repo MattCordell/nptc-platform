@@ -10,8 +10,8 @@ therefore this package's claim about itself.
 **Why not call `nptc_shared.terminology.strip_semantic_tag` alone.** It returns
 its input unchanged when there is no trailing parenthesised group, which suits a
 seeding comparison that counts that case separately (ADR-0006). An export that
-runs unattended on every release must fail loudly instead, because a served FSN
-always carries a tag (FR-82). This module adds that assertion and leaves the
+runs unattended on every release must fail loudly instead, because every stored
+`fsn` came from the server (FR-82) and a served FSN always carries a tag. This module adds that assertion and leaves the
 strip rule defined once, in `nptc_shared.terminology.snomed`.
 """
 
@@ -27,8 +27,8 @@ __all__ = ["EmptyDisplayTermError", "NotAServedFSNError", "render_display_term"]
 class NotAServedFSNError(ValueError):
     """Raised by `render_display_term` when its input has no trailing
     parenthesised group (FR-83's first assertion). FR-82 guarantees a stored
-    `fsn` has one, so the value is not a served FSN and the export must fail
-    rather than publish it."""
+    `fsn` is a served FSN, which always has one, so the export must fail rather
+    than publish this value."""
 
     http_status: ClassVar[int] = 422
 

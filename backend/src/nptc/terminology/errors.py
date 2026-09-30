@@ -52,8 +52,8 @@ class TerminologyUpstreamError(Exception):
 
     This is the catch-all and is never a 404. Reading an unclassified failure
     as "not found" would let an unseeded `StubTerminologyClient` answer every
-    lookup with a clean absence, and a malformed upstream response read as a
-    missing code, instead of the defects they are.
+    lookup with a clean absence. It would also make a malformed upstream
+    response look like a missing code. Both are defects, not absences.
     """
 
     http_status: ClassVar[int] = 502

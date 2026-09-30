@@ -10,9 +10,9 @@ designation's `use` does not separate preferred from acceptable.
 
 **Only `inactive` is requested.** FR-46's inactivation reason and historical
 associations come on the same call, but FR-46/FR-47 own reading them. `active`
-is `bool | None` because a server need not report a property nobody asked for.
-`None` means "not reported", and calling that active would mislead an editor
-(hazard H-05).
+is `bool | None` because a server may omit even a requested property (FHIR R4
+does not oblige it to report one). `None` means "not reported", and calling that
+active would mislead an editor (hazard H-05).
 
 **Classification order matters.** `TerminologyRateLimitError` and
 `TerminologyTimeoutError` subclass broader types, so `classify_terminology_error`
