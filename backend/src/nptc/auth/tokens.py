@@ -1,11 +1,10 @@
-"""NFR-07 server-side JWT verification (issue #43).
+"""NFR-07 server-side JWT verification.
 
 ``TokenVerifier.verify`` is the one place in this repository that turns a
-bearer token into an ``OidcIdentityClaims`` - see
-``nptc.auth.authentication.authenticate`` for the join into #42's
-``resolve_user_for_claims``. Every check below runs in the stated order,
-and every failure raises a subclass of ``nptc.auth.errors.TokenError``:
-there is no path from "verification failed" to "treat as valid".
+bearer token into an ``OidcIdentityClaims``; ``nptc.auth.authentication`` joins
+it to identity resolution. Every check below runs in the stated order, and
+every failure raises a subclass of ``nptc.auth.errors.TokenError``: there is no
+path from "verification failed" to "treat as valid".
 """
 
 from __future__ import annotations
@@ -27,22 +26,17 @@ from nptc.auth.errors import (
 from nptc.auth.jwks import SigningKeys
 from nptc.settings import AuthSettings
 
-#: The realm's signature algorithm, stated explicitly rather than relied on
-#: implicitly - this is the single line that kills `alg: none` and an
-#: RS256-signed token replayed as HS256 against the RSA public key. PyJWT
-#: would also refuse both once `algorithms=` is passed to `decode`, but the
-#: allowlist is checked against the header *before* any key lookup happens,
-#: so a disallowed `alg` never even causes a JWKS request.
+#: The realm's signature algorithm, stated explicitly: this line kills
+#: `alg: none` and an RS256-signed token replayed as HS256 against the RSA
+#: public key. `verify` checks it against the header *before* any key lookup,
+#: so a disallowed `alg` never causes a JWKS request (ADR-0016).
 _ALGORITHMS = ["RS256"]
 _REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat"]
 #: Keycloak stamps the *payload* claim `typ: Bearer` on access tokens and
-#: `typ: ID` on ID tokens - the JOSE *header*'s own `typ` is `JWT` for
-#: both (confirmed empirically against the pinned Keycloak image, see
-#: test_keycloak_jwt.py), so this is checked against the verified payload,
-#: never the unverified header. Refusing by kind rather than by accident:
-#: a replayed ID token would carry the wrong audience anyway, but naming
-#: the mistake is clearer than letting the audience check reject it as a
-#: side effect.
+#: `typ: ID` on ID tokens; the JOSE *header*'s own `typ` is `JWT` for both
+#: (`test_keycloak_jwt.py`). So this is checked against the verified payload,
+#: never the unverified header (ADR-0016). A replayed ID token would also fail
+#: the audience check, but refusing it by kind names the mistake.
 _EXPECTED_TYP = "Bearer"
 
 
@@ -51,12 +45,9 @@ class TokenVerifier:
     issuer: str
     audience: str
     keys: SigningKeys
-    #: Not hard-coded to zero: a constructor argument so a deployment with
-    #: a known clock skew can raise it deliberately. Defaults to 0.0
-    #: because Keycloak's own `accessTokenLifespan` is 300s (see the
-    #: committed realm) and NFR-07's acceptance criteria require an
-    #: expired token to be rejected, leaving no argument for a silent
-    #: grace window by default.
+    #: A constructor argument so a deployment with a known clock skew can raise
+    #: it deliberately. Defaults to 0.0 because NFR-07 requires an expired token
+    #: to be rejected, and Keycloak's `accessTokenLifespan` is 300s (ADR-0016).
     leeway: float = 0.0
 
     @classmethod
@@ -131,20 +122,17 @@ class TokenVerifier:
         if not isinstance(issuer, str):
             raise TokenClaimsError("iss claim is not a string")
 
-        # jwt.decode returns dict[str, Any] - every other claim below is
-        # narrowed to the type OidcIdentityClaims declares rather than
-        # passed through unchecked, the same discipline `sub` gets above.
+        # jwt.decode returns dict[str, Any]: narrow every other claim to the
+        # type OidcIdentityClaims declares, as `sub` is above.
         email = payload.get("email")
         email = email if isinstance(email, str) else None
         preferred_username = payload.get("preferred_username")
         preferred_username = preferred_username if isinstance(preferred_username, str) else None
         display_name = payload.get("name")
         display_name = display_name if isinstance(display_name, str) else None
-        # NFR-06 (issue #44): `acr`/`auth_time` are authentication facts
-        # (how/when the user authenticated), read here with the same
-        # isinstance narrowing as every other optional claim above - see
-        # nptc.auth.claims's module docstring for why this is not the
-        # authorisation-claims door ADR-0014 closed.
+        # NFR-06: `acr`/`auth_time` are authentication facts, not the
+        # authorisation claims ADR-0014 closed the door on (see
+        # nptc.auth.claims).
         acr = payload.get("acr")
         acr = acr if isinstance(acr, str) else None
         auth_time = payload.get("auth_time")
@@ -154,9 +142,8 @@ class TokenVerifier:
             issuer=issuer,
             subject=subject,
             email=email,
-            # `is True`, never truthiness - a claim decoded as the string
-            # "false" is truthy in Python. The same discipline
-            # nptc.auth.linking documents for may_auto_link.
+            # `is True`, never truthiness: the string "false" is truthy (see
+            # nptc.auth.linking).
             email_verified=payload.get("email_verified") is True,
             preferred_username=preferred_username,
             display_name=display_name,

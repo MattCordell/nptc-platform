@@ -1,52 +1,38 @@
-"""The PRD Section 4.7 permission matrix, as code (issue #44, FR-44).
+"""The PRD Section 4.7 permission matrix, as code (FR-44).
 
-**Permissions and role -> permission mappings are code here, not database
-rows.** A permission constant referenced by a check site must exist as a
-Python symbol, so a database-sourced permission table could only ever be a
-*shadow* of this enum - one that can silently disagree with it, the exact
-drift `nptc.db.roles` was built to prevent for privilege grants. "Who may
-publish a release" belongs in `git blame` and PR review, not an unreviewed
-`INSERT` - especially with no admin UI in this issue's scope. `mypy
---strict` typechecks a `Permission` reference at every call site; a
-database-sourced string cannot be. Only *grants* (which user holds which
-role) are database rows - see `nptc.auth.grants` and
-`nptc.db.models.user_role`.
+**Permissions and role -> permission mappings are code, not database rows**
+(ADR-0019). A permission referenced at a check site must exist as a Python
+symbol, so a database table could only *shadow* this enum and silently
+disagree with it. Only *grants* (which user holds which role) are rows; see
+`nptc.auth.grants` and `nptc.db.models.user_role`.
 
-**`ROLE_PERMISSIONS` is written as an explicit literal `frozenset` per
-role, never `MEMBER = PROVISIONAL | {...}`.** The matrix is not monotone -
-a Provisional user may create submissions but may not register interest,
-so a later, more-privileged role does not simply add to an earlier one.
-Writing each role flat lets a reviewer diff this table against PRD Section
-4.7 row by row; monotonicity (where it does hold) is asserted as a test
-property in `test_permissions_data.py`, not baked into the representation
-as an unexamined assumption.
+**`ROLE_PERMISSIONS` is an explicit literal `frozenset` per role, never
+`MEMBER = PROVISIONAL | {...}`.** The matrix is not monotone: a Provisional
+user may create submissions but may not register interest. Written flat, each
+role can be diffed against PRD Section 4.7 row by row. Monotonicity, where it
+holds, is asserted in `test_permissions_data.py`.
 
-**The three matrix qualifiers are three different kinds of thing, and
-each gets its own mechanism** - collapsing them into one is the design
-trap this module exists to avoid:
+**The three matrix qualifiers are three different kinds of thing, and each gets
+its own mechanism:**
 
 - ``Y (own)`` / ``Y (any)`` (withdraw a submission) is a *resource-scope*
   distinction: two permissions, ``SUBMISSION_WITHDRAW_OWN`` and
   ``SUBMISSION_WITHDRAW_ANY``, checked via
-  ``nptc.auth.authorisation.may_act_on`` against the resource's owner. A
-  single ``SUBMISSION_WITHDRAW`` permission plus an ownership ``if`` at
-  the call site would be exactly the hard-coded authorisation check FR-44
-  forbids, merely relocated.
-- ``max 5`` / ``20/hr`` (submission creation) is not a permission at all -
-  both Provisional and Member hold the same ``SUBMISSION_CREATE``
-  permission. It is a numeric budget, carried by ``SubmissionQuota``/
-  ``QUOTAS`` below. This module defines and unit-tests the data and its
-  resolution rule; it does **not** enforce it - there is no ``submission``
-  table yet to count against, exceeding a quota is a 429, not a 403, and
-  it is a different audit story ("rate limited") from "not permitted".
+  ``nptc.auth.authorisation.may_act_on`` against the resource's owner. One
+  permission plus an ownership ``if`` at the call site would be the
+  hard-coded authorisation check FR-44 forbids, merely relocated.
+- ``max 5`` / ``20/hr`` (submission creation) is not a permission: Provisional
+  and Member hold the same ``SUBMISSION_CREATE``. It is a numeric budget,
+  carried by ``SubmissionQuota``/``QUOTAS``. This module defines and tests the
+  data and its resolution rule but does **not** enforce it: exceeding a quota
+  is a 429, not a 403, with its own audit story ("rate limited").
 - Reviewer's "promote Provisional to Member and no more" is the
   ``ROLE_GRANT_MEMBER`` / ``ROLE_GRANT_ANY`` split, resolved by
   `nptc.auth.grants.grant_role`.
 
-Deliberately never attached to a permission set: a predicate or lambda
-expressing one of the above. That would destroy the "permissions are
-inspectable data" property `test_permission_matrix.py`, the FR-80/FR-81
-property tests, and `test_authorisation_guard.py` all depend on.
+Never attach a predicate or lambda expressing one of these to a permission set.
+`test_permission_matrix.py`, the FR-80/FR-81 property tests and
+`test_authorisation_guard.py` depend on permissions being inspectable data.
 """
 
 from __future__ import annotations
@@ -59,7 +45,7 @@ from typing import Final
 
 class Role(StrEnum):
     """PRD Section 4, ordered by privilege. ``ANON`` is a matrix column
-    (the anonymous visitor), never a grantable row - see `GRANTABLE_ROLES`.
+    (the anonymous visitor), never a grantable row; see `GRANTABLE_ROLES`.
     """
 
     ANON = "anon"
@@ -70,15 +56,14 @@ class Role(StrEnum):
     ADMINISTRATOR = "administrator"
 
 
-#: Roles a `user_role` row may ever name - everything except ANON, which
-#: is never granted (an ungranted user simply *is* anonymous).
+#: Roles a `user_role` row may name: everything except ANON, because an
+#: ungranted user simply *is* anonymous.
 GRANTABLE_ROLES: Final[frozenset[Role]] = frozenset(Role) - {Role.ANON}
 
 
 class Permission(StrEnum):
-    """One constant per PRD Section 4.7 capability (or capability group).
-    Dotted, stable values - see the module docstring for why this is code,
-    not data."""
+    """One constant per PRD Section 4.7 capability (or capability group),
+    with dotted, stable values."""
 
     CATALOGUE_BROWSE = "catalogue.browse"
     RELEASE_RETRIEVE = "release.retrieve"
@@ -110,12 +95,11 @@ class Permission(StrEnum):
 
 
 class PermissionKind(StrEnum):
-    """FR-80's own wording: Observer must have "no write capability of any
-    kind", which is a statement about *data* (is a permission read-shaped
-    or write-shaped), not about endpoints. Every `Permission` member must
-    be classified - `test_permissions_data.py` asserts exhaustiveness, the
-    same "every column classified or construction fails" discipline
-    `nptc.audit.policy` already applies to model columns."""
+    """FR-80 requires Observer to have "no write capability of any kind", a
+    statement about *data* (is a permission read-shaped or write-shaped), not
+    about endpoints. Every `Permission` member must be classified;
+    `test_permissions_data.py` asserts exhaustiveness, as `nptc.audit.policy`
+    does for model columns."""
 
     READ = "read"
     WRITE = "write"
@@ -151,17 +135,14 @@ PERMISSION_KIND: Final[Mapping[Permission, PermissionKind]] = {
     Permission.AUDIT_READ: PermissionKind.READ,
 }
 
-#: Derived, never hand-listed twice - see `test_permissions_data.py`'s
-#: exhaustiveness assertion against `Permission`.
+#: Derived, never hand-listed twice.
 WRITE_PERMISSIONS: Final[frozenset[Permission]] = frozenset(
     p for p, kind in PERMISSION_KIND.items() if kind is PermissionKind.WRITE
 )
 
-# PRD Section 4.7, reproduced cell by cell - each role an explicit literal
-# frozenset (see module docstring for why). `test_permission_matrix.py`
-# parses the PRD's own markdown table and asserts this mapping reproduces
-# it exactly; that test, not this comment, is the source of truth for
-# "matches the PRD".
+# `test_permission_matrix.py` parses the PRD Section 4.7 markdown table and
+# asserts this mapping reproduces it exactly; that test, not this comment, is
+# the source of truth for "matches the PRD".
 ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
     Role.ANON: frozenset(
         {
@@ -223,11 +204,10 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
             Permission.ROLE_GRANT_MEMBER,
         }
     ),
-    # Holds SUBMISSION_WITHDRAW_ANY only, not also _OWN - PRD Section 4.7
-    # marks Administrator's cell "Y (any)", not "Y (own)" in addition.
-    # This is not a functional gap: `may_act_on` checks `any_` first and
-    # returns True immediately when held, so an Administrator's own
-    # submissions are already covered without a redundant grant.
+    # Holds SUBMISSION_WITHDRAW_ANY only, not also _OWN: PRD Section 4.7 marks
+    # Administrator's cell "Y (any)". Not a functional gap, because
+    # `may_act_on` checks `any_` first, so an Administrator's own submissions
+    # are already covered.
     Role.ADMINISTRATOR: frozenset(
         {
             Permission.CATALOGUE_BROWSE,
@@ -263,7 +243,7 @@ ROLE_PERMISSIONS: Final[Mapping[Role, frozenset[Permission]]] = {
 
 def permissions_for_roles(roles: frozenset[Role]) -> frozenset[Permission]:
     """The union of every held role's permissions, plus `Role.ANON`'s
-    unconditionally - a user with zero grants is never *less* capable than
+    unconditionally, so a user with zero grants is never *less* capable than
     an anonymous visitor (see `nptc.auth.principal.principal_for`)."""
     result = set(ROLE_PERMISSIONS[Role.ANON])
     for role in roles:
@@ -271,10 +251,9 @@ def permissions_for_roles(roles: frozenset[Role]) -> frozenset[Permission]:
     return frozenset(result)
 
 
-#: Every permission held by Administrator and no other role - PRD Section
-#: 4.5's explicit withheld-from-Reviewer list, plus this issue's NFR-06
-#: hook (`MFA_REQUIRED_PERMISSIONS` below). Derived, not hand-listed, so a
-#: new Administrator-only permission is picked up automatically by both.
+#: Every permission held by Administrator and no other role: PRD Section 4.5's
+#: withheld-from-Reviewer list, and the source of `MFA_REQUIRED_PERMISSIONS`
+#: below. Derived, so a new Administrator-only permission is picked up by both.
 _OTHER_ROLE_PERMISSIONS: Final[frozenset[Permission]] = frozenset().union(
     *(perms for role, perms in ROLE_PERMISSIONS.items() if role is not Role.ADMINISTRATOR)
 )
@@ -284,18 +263,16 @@ ADMINISTRATOR_ONLY: Final[frozenset[Permission]] = (
 
 #: NFR-06: which permissions require the acting Administrator to have
 #: authenticated with MFA (see `nptc.auth.principal.principal_for` and
-#: `nptc.auth.authorisation.require_permission`). Equal to
-#: `ADMINISTRATOR_ONLY` today - every capability only an Administrator
-#: holds is exactly the set NFR-06 exists to protect - kept as a distinct
-#: name so a future, narrower policy is a one-line change here, not a
-#: search-and-replace at every call site.
+#: `nptc.auth.authorisation.require_permission`). Equal to `ADMINISTRATOR_ONLY`
+#: today, under its own name so a narrower policy is a one-line change here,
+#: not an edit at every call site.
 MFA_REQUIRED_PERMISSIONS: Final[frozenset[Permission]] = ADMINISTRATOR_ONLY
 
 
 @dataclass(frozen=True)
 class SubmissionQuota:
     """A role's submission budget (PRD Section 4.3/4.4). `None` means
-    uncapped. Not a permission - see the module docstring."""
+    uncapped. Not a permission; see the module docstring."""
 
     lifetime_max: int | None
     per_hour_max: int | None
@@ -316,11 +293,11 @@ QUOTAS: Final[Mapping[Role, SubmissionQuota]] = {
 def effective_quota(
     roles: frozenset[Role], *, override: SubmissionQuota | None = None
 ) -> SubmissionQuota:
-    """The most permissive quota across every held role - `None` beats any
+    """The most permissive quota across every held role: `None` beats any
     integer in each dimension, so a Member who is also a Reviewer is not
     capped by the Member row. `override` is the seam for FR-41's per-user
-    rate-limit override (deferred past this issue - see ADR-0019's
-    Consequences: no column exists yet for it to read)."""
+    rate-limit override, which has no column to read yet (ADR-0019,
+    Consequences)."""
     if override is not None:
         return override
     if not roles:

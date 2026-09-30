@@ -2279,10 +2279,9 @@ export interface components {
         /**
          * UserRef
          * @description The NFR-04 serialisation boundary: what any API response or export
-         *     is allowed to say about a user. No ``id`` field, ever - the internal
-         *     UUID must never escape past this type. #43/#142/#143 route through
-         *     this structurally instead of relying on reviewer memory that the UUID
-         *     must not leak.
+         *     is allowed to say about a user. There is no ``id`` field, ever: the
+         *     internal UUID must not escape past this type, so a route that returns a
+         *     ``UserRef`` cannot leak it.
          */
         UserRef: {
             /** Username */
