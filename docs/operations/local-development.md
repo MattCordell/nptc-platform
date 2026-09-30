@@ -62,8 +62,8 @@ commands are safe to repeat.
 uv run uvicorn nptc.api.app:create_app --factory --reload --app-dir backend/src
 ```
 
-- Swagger UI: <http://127.0.0.1:8000/api/v1/docs>
-- OpenAPI document: <http://127.0.0.1:8000/api/v1/openapi.json>
+- Swagger UI: <http://localhost:8000/api/v1/docs>
+- OpenAPI document: <http://localhost:8000/api/v1/openapi.json>
 - There is no route at `/`, so a 404 there is expected.
 
 ## 6. Start the web app
