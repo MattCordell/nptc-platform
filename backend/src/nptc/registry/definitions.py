@@ -1,39 +1,18 @@
-"""Datatype-agnostic PropertyDefinition service errors and DTOs (issue #55,
-FR-11, FR-12).
+"""Datatype-agnostic PropertyDefinition service errors and DTOs (FR-11, FR-12).
 
-**A leaf module** (ADR-0013 SS2): imports only `nptc_shared`, the stdlib,
-and sibling `nptc.registry` modules - never `nptc.db` or any other `nptc`
-package. `nptc.db.definitions` is the ORM-touching half that actually reads
-and writes `property_definition` rows; this module holds only the pure,
-container-free pieces every caller of that service needs to catch:
+A leaf module (ADR-0013 SS2): it imports only `nptc_shared`, the stdlib and
+sibling `nptc.registry` modules, never `nptc.db` or another `nptc` package.
+`nptc.db.definitions` is the ORM-touching half.
 
-- **Deprecation is one-way** (FR-11): there is no "reactivate" - an attempt
-  to move a `deprecated` property back to `active` raises
-  `PropertyReactivationRefusedError` rather than silently no-opping or
-  quietly succeeding.
-- **`key` is immutable** (FR-12): `PropertyKeyImmutableError` is raised by
-  `nptc.db.definitions.amend_definition` before any attribute is touched,
-  whenever a caller's amendment names a `key` different from the one it is
-  amending - the database's own `@validates("key")` guard on
-  `PropertyDefinition` is the second, storage-level layer for the same
-  invariant; this is the fail-loud service-level layer, matching
-  `nptc.catalogue.bindings`'s own precedent of raising before the ORM ever
-  gets a chance to.
-- **A property definition is never actually deleted** (FR-11): the API
-  route always refuses a `DELETE` with `PropertyDefinitionDeleteRefusedError`,
-  naming deprecation as the available action - `property_definition` has no
-  `DELETE` grant at the database layer at all (issue #51), so this is the
-  HTTP-visible refusal for the same invariant, not a second enforcement
-  mechanism.
-- **Deprecating an `origin = 'system'` property is refused**
-  (`SystemPropertyDeprecationRefusedError`) - an explicit assumption this
-  issue takes, flagged in the PR body as one the maintainer can strike: the
-  PRD does not itself state this restriction.
+Each error here is the fail-loud service-level layer of an invariant whose
+storage-level layer sits in the database (a `@validates` guard or a missing
+grant), so a caller gets a typed 4xx instead of a driver error. The
+deprecation lifecycle is in `docs/architecture/data-model.md`. Refusing to
+deprecate an `origin = 'system'` property is an assumption the PRD does not
+state, and that page records it too.
 
-`PropertyDefinitionNotFoundError` (404) is deliberately **not** redefined
-here - `nptc.catalogue.property_values` already defines and raises it, and
-every caller (the new registry service, the new HTTP router, the existing
-value-write path) shares that one definition.
+`PropertyDefinitionNotFoundError` (404) is not redefined here:
+`nptc.catalogue.property_values` defines it and every caller shares that one.
 """
 
 from __future__ import annotations
@@ -56,15 +35,12 @@ __all__ = [
 
 
 class DefinitionAudience(StrEnum):
-    """Which listing a caller of `nptc.db.definitions.list_definitions`
-    wants (issue #55's export-resolver-only scope decision).
+    """Which listing a caller of `nptc.db.definitions.list_definitions` wants.
 
-    `DATA_ENTRY` is the audience for a submission/maintenance form: only
-    `active` properties, since a deprecated one must never be offered as
-    something new to record a value against (FR-11). `EXPORT` is every
-    status, including `deprecated` - the audience a release/export needs,
-    since a historical value recorded against a since-deprecated property
-    must still resolve to a spec and a handler when re-serialised.
+    `DATA_ENTRY` is only `active` properties, so a deprecated one is never
+    offered for a new value (FR-11). `EXPORT` is every status, because a value
+    recorded against a since-deprecated property must still resolve to a spec
+    and a handler when re-serialised.
     """
 
     DATA_ENTRY = "data_entry"
@@ -72,76 +48,65 @@ class DefinitionAudience(StrEnum):
 
 
 class PropertyDefinitionDeleteRefusedError(Exception):
-    """Raised by every call reaching `DELETE /registry/properties/{key}` -
-    that route never actually deletes a row (FR-11); `property_definition`
-    has no `DELETE` grant at the database layer at all (issue #51), so this
-    is the HTTP-visible, actionable refusal for the same invariant, naming
-    deprecation as the available action rather than surfacing the
-    underlying `42501` as an unhandled 500."""
+    """Raised by every call to `DELETE /registry/properties/{key}`, which never
+    deletes a row (FR-11).
+
+    `property_definition` has no `DELETE` grant, so this is the actionable
+    refusal, naming deprecation, instead of an unhandled `42501` 500."""
 
     http_status: ClassVar[int] = 409
 
 
 class PropertyKeyImmutableError(Exception):
-    """Raised when an amendment attempts to change `key` (FR-12) - checked
-    before any attribute is touched. `PropertyDefinition.key`'s own
-    `@validates` guard (issue #51) is the storage-level backstop for the
-    same invariant; this is the fail-loud service-level layer, matching
-    `CatalogueEntry`'s own immutable-`business_key` precedent."""
+    """Raised when an amendment attempts to change `key` (FR-12), before any
+    attribute is touched. `PropertyDefinition.key`'s `@validates` guard is the
+    storage-level backstop."""
 
     http_status: ClassVar[int] = 409
 
 
 class PropertyAlreadyDeprecatedError(Exception):
-    """Raised when `deprecate_definition` is called against a property
-    whose `status` is already `deprecated` - deprecation is a one-time
-    transition, not an idempotent no-op, so a repeat call is a caller
-    mistake worth surfacing rather than silently succeeding again."""
+    """Raised when `deprecate_definition` meets a property already `deprecated`.
+
+    A repeat call is a caller mistake worth surfacing, not an idempotent no-op."""
 
     http_status: ClassVar[int] = 409
 
 
 class PropertyReactivationRefusedError(Exception):
-    """Raised whenever an amendment would move a property's `status` from
-    `deprecated` back to `active` - deprecation is one-way (FR-11's own
-    "deprecation, not deletion" framing does not extend to "and it can come
-    back"). There is deliberately no `reactivate()` function to call
-    instead."""
+    """Raised when an amendment would move `status` from `deprecated` back to
+    `active`. Deprecation is one-way (FR-11), so there is deliberately no
+    `reactivate()`."""
 
     http_status: ClassVar[int] = 409
 
 
 class SystemPropertyDeprecationRefusedError(Exception):
-    """Raised when `deprecate_definition` is called against an
-    `origin = 'system'` property (Discipline, Subgroup, Specimen, Usage
-    guidance - issue #51's seeded built-ins). An explicit assumption this
-    issue takes, not a PRD requirement - flagged in the PR body as one the
-    maintainer can strike."""
+    """Raised when `deprecate_definition` meets an `origin = 'system'` property
+    (Discipline, Subgroup, Specimen, Usage guidance).
+
+    An assumption the PRD does not state; see `docs/architecture/data-model.md`."""
 
     http_status: ClassVar[int] = 409
 
 
 class PropertyDefinitionKeyExistsError(Exception):
-    """Raised by `create_definition` when `key` is already in use -
-    `uq_property_definition_key` is the actual database invariant; this is
-    the fail-loud, race-safe Python-level layer (see
-    `nptc.db.definitions.create_definition`'s own docstring for the
-    concurrent-insert handling), matching
-    `nptc.catalogue.bindings.CodeBindingCodeAlreadyBoundError`'s own
-    precedent of turning a unique-violation race into a typed 409 rather
-    than an unhandled `IntegrityError`."""
+    """Raised by `create_definition` when `key` is already in use.
+
+    `uq_property_definition_key` is the database invariant. This turns a
+    concurrent-insert race into a typed 409 instead of an `IntegrityError` (see
+    `create_definition`)."""
 
     http_status: ClassVar[int] = 409
 
 
 class PropertyDatatypeUnknownError(Exception):
-    """Raised by `nptc.db.definitions.create_definition`/`amend_definition`
-    when `datatype` does not resolve via `DatatypeRegistry.get()` (FR-77,
-    issue #223 review finding 3). `property_definition.datatype` has no
-    database `CHECK` at all - that is FR-77's own extension point - so
-    without this, an unknown datatype produced a `201` and a broken row
-    that only failed later, at the first value write, with an unhandled
-    `UnknownDatatypeError`. Raised before the row is ever written."""
+    """Raised by `create_definition` and `amend_definition` when `datatype` does
+    not resolve via `DatatypeRegistry.get()` (FR-77).
+
+    `property_definition.datatype` has no database `CHECK`, because that is
+    FR-77's extension point. Without this error an unknown datatype would be
+    saved and fail at the first value write. Raised before the row is written."""
 
     http_status: ClassVar[int] = 422
 
@@ -151,23 +116,21 @@ class PropertyDatatypeUnknownError(Exception):
 
 
 class PropertyConstraintsInvalidError(Exception):
-    """Raised when `constraints` does not conform to the resolved datatype
-    handler's own `constraints_schema()` (issue #223 review finding 4).
-    Wraps `nptc.registry.schema.MalformedConstraintsError` with an
-    `http_status` ClassVar so it can be mapped the same way every other
-    typed error in this module already is - `MalformedConstraintsError`
-    itself is a plain `ValueError` with no such field, since `nptc.
-    registry.schema` is a leaf module with no HTTP concept."""
+    """Raised when `constraints` does not conform to the datatype handler's
+    `constraints_schema()`.
+
+    Wraps `nptc.registry.schema.MalformedConstraintsError`, a plain `ValueError`
+    from a leaf module with no HTTP concept, so that it gains an `http_status`."""
 
     http_status: ClassVar[int] = 422
 
 
 class DeprecatedPropertyWriteError(Exception):
-    """Raised by `nptc.catalogue.property_values.save_property_values` when
-    the resolved `PropertyDefinition.status` is `deprecated` - FR-11's
-    corollary that a deprecated property retains its recorded values but
-    accepts no new ones. Named after the specific property key so a caller
-    or reviewer can act on it without decoding an entity id."""
+    """Raised by `save_property_values` when the resolved property is `deprecated`.
+
+    It keeps its recorded values but accepts no new ones (FR-11). The message
+    names the property key so a caller can act on it without decoding an entity
+    id."""
 
     http_status: ClassVar[int] = 422
 
