@@ -136,14 +136,23 @@ def test_hermetic_settings_reject_a_mistyped_field_name() -> None:
         _api_support.hermetic_api_settings(max_preferred_term_lenght=20)
 
 
+@pytest.fixture
+def configured_api(app_db: Connection, request: pytest.FixtureRequest) -> Iterator[ApiTestApp]:
+    """An app built with the `api_settings` the test parametrises this with,
+    torn down by the fixture machinery like every other app under test."""
+    yield from build_api_test_app(app_db, api_settings=request.param)
+
+
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
-def test_set_api_settings_keeps_the_fields_it_is_not_given(app_db: Connection) -> None:
-    configured = _api_support.hermetic_api_settings(max_preferred_term_length=9)
+@pytest.mark.parametrize(
+    "configured_api",
+    [_api_support.hermetic_api_settings(max_preferred_term_length=9)],
+    indirect=True,
+)
+def test_set_api_settings_keeps_the_fields_it_is_not_given(configured_api: ApiTestApp) -> None:
+    replaced = configured_api.set_api_settings(frontend_base_url="https://other.example")
 
-    for api in build_api_test_app(app_db, api_settings=configured):
-        replaced = api.set_api_settings(frontend_base_url="https://other.example")
-
-        assert replaced.max_preferred_term_length == 9
-        assert replaced.frontend_base_url == "https://other.example"
-        assert api.app.dependency_overrides[get_api_settings]() is replaced
+    assert replaced.max_preferred_term_length == 9
+    assert replaced.frontend_base_url == "https://other.example"
+    assert configured_api.app.dependency_overrides[get_api_settings]() is replaced
