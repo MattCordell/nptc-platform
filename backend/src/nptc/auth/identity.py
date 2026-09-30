@@ -34,7 +34,8 @@ from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
-#: Bounded so a genuine bug (e.g. a broken random source) fails fast instead of
+#: Large enough that a real collision streak is astronomically unlikely, small
+#: enough that a genuine bug (e.g. a broken random source) fails fast instead of
 #: spinning in `_create_user`'s username-collision fallback.
 _MAX_USERNAME_ATTEMPTS = 5
 
@@ -69,7 +70,8 @@ def _find_candidate_user_ids(
     the *incoming* claim. Without that second check, a first registration
     through an untrusted issuer could plant a verified email that a later,
     genuinely trusted login would auto-link into: exactly the failure mode
-    NFR-05 exists to prevent, minted once on day one.
+    NFR-05 exists to prevent, set up by a single token from an untrusted
+    issuer.
 
     Returns every distinct matching user. More than one match means the
     auto-link target is ambiguous, which the caller treats as

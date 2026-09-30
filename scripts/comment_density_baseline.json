@@ -36,7 +36,7 @@
   "backend/src/nptc/auth/errors.py": {"code": 8, "prose": 21, "ratio": 2.625},
   "backend/src/nptc/auth/errors_authorisation.py": {"code": 14, "prose": 34, "ratio": 2.429},
   "backend/src/nptc/auth/grants.py": {"code": 132, "prose": 94, "ratio": 0.712},
-  "backend/src/nptc/auth/identity.py": {"code": 213, "prose": 100, "ratio": 0.469},
+  "backend/src/nptc/auth/identity.py": {"code": 213, "prose": 102, "ratio": 0.479},
   "backend/src/nptc/auth/jwks.py": {"code": 87, "prose": 49, "ratio": 0.563},
   "backend/src/nptc/auth/linking.py": {"code": 4, "prose": 14, "ratio": 3.5},
   "backend/src/nptc/auth/permissions.py": {"code": 217, "prose": 76, "ratio": 0.35},

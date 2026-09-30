@@ -73,12 +73,12 @@ def assert_not_last_administrator(session: Session, *, removing_user_id: uuid.UU
 
     **TODO (suspend path, not yet written): it MUST call this function before
     setting `app_user.status` to `'suspended'`.** No suspend endpoint exists
-    and `UserStatus.SUSPENDED` is only read today (`nptc.auth.principal.
-    principal_for`). `FOR UPDATE OF ur` locks only `user_role` rows, not the
-    joined `app_user` row, so a suspend that writes `app_user.status` without
-    this lock races a concurrent `revoke_role` or `close_account` on a
-    *different* administrator: neither transaction's lock is visible to the
-    other's `u.status = 'active'` join until commit.
+    and `UserStatus.SUSPENDED` is only read today
+    (`nptc.auth.principal.principal_for`). `FOR UPDATE OF ur` locks only
+    `user_role` rows, not the joined `app_user` row, so a suspend that writes
+    `app_user.status` without this lock races a concurrent `revoke_role` or
+    `close_account` on a *different* administrator: neither transaction's lock
+    is visible to the other's `u.status = 'active'` join until commit.
     """
     holder_ids = {
         row["user_id"] for row in session.execute(_LOCK_ADMINISTRATOR_GRANTS_SQL).mappings()
