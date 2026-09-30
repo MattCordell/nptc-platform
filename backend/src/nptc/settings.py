@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -287,6 +287,23 @@ class MigrationSettings(BaseSettings):
     @classmethod
     def _not_blank(cls, value: str) -> str:
         return _require_non_blank(value, "migration_database_url")
+
+
+class AppLoginSettings(BaseSettings):
+    """The password `nptc.db.provision_login` sets on the app runtime login
+    role. Required, with no default, so a missing value fails naming the
+    variable instead of creating a role with a guessable password (NFR-26).
+    A `SecretStr`, so the value never appears in a repr or a traceback."""
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    app_db_password: SecretStr
+
+    @field_validator("app_db_password")
+    @classmethod
+    def _not_blank(cls, value: SecretStr) -> SecretStr:
+        _require_non_blank(value.get_secret_value(), "app_db_password")
+        return value
 
 
 class IndexerSettings(BaseSettings):
