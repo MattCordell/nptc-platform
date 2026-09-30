@@ -73,7 +73,11 @@ grant a role.
    The command records a `user_role.granted` audit event. See
    [`upgrade.md`](upgrade.md#bootstrapping-the-first-administrator) for why this step is deliberately
    outside the API.
-5. Sign out and back in so the new role takes effect.
+5. Open an administrator page, such as <http://localhost:8081/admin/catalogue>. The
+   administrator role needs a second factor (NFR-06). The first time, Keycloak asks you to
+   set up an authenticator app, then returns you to the page. Until that step succeeds, the
+   API hides the role: `GET /api/v1/auth/me` lists only `provisional`, although the database
+   already holds the grant. See [`permissions.md`](../architecture/permissions.md).
 
 ## Stop the stack
 
@@ -122,7 +126,7 @@ Run `down -v` and start again.
 | `backend` never becomes healthy | Run `docker compose -f deploy/compose.yml logs backend`. A settings error names the variable. |
 | Keycloak shows "Invalid parameter: redirect_uri" | `NPTC_FRONTEND_BASE_URL` does not match the address in your browser. Fix it, then recreate `keycloak`. |
 | Every API call fails with a 401 after sign-in | `NPTC_OIDC_ISSUER` does not match the address Keycloak signed the token with. Use the address your browser uses. |
-| Sign-in works, but pages say you lack permission | You have not been granted a role. See [Create the first user and administrator](#create-the-first-user-and-administrator). |
+| Sign-in works, but pages say you lack permission | You have no role yet, or you hold the administrator role but have not completed the second-factor step. See [Create the first user and administrator](#create-the-first-user-and-administrator). |
 
 To run the API or web app on your own machine instead, see
 [`local-development.md`](local-development.md). Every setting is listed in

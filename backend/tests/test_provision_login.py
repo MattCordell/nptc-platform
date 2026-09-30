@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from testcontainers.community.postgres import PostgresContainer
 
@@ -25,10 +25,8 @@ _HOSTILE_PASSWORD = "it's a \\ $$ 100% test-only-not-a-real-secret"
 
 
 def _login_engine(owner_engine: Engine, password: str) -> Engine:
-    url = make_url(owner_engine.url.render_as_string(hide_password=False)).set(
-        username=APP_LOGIN_ROLE, password=password
-    )
-    return create_engine(url.render_as_string(hide_password=False))
+    url = owner_engine.url.set(username=APP_LOGIN_ROLE, password=password)
+    return create_engine(url)
 
 
 def _can_log_in(owner_engine: Engine, password: str) -> bool:
