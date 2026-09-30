@@ -1,10 +1,10 @@
 """Configuration for the FR-53 terminology client.
 
 Explicit ``os.environ`` reads, not a settings framework: ``pydantic-settings``
-is a backend-only dependency (ADR-0001), and pulling pydantic into ``shared``
-would pull it into the transform, which has no other use for it. ``from_env``
-takes the environment as an argument so a test configures it by passing a
-dict, never by mutating the process.
+is a backend-only dependency (ADR-0001), and using it here would pull pydantic
+into the transform, which has no other use for it. ``from_env`` takes the
+environment as an argument so a test passes a dict instead of mutating the
+process.
 """
 
 from __future__ import annotations
@@ -18,14 +18,13 @@ from nptc_shared.terminology.errors import TerminologyConfigError
 DEFAULT_BASE_URL = "https://tx.ontoserver.csiro.au/fhir/"
 
 #: Codes per ``ValueSet/$expand`` in the FR-52 bulk pass. FR-52 says "start
-#: around 200 to 500 codes and tune"; 300 is the midpoint, and ADR-0005
-#: records both the reasoning and the procedure for tuning it against a
-#: specific server.
+#: around 200 to 500 codes and tune"; 300 is the midpoint. ADR-0005 records the
+#: reasoning and how to tune it against a specific server.
 DEFAULT_CHUNK_SIZE = 300
 
-#: Concurrent requests in the FR-52 targeted second pass. FR-52 says "default
-#: conservatively" - four is conservative for a shared public terminology
-#: server, and ADR-0005 records why it is not higher.
+#: Concurrent requests in the FR-52 second pass. FR-52 says "default
+#: conservatively"; four suits a shared public terminology server, and ADR-0005
+#: records why it is not higher.
 DEFAULT_MAX_CONCURRENCY = 4
 
 _BASE_URL_VAR = "NPTC_TX_BASE_URL"
@@ -40,7 +39,7 @@ _MAX_CONCURRENCY_VAR = "NPTC_TX_MAX_CONCURRENCY"
 class TerminologyConfig:
     """Everything an ``OntoserverClient`` needs to reach a terminology server.
 
-    ``bearer_token`` is ``repr=False`` - a frozen dataclass's generated
+    ``bearer_token`` is ``repr=False``: a frozen dataclass's generated
     ``__repr__`` would otherwise put a secret into any traceback or log line
     (NFR-26, NFR-35).
     """
@@ -55,17 +54,13 @@ class TerminologyConfig:
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY
 
     def __post_init__(self) -> None:
-        # httpx joins base_url's raw_path with the request path; a base URL
-        # of ".../fhir" without a trailing slash silently drops the "/fhir"
-        # segment for some join shapes. Normalising here means every caller
-        # gets the correct join regardless of how the value arrived.
+        # httpx joins base_url's raw_path with the request path; without a
+        # trailing slash, some join shapes drop the "/fhir" segment.
         if not self.base_url.endswith("/"):
             object.__setattr__(self, "base_url", f"{self.base_url}/")
-        # Rejected here rather than at the sweep's call site: a chunk size of
-        # zero makes no progress at all, and a negative one silently inverts
-        # a slice into an empty chunk - either way the sweep would report a
-        # clean catalogue it never actually checked, which is the exact FR-54
-        # hazard (an outage that reads as a clean result).
+        # A chunk size of zero makes no progress and a negative one slices to an
+        # empty chunk. Either way the sweep would report a clean catalogue it
+        # never checked (FR-54's hazard).
         if self.chunk_size < 1:
             raise TerminologyConfigError(f"chunk_size must be at least 1, got {self.chunk_size}")
         if self.max_concurrency < 1:
@@ -77,11 +72,11 @@ class TerminologyConfig:
     def from_env(cls, env: Mapping[str, str] | None = None) -> TerminologyConfig:
         """Builds a config from environment variables (default: ``os.environ``).
 
-        An empty ``NPTC_TX_TOKEN`` is treated as unset, so a ``.env`` file can
-        carry the key with no value without accidentally sending
-        ``Authorization: Bearer``. A malformed numeric value raises
-        ``TerminologyConfigError`` naming the variable - it never falls back
-        to the default, which would hide a deployment typo indefinitely.
+        An empty ``NPTC_TX_TOKEN`` counts as unset, so a ``.env`` file can carry
+        the key with no value without sending ``Authorization: Bearer``. A
+        malformed numeric value raises ``TerminologyConfigError`` naming the
+        variable; it never falls back to the default, which would hide a
+        deployment typo.
         """
         source = env if env is not None else os.environ
 

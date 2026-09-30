@@ -68,31 +68,26 @@ class EditionResolution:
 class TerminologyRun:
     """What the terminology pass covered, for the report's provenance block.
 
-    ``codes_not_checked`` is not decoration: a run that skipped a third of
-    the catalogue because those cells were malformed must not read as a run
-    that validated all of it (the same reason ``UNRECOGNISED_LAYOUT`` reports
-    its unscanned row count).
+    ``codes_not_checked`` exists because a run that skipped a third of the
+    catalogue as malformed must not read as one that validated all of it (as
+    ``UNRECOGNISED_LAYOUT`` reports its unscanned row count).
 
-    The two counts intentionally use different units, so they are not meant
-    to be added together: ``codes_checked`` is the number of *distinct codes*
-    the sweep actually queried (a code bound by three checkable cells still
-    counts once - the engine works in codes, FR-72's own docstring), while
-    ``codes_not_checked`` is the number of *bindings* excluded before the
-    sweep ran (one per skipped cell, even if its code string also reached the
-    server via a different, checkable cell) - counting bindings rather than
-    distinct codes is what keeps a binding that was genuinely skipped from
-    being silently absorbed by another cell that happened to share its code
-    string (issue #130).
+    The two counts use different units and are not meant to be added.
+    ``codes_checked`` is the number of *distinct codes* the sweep queried: a code
+    bound by three checkable cells counts once, because the engine works in
+    codes. ``codes_not_checked`` is the number of *bindings* excluded before the
+    sweep, one per skipped cell even if another checkable cell sent the same code
+    string to the server. Counting bindings keeps a skipped binding from being
+    absorbed by a cell that shares its code string.
     """
 
     codes_checked: int
     codes_not_checked: int
     editions: tuple[EditionResolution, ...]
-    #: Concepts resolved during this run for which no edition's sweep could
-    #: identify an FSN designation, summed across editions - see
-    #: ``SweepResult.unresolved_fsn_count``. Zero on a conformant server;
-    #: nonzero here is the operator-visible signal that FR-99's check did not
-    #: actually run for that many concepts, not a silent pass.
+    #: Concepts for which no edition's sweep could identify an FSN, summed across
+    #: editions (``SweepResult.unresolved_fsn_count``). Zero on a conformant
+    #: server. Nonzero tells the operator FR-99's check did not run for that many
+    #: concepts, which is not a silent pass.
     unresolved_fsn_count: int = 0
 
 
@@ -100,16 +95,13 @@ class TerminologyRun:
 class TerminologyOutcome:
     """The pass's findings, plus the provenance record of the run itself.
 
-    ``bindings`` and ``results`` exist for ``designation_check.py`` (FR-97,
-    issue #28): the checkable code bindings and each edition's ``SweepResult``
-    this pass already produced, so the reconciliation pass can reuse them - a
-    code's cell type and Verhoeff validity, and its designation set, must not
-    be decided twice by two independently drifting notions of "checkable".
-    Reconciling only codes present in ``results`` is also what keeps a code
-    already reported ``CODE_NOT_FOUND``/``CODE_INACTIVE`` here from being
-    reconciled at all: an absent or inactive code was never resolved in any
-    edition's ``SweepResult.designations``, so it never reaches the
-    designation check's index.
+    ``bindings`` and ``results`` exist for ``designation_check.py`` (FR-97): the
+    checkable bindings and each edition's ``SweepResult``, reused so a code's cell
+    type, Verhoeff validity and designation set are decided once. Reconciling only
+    codes present in ``results`` also keeps a code already reported
+    ``CODE_NOT_FOUND``/``CODE_INACTIVE`` from being reconciled: an absent or
+    inactive code is in no edition's ``SweepResult.designations``, so it never
+    reaches the designation check's index.
     """
 
     findings: tuple[Finding, ...]

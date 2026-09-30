@@ -1,46 +1,38 @@
 """FR-79/H-04: heuristic misspelling detection over the RCPA preferred-term
-and synonyms columns (issue #29, P0-7).
+and synonyms columns.
 
-**Scope.** Only ``ColumnRole.PREFERRED_TERM`` and ``ColumnRole.SYNONYMS``
-cells are read. This pass consumes the FR-52 sweep's *already-resolved*
-per-edition ``SweepResult`` mapping - the same shape ``check_designations``
-consumes - and issues zero terminology requests of its own; it never holds a
-live ``sweep``. Both finding codes are ``Band.INFORMATIONAL`` (``bands.py``):
-candidates for editorial review, never auto-corrections, and never blocking.
+**Scope.** Only ``ColumnRole.PREFERRED_TERM`` and ``ColumnRole.SYNONYMS`` cells
+are read. The pass consumes the FR-52 sweep's already-resolved per-edition
+``SweepResult`` mapping, as ``check_designations`` does, and issues no
+terminology requests. Both finding codes are ``Band.INFORMATIONAL``
+(``bands.py``): candidates for editorial review, never auto-corrections, never
+blocking.
 
-**Two heuristics, in order of reliability (FR-79's own words).**
+**Two heuristics, in order of reliability (FR-79).**
 
-1. **Intra-entry near-match.** Within one workbook row's own preferred-term
-   and synonym cells (plus, when a completed sweep is available, the served
-   designations of the concept that row's code binds to), a token near a
-   near-match reference is a probable in-entry misspelling
-   (``PROBABLE_MISSPELLING``). This is the heuristic that catches a typo with
-   zero cross-row reasoning at all - ``Epinephine`` next to a served
-   ``Epinephrine`` needs only the one row.
-2. **Cross-entry corpus frequency.** A token seen in only a handful of
-   entries that near-matches one seen in many more is a probable spelling
-   drift across the corpus (``INCONSISTENT_SPELLING``). Heuristic 1 always
-   takes precedence for the same ``(cell, token)`` pair - at most one finding
-   per cell/token, across both heuristics combined.
+1. **Intra-entry near-match.** Within one row's preferred-term and synonym cells
+   (plus, when a sweep is available, the served designations of the concept the
+   row's code binds to), a token near a reference token is a probable
+   misspelling (``PROBABLE_MISSPELLING``). It needs no cross-row reasoning:
+   ``Epinephine`` beside a served ``Epinephrine`` is one row.
+2. **Cross-entry corpus frequency.** A token seen in a handful of entries that
+   near-matches one seen in many more is a probable spelling drift
+   (``INCONSISTENT_SPELLING``). Heuristic 1 takes precedence for the same
+   ``(cell, token)`` pair, so each pair yields at most one finding.
 
-**The authority set is a whitelist only, never a finding generator.** Every
-token found in any edition's served designation values or FSN, when a sweep
-ran, is authoritative - it can be cited as a *reference*, but its own
-``token_key`` can never itself be named a *suspect*, in either heuristic.
-This is what keeps a synonym column's real brand names and genuine
-abbreviations - not carried by any SNOMED FSN - from being false-flagged
-merely for being unusual, while a token that genuinely doesn't match
-anything served is judged purely on its own corpus behaviour.
+**The authority set is a whitelist, never a finding generator.** Every token in
+any edition's served designation values or FSN is authoritative: it can be cited
+as a *reference*, but its ``token_key`` is never named a *suspect*. That stops
+real brand names and abbreviations, absent from any FSN, being flagged merely
+for being unusual.
 
-**Without a sweep (``results=None``), both heuristics still run in full** -
-nothing is suppressed - but the authority set is empty, so precision is
-lower and ``MisspellingRun.authority_source`` records ``WORKBOOK_ONLY``
-rather than ``SWEEP`` so the report can say so explicitly (see
-``report_writer._render_misspellings``).
+**Without a sweep (``results=None``) both heuristics still run in full**, but the
+authority set is empty, so precision is lower. ``MisspellingRun.authority_source``
+records ``WORKBOOK_ONLY`` rather than ``SWEEP`` so the report says so
+(``report_writer._render_misspellings``).
 
-**Thresholds are module constants, not configuration** (mirroring FR-79's
-own "no NPTC_TX_* here" stance - see ADR-0007): a judgement call, stated
-once, not a lever an operator is expected to tune per catalogue.
+**Thresholds are module constants, not configuration** (ADR-0007, FR-79's "no
+NPTC_TX_* here"): a judgement call stated once, not a lever to tune per catalogue.
 """
 
 from __future__ import annotations
@@ -66,17 +58,16 @@ from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
-#: Heuristic 2's own thresholds (FR-79's "in order of reliability", operationalised
-#: as: rare enough to be suspect, common enough to be trusted, and the gap between
-#: them wide enough that "coincidence" is not the likelier explanation). Judgement
-#: calls, not measurements - see ADR-0007's "how to tune these constants".
+#: Heuristic 2's thresholds: rare enough to be suspect, common enough to be
+#: trusted, and far enough apart that coincidence is not the likelier explanation.
+#: Judgement calls, not measurements; ADR-0007 says how to tune them.
 MAX_RARE_COUNT = 2
 MIN_COMMON_COUNT = 3
 COMMON_TO_RARE_RATIO = 3
 
-#: Echoed verbatim into ``report.json``'s ``thresholds`` object
-#: (``report_writer._misspellings_payload``) so a reader never has to cross-reference
-#: this module's source to know what produced a finding.
+#: Echoed into ``report.json``'s ``thresholds`` object
+#: (``report_writer._misspellings_payload``) so a reader need not consult this
+#: source to know what produced a finding.
 THRESHOLDS: dict[str, int] = {
     "min_token_length": MIN_TOKEN_LENGTH,
     "max_edit_distance": MAX_EDIT_DISTANCE,
@@ -91,8 +82,7 @@ _ENTRY_ROLES = (ColumnRole.PREFERRED_TERM, ColumnRole.SYNONYMS)
 
 class AuthoritySource(StrEnum):
     """Where the authority whitelist came from, for the report's provenance
-    block - mirrors ``DesignationRun``'s "say what ran, not just what was
-    found" reasoning (``designation_check.DesignationRun``)."""
+    block: say what ran, not just what was found (``designation_check.DesignationRun``)."""
 
     #: Built from a completed FR-52 sweep's served designations/FSNs.
     SWEEP = "SWEEP"
@@ -107,8 +97,8 @@ class MisspellingRun:
 
     #: Distinct preferred-term/synonym cells read.
     cells_scanned: int = 0
-    #: Comparable-eligible token occurrences considered (see
-    #: ``is_comparable_token``) - not distinct tokens, every occurrence.
+    #: Every comparable-eligible token occurrence considered (see
+    #: ``is_comparable_token``), not distinct tokens.
     tokens_considered: int = 0
     probable_misspelling_count: int = 0
     inconsistent_spelling_count: int = 0
@@ -127,8 +117,8 @@ class MisspellingOutcome:
 class _Entry:
     """One workbook row's preferred-term/synonym cells, plus the code it binds to.
 
-    Grouped by ``(sheet name, row)`` - mirrors ``designation_check._rows_by_role``'s
-    own minimal, private row view, adapted to the two roles this pass reads.
+    Grouped by ``(sheet name, row)``, like ``designation_check._rows_by_role``,
+    for the two roles this pass reads.
     """
 
     key: tuple[str, int]
@@ -138,8 +128,8 @@ class _Entry:
 
 @dataclass
 class _RowData:
-    """Mutable accumulator for one ``(sheet, row)`` while grouping - never
-    exposed outside ``_group_entries``, which freezes it into an ``_Entry``.
+    """Mutable accumulator for one ``(sheet, row)`` while grouping;
+    ``_group_entries`` freezes it into an ``_Entry``.
     """
 
     code: str | None = None
@@ -181,9 +171,8 @@ def _reference_extras(
     designation values and FSN of the concept ``entry.code`` binds to, across
     every edition the sweep resolved it in.
 
-    This is what lets a single-row entry (``Epinephine``, no other row
-    involved at all) still be caught - the reference material comes from the
-    server, not from any other workbook row.
+    This lets a single-row entry (``Epinephine``, no other row involved) be
+    caught: the reference material comes from the server, not another row.
     """
     if entry.code is None:
         return []
@@ -209,15 +198,12 @@ def _reference_extras(
 
 def _corpus_index(entries: Sequence[_Entry]) -> tuple[dict[str, int], dict[str, str]]:
     """Corpus-wide, per ``token_key``: the number of *entries* carrying it at
-    least once, and the surface form seen in the most entries (ties broken
-    lexicographically, for deterministic display, FR-73) - never
-    occurrence/cell counts.
+    least once (never occurrence or cell counts), and the surface form seen in
+    the most entries, ties broken lexicographically (FR-73).
 
-    The representative surface must be the common one, not merely the
-    alphabetically-first one: a message citing "the far more common"
-    spelling has to actually be the more common spelling, not whichever
-    variant happens to sort first (e.g. a single-entry ``ANTENATAL`` sorting
-    before a 200-entry ``Antenatal``).
+    The representative surface must be the common one, not the alphabetically
+    first: a message citing "the far more common" spelling has to be that one,
+    not a single-entry ``ANTENATAL`` sorting before a 200-entry ``Antenatal``.
     """
     row_counts: dict[str, int] = defaultdict(int)
     surface_counts: dict[str, dict[str, int]] = defaultdict(dict)
@@ -238,9 +224,9 @@ def _corpus_index(entries: Sequence[_Entry]) -> tuple[dict[str, int], dict[str, 
 
 
 def _authority_set(results: Mapping[str, SweepResult] | None) -> frozenset[str]:
-    """Every ``token_key`` of every served designation value or FSN, across
-    every edition - the whitelist, per the module docstring. Empty when
-    ``results`` is ``None`` (``AuthoritySource.WORKBOOK_ONLY``).
+    """Every ``token_key`` of every served designation value or FSN, across every
+    edition: the whitelist. Empty when ``results`` is ``None``
+    (``AuthoritySource.WORKBOOK_ONLY``).
     """
     if results is None:
         return frozenset()
@@ -255,23 +241,19 @@ def _authority_set(results: Mapping[str, SweepResult] | None) -> frozenset[str]:
 
 
 def _can_be_suspect(surface: str, cell: Cell | None) -> bool:
-    """The suspect-only restriction ``similarity.is_comparable_token``
-    deliberately leaves out (see its docstring): an all-uppercase surface
-    form is a fine *reference* but can never itself be named a *suspect*,
-    and a reference with no cell of its own (heuristic 1's arm (b), served
-    designation material) can never be a suspect either - there is nowhere
-    to put the finding.
+    """The suspect-only restriction ``similarity.is_comparable_token`` leaves out
+    (see its docstring): an all-uppercase surface is a fine *reference* but never
+    a *suspect*, and neither is a reference with no cell (heuristic 1's arm (b),
+    served designation material), since there is nowhere to put the finding.
     """
     return cell is not None and surface != surface.upper()
 
 
 @dataclass(frozen=True)
 class _Side:
-    """One side of a near-match pair under consideration by ``_decide_suspect``.
-
-    A `(surface, key, role, cell)` quartet, named once: the two-sided
-    signature this replaces passed it twice per call, positionally, which is
-    an arg-order transposition hazard for no benefit.
+    """One side of a near-match pair under consideration by ``_decide_suspect``:
+    a ``(surface, key, role, cell)`` quartet, named so the two sides cannot be
+    transposed positionally.
     """
 
     surface: str
@@ -288,17 +270,16 @@ def _decide_suspect(
 ) -> tuple[str, str, Cell, str, str] | None:
     """Given a near-match pair, decides which side is the suspect.
 
-    The total order FR-79's plan specifies, checked in sequence, first match
-    wins: (1) authority asymmetry, (2) corpus-wide row-count, (3) a
-    same-entry synonym-vs-preferred-term tie-break, (4) silence - with no
-    evidence of which spelling is correct, FR-72 requires a finding to be
-    able to state the required action, and there isn't one.
+    The total order FR-79 specifies, first match wins: (1) authority asymmetry,
+    (2) corpus-wide row count, (3) a same-entry synonym-vs-preferred-term
+    tie-break, (4) silence. With no evidence of which spelling is correct, FR-72
+    requires a finding to state the required action, and there is none.
 
     Returns ``(suspect_surface, suspect_key, suspect_cell, reference_surface,
-    reference_key)``, or ``None`` if no finding should result - including
-    when the side the rules point to cannot be a suspect at all
-    (``_can_be_suspect``), in which case the pairing contributes nothing
-    rather than being redirected onto the other side without evidence.
+    reference_key)``, or ``None`` if no finding should result. That includes the
+    case where the side the rules point to cannot be a suspect
+    (``_can_be_suspect``): the pairing then contributes nothing, rather than
+    being redirected onto the other side without evidence.
     """
     a_in_authority = a.key in authority
     b_in_authority = b.key in authority
@@ -370,8 +351,7 @@ def _heuristic_one(
     row_counts: Mapping[str, int],
 ) -> dict[tuple[CellRef, str], Finding]:
     """Intra-entry near-match. Returns findings keyed by ``(cell.reference,
-    token_key)`` - the shape heuristic 2 needs to know which cells/tokens it
-    must not also flag.
+    token_key)``, so heuristic 2 knows which cells and tokens not to flag again.
     """
     findings: dict[tuple[CellRef, str], Finding] = {}
     for entry in entries:
@@ -400,14 +380,13 @@ def _heuristic_one(
                     or suspect_key != a_key
                     or suspect_surface != a_surface
                 ):
-                    # This pairing's suspect is the *other* side - it will be
-                    # (or already was) considered on its own turn as "a", if
-                    # it has a cell to be flagged against at all.
+                    # The suspect is the *other* side; it is considered on its own
+                    # turn as "a", if it has a cell to flag.
                     continue
-                # Tie-break among multiple qualifying references for the same
-                # suspect: minimum distance, then maximum reference row-count,
-                # then lexicographically smallest reference surface (never
-                # Counter.most_common - FR-73 forbids insertion-order ties).
+                # Tie-break among qualifying references for one suspect:
+                # minimum distance, then maximum reference row count, then the
+                # lexicographically smallest surface. Never Counter.most_common:
+                # FR-73 forbids insertion-order ties.
                 candidate_key = (distance, -row_counts.get(ref_key, 0), ref_surface)
                 if best is None or candidate_key < (best[0], best[1], best[2]):
                     best = (distance, -row_counts.get(ref_key, 0), ref_surface, ref_key)
@@ -425,28 +404,21 @@ def _heuristic_two_candidates(
     """For every rare ``token_key`` qualifying under the thresholds, the best
     common reference to cite: ``rare_key -> (distance, common_surface, common_key)``.
 
-    Candidate keys are bucketed by length, and restricted up front to keys
-    that pass the *count-only* half of the common-reference threshold
-    (``MIN_COMMON_COUNT`` - the ``COMMON_TO_RARE_RATIO`` half also depends on
-    the rare key's own count, so it cannot be applied until inside the
-    per-rare-key loop). This is a modest, honestly-scoped saving, not the
-    fix for this heuristic's cost centre: ``bounded_edit_distance`` already
-    rejects a length-incompatible pair in O(1) on its own first line, so
-    almost every call this bucketing removes was one that would have
-    returned ``None`` immediately anyway, never reaching the DP. Measured
-    against the unbucketed scan (see PR #124's review), the call count
-    drops sharply but the count of calls that actually reach the DP - the
-    real cost - does not; restricting the bucket to count-eligible keys, as
-    done here, buys a further 1.3x-1.5x by shrinking the candidate lists
-    themselves (149s -> 100.4s on a 6,000-row / 48,000-token-occurrence
-    workbook), but this is still not a structural fix.
+    Candidate keys are bucketed by length and restricted to keys passing the
+    count-only half of the common-reference threshold (``MIN_COMMON_COUNT``). The
+    ``COMMON_TO_RARE_RATIO`` half depends on the rare key's own count, so it is
+    applied inside the loop.
 
-    The heuristic's actual cost centre is the DP over the surviving,
-    length-compatible rare/common pairs, and that stays open: closing it
-    properly means an actual index (e.g. a SymSpell-style
-    deletion-neighbourhood lookup) rather than any bucketing scheme -
-    out of scope here unless real catalogue measurements show this
-    heuristic is a practical bottleneck on an actual SPIA-sized workbook.
+    This is a modest saving, not a fix for the cost. ``bounded_edit_distance``
+    already rejects a length-incompatible pair in O(1), so bucketing mostly
+    removes calls that returned immediately. Restricting to count-eligible keys
+    shrinks the candidate lists further, from 149s to 100.4s on a 6,000-row,
+    48,000-token-occurrence workbook.
+
+    The cost centre is the DP over surviving length-compatible pairs. Closing it
+    needs an index (a SymSpell-style deletion-neighbourhood lookup), not a
+    bucketing scheme, and is out of scope unless catalogue measurements show a
+    bottleneck on a SPIA-sized workbook.
     """
     keys = sorted(row_counts)
     common_keys_by_length: dict[int, list[str]] = defaultdict(list)
@@ -472,9 +444,8 @@ def _heuristic_two_candidates(
             for common_key in common_keys_by_length.get(length, ())
         )
         for common_key in candidate_keys:
-            # Defence only, not reachable today: MAX_RARE_COUNT (2) <
-            # MIN_COMMON_COUNT (3), so a key already in common_keys_by_length
-            # can never equal a qualifying rare_key. Guards against a future
+            # Unreachable today: MAX_RARE_COUNT (2) < MIN_COMMON_COUNT (3), so a
+            # common key never equals a qualifying rare key. Guards against a
             # change to either constant reintroducing self-matches.
             if common_key == rare_key:
                 continue
@@ -501,10 +472,9 @@ def check_misspellings(
     """Runs both FR-79 heuristics over ``sheets``' preferred-term/synonym cells.
 
     ``results`` is the FR-52 sweep's already-resolved per-edition mapping
-    (``check_terminology``'s own ``outcome.results``) - never a live
-    ``sweep``, since this pass issues zero terminology requests of its own.
-    When ``results`` is ``None`` both heuristics still run in full, over the
-    workbook's own content alone; only the authority whitelist is empty.
+    (``check_terminology``'s ``outcome.results``), not a live ``sweep``, because
+    this pass issues no terminology requests. When ``None``, both heuristics run
+    in full over the workbook's own content; only the whitelist is empty.
     """
     entries = _group_entries(sheets)
     designations_by_label: dict[str, dict[str, ConceptDesignations]] = (

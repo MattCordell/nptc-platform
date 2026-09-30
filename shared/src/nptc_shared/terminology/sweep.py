@@ -1,53 +1,34 @@
-"""The FR-52 batch validation sweep, the FR-84 hierarchy check, and FR-97's
+"""The FR-52 batch validation sweep, the FR-84 hierarchy check and FR-97's
 designation reconciliation probe.
 
-Written once here, not in the transform, because FR-74 forbids a second
-validation implementation for the migration path: the P0 seeding transform
-(``nptc_transform.terminology_check``, ``nptc_transform.designation_check``)
-and the backend's scheduled validation sweep both drive this module, over the
-same ``TerminologyClient`` contract (FR-53, ADR-0003).
+The P0 seeding transform (``nptc_transform.terminology_check``,
+``nptc_transform.designation_check``) and the backend's scheduled sweep both
+drive this module, so the migration path has one validation implementation
+(FR-74), over the ``TerminologyClient`` contract (FR-53, ADR-0003).
 
-**This module's whole subject is request count.** FR-52 exists because one
-``$validate-code`` per code per edition is 40,000 sequential requests at the
-PRD's 20,000-entry planning ceiling, and the failure mode it guards against is
-not incorrectness but a design that quietly works at 50 codes and is
-unusable - and inconsiderate to a shared server - at 20,000. So the shape here
-is fixed by the requirement, and asserted by call count in the tests, not left
-to judgement:
+The subject is request count. One ``$validate-code`` per code per edition is
+40,000 requests at the 20,000-entry planning ceiling, so FR-52 fixes the shape
+below and the tests assert it by call count:
 
-1. **Bulk status resolution.** One ``ValueSet/$expand`` per chunk of
-   ``chunk_size`` codes, over the ECL enumerating exactly that chunk
-   (``snomed.ecl_set_of``), with ``activeOnly=true``. A code in the result
-   exists in the edition *and* is active; that settles the overwhelming
-   majority of the catalogue in ``ceil(N / chunk_size)`` requests.
-2. **A targeted second pass for the delta only.** Every code the expansion did
-   not return gets one ``CodeSystem/$lookup``, which is what distinguishes
-   "inactive" (FR-46's inactivation reason and historical association come
-   back with it) from "not in this edition at all". The delta is a small
-   fraction of the catalogue; that is the entire reason this pass is
-   affordable.
-3. **Bounded concurrency on that second pass**, ``max_concurrency`` at a
-   time, submitted in batches rather than all at once - a failure in one
-   batch stops the next batch from ever being queued.
-4. **Chunked ``expand`` for the FR-84 hierarchy check too**:
-   ``(chunk) MINUS <<71388002`` over the same ``chunk_size`` chunks as the
-   status pass, not one request for the whole catalogue - at the PRD's
-   20,000-code planning ceiling a single disjunction is itself too large to
-   send (measured: ~340KB of percent-encoded ECL). Anything a chunk's
-   expansion returns is a code that exists and is not a procedure.
-5. **``confirm_labels`` (FR-97) never issues one ``$validate-code`` per row.**
-   Its caller (``designation_check.py``) classifies published labels against
-   ``SweepResult.designations`` - itself already fetched for free by pass 1 -
-   and calls this only for the labels that check could not settle locally.
-   Bounded concurrency and batched submission, reusing pass 2's discipline.
+1. **Bulk status.** One ``ValueSet/$expand`` per chunk of ``chunk_size``
+   codes, over the ECL enumerating that chunk, with ``activeOnly=true``. A
+   returned code exists in the edition and is active.
+2. **Delta.** One ``CodeSystem/$lookup`` per code the expansion did not
+   return. It separates "inactive" (FR-46's reason and historical association
+   come back with it) from "not in this edition".
+3. **Bounded concurrency on the delta**, ``max_concurrency`` at a time,
+   submitted in batches so a failure stops the next batch from being queued.
+4. **The FR-84 hierarchy check**, ``(chunk) MINUS <<71388002`` over the same
+   chunks. One disjunction for the whole catalogue is too large to send
+   (about 340KB of percent-encoded ECL at the ceiling; ADR-0005).
+5. **``confirm_labels`` (FR-97)** probes only the labels ``designation_check.py``
+   could not settle against ``SweepResult.designations``, reusing item 3's
+   batching.
 
-Retry, ``Retry-After`` and exponential backoff live one layer down, in
-``OntoserverClient`` - not repeated here, so a sweep against the stub and a
-sweep against a real server differ in no respect this module can see.
-
-Failure is always an exception (``errors.py``): a sweep that cannot reach the
-server raises rather than returning a ``SweepResult`` full of absences, which
-would read as a catalogue of errors instead of an outage (FR-54).
+Retry and backoff live in ``OntoserverClient``. Failure is always an
+exception (``errors.py``): a sweep that cannot reach the server must not
+return a ``SweepResult`` of absences, which would read as a catalogue of errors
+instead of an outage (FR-54).
 """
 
 from __future__ import annotations
@@ -84,22 +65,16 @@ __all__ = [
     "TerminologySweep",
 ]
 
-#: The semantic tag FR-99 expects on a concept under ``<<71388002``. Any other
-#: tag is a warning, never an error - subsumption does not imply the tag (PRD
-#: Appendix A.10: ``71388002`` \|Procedure\| subsumes ``243120004``
-#: \|Regime/therapy (regime/therapy)\|).
+#: The tag FR-99 expects under ``<<71388002``. Any other tag is a warning, not
+#: an error: subsumption does not imply the tag (PRD Appendix A.10: ``71388002``
+#: \|Procedure\| subsumes ``243120004`` \|Regime/therapy (regime/therapy)\|).
 PROCEDURE_SEMANTIC_TAG = "procedure"
 
-#: ``$lookup`` properties requested on every delta call. ``inactive`` is
-#: requested explicitly rather than relying on a server volunteering it
-#: unprompted: FHIR R4 does not require a server to return any property that
-#: wasn't asked for, and ``LookupResult.inactive`` coming back ``None`` (not
-#: reported, distinct from "reported false") would otherwise send an active
-#: code into the ``inactive`` bucket in ``run()`` below - a false blocking
-#: defect. The rest are FR-46's own inactivation-reason/historical-association
-#: table; requesting them costs nothing extra on a call already being made,
-#: and is what lets ``SweepResult.lookups`` make good on its own docstring's
-#: promise to issue #28.
+#: ``inactive`` is requested explicitly because FHIR R4 does not oblige a server
+#: to return unrequested properties, and a ``None`` ``LookupResult.inactive``
+#: would put an active code in ``run()``'s ``inactive`` bucket. The rest are
+#: FR-46's inactivation reason and historical associations, free on a call
+#: already being made.
 _LOOKUP_PROPERTIES: tuple[str, ...] = (
     "inactive",
     "inactivationReason",
@@ -115,10 +90,8 @@ _LOOKUP_PROPERTIES: tuple[str, ...] = (
 class ConceptTag:
     """A concept's served FSN and the semantic tag read off it (FR-99).
 
-    ``tag`` is never ``None`` here: ``_unexpected_tags`` only constructs one
-    once it has already confirmed ``semantic_tag(fsn) is not None`` - an FSN
-    with no identifiable tag at all is a different, un-taggable case (see
-    ``unresolved_fsn_count``), not a ``ConceptTag`` with a missing ``tag``.
+    ``tag`` is never ``None``: an FSN with no tag at all is the un-taggable case
+    counted in ``unresolved_fsn_count``.
     """
 
     code: str
@@ -128,31 +101,23 @@ class ConceptTag:
 
 @dataclass(frozen=True, slots=True)
 class ConceptDesignations:
-    """One active concept's designation set, as resolved by the status pass.
+    """One active concept's designation set, as resolved by the status pass (FR-97).
 
-    The raw material for FR-97's seeding-time designation reconciliation
-    (issue #28): rather than hand the caller the ``ExpandedConcept`` objects
-    the bulk ``$expand`` returned, this is a de-duplicated, sorted projection
-    of them - the expansion's own paging loop (``_expand_chunk``) tolerates a
-    server that returns overlapping pages, so the raw concepts are neither
-    de-duplicated nor sorted, and handing them out as-is would give a caller
-    a second, independent opportunity to disagree with ``_unexpected_tags``
-    about which of two duplicated pages won.
+    A de-duplicated, sorted projection, not the raw ``ExpandedConcept`` objects:
+    ``_expand_chunk`` tolerates overlapping pages, so the raw list can hold a
+    concept twice and two readers could disagree about which copy won.
     """
 
     code: str
-    #: The served FSN, semantic tag intact (FR-82). ``None`` when the
-    #: expansion returned no identifiable FSN designation - the same case
-    #: ``SweepResult.unresolved_fsn_count`` counts.
+    #: The served FSN with its semantic tag (FR-82). ``None`` when the expansion
+    #: returned no FSN, the case ``SweepResult.unresolved_fsn_count`` counts.
     fully_specified_name: str | None
-    #: The concept's ``display`` under this edition's ``display_language``
-    #: (FR-82) - the AU preferred term for the AU edition. ``None`` if the
-    #: server reported none.
+    #: ``display`` under the edition's ``display_language`` (FR-82): the AU
+    #: preferred term for the AU edition. ``None`` if the server reported none.
     display: str | None
-    #: Every designation value the expansion returned for this concept,
-    #: de-duplicated and sorted. Verbatim (FR-82): never stripped, never
-    #: normalised - a caller comparing against these applies its own
-    #: normalisation (see ``nptc_shared.text.normalise_for_comparison``).
+    #: Every designation value returned, de-duplicated and sorted. Verbatim
+    #: (FR-82): callers apply their own normalisation
+    #: (``nptc_shared.text.normalise_for_comparison``).
     values: tuple[str, ...] = ()
 
 
@@ -160,32 +125,12 @@ class ConceptDesignations:
 class LabelConfirmation:
     """One ``CodeSystem/$validate-code`` probe's answer (FR-97).
 
-    Reserved for the one case FR-97's designation reconciliation cannot
-    settle locally: a published label that matches nothing in the
-    designations a bulk ``$expand`` returned. ``client.py``'s own
-    ``validate_code`` docstring calls this "the delta ... where the delta is
-    the workload" - the same discipline this module has enforced since
-    FR-52's batch sweep: never one such call per row of a large catalogue,
-    only for the rows a cheaper pass could not already resolve.
+    Reserved for a published label that matches nothing in the designations a
+    bulk ``$expand`` returned, never one call per catalogue row (FR-52).
 
-    ``matched`` is exactly the server's own ``result`` boolean, trusted as
-    the FHIR R4 ``$validate-code`` contract defines it: "whether the code
-    (system/code/display) is valid" - not re-derived from, or qualified by,
-    ``message``. This is a stated precondition, not an oversight: the spec
-    documents ``message`` as "error details, if result = false", not as a
-    caveat a caller should apply to a ``true`` result, and there is no
-    schema for what a free-text message would mean if it disagreed with
-    ``result`` - inferring one would be guessing at an undefined contract,
-    not implementing the defined one. The consequence is real and worth
-    naming rather than hiding: a non-conformant server that returns
-    ``result=true`` for a display it does not genuinely recognise (a
-    lenient acceptance-with-a-caveat, say) downgrades what should have been
-    a blocking FR-97 outcome to informational drift, because the design in
-    ADR-0006 makes the probe strictly monotone - trusting ``result`` this
-    way is *why* that monotonicity holds, not a gap in it. Guarding against
-    a non-conformant server is a decision to make deliberately (see
-    ``client.py``'s own trust boundary for the terminology server), not one
-    to smuggle in as free-text pattern-matching here.
+    ``matched`` is the server's ``result`` boolean as FHIR R4 defines it, never
+    qualified by ``message``. Trusting ``result`` alone, and its cost, are
+    recorded in ADR-0006's 2026-09-30 amendment.
     """
 
     code: str
@@ -210,29 +155,20 @@ class SweepResult:
     absent: tuple[str, ...] = ()
     hierarchy_violations: tuple[str, ...] = ()
     unexpected_semantic_tags: tuple[ConceptTag, ...] = ()
-    #: Concepts the bulk expansion returned with no identifiable FSN
-    #: designation - the FR-99 check could not run over them at all, because
-    #: "no tag observed" is not evidence of a wrong tag and cannot be turned
-    #: into a warning. Zero on a conformant server that honours
-    #: ``includeDesignations``; a persistently nonzero count means the FR-99
-    #: check is silently not running for those concepts and the server's
-    #: designation shape should be checked (see ADR-0005).
+    #: Concepts the expansion returned with no FSN. FR-99 cannot run over them,
+    #: because "no tag observed" is not evidence of a wrong tag. Zero on a
+    #: server that honours ``includeDesignations``; persistently nonzero means
+    #: FR-99 is silently not running and the server's designation shape needs
+    #: checking (ADR-0005).
     unresolved_fsn_count: int = 0
-    #: Every ``$lookup`` the second pass resolved, by code - the raw material
-    #: for FR-46's inactivation-reason/historical-association pairing, kept
-    #: rather than discarded so the caller that needs it (issue #28, the
-    #: backend's findings) does not have to look the same codes up again.
+    #: Every delta ``$lookup`` result, kept for FR-46's inactivation-reason and
+    #: association pairing so callers need not look the codes up again.
     lookups: tuple[LookupResult, ...] = ()
-    #: Every active concept's designation set, sorted by code - see
-    #: ``ConceptDesignations``. Covers both passes: the bulk pass's own
-    #: concepts cost nothing further (``_resolve_status`` already fetches
-    #: this with ``includeDesignations`` for FR-99's own semantic-tag check),
-    #: and a code the bulk pass missed but the delta ``$lookup`` confirmed
-    #: active still gets an entry, projected from that same lookup response -
-    #: "every active concept" here is a real guarantee, not just the common
-    #: case, so a caller (FR-97's reconciliation, FR-99's tag check) never
-    #: has to distinguish "no designations projected" from "concept
-    #: absent/inactive" for a code this field reports active.
+    #: Every active concept's designation set, sorted by code (see
+    #: ``ConceptDesignations``), from both passes: a code the delta ``$lookup``
+    #: confirmed active gets an entry projected from that response. A caller
+    #: never has to tell "no designations" from "absent or inactive" for a code
+    #: listed active.
     designations: tuple[ConceptDesignations, ...] = ()
     #: Every fully qualified version URI the server reported it resolved
     #: against, from any request in the sweep (FR-48). Normally one.
@@ -248,9 +184,8 @@ class TerminologySweep:
     """Resolves a whole catalogue's codes against one edition, in batches.
 
     Holds a ``TerminologyClient`` and the two tuning knobs FR-52 asks to be
-    configurable. Stateless between ``run`` calls: the same sweep object is
-    reused across editions (FR-47, FR-74) and the result carries the edition
-    it belongs to.
+    configurable. Stateless between ``run`` calls, so one sweep serves every
+    edition (FR-47, FR-74).
     """
 
     def __init__(
@@ -288,17 +223,13 @@ class TerminologySweep:
     def run(self, codes: Iterable[str], *, edition: Edition) -> SweepResult:
         """Sweeps ``codes`` against ``edition``: status, hierarchy, semantic tags.
 
-        ``codes`` is de-duplicated and sorted first - a code bound by twenty
-        catalogue entries costs one slot in one chunk, not twenty, and the
-        request sequence depends on the *set* of codes rather than on the row
-        order they arrived in (FR-73).
+        ``codes`` is de-duplicated and sorted first, so the request sequence
+        depends on the set of codes, not the row order (FR-73).
 
-        Every code must already be a well-formed SCTID: ``ecl_set_of`` raises
-        ``ValueError`` otherwise rather than concatenating an arbitrary string
-        into an ECL query. Screening malformed codes out - and reporting them
-        as the defect they are (FR-06) - belongs to the caller, which has the
-        row and cell reference to report them against; this module never sees
-        one.
+        Every code must be a well-formed SCTID: ``ecl_set_of`` raises
+        ``ValueError`` rather than concatenating an arbitrary string into ECL.
+        The caller screens malformed codes (FR-06), because it has the row and
+        cell reference to report them against.
         """
         unique = tuple(sorted(set(codes)))
         if not unique:
@@ -321,33 +252,26 @@ class TerminologySweep:
                 continue
             if lookup.resolved_version is not None:
                 versions.add(lookup.resolved_version)
-            # The expansion already answered "not active" for this code; the
-            # lookup only overturns that if it says so explicitly. A server
-            # that reports no `inactive` property at all leaves the
-            # expansion's verdict standing rather than silently promoting the
-            # code back to active.
+            # The expansion already said "not active"; the lookup overturns that
+            # only if it explicitly reports `inactive` false. A server that
+            # reports no `inactive` leaves the expansion's verdict standing.
             if lookup.inactive is False:
                 active.add(code)
-                # This code never reached `concepts` at all (that is why it
-                # was in the delta), so `_project_designations` below has
-                # nothing to project it from - without this, it would be
-                # reported active with no designation entry, and a caller
-                # could not tell that apart from "absent/inactive" (see
-                # `SweepResult.designations`'s own docstring).
+                # This code never reached `concepts` (that is why it is in the
+                # delta), so `_project_designations` cannot cover it. Without
+                # this entry it would be active with no designations,
+                # indistinguishable from absent or inactive.
                 delta_active_designations.append(_designations_from_lookup(lookup))
             else:
                 inactive.append(code)
 
-        # Only codes known to exist go into the hierarchy check - an absent
-        # code (already reported as such) never appears in a disjunction
-        # sent to the server, which both shrinks the ECL and avoids relying
-        # on every server tolerating an unknown-concept reference inside one.
+        # Absent codes stay out of the hierarchy check: that shrinks the ECL and
+        # avoids relying on servers tolerating an unknown concept in a disjunction.
         resolved_codes = tuple(sorted(active | set(inactive)))
         violations = self._check_hierarchy(resolved_codes, edition=edition, versions=versions)
         violating = set(violations)
-        # Disjoint by construction - `delta_active_designations` only ever
-        # covers codes `concepts` does not - so concatenating before the sort
-        # can never collide two entries for the same code.
+        # Disjoint by construction: `delta_active_designations` only covers
+        # codes `concepts` lacks, so no code appears twice before the sort.
         designations = tuple(
             sorted(
                 (*_project_designations(concepts), *delta_active_designations),
@@ -379,26 +303,17 @@ class TerminologySweep:
     def confirm_labels(
         self, probes: Sequence[tuple[str, str]], *, edition: Edition
     ) -> tuple[LabelConfirmation, ...]:
-        """One ``CodeSystem/$validate-code`` per unique ``(code, display)`` pair.
+        """One ``CodeSystem/$validate-code`` per unique ``(code, display)`` pair (FR-97).
 
-        Reserved for FR-97's designation reconciliation, and only for the
-        rows a local check against ``SweepResult.designations`` could not
-        already settle - see ``client.py``'s own ``validate_code`` docstring.
-        ``probes`` is de-duplicated and sorted first, the same discipline as
-        ``run()`` and for the same reason: two rows citing the same code and
-        label cost one call, not two, and the request sequence depends on the
-        *set* of probes rather than row order (FR-73). Batched at
-        ``max_concurrency`` using the same submit-a-batch-then-wait discipline
-        as ``_resolve_delta``, reused rather than re-implemented, so a failure
-        in one batch stops the next from ever being queued.
+        Only for rows a local check against ``SweepResult.designations`` could
+        not settle (see ``client.py``'s ``validate_code``). ``probes`` is
+        de-duplicated and sorted as in ``run()`` (FR-73), and batched like
+        ``_resolve_delta``.
 
-        Unlike ``_lookup``, this does **not** treat a "not found" answer as
-        data: every ``TerminologyError`` propagates, aborting the sweep. A
-        probe is only ever issued for a code this same sweep just resolved as
-        active in ``edition``, so a 404 here is a contradiction with the
-        status pass, not an answer to a question this call asked - and an
-        unreachable server must never be recorded as a catalogue of
-        designation defects (FR-54).
+        Unlike ``_lookup``, every ``TerminologyError`` propagates, including
+        not-found. The code was just resolved active in ``edition``, so a 404
+        contradicts the status pass rather than answering a question, and an
+        unreachable server must never be recorded as designation defects (FR-54).
         """
         unique = tuple(sorted(set(probes)))
         if not unique:
@@ -415,8 +330,8 @@ class TerminologySweep:
                         pool.submit(self._confirm, code, display, edition=edition)
                         for code, display in batch
                     ]
-                    # `.result()` re-raises here, inside the `with` and before
-                    # the next batch is ever submitted - see `_resolve_delta`.
+                    # `.result()` re-raises before the next batch is submitted
+                    # (see `_resolve_delta`).
                     for future in futures:
                         results.append(future.result())
         return tuple(
@@ -436,14 +351,12 @@ class TerminologySweep:
     ) -> tuple[ExpandedConcept, ...]:
         """One ``$expand`` per chunk - ``ceil(len(codes) / chunk_size)`` requests.
 
-        Sequential on purpose. FR-52 puts bounded concurrency on the *second*
-        pass, and this one is both the smaller number of requests (67 at the
-        20,000-code ceiling with the default chunk size) and the heavier
-        per-request cost for the server. See ADR-0005.
+        Sequential on purpose: FR-52 bounds concurrency only on the second pass,
+        and this pass is the smaller request count (67 at the ceiling with the
+        default chunk size) but the heavier per-request cost. See ADR-0005.
 
-        ``includeDesignations`` is on so the FSN comes back with the
-        expansion: FR-99's semantic-tag check then costs no additional
-        requests at all, which is the only reason it can be afforded per-code.
+        ``includeDesignations`` brings the FSN back with the expansion, so FR-99's
+        semantic-tag check costs no further requests.
         """
         found: list[ExpandedConcept] = []
         for chunk in _chunks(codes, self._chunk_size):
@@ -468,17 +381,15 @@ class TerminologySweep:
             )
             versions.update(expansion.resolved_versions)
             concepts.extend(expansion.concepts)
-            # `Expansion.is_complete` compares one *page* against `total`;
-            # paging has to compare the accumulated count instead, or a
-            # second page that is itself shorter than `total` looks like more
-            # work forever.
+            # `Expansion.is_complete` compares one page against `total`; paging
+            # must compare the accumulated count, or a short second page looks
+            # like more work forever.
             if expansion.total is None or len(concepts) >= expansion.total:
                 break
             if not expansion.concepts:
                 # A server that promises more but returns an empty page would
-                # otherwise loop here. Stopping is safe rather than lossy:
-                # every code still missing falls through to the second pass,
-                # which resolves it one request at a time.
+                # loop. Stopping is safe: codes still missing fall through to
+                # the second pass.
                 break
             offset += len(expansion.concepts)
         return tuple(concepts)
@@ -490,27 +401,20 @@ class TerminologySweep:
     ) -> tuple[tuple[str, LookupResult | None], ...]:
         """One ``$lookup`` per unresolved code, ``max_concurrency`` at a time.
 
-        ``None`` for a code the server says it does not have (see
-        ``errors.is_concept_absence``); any other failure propagates, aborting the sweep -
-        an unreachable server must never be recorded as a catalogue of absent
-        codes (FR-54).
+        ``None`` means the server says it does not have the code
+        (``errors.is_concept_absence``). Any other failure aborts the sweep,
+        because an unreachable server must never be recorded as a catalogue of
+        absent codes (FR-54).
 
-        Submitted in batches of ``max_concurrency``, not all at once:
-        ``Executor.map`` submits every future the moment it is called
-        (``[self.submit(...) for ...]``, eagerly, before any result is
-        consumed), so a failing lookup would not stop the remaining codes -
-        potentially thousands of them - from being queued and executed before
-        the exception ever surfaces to the caller. Batching means a failure
-        in one batch means the next batch is never submitted at all - at most
-        one batch's worth of extra requests beyond the failure, not the whole
-        remaining catalogue.
+        Submitted in batches, not via ``Executor.map``, which submits every
+        future eagerly: a failing lookup would not stop thousands of queued
+        requests. Batching bounds the extra requests to one batch past the failure.
         """
         if not codes:
             return ()
         if self._max_concurrency == 1 or len(codes) == 1:
-            # No pool at all for the serial case: a ThreadPoolExecutor here
-            # would move every exception's traceback into a worker thread for
-            # no concurrency in return.
+            # No pool for the serial case: it would only move tracebacks into a
+            # worker thread.
             return tuple((code, self._lookup(code, edition=edition)) for code in codes)
         results: list[tuple[str, LookupResult | None]] = []
         with ThreadPoolExecutor(
@@ -519,9 +423,8 @@ class TerminologySweep:
             for batch in _chunks(codes, self._max_concurrency):
                 futures = {pool.submit(self._lookup, code, edition=edition): code for code in batch}
                 for future in futures:
-                    # `.result()` re-raises here, inside the `with` and before
-                    # the next batch is ever submitted - the pool is still
-                    # shut down cleanly either way.
+                    # `.result()` re-raises inside the `with` before the next
+                    # batch is submitted; the pool shuts down cleanly either way.
                     results.append((futures[future], future.result()))
         return tuple(results)
 
@@ -540,11 +443,7 @@ class TerminologySweep:
     ) -> tuple[str, ...]:
         """Expands ``(chunk) MINUS <<71388002`` per chunk (FR-84).
 
-        A thin, byte-identical-ECL wrapper over ``_expand_combined`` - see
-        that method for the chunking rationale (ADR-0005). Kept as its own
-        named method rather than inlined at the one call site in ``run()``,
-        so a reader looking for "where does FR-84's check live" finds a
-        method named for it.
+        A named wrapper over ``_expand_combined`` (ADR-0005).
         """
         return self._expand_combined(
             codes,
@@ -559,26 +458,17 @@ class TerminologySweep:
     ) -> tuple[str, ...]:
         """Chunked ``(chunk) <operator> <rhs>``, one request per chunk of ``codes``.
 
-        Generalises what was originally ``_check_hierarchy``'s own MINUS-only
-        chunking loop to any right-hand ECL expression and either top-level
-        operator (``MINUS``/``AND``) - FR-75's specimen-attribute checks
-        (``codes_without_attribute``, ``codes_with_attribute_value``) need the
-        identical chunking discipline ADR-0005 measured for FR-84's hierarchy
-        check (~340KB of percent-encoded ECL for an unchunked disjunction at
-        the PRD's 20,000-code planning ceiling), so this is one implementation
-        parameterised rather than a second copy of the same loop. Produces
-        byte-identical ECL to the pre-existing FR-84 check for that call
-        shape - only the plumbing moved, not the behaviour.
+        One implementation for FR-84's hierarchy check and FR-75's
+        specimen-attribute checks, which need the same chunking (ADR-0005).
+        ``operator`` is ``MINUS`` or ``AND``.
 
-        A code absent from the edition cannot appear in any result here - an
-        ECL enumerating codes only ever returns concepts that exist - so the
-        caller is responsible for passing only codes it already knows resolve
-        (see ``run()``'s own comment on this for the hierarchy check).
+        The caller passes only codes it knows resolve, because an ECL that
+        enumerates absent codes cannot return them (see the hierarchy comment
+        in ``run()``).
 
-        Paging exists but should rarely engage: ``count`` asks for room for
-        every code in the chunk. It engages only if a server caps the page
-        below the number of matches, in which case the alternative is
-        under-reporting them.
+        Paging should rarely engage: ``count`` leaves room for every code in the
+        chunk. It matters only if a server caps the page below the match count,
+        where ignoring it would under-report.
         """
         matches: list[str] = []
         for chunk in _chunks(codes, self._chunk_size):
@@ -622,20 +512,15 @@ class TerminologySweep:
         edition: Edition,
         versions: set[str] | None = None,
     ) -> tuple[str, ...]:
-        """Which of ``codes`` constrains no value at all for ``attribute``.
+        """Which of ``codes`` constrains no value at all for ``attribute`` (FR-75).
 
-        Chunked ``(chunk) MINUS (* : <attribute> = *)`` (issue #29's
-        semantic-drift check, FR-75): everything the server returns from a
-        chunk is a code that resolves in ``edition`` and carries no
-        relationship for ``attribute`` whatsoever - the raw material for
-        ``TERM_SPECIMEN_NOT_MODELLED``. ``codes`` should be restricted to the
-        set of codes a caller actually needs an answer for (never the whole
-        catalogue) - see ``semantic_drift.py``'s own request-count discipline.
+        Chunked ``(chunk) MINUS (* : <attribute> = *)``: every returned code
+        resolves in ``edition`` and has no relationship for ``attribute``, the
+        basis for ``TERM_SPECIMEN_NOT_MODELLED``. Pass only the codes the caller
+        needs an answer for, not the whole catalogue (see ``semantic_drift.py``).
 
-        ``versions``, if given, is updated with every resolved version URI
-        this call's requests reported (FR-48) - the same discipline ``run()``
-        follows, threaded out rather than discarded since this call's caller
-        does not go through ``run()`` at all.
+        ``versions``, if given, receives every resolved version URI the requests
+        reported (FR-48), as ``run()`` does.
         """
         local_versions: set[str] = set()
         result = self._expand_combined(
@@ -661,14 +546,11 @@ class TerminologySweep:
         """Which of ``codes`` constrains ``attribute`` to a value subsumed by ``root``.
 
         Chunked ``(chunk) AND (* : <attribute> = <<root>)``. The ``<<`` on the
-        *value* side - not just wrapping the whole refinement - is deliberate:
-        it is what catches a descendant specimen value (e.g. "Urine specimen
-        from catheter" under "Urine specimen") as agreeing with ``root``,
-        rather than only an exact match. Dropping it would silently miss every
-        such descendant and report a false ``TERM_SPECIMEN_DIFFERS``.
+        value side is deliberate: it counts a descendant (for example "Urine
+        specimen from catheter" under "Urine specimen") as agreeing, where an
+        exact match would report a false ``TERM_SPECIMEN_DIFFERS``.
 
-        ``versions``, if given, is updated the same way as
-        ``codes_without_attribute``'s own parameter of the same name.
+        ``versions`` behaves as in ``codes_without_attribute``.
         """
         local_versions: set[str] = set()
         result = self._expand_combined(
@@ -685,23 +567,17 @@ class TerminologySweep:
     def describe(
         self, codes: Sequence[str], *, edition: Edition, versions: set[str] | None = None
     ) -> tuple[ConceptDesignations, ...]:
-        """Every one of ``codes``'s designation sets, resolved directly - not
-        through a hierarchy expression.
+        """The designation sets of ``codes``, resolved directly (FR-75).
 
-        Chunked ``$expand`` with ``includeDesignations=true`` over exactly
-        ``codes`` (reusing ``_expand_chunk``, the same paging/dedup-tolerant
-        primitive ``_resolve_status`` uses) and projected through the same
-        ``_project_designations`` FR-97 already relies on, so the two callers
-        can never disagree about which of two duplicated pages won.
+        Chunked ``$expand`` with ``includeDesignations=true`` through
+        ``_expand_chunk`` and ``_project_designations``, the path FR-97 uses, so
+        the two callers cannot disagree about duplicated pages.
 
-        Deliberately does **not** go through ``run()``: these are specimen
-        concepts (issue #29, FR-75), not procedures, and ``run()``'s FR-84
-        hierarchy check and FR-99 semantic-tag check would both misfire on
-        every one of them - a specimen concept is never subsumed by
-        ``<<71388002`` and never tagged ``(procedure)``.
+        Does not go through ``run()``: these are specimen concepts, not
+        procedures, so its FR-84 and FR-99 checks would misfire on each (never
+        under ``<<71388002``, never tagged ``(procedure)``).
 
-        ``versions``, if given, is updated the same way as
-        ``codes_without_attribute``'s own parameter of the same name.
+        ``versions`` behaves as in ``codes_without_attribute``.
         """
         unique = tuple(sorted(set(codes)))
         if not unique:
@@ -716,15 +592,12 @@ class TerminologySweep:
 
 
 def _project_designations(concepts: Iterable[ExpandedConcept]) -> tuple[ConceptDesignations, ...]:
-    """Reduces the bulk expansion's raw, possibly-duplicated concepts to one
-    de-duplicated, sorted ``ConceptDesignations`` per code.
+    """Reduces the expansion's possibly-duplicated concepts to one
+    ``ConceptDesignations`` per code, sorted.
 
-    ``_expand_chunk``'s paging loop deliberately tolerates a server that
-    ignores ``offset`` or overlaps pages (see its own docstring); without
-    this, a duplicated page would double a concept's designation values, and
-    two independent readers of the raw list (FR-97's reconciliation and
-    FR-99's tag check) could disagree about which of two duplicate pages won.
-    First occurrence wins, consistently for every field.
+    ``_expand_chunk`` tolerates a server that ignores ``offset`` or overlaps
+    pages. Without this, a duplicate page would double a concept's values.
+    First occurrence wins for every field.
     """
     projected: dict[str, ConceptDesignations] = {}
     for concept in concepts:
@@ -749,16 +622,12 @@ def _project_designations(concepts: Iterable[ExpandedConcept]) -> tuple[ConceptD
 
 
 def _designations_from_lookup(lookup: LookupResult) -> ConceptDesignations:
-    """One delta-confirmed-active code's designation set, from the same
-    ``$lookup`` response ``run()`` already made for it.
+    """The designation set of a delta code confirmed active, from the
+    ``$lookup`` ``run()`` already made for it.
 
-    The bulk expansion never returned this code at all - that is why it was
-    in the delta - so ``_project_designations`` has nothing to build an entry
-    from. Projecting one here from the lookup's own designations is what
-    makes ``SweepResult.designations``'s "every active concept" promise true
-    rather than "every active concept the bulk pass happened to return",
-    with no extra request: the lookup already happened, for FR-46's own
-    inactivation-reason/historical-association pairing.
+    The bulk expansion never returned this code, so ``_project_designations`` has
+    nothing to project. This keeps ``SweepResult.designations`` covering every
+    active concept at no extra request.
     """
     values = tuple(sorted({designation.value for designation in lookup.designations}))
     return ConceptDesignations(
@@ -772,22 +641,16 @@ def _designations_from_lookup(lookup: LookupResult) -> ConceptDesignations:
 def _unexpected_tags(
     designations: Iterable[ConceptDesignations], *, exclude: set[str]
 ) -> tuple[tuple[ConceptTag, ...], int]:
-    """FR-99: a concept under ``<<71388002`` whose tag is not ``(procedure)``.
+    """FR-99: concepts under ``<<71388002`` whose tag is not ``(procedure)``.
 
-    Read off the FSN the status pass already resolved - no extra request per
-    code, which is what makes a per-concept check affordable at catalogue
-    scale (FR-52).
+    Read off the FSN the status pass already resolved, so no request per code
+    (FR-52).
 
-    Two exclusions, both deliberate. A concept already reported as an FR-84
-    violation is skipped: it is out of the procedure hierarchy altogether, so
-    its tag is a symptom of an error already raised and repeating it as a
-    warning is noise. A concept with no identifiable FSN is also skipped -
-    "no tag observed" is not evidence of a wrong tag, and inventing a warning
-    from missing data is worse than staying silent (FR-54) - but counted in
-    the returned ``unresolved_fsn_count``, since *every* concept hitting this
-    case (a server that doesn't honour ``includeDesignations``, or tags
-    ``use`` non-standardly) would otherwise make the whole check pass
-    silently and permanently, with nothing to show it never ran.
+    Two deliberate exclusions. A concept already reported as an FR-84 violation
+    is skipped: its tag is a symptom of an error already raised. A concept with
+    no FSN is skipped because "no tag observed" is not evidence of a wrong tag
+    (FR-54), but it is counted in ``unresolved_fsn_count``. Otherwise a server
+    that ignores ``includeDesignations`` would make the whole check pass silently.
     """
     tagged: dict[str, ConceptTag] = {}
     unresolved = 0

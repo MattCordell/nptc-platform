@@ -1,16 +1,11 @@
-"""Groups a sheet's cells by row (issue #31, P0-9).
+"""Groups a sheet's cells by row.
 
-Row grouping was reimplemented privately three times before this module
-existed (``designation_check._rows_by_role``, ``semantic_drift._rows_by_role``,
-``misspelling._group_entries``) - adding a fourth private copy for dataset
-emission would have been indefensible. This is the one place that groups
-``Sheet.cells`` by ``(sheet, row)``; ``designation_check.py`` and
-``semantic_drift.py``'s own ``_rows_by_role`` helpers are now thin,
-role-filtered wrappers over ``group_rows`` rather than independent
-re-implementations. ``misspelling._group_entries`` is deliberately left
-alone - it accumulates a cell *list* per row (multiple cells can share a
-role there), a different shape than the one-cell-per-role ``Mapping`` this
-module returns, and touching it buys nothing (see the plan's "Out of scope").
+The one place that groups ``Sheet.cells`` by ``(sheet, row)``. The
+``_rows_by_role`` helpers in ``designation_check.py`` and ``semantic_drift.py``
+are role-filtered wrappers over ``group_rows``. ``misspelling._group_entries`` is
+left alone: it accumulates a cell *list* per row because several cells can share
+a role there, a different shape from the one-cell-per-role ``Mapping`` returned
+here.
 """
 
 from __future__ import annotations
@@ -27,10 +22,9 @@ class SourceRow:
     """One worksheet row: its sheet name, row number, and every cell on it,
     keyed by role.
 
-    A row with more than one cell sharing a role (only ``misspelling.py``'s
-    own ``_group_entries`` needs that shape) is not representable here by
-    design - the last cell for a given role silently wins during grouping,
-    which is why ``group_rows`` is not a drop-in replacement for that
+    A row with several cells sharing a role (only ``misspelling.py``'s
+    ``_group_entries`` needs that) is not representable: the last cell for a role
+    wins during grouping, so ``group_rows`` is not a drop-in replacement for that
     function.
     """
 
@@ -42,9 +36,8 @@ class SourceRow:
 def group_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
     """Groups every cell in ``sheets`` by ``(sheet.name, row)``, sorted.
 
-    Sorted explicitly by ``(sheet.name, row)`` rather than left in whatever
-    order a ``dict``/``defaultdict`` iterates - never relying on insertion
-    order alone (FR-73).
+    Sorted explicitly by ``(sheet.name, row)``, never by ``dict`` iteration order
+    (FR-73).
     """
     grouped: dict[tuple[str, int], dict[ColumnRole, Cell]] = defaultdict(dict)
     for sheet in sheets:

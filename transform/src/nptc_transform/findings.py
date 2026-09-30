@@ -1,11 +1,10 @@
 """The ``Finding`` type, split out from ``pipeline.py``.
 
 Both ``cell_defects.py`` (which produces findings) and ``pipeline.py`` (which
-collects and reports them) need this type. Keeping it in its own module - not
-in whichever of the two seemed more natural - means neither has to import the
-other just to get it, so the reader (P0-2) and the pipeline never become
-circularly dependent. It imports ``bands`` (not the reverse), so that
-dependency direction stays acyclic too.
+collects and reports them) need this type. A module of its own means neither
+imports the other to get it, so the reader and the pipeline never become
+circularly dependent. It imports ``bands``, not the reverse, so that direction
+stays acyclic too.
 """
 
 from __future__ import annotations
@@ -21,18 +20,16 @@ class Finding:
     """A single defect finding.
 
     ``code``, ``location`` (a structured ``CellRef``) and ``message``, plus
-    ``band`` (FR-71), derived from ``code`` alone via ``band_for`` - a
-    property, not a field, so every ``Finding`` that exists is classified by
-    construction and no caller can create one that isn't. Grouped rendering
-    by band and defect class (FR-72) is owned by ``report_writer.py``.
+    ``band`` (FR-71), derived from ``code`` alone via ``band_for``. ``band`` is a
+    property, not a field, so every ``Finding`` is classified by construction.
+    ``report_writer.py`` owns grouped rendering by band and defect class (FR-72).
 
     A ``Finding`` built with a plain ``str`` for ``location`` fails at
-    ``RunResult.__post_init__`` (``Finding.sort_key`` calling
-    ``str.sort_key()``) with an ``AttributeError``, not at construction. No
-    runtime ``isinstance`` guard is added here on purpose: mypy already
-    covers every in-repo production call site, and this repo's style is
-    "true by construction", not defensive re-checking of what the type
-    system already guarantees.
+    ``RunResult.__post_init__`` (``Finding.sort_key`` calling ``str.sort_key()``)
+    with an ``AttributeError``, not at construction. There is no runtime
+    ``isinstance`` guard on purpose: mypy covers every in-repo production call
+    site, and this repo's style is "true by construction", not re-checking what
+    the type system guarantees.
     """
 
     code: str

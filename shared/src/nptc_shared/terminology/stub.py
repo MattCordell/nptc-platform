@@ -2,25 +2,25 @@
 
 Never opens a socket (NFR-37). It answers a request in this order: an exact
 response a test seeded (``seed_expansion``/``seed_lookup``/``seed_subsumes``/
-``seed_validate_code``); then, for ``expand`` only, a small recognised subset
-of ECL evaluated against a seeded concept table (``add_concept``); then it
-**raises**. It never invents an empty or default-valued result for something
-it was not taught - an unseeded request silently reading as "nothing matched"
-is exactly the FR-54 hazard this package exists to avoid, reproduced inside
-the test suite, where it would be even harder to notice.
+``seed_validate_code``); then, for ``expand`` only, a small subset of ECL
+evaluated against a seeded concept table (``add_concept``); then it **raises**.
+It never invents an empty or default-valued result for something it was not
+taught. An unseeded request reading as "nothing matched" is the FR-54 hazard
+this package exists to avoid, and inside a test suite it is harder to notice.
 
-The ECL subset (``_evaluate_ecl``) is not an ECL engine: it recognises a
-disjunction of literal codes (what ``snomed.ecl_set_of`` emits), ``<<X``/``<X``
-against a seeded concept's ``parents``, one top-level ``A MINUS B`` and one
-top-level ``A AND B`` over those, and two attribute-refinement forms:
-``* : <attr> = *`` (any value at all present for ``<attr>``, matched against a
-seeded ``StubConcept.properties`` entry with that ``code``) and
-``* : <attr> = <<root>`` (the property's value subsumed by ``root``, reusing
-the same descendant-closure logic ``<<X`` already gives ``<X`` "for free").
-That is exactly enough to make FR-84's ``(codes) MINUS <<71388002`` idiom and
-FR-75's ``(codes) MINUS (* : attr = *)`` / ``(codes) AND (* : attr = <<root)``
-idioms usable in a test without hand-seeding a distinct expansion for every
-chunk.
+The ECL subset (``_evaluate_ecl``) is not an ECL engine. It recognises:
+
+- a disjunction of literal codes (what ``snomed.ecl_set_of`` emits);
+- ``<<X``/``<X`` against a seeded concept's ``parents``;
+- one top-level ``A MINUS B`` and one top-level ``A AND B`` over those;
+- ``* : <attr> = *``, any value present for ``<attr>`` in a seeded
+  ``StubConcept.properties`` entry with that ``code``;
+- ``* : <attr> = <<root>``, the property's value subsumed by ``root``, reusing
+  the descendant closure behind ``<<X``.
+
+That is enough to use FR-84's ``(codes) MINUS <<71388002`` and FR-75's
+``(codes) MINUS (* : attr = *)`` / ``(codes) AND (* : attr = <<root)`` idioms in
+a test without hand-seeding an expansion for every chunk.
 """
 
 from __future__ import annotations
@@ -89,14 +89,13 @@ class StubConcept:
 
 @dataclass(frozen=True, slots=True)
 class StubRequest:
-    """One call made against the stub, for #27-style "one request, not N"
-    assertions to work identically against the stub and the real client.
+    """One call made against the stub, so "one request, not N" assertions work
+    the same against the stub and the real client.
 
-    `offset`/`count`/`display_language` are recorded for `expand` calls
-    only (every other operation leaves them at their defaults) - issue
-    #247's review found that without this, a caller silently dropping or
-    transposing `offset`/`count`, or never forwarding `display_language`,
-    could not be told apart from a correct call through this stub."""
+    ``offset``/``count``/``display_language`` are recorded for ``expand`` only;
+    other operations leave the defaults. Without them a caller that drops or
+    transposes ``offset``/``count``, or never forwards ``display_language``,
+    could not be told apart from a correct call."""
 
     operation: Operation
     detail: str
@@ -523,13 +522,10 @@ class StubTerminologyClient:
 def _designations_for(concept: StubConcept) -> tuple[Designation, ...]:
     """Every designation a real server would serve for ``concept``.
 
-    One function for both ``expand`` and ``lookup``: the two used to compute
-    this independently, ``lookup`` including ``concept.synonyms`` and
-    ``expand`` silently dropping them, which made FR-97's "matches another
-    active designation on the concept" outcome unreachable through a bulk
-    ``$expand`` - only through the (much rarer) delta ``$lookup`` path. A
-    concept's designation set does not depend on which operation asked for
-    it, so neither should this.
+    One function for ``expand`` and ``lookup``, because a concept's designation
+    set does not depend on which operation asked. If ``expand`` dropped
+    ``concept.synonyms``, FR-97's "matches another active designation" outcome
+    would be unreachable through a bulk ``$expand``.
     """
     return (
         Designation(
@@ -546,14 +542,11 @@ def _designations_for(concept: StubConcept) -> tuple[Designation, ...]:
 def _display_for(concept: StubConcept, display_language: str | None) -> str:
     """The preferred term ``display_language`` names, falling back sensibly.
 
-    Shared for the same reason as ``_designations_for``: ``expand`` used to
-    ignore ``display_language`` entirely (always the first preferred term in
-    dict-insertion order, or the FSN), while ``lookup`` honoured it - so an
-    AU-edition ``$expand`` reporting ``display`` for FR-82's preferred-term
-    comparison could silently be some other language's term wearing an AU
-    label. Falls back to ``AU_LANGUAGE_TAG`` when no language is requested at
-    all (matching this stub's long-standing ``lookup`` default), then to any
-    preferred term, then to the FSN.
+    Shared by ``expand`` and ``lookup`` for the reason given at
+    ``_designations_for``. If ``expand`` ignored ``display_language``, an AU
+    ``$expand`` could report another language's term as the AU ``display`` that
+    FR-82's preferred-term comparison reads. With no language requested it falls
+    back to ``AU_LANGUAGE_TAG``, then to any preferred term, then to the FSN.
     """
     display = concept.preferred_terms.get(display_language or AU_LANGUAGE_TAG)
     if display is not None:

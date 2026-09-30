@@ -1,14 +1,13 @@
 """The FR-53 terminology client's exception hierarchy.
 
 One base, so a caller implementing FR-54's graceful degradation can catch a
-single type. ``retryable`` is the only piece of FR-54 machinery this package
-builds: it classifies every failure so a caller (the P3 validation sweep, the
-P1 API) can mark a run incomplete and retry the transient half without
-re-deriving that classification from a status code at every call site. The
-*policy* FR-54 asks for - incomplete runs, cached prior results staying
-visible and dated, browsing/searching/editing unaffected by an outage - is
-the caller's; this package's entire FR-54 obligation is to fail loudly and
-classifiably, never to return a default-valued result on failure.
+single type. ``retryable`` classifies every failure so a caller (the P3
+validation sweep, the P1 API) can mark a run incomplete and retry the transient
+half without re-deriving that from a status code at each call site.
+
+The FR-54 policy (incomplete runs, dated cached results, browsing and editing
+unaffected by an outage) is the caller's. This package's obligation is to fail
+loudly and classifiably, never to return a default-valued result on failure.
 """
 
 from __future__ import annotations
@@ -59,9 +58,8 @@ class TerminologyTimeoutError(TerminologyTransportError):
 class TerminologyStatusError(TerminologyError):
     """An HTTP response with a non-2xx status.
 
-    Carries the parsed ``OperationOutcome`` issues when the body served one -
-    the overwhelmingly common shape for a 4xx from a FHIR server - rather
-    than a separate class for that case.
+    Carries the parsed ``OperationOutcome`` issues when the body served one,
+    the usual shape of a 4xx from a FHIR server, rather than a separate class.
     """
 
     def __init__(
@@ -101,18 +99,17 @@ class TerminologyProtocolError(TerminologyError):
     """A 2xx response whose body was not the resource asked for.
 
     Includes a body that fails to parse as JSON, one with the wrong
-    ``resourceType``, and one carrying a SNOMED CT identifier as a JSON
-    number rather than a string (FR-06's chokepoint at the wire boundary).
+    ``resourceType``, and one carrying a SNOMED CT identifier as a JSON number
+    rather than a string (FR-06 at the wire boundary).
     """
 
 
 class TerminologyOutcomeError(TerminologyProtocolError):
     """A 2xx response whose body is an ``OperationOutcome``.
 
-    Distinct from ``TerminologyStatusError`` because this is precisely the
-    case that, parsed leniently as if it were the expected resource, would
-    yield an empty ``Expansion`` and read as "nothing matched" instead of
-    "the server refused this request" (FR-54's hazard).
+    Distinct from ``TerminologyStatusError`` because parsed leniently as the
+    expected resource it would yield an empty ``Expansion``, reading as "nothing
+    matched" instead of "the server refused this request" (FR-54).
     """
 
     def __init__(
@@ -134,20 +131,15 @@ NOT_FOUND_ISSUE_CODES = frozenset({"not-found", "code-invalid", "invalid-code"})
 def is_concept_absence(exc: TerminologyError) -> bool:
     """True if ``exc`` means "no such code here", not "the request failed".
 
-    A ``$lookup`` for a code that is not in an edition is a 404 from a
-    conformant FHIR server, which is an answer to "does this code exist"
-    rather than a failure. Deliberately narrow: only a 4xx (never a 5xx,
-    never a transport failure, never a protocol error) and only a 404 or an
-    ``OperationOutcome`` that says not-found in as many words. Widening this
-    to "any 4xx" would turn a malformed request - one the server rejected
-    outright - into a false "code not found" answer; at catalogue scale
-    (``sweep.py``'s own caller) that reads as thousands of plausible-looking
-    absences instead of the one broken request that caused them.
+    A ``$lookup`` for a code not in an edition is a 404 from a conformant FHIR
+    server: an answer, not a failure. Deliberately narrow: only a 4xx (never a
+    5xx, transport or protocol error), and only a 404 or an ``OperationOutcome``
+    that says not-found. Widening to any 4xx would turn a request the server
+    rejected outright into a false "code not found", which at catalogue scale
+    reads as thousands of plausible absences instead of the one broken request.
 
-    Promoted out of ``sweep.py`` (FR-52's second pass) so a second,
-    interactive caller - the P1 API's single-code lookup route, FR-26 - can
-    ask the same question without a second, independently-written answer to
-    it (FR-74/ADR-0001: one implementation, never two that could drift).
+    Shared by ``sweep.py`` and the P1 API's single-code lookup route (FR-26), so
+    there is one answer to the question (FR-74, ADR-0001).
     """
     if not isinstance(exc, TerminologyStatusError):
         return False

@@ -2,30 +2,28 @@
 
 Owns the envelope, the writing discipline (FR-73's determinism and
 idempotency), and the human-readable grouping by defect class with structured
-cell references and a required action per class (FR-72, P0-8). Band
-assignment itself (FR-71) is owned by ``Finding.band``, and the action text
-per code by ``actions.action_for``; this module only ever reads them.
+cell references and a required action per class (FR-72). Band assignment
+(FR-71) belongs to ``Finding.band`` and the action text to
+``actions.action_for``; this module only reads them.
 
 Five rules keep every run byte-identical for identical input:
 
-1. No clock-derived value anywhere in the output. The run start, duration and
-   tool banner go to stderr only (see ``cli.py``); operators get the date
-   from the report file's mtime.
+1. No clock-derived value in the output. The run start, duration and tool
+   banner go to stderr only (see ``cli.py``); operators get the date from the
+   report file's mtime.
 2. No absolute paths. ``RunResult.source.filename`` is a basename (see
    ``pipeline.SourceRef``).
-3. Every file is written ``encoding="utf-8"``, ``newline="\\n"`` - never the
+3. Every file is written ``encoding="utf-8"``, ``newline="\\n"``, never the
    platform default, which is ``\\r\\n`` on Windows.
-4. Every collection is explicitly sorted before being written - never a
-   ``set``, never a ``dict`` relying on insertion order alone. Band counts
-   are rendered in ``BAND_REPORT_ORDER``, for the same reason - not
-   ``Band``'s own declaration order, which is unrelated to presentation.
-5. Defect classes are rendered in an explicit group order
-   (``BAND_REPORT_ORDER``, then declared ``FindingCode`` order, then the code
-   itself as a final tiebreak for an unregistered code) - never
-   ``json.dumps(sort_keys=True)``, which only sorts object *keys*, not array
-   elements, so it does not cover this at all. Findings within a group keep
-   ``RunResult``'s own canonical order, from a single stable partitioning
-   pass - never re-sorted a second time.
+4. Every collection is explicitly sorted: never a ``set``, never a ``dict``
+   relying on insertion order. Band counts use ``BAND_REPORT_ORDER`` for the
+   same reason, not ``Band``'s declaration order.
+5. Defect classes render in an explicit group order (``BAND_REPORT_ORDER``, then
+   declared ``FindingCode`` order, then the code as a tiebreak for an
+   unregistered code). ``json.dumps(sort_keys=True)`` does not cover this: it
+   sorts object *keys*, not array elements. Findings within a group keep
+   ``RunResult``'s canonical order from one stable partitioning pass, never
+   re-sorted.
 """
 
 from __future__ import annotations
@@ -44,30 +42,22 @@ from nptc_transform.findings import Finding
 from nptc_transform.misspelling import THRESHOLDS, AuthoritySource
 from nptc_transform.pipeline import RunResult
 
-#: Bumped 7 -> 8 for issue #31 (P0-9): four new ``FindingCode`` members
-#: (``EMPTY_SYNONYM_REMOVED``, ``SPECIMEN_UNCONSTRAINED_RESOLVED``,
-#: ``COMPOUND_VALUE_SPLIT``, ``SPECIMEN_VALUE_UNMAPPED``) can now appear in
-#: ``defect_classes`` - the shape is unchanged, but a consumer pinned to the
-#: old vocabulary should be able to tell the difference.
+#: Bumped when a new ``FindingCode`` can appear in ``defect_classes`` as well as
+#: when the shape changes, so a consumer pinned to the old vocabulary can tell.
 SCHEMA_VERSION = 8
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
 
-#: Declared ``FindingCode`` order, computed once - the tiebreak
-#: ``_group_findings`` uses so an unregistered code (there should never be
-#: one - see ``bands.band_for``) sorts last rather than raising or sorting
-#: arbitrarily by insertion order.
+#: Declared ``FindingCode`` order, the tiebreak ``_group_findings`` uses so an
+#: unregistered code (there should be none; see ``bands.band_for``) sorts last
+#: rather than raising or following insertion order.
 _CODE_ORDER: dict[str, int] = {code: index for index, code in enumerate(FindingCode)}
 
 
 @dataclass(frozen=True)
 class _DefectClass:
-    """One ``FindingCode``'s findings, grouped for FR-72's rendering.
-
-    Private to this module - nothing else consumes a grouped view of
-    findings, so there is no reason to make this a public type.
-    """
+    """One ``FindingCode``'s findings, grouped for FR-72's rendering."""
 
     band: Band
     code: str
@@ -77,14 +67,12 @@ class _DefectClass:
 def _group_findings(findings: tuple[Finding, ...]) -> tuple[_DefectClass, ...]:
     """Partitions ``findings`` by code, in FR-72's group-presentation order.
 
-    A single stable pass: each finding is appended to its code's bucket in
-    the order it already appears in (``RunResult.findings`` is sorted by
-    ``Finding.sort_key`` before this ever runs), so a group's own findings
-    need no second sort. Only the *groups* are sorted, explicitly, by
-    ``(BAND_REPORT_ORDER.index(band), declared FindingCode order, code)`` -
-    never by dict/set iteration order, which is what
-    ``json.dumps(sort_keys=True)`` alone would leave to chance for the array
-    this produces.
+    One stable pass: each finding joins its code's bucket in the order it already
+    has (``RunResult.findings`` is sorted by ``Finding.sort_key`` first), so a
+    group needs no second sort. Only the *groups* are sorted, by
+    ``(BAND_REPORT_ORDER.index(band), declared FindingCode order, code)``, never
+    by dict or set iteration order, which ``json.dumps(sort_keys=True)`` would
+    leave to chance for the array this produces.
     """
     grouped: dict[str, list[Finding]] = defaultdict(list)
     for finding in findings:
@@ -106,15 +94,14 @@ def _group_findings(findings: tuple[Finding, ...]) -> tuple[_DefectClass, ...]:
 def _terminology_payload(result: RunResult) -> object:
     """The terminology run's provenance block, or ``null`` if none ran.
 
-    ``null`` and "a run that produced no findings" are different facts, and
-    conflating them is how a report that never contacted a server comes to
-    read as a clean validation. The resolved version URIs are FR-48's
-    requirement: a validation you cannot reproduce is not evidence.
+    ``null`` and "a run that produced no findings" are different facts; conflating
+    them makes a report that never contacted a server read as a clean validation.
+    The resolved version URIs are FR-48's requirement: a validation you cannot
+    reproduce is not evidence.
 
-    Note what this does to FR-73: two runs against the same workbook stay
-    byte-identical only while the server resolves the same edition versions.
-    That is the intended reading - the SNOMED release is an input to the run,
-    and this block is what records which one it was.
+    Two runs against the same workbook are byte-identical (FR-73) only while the
+    server resolves the same edition versions. That is intended: the SNOMED
+    release is an input to the run, and this block records which one.
     """
     run = result.terminology
     if run is None:
@@ -133,13 +120,11 @@ def _terminology_payload(result: RunResult) -> object:
 def _designations_payload(result: RunResult) -> object:
     """FR-97's provenance block, or ``null`` if reconciliation never ran.
 
-    ``label_confirmations`` is not decoration: it is the only per-row request
-    this tool ever issues (``client.py``'s own ``validate_code`` docstring
-    reserves it for exactly this pass), and printing the count is what makes
-    "the delta is the workload" auditable rather than merely asserted. A run
-    where it approaches ``labels_reconciled`` is a run where something is
-    wrong with the server's designation serving, and nothing else here would
-    show it.
+    ``label_confirmations`` is the only per-row request this tool issues
+    (``client.py``'s ``validate_code`` reserves it for this pass), and reporting
+    the count makes "the delta is the workload" auditable. A count approaching
+    ``labels_reconciled`` means the server's designation serving is wrong, which
+    nothing else here would show.
     """
     run = result.designations
     if run is None:
@@ -152,15 +137,14 @@ def _designations_payload(result: RunResult) -> object:
 
 
 def _misspellings_payload(result: RunResult) -> object:
-    """FR-79's provenance block, or ``null`` if the pass never ran at all
-    (it always runs when the pipeline does, unlike ``terminology``/
-    ``designations`` - see ``RunResult.misspellings``'s docstring - so in
-    practice this is only ``null`` for a ``RunResult`` built by hand, e.g. in
-    a test).
+    """FR-79's provenance block, or ``null`` if the pass never ran. Unlike
+    ``terminology``/``designations`` it always runs with the pipeline (see
+    ``RunResult.misspellings``), so ``null`` only occurs for a hand-built
+    ``RunResult``, such as in a test.
 
-    ``thresholds`` is ``misspelling.THRESHOLDS`` echoed verbatim, not
-    restated: a reader must never have to cross-reference the source to know
-    what produced ``PROBABLE_MISSPELLING``/``INCONSISTENT_SPELLING``.
+    ``thresholds`` is ``misspelling.THRESHOLDS`` echoed, so a reader need not
+    consult the source to know what produced ``PROBABLE_MISSPELLING`` or
+    ``INCONSISTENT_SPELLING``.
     """
     run = result.misspellings
     if run is None:
@@ -176,10 +160,9 @@ def _misspellings_payload(result: RunResult) -> object:
 
 
 def _drift_payload(result: RunResult) -> object:
-    """FR-75's provenance block, or ``null`` if the pass never ran at all -
-    the same ``None``-vs-zero-findings distinction ``_designations_payload``
-    makes, and for the same reason: a clean run and a run that never contacted
-    the server must not read identically.
+    """FR-75's provenance block, or ``null`` if the pass never ran: the same
+    ``None``-versus-zero-findings distinction as ``_designations_payload``, so a
+    clean run and one that never contacted the server do not read alike.
     """
     run = result.drift
     if run is None:
@@ -208,10 +191,9 @@ def _location_payload(location: CellRef) -> dict[str, object]:
 
 
 def _defect_class_payload(defect_class: _DefectClass) -> dict[str, object]:
-    """One group's payload: ``code``/``band``/``action`` live here once, not
-    per finding - what "organised by defect class" means structurally.
-    ``blocks_import`` is denormalised deliberately: a consumer must never
-    re-implement ``blocks_import()`` from a band string of its own.
+    """One group's payload: ``code``, ``band`` and ``action`` appear once here, not
+    per finding. ``blocks_import`` is denormalised on purpose so a consumer never
+    re-implements ``blocks_import()`` from a band string.
     """
     return {
         "band": str(defect_class.band),
@@ -260,16 +242,15 @@ def _render_json(result: RunResult) -> str:
 def _escape_cell(value: str) -> str:
     """Makes ``value`` safe to interpolate into a Markdown table cell.
 
-    A finding's location or message is workbook-derived text, so it can contain
-    the two characters that break a table row: ``|`` (splits the row into extra
-    columns, silently truncating the rest) and a line break (ends the row
-    mid-cell, and would put a literal ``\\r\\n`` into the file on Windows,
-    violating rule 3 above). Both are escaped rather than stripped so the
-    defect stays visible to the operator.
+    A finding's location or message is workbook-derived text, so it can hold the
+    two characters that break a table row: ``|`` (splits the row into extra
+    columns) and a line break (ends the row mid-cell, and would put a literal
+    ``\\r\\n`` in the file on Windows, violating rule 3). Both are escaped, not
+    stripped, so the defect stays visible.
 
-    Not used for the Cell column: that value is wrapped in a code span
-    (``_code_span``), and backslash escapes are inert inside one per
-    CommonMark, so a backslash-escaped backtick would still close the span.
+    Not used for the Cell column, which is wrapped in a code span
+    (``_code_span``): backslash escapes are inert inside one (CommonMark), so an
+    escaped backtick would still close the span.
     """
     return (
         value.replace("\\", "\\\\")
@@ -281,15 +262,14 @@ def _escape_cell(value: str) -> str:
 
 
 def _code_span(value: str) -> str:
-    """Wraps ``value`` in a Markdown code span, CommonMark-correct even when
-    ``value`` itself contains a backtick (legal in an Excel sheet name -
-    Excel forbids only ``: \\ / ? * [ ]``).
+    """Wraps ``value`` in a Markdown code span, CommonMark-correct when ``value``
+    contains a backtick (legal in an Excel sheet name, which forbids only
+    ``: \\ / ? * [ ]``).
 
-    Backslash escapes are inert inside a code span, so the only way to put a
-    literal backtick inside one is a fence - a run of backticks - longer than
-    any backtick run already in ``value``. A leading/trailing space pads the
-    span when ``value`` itself starts or ends with a backtick, so that
-    backtick isn't read as part of the fence.
+    Backslash escapes are inert inside a code span, so a literal backtick needs a
+    fence longer than any backtick run in ``value``. A space pads the span when
+    ``value`` starts or ends with a backtick, so it is not read as part of the
+    fence.
     """
     longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
     fence = "`" * (longest_run + 1)
@@ -300,9 +280,8 @@ def _code_span(value: str) -> str:
 def _render_terminology(result: RunResult) -> list[str]:
     """The human-readable half of the provenance block above.
 
-    Says "not run" explicitly rather than omitting the section: a reader
-    scanning report.md for whether the codes were checked must not have to
-    infer it from the absence of terminology findings.
+    Says "not run" rather than omitting the section, so a reader scanning
+    report.md need not infer it from the absence of terminology findings.
     """
     run = result.terminology
     if run is None:
@@ -312,10 +291,9 @@ def _render_terminology(result: RunResult) -> list[str]:
         f"{run.codes_not_checked} binding(s) not checked",
     ]
     if run.unresolved_fsn_count:
-        # Not decoration: a nonzero count here means the FR-99 semantic-tag
-        # check could not run for that many concepts at all (no identifiable
-        # FSN designation came back), which would otherwise pass silently
-        # and permanently with nothing to show it never ran.
+        # A nonzero count means the FR-99 semantic-tag check could not run for
+        # that many concepts (no identifiable FSN came back), which would
+        # otherwise pass silently and permanently.
         lines.append(
             f"- {run.unresolved_fsn_count} concept(s) had no identifiable FSN designation; "
             "the FR-99 semantic-tag check could not run for them"
@@ -339,10 +317,8 @@ def _render_terminology(result: RunResult) -> list[str]:
 def _render_designations(result: RunResult) -> list[str]:
     """The human-readable half of FR-97's provenance block.
 
-    Says "not run" explicitly, for the same reason ``_render_terminology``
-    does: a reader must not have to infer it from the absence of a
-    ``LABEL_*`` finding, which a clean workbook produces just as often as a
-    reconciliation pass that never ran at all.
+    Says "not run" for the reason ``_render_terminology`` does: a clean workbook
+    and a pass that never ran both produce no ``LABEL_*`` finding.
     """
     run = result.designations
     if run is None:
@@ -358,10 +334,9 @@ def _render_designations(result: RunResult) -> list[str]:
 def _render_misspellings(result: RunResult) -> list[str]:
     """The human-readable half of FR-79's provenance block.
 
-    Says "not run" explicitly for the same reason ``_render_designations``
-    does - and when the authority whitelist was empty (``WORKBOOK_ONLY``,
-    ``results=None`` upstream), states the precision caveat explicitly
-    rather than letting a reader assume every run has the same reliability.
+    Says "not run" as ``_render_designations`` does. When the authority whitelist
+    was empty (``WORKBOOK_ONLY``, ``results=None`` upstream) it states the
+    precision caveat, so a reader does not assume every run is equally reliable.
     """
     run = result.misspellings
     if run is None:
@@ -387,10 +362,9 @@ def _render_misspellings(result: RunResult) -> list[str]:
 def _render_drift(result: RunResult) -> list[str]:
     """The human-readable half of FR-75's provenance block.
 
-    Says "not run" explicitly for the same reason ``_render_designations``
-    does, and calls out the two provenance counters only when nonzero - a
-    reader must not have to hunt for them in ``report.json`` when there is
-    nothing to say.
+    Says "not run" as ``_render_designations`` does, and shows the two provenance
+    counters only when nonzero, so a reader need not hunt for them in
+    ``report.json``.
     """
     run = result.drift
     if run is None:
@@ -418,15 +392,13 @@ def _render_drift(result: RunResult) -> list[str]:
 
 def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
     """FR-72's grouped findings section: band, then defect class, then a
-    ``| Cell | Detail |`` table - code and band are the enclosing headings,
-    the required action its own paragraph above the table, so neither is
-    repeated per row the way the old flat table did.
+    ``| Cell | Detail |`` table. Code and band are the enclosing headings and the
+    required action a paragraph above the table, so neither repeats per row.
 
-    Bands/codes with zero findings are omitted entirely - the opposite rule
-    to the provenance sections above, and deliberately so: the band-count
-    table already states the zero, so there is no "not run vs found nothing"
-    ambiguity here for an empty section to guard against, and one would be
-    pure noise.
+    Bands and codes with zero findings are omitted, the opposite of the
+    provenance sections above and deliberately: the band-count table already
+    states the zero, so there is no "not run versus found nothing" ambiguity for
+    an empty section to guard against.
     """
     lines = ["## Findings by defect class", ""]
     if not classes:
@@ -456,17 +428,14 @@ def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
             lines.append("| Cell | Detail |")
             lines.append("|---|---|")
             for finding in defect_class.findings:
-                # The pipe is escaped before the fence goes on, not by
-                # `_escape_cell` - table-cell splitting happens before a code
-                # span's contents are parsed, so a backslash-escaped `|`
-                # still protects the row: the table parser consumes the
-                # backslash itself before the code span ever renders, the
-                # same way `\|` -> `|` inside a normal cell does.
+                # The pipe is escaped here, not by `_escape_cell`: table-cell
+                # splitting happens before a code span is parsed, so the table
+                # parser consumes the backslash first, as it does for `\|` in a
+                # normal cell.
                 #
-                # Not similarly escaped for a literal `\`: CellRef.sheet
-                # can't contain one - Excel and openpyxl both reject a
-                # backslash in a worksheet title - so there is nothing here
-                # for `_escape_cell`'s backslash-doubling step to protect.
+                # A literal `\` needs no escape: CellRef.sheet cannot contain
+                # one, since Excel and openpyxl both reject a backslash in a
+                # worksheet title.
                 ref = str(finding.location).replace("|", "\\|")
                 lines.append(f"| {_code_span(ref)} | {_escape_cell(finding.message)} |")
             lines.append("")
@@ -499,9 +468,9 @@ def _render_markdown(result: RunResult) -> str:
 def write_report(result: RunResult, report_dir: Path) -> None:
     """Writes ``report.json`` and ``report.md`` into ``report_dir``, overwriting in place.
 
-    Never appends and never numbers a file (``report-2.json``) - overwriting
-    is what makes re-running against the same input, or into the same
-    directory, a byte-identical no-op.
+    Never appends and never numbers a file (``report-2.json``): overwriting is
+    what makes a re-run against the same input or directory a byte-identical
+    no-op.
     """
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / REPORT_JSON_NAME).write_text(_render_json(result), encoding="utf-8", newline="\n")

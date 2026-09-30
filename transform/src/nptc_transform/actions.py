@@ -1,22 +1,19 @@
 """FR-72's required-action registry: one operator-facing sentence or two per
 ``FindingCode``, stating who acts and what happens to the import.
 
-Kept as its own module, not a dict inside ``bands.py``: that module's own
-docstring stakes a precise claim ("this registry alone chooses the band"),
-and burying it under 28 x 1-3 sentences of operator prose would obscure
-``BAND_BY_CODE``. What's worth copying from ``bands.py`` is the *pattern* -
-declare every code, assert completeness at import time, fail safe on an
-unregistered code - not the location.
+Separate from ``bands.py``, whose docstring claims "this registry alone chooses
+the band"; a dict of operator prose there would bury ``BAND_BY_CODE``. The shared
+*pattern* is declare every code, assert completeness at import time, and fail
+safe on an unregistered code.
 
-House style: imperative, names who acts (RCPA-QAP for a workbook correction,
-a terminologist for an editorial-review candidate), and states what happens
-to the import. A blocking band says the import is blocked until the cell is
-corrected; a non-blocking band says **"no action required"** explicitly - an
-editor scanning 200 findings needs to know what to skip as much as what to
-fix. Every string is grounded in the runbook's own ``### Interpreting a X
-finding`` sections (FR-97, FR-79, FR-75, FR-84) rather than inventing new
-guidance, and is ASCII-only (NFR-38): this prose is copy-pasted from
-Markdown into other tools, so no smart quotes or non-breaking spaces.
+House style: imperative, names who acts (RCPA-QAP for a workbook correction, a
+terminologist for an editorial-review candidate), and states what happens to the
+import. A blocking band says the import is blocked until the cell is corrected. A
+non-blocking band says **"no action required"**, because an editor scanning 200
+findings needs to know what to skip as much as what to fix. Every string follows
+the runbook's ``### Interpreting a X finding`` sections (FR-97, FR-79, FR-75,
+FR-84) and is ASCII-only (NFR-38), because this prose is copy-pasted into other
+tools and smart quotes or non-breaking spaces would corrupt it.
 """
 
 from __future__ import annotations
@@ -25,8 +22,8 @@ from nptc_transform.bands import Band, FindingCode, band_for
 
 ACTION_BY_CODE: dict[str, str] = {
     # Auto-correctable: FR-71 names these examples directly. Applied when
-    # --emit-dataset writes the import dataset (P0-9); the import is not
-    # blocked on any of them either way.
+    # --emit-dataset writes the import dataset; the import is not blocked on
+    # any of them either way.
     FindingCode.INVISIBLE_CHARACTER: (
         "No action required. The transform normalises this invisible "
         "character to an ordinary space automatically. The import is not "
@@ -68,8 +65,8 @@ ACTION_BY_CODE: dict[str, str] = {
         "that whitespace means empty. The import is blocked until the cell "
         "is corrected at source."
     ),
-    # Data defect: the value is already lost, was never valid, or the row
-    # went unscanned - RCPA-QAP corrects the source, never the transform.
+    # Data defect: the value is lost, was never valid, or the row went
+    # unscanned. RCPA-QAP corrects the source, never the transform.
     FindingCode.CODE_CELL_INVALID_TYPE: (
         "RCPA-QAP must retype this cell as text holding the correct SCTID at "
         "source; no coercion exists to recover a valid code from a date, "
@@ -130,7 +127,7 @@ ACTION_BY_CODE: dict[str, str] = {
         "heading) and remove it. No entry is seeded for this row until it is "
         "corrected."
     ),
-    # Informational: not a defect at all - see bands.py's module docstring.
+    # Informational: not a defect (see bands.py's module docstring).
     FindingCode.SHEET_NOT_SPIA_DATA: (
         "No action required. This sheet is recognised as prose, not SPIA "
         "data, and was not scanned. The import is not blocked."
@@ -189,8 +186,8 @@ ACTION_BY_CODE: dict[str, str] = {
 }
 
 if set(ACTION_BY_CODE) != set(FindingCode):
-    # Same import-time completeness assert as BAND_BY_CODE - a code with no
-    # required action would defeat FR-72's own acceptance criterion.
+    # The import-time completeness check BAND_BY_CODE has: a code with no
+    # required action would defeat FR-72.
     missing = set(FindingCode) - set(ACTION_BY_CODE)
     raise AssertionError(f"FindingCode member(s) missing from ACTION_BY_CODE: {missing}")
 
@@ -222,11 +219,9 @@ if set(_ACTION_BY_BAND) != set(Band):
 def action_for(code: str) -> str:
     """The required-action sentence(s) for ``code``. Never returns "".
 
-    Falls back to the band's own fallback text for a code this registry
-    doesn't recognise - the same fail-safe shape ``bands.band_for`` uses: an
-    unregistered code already resolves to ``Band.DATA_DEFECT``, so the reader
-    still gets "fix at source, the import is blocked" rather than a blank
-    action line under a heading, which is precisely the FR-72 failure this
-    fallback guards against.
+    Falls back to the band's text for a code this registry doesn't recognise, as
+    ``bands.band_for`` does. An unregistered code resolves to ``Band.DATA_DEFECT``,
+    so the reader gets "fix at source, the import is blocked" rather than a blank
+    action line, the FR-72 failure this guards against.
     """
     return ACTION_BY_CODE.get(code, _ACTION_BY_BAND[band_for(code)])

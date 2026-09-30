@@ -2,27 +2,26 @@
 
 Converts the published SPIA Requesting workbook into either a validated import
 dataset or a detailed, classified defect report (FR-70, FR-71). Depends only on
-``nptc_shared`` - never on the backend package - so it can run standalone,
+``nptc_shared``, never on the backend package, so it can run standalone and
 offline against the FR-53 terminology stub (NFR-37), with no application
-database required (FR-73).
+database (FR-73).
 
-The CLI entrypoint, the report-only guarantee (FR-70) and the
-determinism/idempotency contract (FR-73) landed with P0-1/#23. The workbook
-reader, cell-type capture and Appendix A.1-A.3 cell defect detection landed
-with P0-2/#24. The three-band defect classification engine landed with
-P0-3/#25: every finding is now classified into a band that determines
-whether the import blocks. Batch terminology validation and the FR-84
-hierarchy check landed with P0-5/#27: ``--check-terminology`` validates every
-code binding against both editions through ``nptc_shared.terminology.sweep``,
-which is the backend's engine too (FR-74), never a second one. The
-SCTID/Verhoeff library (P0-10/#32) and the terminology client interface
-(P0-4/#26) also landed, in ``nptc_shared``. Designation reconciliation
-(P0-6/#28) and the FR-79 misspelling heuristics (P0-7/#29,
-``misspelling.py``, over ``nptc_shared.similarity``) landed next. The
-grouped, actionable defect report (P0-8/#30, FR-72 - ``cellref.py``,
-``actions.py``, ``report_writer.py``) landed after that. Still open: import
-dataset emission - including the auto-correctable band's "fixed
-automatically" behaviour - (P0-9/#31).
+- ``cli.py``: the entrypoint, the report-only guarantee (FR-70) and the
+  determinism and idempotency contract (FR-73).
+- ``workbook.py`` and ``cell_defects.py``: the reader, cell-type capture and
+  Appendix A.1-A.3 defect detection.
+- ``bands.py``: the defect-band classification that decides whether an import
+  blocks (FR-71).
+- ``terminology_check.py``: ``--check-terminology`` validates every code binding
+  against both editions through ``nptc_shared.terminology.sweep``, the backend's
+  engine too (FR-74).
+- ``designation_check.py``, ``misspelling.py`` and ``semantic_drift.py``:
+  designation reconciliation (FR-97), misspelling heuristics (FR-79) and
+  specimen and timing drift (FR-75).
+- ``report_writer.py``, ``actions.py`` and ``cellref.py``: the grouped,
+  actionable defect report (FR-72).
+- ``dataset.py`` and ``corrections.py``: import dataset emission, including the
+  auto-correctable band's repairs (FR-76).
 """
 
 __version__ = "0.0.0"

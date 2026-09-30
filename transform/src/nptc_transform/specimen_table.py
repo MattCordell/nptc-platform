@@ -1,20 +1,17 @@
-"""FR-75/H-03: the RCPA-workbook specimen vocabulary `semantic_drift.py` checks
-published labels against (issue #29, P0-7).
+"""FR-75/H-03: the RCPA-workbook specimen vocabulary ``semantic_drift.py`` checks
+published labels against.
 
-This is transform-scoped, not `shared/` - the same split `terminology_check.py`
-already draws for the seeding-only concerns above it. The table itself is RCPA
-workbook vocabulary (how a curator actually types "specimen" in a free-text
-cell), not a SNOMED CT client concern, and has no reason to be visible to the
-backend.
+Transform-scoped, not ``shared/``, like the other seeding-only concerns
+(``terminology_check.py``). The table is RCPA workbook vocabulary (how a curator
+types "specimen" in a free-text cell), not a SNOMED CT client concern, and the
+backend has no use for it.
 
-Every ``specimen_code`` below was verified live against SNOMED CT-AU during
-this feature's planning: each is subsumed by ``<<123038009 |Specimen|`` and is
-the FSN-bearing "X specimen (specimen)" concept for its group, unless noted
-otherwise on the group itself. ``urine_24h`` is a *descendant* of ``urine``
-(122575003 subsumes 276833005) - kept as its own group, with ``timing`` set,
-rather than folded into ``urine``, because a term asserting the 24-hour
-variant needs its own timing assertion checked in addition to (not instead
-of) the plain specimen check.
+Every ``specimen_code`` was verified against SNOMED CT-AU: each is subsumed by
+``<<123038009 |Specimen|`` and is the FSN-bearing "X specimen (specimen)" concept
+for its group, unless its group says otherwise. ``urine_24h`` is a *descendant* of
+``urine`` (122575003 subsumes 276833005). It is its own group, with ``timing``
+set, because a term asserting the 24-hour variant needs its timing assertion
+checked in addition to the plain specimen check.
 """
 
 from __future__ import annotations
@@ -27,13 +24,12 @@ class SpecimenGroup:
     """One specimen concept, and the hand-typed surface forms an RCPA curator
     plausibly writes for it in a free-text cell.
 
-    ``key`` is stable and quoted in messages and asserted in tests - never
-    derived from ``specimen_display``, which is documentation only and never
-    compared against anything. ``terms`` are casefolded surface forms, short
-    and realistic rather than exhaustive: this is an allowlist a curator's
-    actual vocabulary is checked *against*, not a corpus meant to cover every
-    conceivable phrasing (see ``semantic_drift.py``'s own principal-failure-
-    mode mitigation for what happens when a term isn't covered here at all).
+    ``key`` is stable, quoted in messages and asserted in tests; it is never
+    derived from ``specimen_display``, which is documentation only. ``terms`` are
+    casefolded surface forms, short and realistic rather than exhaustive: an
+    allowlist a curator's vocabulary is checked *against*, not a corpus of every
+    phrasing. ``semantic_drift.py``'s coverage audit handles a term not covered
+    here.
     """
 
     key: str
@@ -45,10 +41,9 @@ class SpecimenGroup:
     timing: str | None = None
 
 
-#: The 16 groups verified live against SNOMED CT-AU during this feature's
-#: planning (see the module docstring). Declaration order is the tie-break
-#: `semantic_drift.py` uses when a label's longest matching surface form is
-#: equally long across two groups.
+#: The groups verified against SNOMED CT-AU (see the module docstring).
+#: Declaration order is the tie-break ``semantic_drift.py`` uses when a label's
+#: longest matching surface form is equally long across two groups.
 SPECIMEN_TABLE: tuple[SpecimenGroup, ...] = (
     SpecimenGroup(
         key="urine",
@@ -153,8 +148,8 @@ SPECIMEN_TABLE: tuple[SpecimenGroup, ...] = (
 def all_specimen_codes(table: tuple[SpecimenGroup, ...] = SPECIMEN_TABLE) -> tuple[str, ...]:
     """Every distinct ``specimen_code`` in ``table``, sorted (FR-73).
 
-    The input to ``TerminologySweep.describe`` - one call resolving every
-    group's own designation set for the visibility filter and for messages
+    The input to ``TerminologySweep.describe``, which resolves every group's
+    designation set for the visibility filter and for messages
     (``semantic_drift.py``).
     """
     return tuple(sorted({group.specimen_code for group in table}))
