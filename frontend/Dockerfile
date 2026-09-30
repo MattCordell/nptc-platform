@@ -6,7 +6,7 @@
 #     --build-arg VITE_OIDC_ISSUER=http://localhost:8080/realms/nptc \
 #     --build-arg VITE_OIDC_CLIENT_ID=nptc-frontend .
 
-FROM node:22.22.2-slim AS build
+FROM node:26.10.0-slim AS build
 # The version comes from "packageManager" in the root package.json.
 RUN corepack enable
 WORKDIR /app
