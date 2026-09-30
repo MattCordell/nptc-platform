@@ -21,12 +21,15 @@ from sqlalchemy import event, literal
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
+import nptc.catalogue.length_report as length_report
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.entries import create_entry
 from nptc.catalogue.length_report import (
+    LengthBucket,
     LengthDistribution,
     build_length_histogram_statement,
     compute_length_distribution,
+    distribution_from_buckets,
 )
 from nptc.catalogue.term_hygiene import preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
@@ -86,7 +89,7 @@ def test_the_maximum_is_the_longest_preferred_term_this_test_created(app_session
 
 @pytest.mark.req("FR-87")
 @pytest.mark.integration
-def test_affected_counts_are_the_number_of_entries_strictly_exceeding_each_length(
+def test_entries_exceeding_is_the_number_of_entries_strictly_longer_than_each_length(
     app_session: Session,
 ) -> None:
     """FR-86 warns when an entry's length *exceeds* the configured maximum
@@ -102,45 +105,87 @@ def test_affected_counts_are_the_number_of_entries_strictly_exceeding_each_lengt
     _new_entry(app_session, long_b)
     app_session.flush()
 
-    distribution = compute_length_distribution(app_session)
+    buckets = {bucket.length: bucket for bucket in compute_length_distribution(app_session).buckets}
 
     # Entries this test itself created, strictly longer than `short`'s own
     # length: long_a and long_b, so the delta against baseline is exactly 2.
     baseline_longer_than_short = sum(
         count for length, count in before.items() if length > len(short)
     )
-    assert distribution.affected_counts[len(short)] - baseline_longer_than_short == 2
+    assert buckets[len(short)].entries_exceeding - baseline_longer_than_short == 2
     # Nothing this test created is longer than the longest entry it made.
     baseline_longer_than_long_b = sum(
         count for length, count in before.items() if length > len(long_b)
     )
-    assert distribution.affected_counts.get(len(long_b), 0) - baseline_longer_than_long_b == 0
+    assert buckets[len(long_b)].entries_exceeding - baseline_longer_than_long_b == 0
 
 
 @pytest.mark.req("FR-87")
 def test_an_empty_histogram_reports_no_maximum() -> None:
-    """Not reachable against the shared container (it is never actually
-    empty across a full run), so this is a pure unit test of the dataclass
-    `compute_length_distribution` returns for zero buckets - the same
-    empty-input branch that function takes whenever `build_length_
-    histogram_statement` returns no rows."""
-    distribution = LengthDistribution(buckets=(), maximum=None, affected_counts={})
+    distribution = distribution_from_buckets([])
 
-    assert distribution.maximum is None
-    assert distribution.affected_counts == {}
+    assert distribution == LengthDistribution(buckets=(), maximum=None)
+
+
+@pytest.mark.req("FR-87")
+def test_a_single_bucket_is_its_own_maximum_and_exceeds_nothing() -> None:
+    distribution = distribution_from_buckets([(7, 3)])
+
+    assert distribution.maximum == 7
+    assert distribution.buckets == (LengthBucket(length=7, count=3, entries_exceeding=0),)
+
+
+@pytest.mark.req("FR-87")
+@pytest.mark.parametrize(
+    "histogram",
+    [
+        [(2, 5), (4, 3), (9, 1)],
+        [(9, 1), (4, 3), (2, 5)],
+        [(4, 3), (9, 1), (2, 5)],
+    ],
+    ids=["ascending", "descending", "shuffled"],
+)
+def test_the_distribution_does_not_depend_on_the_order_buckets_arrive_in(
+    histogram: list[tuple[int, int]],
+) -> None:
+    distribution = distribution_from_buckets(histogram)
+
+    assert distribution.maximum == 9
+    assert distribution.buckets == (
+        LengthBucket(length=2, count=5, entries_exceeding=4),
+        LengthBucket(length=4, count=3, entries_exceeding=1),
+        LengthBucket(length=9, count=1, entries_exceeding=0),
+    )
+
+
+@pytest.mark.req("FR-87")
+def test_repeated_lengths_are_summed_into_one_bucket() -> None:
+    distribution = distribution_from_buckets([(4, 1), (9, 1), (4, 2)])
+
+    assert distribution.buckets == (
+        LengthBucket(length=4, count=3, entries_exceeding=1),
+        LengthBucket(length=9, count=1, entries_exceeding=0),
+    )
 
 
 @pytest.mark.req("FR-87")
 @pytest.mark.integration
-def test_build_length_histogram_statement_matches_nothing_against_an_impossible_filter(
-    app_session: Session,
+def test_an_empty_catalogue_reports_no_maximum_through_the_real_query_path(
+    app_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Proves the statement itself is a normal, composable `Select` - a
-    caller can narrow it (here, to nothing at all) the same way any other
-    `Select` in this codebase can be."""
-    statement = build_length_histogram_statement().where(literal(False))
+    """The shared container is never empty across a full run, so the
+    statement is narrowed to match nothing - the same shape a truly empty
+    `catalogue_entry` table returns - and `compute_length_distribution` runs
+    end to end against it."""
+    monkeypatch.setattr(
+        length_report,
+        "build_length_histogram_statement",
+        lambda: build_length_histogram_statement().where(literal(False)),
+    )
 
-    assert app_session.execute(statement).all() == []
+    distribution = compute_length_distribution(app_session)
+
+    assert distribution == LengthDistribution(buckets=(), maximum=None)
 
 
 @pytest.mark.req("FR-87")

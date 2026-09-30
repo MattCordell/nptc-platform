@@ -554,7 +554,7 @@ class LengthDistributionBucket(BaseModel):
     plus how many entries a maximum set to `length` would warn on (FR-86
     warns when a term's length *exceeds* the configured maximum, so this
     counts strictly greater - `nptc.catalogue.length_report.
-    LengthDistribution.affected_counts`'s own comparison).
+    LengthBucket.entries_exceeding`'s own comparison).
 
     One shape carrying both figures, rather than two parallel lists a caller
     would have to zip back together by `length` themselves - FR-87 asks for
@@ -575,7 +575,7 @@ class LengthDistributionReport(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    buckets: list[LengthDistributionBucket]
+    buckets: tuple[LengthDistributionBucket, ...]
     maximum: int | None = Field(
         description="The longest preferred term in the catalogue, or null when the catalogue is empty."
     )
@@ -604,13 +604,13 @@ def preferred_term_length_distribution(session: SessionDep) -> LengthDistributio
     """
     distribution = compute_length_distribution(session)
     return LengthDistributionReport(
-        buckets=[
+        buckets=tuple(
             LengthDistributionBucket(
                 length=bucket.length,
                 count=bucket.count,
-                entries_exceeding=distribution.affected_counts[bucket.length],
+                entries_exceeding=bucket.entries_exceeding,
             )
             for bucket in distribution.buckets
-        ],
+        ),
         maximum=distribution.maximum,
     )

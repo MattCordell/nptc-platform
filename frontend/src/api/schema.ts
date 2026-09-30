@@ -954,7 +954,7 @@ export interface components {
             designation: components["schemas"]["Designation"];
             /** Warnings */
             warnings: components["schemas"]["CollisionWarning"][];
-            length_warning?: components["schemas"]["LengthWarning"] | null;
+            length_warning: components["schemas"]["LengthWarning"] | null;
             /** Row Version */
             row_version: number;
         };
@@ -1811,7 +1811,7 @@ export interface components {
          *     plus how many entries a maximum set to `length` would warn on (FR-86
          *     warns when a term's length *exceeds* the configured maximum, so this
          *     counts strictly greater - `nptc.catalogue.length_report.
-         *     LengthDistribution.affected_counts`'s own comparison).
+         *     LengthBucket.entries_exceeding`'s own comparison).
          *
          *     One shape carrying both figures, rather than two parallel lists a caller
          *     would have to zip back together by `length` themselves - FR-87 asks for

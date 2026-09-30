@@ -3939,6 +3939,7 @@
         "required": [
           "designation",
           "warnings",
+          "length_warning",
           "row_version"
         ],
         "title": "AmendDesignationResult",
@@ -5418,7 +5419,7 @@
           "entries_exceeding"
         ],
         "title": "LengthDistributionBucket",
-        "description": "Every entry whose preferred term is exactly `length` characters long,\nplus how many entries a maximum set to `length` would warn on (FR-86\nwarns when a term's length *exceeds* the configured maximum, so this\ncounts strictly greater - `nptc.catalogue.length_report.\nLengthDistribution.affected_counts`'s own comparison).\n\nOne shape carrying both figures, rather than two parallel lists a caller\nwould have to zip back together by `length` themselves - FR-87 asks for\nexactly this pairing: \"the count of entries affected at each candidate\nthreshold\", and every observed `length` is a candidate threshold."
+        "description": "Every entry whose preferred term is exactly `length` characters long,\nplus how many entries a maximum set to `length` would warn on (FR-86\nwarns when a term's length *exceeds* the configured maximum, so this\ncounts strictly greater - `nptc.catalogue.length_report.\nLengthBucket.entries_exceeding`'s own comparison).\n\nOne shape carrying both figures, rather than two parallel lists a caller\nwould have to zip back together by `length` themselves - FR-87 asks for\nexactly this pairing: \"the count of entries affected at each candidate\nthreshold\", and every observed `length` is a candidate threshold."
       },
       "LengthDistributionReport": {
         "properties": {
