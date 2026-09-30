@@ -31,7 +31,7 @@ from nptc.catalogue.length_report import (
     compute_length_distribution,
     distribution_from_buckets,
 )
-from nptc.catalogue.term_hygiene import preferred_term_length
+from nptc.catalogue.term_hygiene import exceeds_maximum_length, preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
 
 
@@ -156,6 +156,32 @@ def test_the_distribution_does_not_depend_on_the_order_buckets_arrive_in(
         LengthBucket(length=4, count=3, entries_exceeding=1),
         LengthBucket(length=9, count=1, entries_exceeding=0),
     )
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.parametrize(
+    ("length", "maximum", "expected"),
+    [(9, 10, False), (10, 10, False), (11, 10, True), (0, 0, False), (1, 0, True)],
+    ids=["below", "exactly-at", "above", "zero-at-zero", "one-above-zero"],
+)
+def test_a_length_exceeds_the_maximum_only_when_strictly_greater(
+    length: int, maximum: int, expected: bool
+) -> None:
+    assert exceeds_maximum_length(length, maximum) is expected
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.req("FR-87")
+def test_every_bucket_counts_exactly_the_lengths_the_predicate_says_exceed_it() -> None:
+    histogram = [(2, 5), (4, 3), (9, 1), (12, 2)]
+
+    distribution = distribution_from_buckets(histogram)
+
+    for bucket in distribution.buckets:
+        expected = sum(
+            count for length, count in histogram if exceeds_maximum_length(length, bucket.length)
+        )
+        assert bucket.entries_exceeding == expected
 
 
 @pytest.mark.req("FR-87")

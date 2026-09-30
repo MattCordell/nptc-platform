@@ -15,8 +15,9 @@ expressions (one per facetable property) into one statement. This report has
 exactly one: `char_length(preferred_term)`. A plain
 `SELECT char_length(preferred_term), count(*) ... GROUP BY 1` is the whole
 query; the maximum and the per-length "how many entries exceed this" figure
-FR-87 asks for are both derived from that histogram alone, in Python, as a
-suffix sum - no second statement.
+FR-87 asks for are both derived from that histogram alone, in Python, using
+the same `exceeds_maximum_length` predicate FR-86's warning uses - no second
+statement.
 
 **`char_length` on the stored column, not a second `preferred_term_length`
 implementation.** `nptc.catalogue.term_hygiene.preferred_term_length`'s own
@@ -53,6 +54,7 @@ from sqlalchemy import Select, func
 from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
+from nptc.catalogue.term_hygiene import exceeds_maximum_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
 
 __all__ = [
@@ -111,13 +113,18 @@ def distribution_from_buckets(histogram: Iterable[tuple[int, int]]) -> LengthDis
     totals: dict[int, int] = {}
     for length, count in histogram:
         totals[length] = totals.get(length, 0) + count
-    ascending = sorted(totals.items())
-    exceeding = 0
-    descending: list[LengthBucket] = []
-    for length, count in reversed(ascending):
-        descending.append(LengthBucket(length=length, count=count, entries_exceeding=exceeding))
-        exceeding += count
-    buckets = tuple(reversed(descending))
+    buckets = tuple(
+        LengthBucket(
+            length=length,
+            count=count,
+            entries_exceeding=sum(
+                other_count
+                for other_length, other_count in totals.items()
+                if exceeds_maximum_length(other_length, length)
+            ),
+        )
+        for length, count in sorted(totals.items())
+    )
     return LengthDistribution(
         buckets=buckets, maximum=max((bucket.length for bucket in buckets), default=None)
     )

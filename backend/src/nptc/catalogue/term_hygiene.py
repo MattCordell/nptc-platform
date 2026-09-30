@@ -127,3 +127,13 @@ def preferred_term_length(term: str) -> int:
     collapses to nothing after `.strip()`, for roughly one entry in five.
     """
     return len(normalise_for_comparison(term))
+
+
+def exceeds_maximum_length(length: int, maximum: int) -> bool:
+    """FR-86: whether a preferred-term `length` is over the configured
+    `maximum`. A term exactly at the maximum is within it.
+
+    `maximum` is not optional: a caller with no configured maximum has
+    nothing to compare, so it must not compute a `length` either.
+    """
+    return length > maximum
