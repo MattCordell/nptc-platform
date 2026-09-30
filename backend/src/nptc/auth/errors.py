@@ -1,12 +1,10 @@
-"""The NFR-07 token-verification error hierarchy (issue #43).
+"""The NFR-07 token-verification error hierarchy.
 
-One base, mirroring ``nptc_shared.terminology.errors``'s convention, so a
-future FastAPI dependency (#41/#142/#143) can catch a single type and map
-it to a 401 response without a long except-chain.
+One base, mirroring ``nptc_shared.terminology.errors``, so the API layer catches
+a single type and maps it to a 401 (``nptc.api.errors``).
 
-Every one of these is a refusal, never a bypass: there is no code path
-anywhere in ``nptc.auth`` in which failing to establish one of these
-conditions results in a token being treated as valid.
+Every member is a refusal, never a bypass: no code path in ``nptc.auth`` treats
+a token as valid after failing to establish one of these conditions.
 """
 
 from __future__ import annotations
@@ -42,7 +40,5 @@ class TokenClaimsError(TokenError):
 
 
 class SigningKeyUnavailableError(TokenError):
-    """No signing key could be obtained for the token's ``kid`` - the
-    JWKS endpoint is unreachable and no cached key matches. A rejection,
-    never a bypass: there is no path from "keys unavailable" to
-    "accept"."""
+    """No signing key could be obtained for the token's ``kid``: the JWKS
+    endpoint is unreachable and no cached key matches."""

@@ -1,14 +1,13 @@
-"""OIDC discovery, resolving the realm's JWKS endpoint (issue #43, NFR-07).
+"""OIDC discovery, resolving the realm's JWKS endpoint (NFR-07).
 
-A discovery document is fetched before anything about a token is
-verified, so if it were allowed to name its own trust anchors the whole
-verification chain would be unanchored. Three refusals below exist for
-exactly that reason, each with its own test in
-``backend/tests/test_auth_discovery.py``.
+The discovery document is fetched before anything about a token is verified, so
+a document allowed to name its own trust anchors would leave the verification
+chain unanchored. Three refusals below exist for that reason, each tested in
+``backend/tests/test_auth_discovery.py`` (ADR-0016).
 
-``NPTC_JWKS_URL`` (``AuthSettings.jwks_url``) skips this module entirely -
-air-gapped deployments, and it keeps the offline test suite down to one
-local HTTP endpoint per test rather than two.
+``NPTC_JWKS_URL`` (``AuthSettings.jwks_url``) skips this module entirely, for
+air-gapped deployments and to keep the offline test suite to one local HTTP
+endpoint per test rather than two.
 """
 
 from __future__ import annotations
@@ -28,20 +27,18 @@ def resolve_jwks_url(issuer: str, *, client: httpx.Client) -> str:
     its ``jwks_uri``, refusing a document that fails any of:
 
     - ``issuer`` is plain ``http`` and its host is not ``localhost``/
-      ``127.0.0.1``/``::1`` (NFR-21) - checked *before* the request is
-      made, so a refused configuration is never actually contacted over
-      cleartext. Keycloak's dev stack is http-on-localhost, so that one
-      case is allowed and documented, not a loophole.
+      ``127.0.0.1``/``::1`` (NFR-21). This is checked *before* the request,
+      so a refused configuration is never contacted over cleartext.
+      Keycloak's dev stack is http-on-localhost, so that case is allowed.
     - the document's own ``issuer`` does not match ``issuer`` exactly.
-    - ``jwks_uri``'s scheme/host/port differ from ``issuer``'s - stops a
+    - ``jwks_uri``'s scheme/host/port differ from ``issuer``'s, which stops a
       tampered or misconfigured document redirecting key retrieval to
       another host.
 
-    A transport failure, a non-2xx response, a non-JSON body, or a
-    document missing ``jwks_uri`` all raise ``SigningKeyUnavailableError``
-    rather than propagating a raw ``httpx``/``ValueError`` - the whole
-    point of ``nptc.auth.errors`` is that a caller (a future FastAPI
-    dependency) can catch one exception family and map it to a 401.
+    A transport failure, a non-2xx response, a non-JSON body, or a document
+    missing ``jwks_uri`` raises ``SigningKeyUnavailableError`` rather than a
+    raw ``httpx``/``ValueError``, so a caller catches one exception family
+    (``nptc.auth.errors``) and maps it to a 401.
     """
     issuer_parts = urlsplit(issuer)
     if issuer_parts.scheme == "http" and issuer_parts.hostname not in _LOCAL_HOSTS:
