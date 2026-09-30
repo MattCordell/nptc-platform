@@ -90,7 +90,7 @@ _TERM_NOT_BLANK_SQL = "length(btrim(term)) > 0"
 #: BCP-47 well-formedness at the database layer too, so a row inserted outside the
 #: `@validates("language")` hook (a future bulk load) cannot carry a malformed tag. Built from
 #: `LANGUAGE_TAG_PATTERN.pattern` so the two cannot diverge;
-#: `test_designation_language_check_matches_the_shared_pattern` pins it.
+#: `test_designation_language_check_agrees_with_the_shared_pattern` pins it.
 _LANGUAGE_CHECK_SQL = f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"
 #: The database half of "the en-AU preferred term lives only in `catalogue_entry.preferred_term`". A
 #: non-en-AU preferred variant is still permitted.

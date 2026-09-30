@@ -164,7 +164,7 @@ def get_indexer_engine(database_url: str | None = None) -> Engine:
 
     `NullPool` keeps no idle DDL-capable connection between runs. `AUTOCOMMIT` is required because
     `CREATE INDEX CONCURRENTLY` raises `25001` in a transaction block;
-    `test_db_property_indexes.py::test_create_statement_fails_loudly_without_autocommit` asserts it.
+    `test_creating_a_generated_index_without_autocommit_fails_loudly` asserts it.
     """
     if database_url is None:
         settings = IndexerSettings()

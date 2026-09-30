@@ -18,8 +18,8 @@ but the indicator PRD SS6.1 draws is entry-scoped. So `entry_id` is the mandator
 `binding_id` narrows to the binding a check ran against, when there is one.
 
 `designation_collision_acknowledgement` is a narrow stand-in that this table is expected to subsume
-once its lifecycle lands; that migration is deliberately not attempted here (ADR-0034).
-`docs/architecture/data-model.md` points at this table as the general mechanism.
+once its lifecycle lands; that migration is not attempted yet. `docs/architecture/data-model.md`
+records this table as the general mechanism.
 """
 
 from __future__ import annotations

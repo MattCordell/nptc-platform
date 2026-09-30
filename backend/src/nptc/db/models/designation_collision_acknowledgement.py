@@ -7,7 +7,8 @@ general acknowledgement mechanism for every terminology-validation finding. It i
 because the P3 sweep and acknowledge/resolve endpoints have not landed, while FR-05 collision
 detection was P1. This table is a narrow acknowledgement for one finding shape, the same synonym on
 multiple live entries, so P1 did not wait on P3. `ValidationFinding` is expected to subsume it once
-its lifecycle lands; that migration is deliberately not attempted here (ADR-0034).
+its lifecycle lands; `docs/architecture/data-model.md` records that, and the migration is
+not attempted yet.
 
 **Scope: (entry, term_key, language), not (term_key, language) alone.** An acknowledgement silences
 the warning for the entry it was made against. A fourth entry joining an acknowledged group (PRD
