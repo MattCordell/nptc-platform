@@ -68,7 +68,10 @@ def main() -> int:
         finally:
             engine.dispose()
     except ValidationError as exc:
-        names = ", ".join(f"NPTC_{str(error['loc'][0]).upper()}" for error in exc.errors())
+        names = ", ".join(
+            f"NPTC_{str(error['loc'][0]).upper()}" if error["loc"] else "the settings as a whole"
+            for error in exc.errors()
+        )
         print(f"error: missing or invalid setting(s): {names}", file=sys.stderr)
         return 1
     except Exception as exc:

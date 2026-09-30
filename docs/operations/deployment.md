@@ -31,7 +31,9 @@ least-privilege `nptc_app_login` role and never receives `NPTC_MIGRATION_DATABAS
 
 2. Replace each `change-me` in `deploy/.env` with a local-only password. Keep
    `POSTGRES_PASSWORD` and `NPTC_APP_DB_PASSWORD` free of `@ : / ? # %`, because compose
-   places them inside database URLs.
+   places them inside database URLs. `migrate` refuses an `NPTC_APP_DB_PASSWORD` with one
+   of these characters and names the variable. It cannot check `POSTGRES_PASSWORD`, so a
+   bad value there shows up as a `migrate` authentication failure.
 
 3. Build and start everything:
 
