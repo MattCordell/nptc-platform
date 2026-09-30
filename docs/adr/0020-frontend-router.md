@@ -155,7 +155,7 @@ blank page.
   obvious from TanStack's documentation and cost real debugging time here; it should not
   cost it again.
 - **Adopting a schema library later is a `search-params.ts` change only.**
-- **Deploying behind Caddy needs an SPA fallback** (`try_files {path} /index.html`) before
-  this ships to production — `deploy/` has no Caddyfile yet. Documented as an explicit
-  requirement in `docs/architecture/frontend-routing.md`'s "Serving requirements" section,
-  and left as a checklist item for whichever issue introduces the Caddy service.
+- **Deploying behind Caddy needs an SPA fallback** (`try_files {path} /index.html`).
+  `deploy/caddy/Caddyfile` provides it. It is documented as an explicit requirement in
+  `docs/architecture/frontend-routing.md`'s "Serving requirements" section, for any other
+  proxy an operator puts in front of the SPA.

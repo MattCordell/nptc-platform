@@ -29,29 +29,35 @@ report tracking what's implemented.
 
 ## Quickstart
 
-The Foundation stack (Postgres and Keycloak — the API, worker, frontend and Caddy come
-with later phases) comes up with one command and no manual post-installation steps
-(NFR-41).
+The whole stack comes up with one command and no manual post-installation steps
+(NFR-41). It is a development-grade stack: plain HTTP, and not for production.
 
 **Prerequisites:** Docker, with Compose (any recent version supporting the Compose
-Specification). For the full dev toolchain (Node, pnpm, uv, Python), see
-[CONTRIBUTING.md](CONTRIBUTING.md)'s Prerequisites table.
+Specification). You do not need Python or Node. For the full dev toolchain (Node, pnpm, uv,
+Python), see [CONTRIBUTING.md](CONTRIBUTING.md)'s Prerequisites table.
 
 **Bring the stack up:**
 
 ```powershell
-cp deploy/.env.example deploy/.env
-docker compose -f deploy/compose.yml up
+Copy-Item deploy/.env.example deploy/.env
+docker compose -f deploy/compose.yml up -d --build
 ```
 
-This brings up, on a clean volume:
+This builds two images and starts, on a clean volume:
 
-- **PostgreSQL** (pinned to `18.4` in `deploy/compose.yml`) on `${POSTGRES_PORT:-5432}`
+- **PostgreSQL** (pinned to UTF-8; the version is in `deploy/compose.yml`) on `${POSTGRES_PORT:-5432}`
 - **Keycloak** on `${KEYCLOAK_PORT:-8080}`
+- **migrate**, a one-shot job that applies the database migrations and then exits
+- **backend**, the API, after the migrations succeed
+- **web**, which serves the web app and forwards `/api` to the API, on `${NPTC_WEB_PORT:-8081}`
 
-There is no API, frontend or Caddy yet — those land with later Foundation/P1 issues. See
+Open <http://localhost:8081> when `docker compose -f deploy/compose.yml ps -a` shows the
+services healthy. [docs/operations/deployment.md](docs/operations/deployment.md) covers
+creating the first user and administrator, stopping the stack and troubleshooting. See
 [docs/operations/configuration.md](docs/operations/configuration.md) for what each
-`deploy/.env` variable does.
+`deploy/.env` variable does, and
+[docs/operations/local-development.md](docs/operations/local-development.md) to run the API
+or web app on your own machine.
 
 ## Documentation map
 

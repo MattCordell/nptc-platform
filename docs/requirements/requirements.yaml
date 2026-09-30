@@ -886,8 +886,8 @@
   priority: MUST
   phase: foundation
   title: "The whole stack starts from a single docker compose up against a documented .env, with no manual post-installation steps"
-  status: planned
-  notes: "See GitHub issue #10 (F-7)"
+  status: implemented
+  notes: "deploy/compose.yml runs Postgres, Keycloak, a one-shot migrate service, the API and Caddy (web) from `docker compose -f deploy/compose.yml up -d --build` (issue #356), documented in docs/operations/deployment.md. backend/tests/test_deploy_compose.py (marked NFR-41) pins the stack's shape: the five services, the startup order, that only migrate holds the owner DSN, and that .env.example documents every variable compose reads. backend/tests/test_provision_login.py covers the login-role step that replaces the manual SQL. That the stack actually comes up is checked by running it, not by CI: building the images in CI is a follow-up."
 - id: "NFR-42"
   priority: SHOULD
   phase: foundation

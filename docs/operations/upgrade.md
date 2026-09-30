@@ -10,6 +10,13 @@ restating them.
 
 ## Running migrations
 
+**In the compose stack you run nothing.** The one-shot `migrate` service runs
+`alembic upgrade head`, then [provisions the app role's login](#provisioning-the-app-roles-login),
+every time you run `docker compose -f deploy/compose.yml up -d --build`. The `backend`
+service starts only after `migrate` exits successfully. See [`deployment.md`](deployment.md).
+
+To run Alembic yourself against any database, for example while developing a migration:
+
 ```powershell
 uv run alembic upgrade head
 uv run alembic current
@@ -62,18 +69,30 @@ and/or `data-model.md`, so it gets no section of its own below.
 
 Migrations create the `nptc_app` role (`NOLOGIN`) and grant it the privileges the
 application needs - they deliberately do **not** create a `LOGIN` role or set a password
-anywhere (NFR-26: no secrets committed to the repository). An operator provisions the
-actual login role once, out-of-band, after the migration has run:
+anywhere (NFR-26: no secrets committed to the repository). The login role is created after
+the migration has run, by `nptc.db.provision_login`:
+
+```powershell
+uv run python -m nptc.db.provision_login
+```
+
+The command connects with `NPTC_MIGRATION_DATABASE_URL`, then creates `nptc_app_login` with
+the password in `NPTC_APP_DB_PASSWORD` and makes it a member of `nptc_app`. It is safe to
+repeat: a second run sets the password to the current value, which is also how you rotate
+it. The compose `migrate` service runs this command for you.
+
+`NPTC_DATABASE_URL` (the application's own runtime DSN) then authenticates as
+`nptc_app_login`. `backend/tests/conftest.py` calls the same function inside the disposable
+test container, with an obviously-synthetic local-only password - never real credentials,
+and never anything committed.
+
+If you manage database roles by other means, you can skip the command and run the
+equivalent SQL yourself, once:
 
 ```sql
 CREATE ROLE nptc_app_login LOGIN PASSWORD '<a real, generated secret>';
 GRANT nptc_app TO nptc_app_login;
 ```
-
-`NPTC_DATABASE_URL` (the application's own runtime DSN) then authenticates as
-`nptc_app_login`. `backend/tests/conftest.py` reproduces exactly this two-step sequence
-inside the disposable test container, with an obviously-synthetic local-only password -
-never real credentials, and never anything committed.
 
 ## Provisioning the index reconciler's login (issue #54, FR-13)
 
@@ -175,6 +194,12 @@ grant), an operator with direct database access runs:
 
 ```powershell
 uv run python scripts/grant_role.py --username <the user's username> --role administrator
+```
+
+In the compose stack, run it inside the `backend` container instead:
+
+```powershell
+docker compose -f deploy/compose.yml exec backend python scripts/grant_role.py --username <the user's username> --role administrator
 ```
 
 This calls the same `nptc.auth.grants.grant_role_unchecked` a first-login Provisional grant

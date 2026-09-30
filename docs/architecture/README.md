@@ -40,7 +40,9 @@
   unlike the public FR-19 history surface, closed-account attribution, and what the
   surface cannot do (no write path, no Keycloak proxy).
 
-Still owed: the deployment topology (PRD §14.3 is the starting point).
+The compose stack's topology, in development form, is in
+[`../operations/deployment.md`](../operations/deployment.md). Still owed: the production
+deployment topology (PRD §14.3 is the starting point).
 
 Populated incrementally as the corresponding backlog items land — see the
 documentation-impact table in [CONTRIBUTING.md](../../CONTRIBUTING.md) for which
