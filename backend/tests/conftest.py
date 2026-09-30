@@ -86,13 +86,18 @@ def _alembic_config() -> Config:
 def postgres_container() -> Iterator[PostgresContainer]:
     # driver="psycopg" (v3), not testcontainers' own default of psycopg2 -
     # psycopg2 is not a dependency anywhere in this workspace.
-    with PostgresContainer(
+    container = PostgresContainer(
         image_from_compose(),
         username="nptc_owner",
         password="nptc-owner-test-only-not-a-real-secret",
         dbname="nptc_test",
         driver="psycopg",
-    ) as container:
+    )
+    # The initdb flags compose gives the real database, so the suite runs on
+    # the same encoding the deployed stack pins.
+    initdb_args = compose_config()["services"]["postgres"]["environment"]["POSTGRES_INITDB_ARGS"]
+    container.with_env("POSTGRES_INITDB_ARGS", initdb_args)
+    with container:
         yield container
 
 
