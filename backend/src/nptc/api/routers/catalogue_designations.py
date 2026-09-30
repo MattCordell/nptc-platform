@@ -688,7 +688,7 @@ def add_designations(
     # order today, for the same reason. See ADR-0035's "Lock ordering"
     # addendum for the fuller history of why this pair of locks needed a
     # single, consistent order in the first place.
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         if body.use is DesignationUse.PREFERRED:
             # add_synonyms is synonym-only (it hardcodes use="synonym") and a
             # preferred variant is always a single term - `add_designation`
@@ -884,7 +884,7 @@ def amend_designation_route(
     # lock `entry_child_write` already holds, not a second acquisition. See
     # `add_designations`' own comment above and ADR-0035's "Lock ordering"
     # addendum for the fuller history.
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         if designation is None:
             # Raised here rather than by calling `load_active_designation`
             # for its refusal, which would re-run the identical `SELECT`
@@ -943,7 +943,7 @@ def retire_designation_route(
     # inside the lock, after `entry_child_write`'s own version check - a
     # stale caller sees the version conflict, not an unrelated 404, matching
     # `catalogue_bindings.py`'s `retire_binding` precedent (FR-38, issue #300).
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         designation = load_active_designation(
             session, entry_id=entry.id, term=body.term, language=body.language
         )
@@ -981,7 +981,7 @@ def reinstate_designation_route(
     inspects retired rows, so it cannot tell the two cases apart on its
     own (see its own docstring)."""
     entry = load_entry_for_update(session, business_key)
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         active = find_active_designation(
             session, entry_id=entry.id, term=body.term, language=body.language
         )

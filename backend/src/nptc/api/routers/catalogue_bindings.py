@@ -319,7 +319,7 @@ def bind_code(
     body: Annotated[BindCodeRequest, Body()],
 ) -> BindingWriteResult:
     entry = load_entry_for_update(session, business_key)
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         binding = create_binding(
             session,
             ctx,
@@ -363,7 +363,7 @@ def retire_binding(
     # caller sees the version conflict, not an unrelated 404, matching
     # `save_entry`'s own precedent for checking the version before a
     # collision it would otherwise report instead.
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         binding = load_active_binding(session, entry_id=entry.id, code=code)
         _retire_binding(session, ctx, binding=binding, reason=body.reason)
     return BindingWriteResult(
@@ -409,7 +409,7 @@ def replace_binding(
         # (issue #219 review). Refused before either write runs.
         raise CodeBindingSelfSupersessionError(f"code {code!r} cannot be replaced by itself")
     entry = load_entry_for_update(session, business_key)
-    with entry_child_write(session, entry, body.expected_row_version):
+    with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         superseded = load_active_binding(session, entry_id=entry.id, code=code)
         _retire_binding(session, ctx, binding=superseded, reason=body.reason)
         successor = create_binding(

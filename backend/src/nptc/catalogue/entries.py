@@ -470,7 +470,11 @@ def bump_entry_row_version(entry: CatalogueEntry) -> None:
 
 @contextmanager
 def entry_child_write(
-    session: Session, entry: CatalogueEntry, expected_row_version: int
+    session: Session,
+    entry: CatalogueEntry,
+    expected_row_version: int,
+    *,
+    reason: str | None = None,
 ) -> Iterator[None]:
     """Wraps a write to a table that hangs off `entry` but keeps no
     `row_version` of its own - `code_binding` is the first caller (issue
@@ -502,8 +506,13 @@ def entry_child_write(
     event - the same guarantee a version already known stale up front gets
     from the precondition check.
 
-    `acquire_append_lock` is the first statement below - before the
-    savepoint opens, and so before anything that could take a `catalogue_
+    `reason`, when given, is validated before the lock: a route passes its
+    request's note so a rejected one takes no lock, because the wrapped
+    writers only validate it once this context manager already holds the
+    lock. `None` skips the check for a caller whose body validates its own.
+
+    `acquire_append_lock` is the first session-touching statement below -
+    before the savepoint opens, and so before anything that could take a `catalogue_
     entry` row lock. Setting `entry.row_version` does not touch the
     database by itself; the `UPDATE ... WHERE row_version = ...` `version_
     id_col` issues is what does, and that now happens at this context
@@ -544,6 +553,8 @@ def entry_child_write(
     per-entry domain error and keeps using the session (as `save_entries`
     already does for #63's bulk shape) would need to be able to rely on.
     """
+    if reason is not None:
+        validate_changelog_note(reason)
     acquire_append_lock(session)
     assert_entry_row_version(session, entry, expected_row_version)
     business_key = entry.business_key
@@ -728,12 +739,16 @@ def save_entries(
     `nptc.catalogue.property_values.save_property_values_for_entries`
     instead (issue #265).
 
-    `acquire_append_lock` runs as the literal first statement, for the same
-    reason `add_synonyms` now does (issue #281 round-3 review): each
-    `save_entry` call below already re-asserts the same lock on this
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock - including for an empty
+    `updates`, which no longer succeeds silently with a bad note.
+    `acquire_append_lock` then runs before any session-touching statement,
+    for the same reason `add_synonyms` does (issue #281 round-3 review):
+    each `save_entry` call below already re-asserts the same lock on this
     function's behalf, so this is a cheap, safe re-assertion, kept so this
-    function's own first statement satisfies the same uniform invariant
-    every other writer in this package does."""
+    function satisfies the same uniform invariant every other writer in
+    this package does."""
+    validate_changelog_note(reason)
     acquire_append_lock(session)
     return [
         save_entry(

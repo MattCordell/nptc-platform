@@ -384,10 +384,11 @@ def add_designation(
     **`reason`, `term` and `language` are validated first, then
     `acquire_append_lock` runs before any session-touching statement (issue
     #281 round-2 review).** None of those three checks touches the session,
-    so a rejected input takes no lock. Every existing caller today reaches this function
-    already wrapped in `nptc.catalogue.entries.entry_child_write` (issue
-    #60/#300), which takes the same lock first - so this call is a cheap,
-    safe re-assertion of a lock already held, not a second acquisition.
+    so a rejected input takes no lock. Every existing caller today reaches
+    this function already wrapped in `nptc.catalogue.entries.
+    entry_child_write` (issue #60/#300), which takes the same lock first -
+    so this call is a cheap, safe re-assertion of a lock already held, not
+    a second acquisition.
     Without it, a caller invoking `add_designation` directly (bypassing
     `entry_child_write`) would reopen the exact collision-lock-vs-append-
     lock cycle issue #281 closes elsewhere: this function's own collision
@@ -527,21 +528,24 @@ def retire_designation(
     deprecation-not-deletion). Raises `DesignationAlreadyRetiredError`
     rather than silently no-opping - see that class's own docstring.
 
-    `acquire_append_lock` runs as the literal first statement, matching
-    every other writer in this module that reaches `record_change` (issue
-    #281 round-3 review): this function takes no *other* lock today, so
-    the ordering has no live deadlock to close yet, but a uniform "the
-    append lock is always this function's first statement" invariant,
-    with no per-function exceptions to reason about, is what
-    `test_lock_ordering.py`'s own derived guard checks - and is cheaper to
-    keep true everywhere than to justify a carve-out for the one function
-    that happens not to need it today.
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock - and is reported ahead of
+    an already-retired refusal. `acquire_append_lock` then runs before
+    any session-touching statement, matching every other writer in this
+    module that reaches `record_change` (issue #281 round-3 review): this
+    function takes no *other* lock today, so the ordering has no live
+    deadlock to close yet, but a uniform invariant with no per-function
+    exceptions to reason about is what `test_lock_ordering.py`'s own
+    derived guard checks - and is cheaper to keep true everywhere than to
+    justify a carve-out for the one function that happens not to need it
+    today.
 
     Sets `retired_at` (issue #313, mirroring `nptc.catalogue.bindings.
     retire_binding`'s own precedent for its own table's retirement
     timestamp, FR-17-style) - `func.now()`, the **database's** clock, so
     `retired_at` orders correctly across every app instance's writes, not
     just this process's own."""
+    validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
 
     from nptc.db.models.designation import DesignationStatus
@@ -549,7 +553,6 @@ def retire_designation(
     if designation.status == str(DesignationStatus.RETIRED):
         raise DesignationAlreadyRetiredError(f"designation {designation.id} is already retired")
 
-    validated_reason = validate_changelog_note(reason)
     designation.status = str(DesignationStatus.RETIRED)
     designation.retired_at = func.now()
     record_change(
@@ -609,9 +612,11 @@ def reinstate_designation(
     `PendingRollbackError` in place of the domain error this is meant to
     raise (matching `add_designation`'s own precedent, issue #224 review).
 
-    `acquire_append_lock` runs as the literal first statement, for the same
-    reason every other writer in this module does (issue #281 round-3
-    review)."""
+    `reason` is validated first because that check never touches the
+    session, so a rejected note takes no lock. `acquire_append_lock` then
+    runs before any session-touching statement, for the same reason every
+    other writer in this module does (issue #281 round-3 review)."""
+    validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
 
     from nptc.db.models.designation import DesignationStatus
@@ -619,7 +624,6 @@ def reinstate_designation(
     if designation.status == str(DesignationStatus.ACTIVE):
         raise DesignationNotRetiredError(f"designation {designation.id} is already active")
 
-    validated_reason = validate_changelog_note(reason)
     entry_id = entry.id
     cleaned_term = designation.term
     canonical_language = designation.language
@@ -677,11 +681,15 @@ def amend_designation(
     resolved both via `load_entry_for_update`/`load_active_designation`)
     has them both on hand.
 
-    `acquire_append_lock` runs as the literal first statement, for the same
-    reason `add_designation` now does (issue #281 round-2 review): makes
-    the append-lock-before-collision-lock invariant hold at this function's
-    own boundary rather than depending on every caller wrapping it in
-    `entry_child_write` correctly."""
+    `reason` and `new_term` are validated first because neither check
+    touches the session, so a rejected input takes no lock.
+    `acquire_append_lock` then runs before any session-touching statement,
+    for the same reason `add_designation` does (issue #281 round-2 review):
+    makes the append-lock-before-collision-lock invariant hold at this
+    function's own boundary rather than depending on every caller wrapping
+    it in `entry_child_write` correctly."""
+    validated_reason = validate_changelog_note(reason)
+    cleaned_term = clean_term(new_term)
     acquire_append_lock(session)
 
     from nptc.db.models.designation import DesignationStatus
@@ -691,8 +699,6 @@ def amend_designation(
             f"designation {designation.id} is retired and cannot be amended"
         )
 
-    validated_reason = validate_changelog_note(reason)
-    cleaned_term = clean_term(new_term)
     if cleaned_term == designation.term:
         # A no-op edit: nothing to check the term against itself for, and
         # a same-value "edit" audit event would misrepresent that nothing

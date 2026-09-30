@@ -254,7 +254,12 @@ the row-version check in every one of these functions, a stale `expected_row_ver
 holds it until the request's transaction unwinds too — not only a successful write.
 **Issue #360 exempts input checks that never see a session.** `validate_changelog_note`,
 `clean_term` and `validate_language_tag` run before the lock, so a rejected changelog note
-(422) or term takes no lock. They cannot take a row or collision lock ahead of the append
+(422) or term takes no lock. That covers `save_entries`, `amend_designation`,
+`retire_designation` and `reinstate_designation` too, and the designation and binding routes
+pass their request's note to `entry_child_write(..., reason=...)`, which validates it ahead
+of its own lock because the wrapped writers only run once that lock is held. One visible
+effect: an empty note on an already-retired designation now returns 422, where it returned 409.
+They cannot take a row or collision lock ahead of the append
 lock, so the ordering above still holds; the guard allows exactly those named calls ahead of
 the lock (`_SESSION_FREE_PRECHECKS` in `test_lock_ordering.py`) and nothing else. Every catalogue write
 now serialises against every other on this one lock for a longer window than before this
