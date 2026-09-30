@@ -60,6 +60,7 @@ validation on its own merits rather than bypassing it.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from collections.abc import Iterator, Sequence
@@ -86,7 +87,7 @@ from nptc.catalogue.errors import (
     FieldConflict,
 )
 from nptc.catalogue.property_values import assert_specimen_flag_allowed
-from nptc.catalogue.term_hygiene import clean_term
+from nptc.catalogue.term_hygiene import clean_term, exceeds_maximum_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.designation import DesignationUse
@@ -184,6 +185,26 @@ class EntryChanges:
         }
 
 
+_logger = logging.getLogger(__name__)
+
+
+def _log_if_over_maximum_length(entry: CatalogueEntry, maximum: int | None) -> None:
+    """FR-86 on the write path: one warning record when `entry`'s preferred
+    term is over `maximum`, carrying the business key and the length but
+    never the term. Never raises, so an over-length term still saves."""
+    if maximum is None:
+        return
+    length = entry.length
+    if exceeds_maximum_length(length, maximum):
+        _logger.warning(
+            "preferred term over the configured maximum length: "
+            "business_key=%s length=%d maximum=%d",
+            entry.business_key,
+            length,
+            maximum,
+        )
+
+
 def create_entry(
     session: Session,
     ctx: AuditContext,
@@ -193,6 +214,7 @@ def create_entry(
     status: CatalogueEntryStatus | str = CatalogueEntryStatus.DRAFT,
     specimen_unconstrained: bool = False,
     business_key: str | None = None,
+    max_preferred_term_length: int | None = None,
 ) -> CatalogueEntry:
     """Creates a new entry. `business_key` is minted via
     `allocate_business_key` unless the caller supplies one explicitly - the
@@ -244,6 +266,7 @@ def create_entry(
         kind=ChangeKind.CREATED,
         reason=validated_reason,
     )
+    _log_if_over_maximum_length(entry, max_preferred_term_length)
     return entry
 
 
@@ -592,6 +615,7 @@ def save_entry(
     expected_row_version: int,
     changes: EntryChanges,
     reason: str,
+    max_preferred_term_length: int | None = None,
 ) -> CatalogueEntry:
     """Applies `changes` to the entry identified by `business_key`,
     enforcing FR-38 optimistic locking. Raises `EntryVersionConflictError`
@@ -684,6 +708,7 @@ def save_entry(
     # to the database and clear SQLAlchemy's attribute history before
     # record_change ever gets to read it - turning every save into a
     # spurious AuditNoOpError regardless of whether it actually conflicts.
+    previous_term = entry.preferred_term
     savepoint = session.begin_nested()
     try:
         for name, value in changes.as_dict().items():
@@ -719,6 +744,8 @@ def save_entry(
             )
         ) from None
 
+    if entry.preferred_term != previous_term:
+        _log_if_over_maximum_length(entry, max_preferred_term_length)
     return entry
 
 
@@ -728,6 +755,7 @@ def save_entries(
     *,
     updates: Sequence[tuple[str, int, EntryChanges]],
     reason: str,
+    max_preferred_term_length: int | None = None,
 ) -> list[CatalogueEntry]:
     """Applies a batch of `(business_key, expected_row_version, changes)`
     updates, one `save_entry` call - and one savepoint - per entry (FR-39's
@@ -758,6 +786,7 @@ def save_entries(
             expected_row_version=expected_row_version,
             changes=changes,
             reason=reason,
+            max_preferred_term_length=max_preferred_term_length,
         )
         for business_key, expected_row_version, changes in updates
     ]
