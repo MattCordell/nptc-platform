@@ -1,20 +1,15 @@
-"""Strict normalisation of a single value into JSON-safe form, for content
-that is about to be written into `audit_event.before`/`after` (issue #37,
-NFR-08, FR-06).
+"""Strict normalisation of one value into JSON-safe form, for content about to be written into
+`audit_event.before`/`after` (NFR-08, FR-06).
 
-This is the **strict** counterpart to `nptc.audit.hashing._normalise`, which
-must stay total (see that module's docstring for why). Every type handled
-here normalises identically to `hashing._normalise` for any value that
-module already accepted - this refactor moves no existing hash, proven by
-`test_audit_hashing.py`'s golden-vector digest test.
+The strict counterpart to `nptc.audit.hashing._normalise`, which must stay total. Every type
+handled here normalises identically to `_normalise` for any value `_normalise` already
+accepted, so no existing hash moves (`test_audit_hashing.py`'s golden-vector test).
 
-**Why raise instead of stringify.** `audit_event` is INSERT/SELECT-only
-(NFR-09): once a row is written it cannot be corrected. `hashing._normalise`
-tolerates an unfamiliar type via `str(value)` because it must also run over
-rows read back from Postgres, where raising would turn a verifiable chain
-into an unverifiable one. A diff about to be written has no such excuse - an
-unexpected object silently stringified into `before`/`after` is a permanent,
-possibly-misleading audit record, so this module fails loudly instead.
+**Raise, do not stringify.** `audit_event` is INSERT/SELECT-only (NFR-09), so a row cannot be
+corrected. `_normalise` tolerates an unfamiliar type via `str(value)` because it also runs over
+rows read back from Postgres, where raising would make a verifiable chain unverifiable. A diff
+about to be written has no such excuse: a silently stringified object is a permanent, possibly
+misleading record. ADR-0018 records the split.
 """
 
 from __future__ import annotations
@@ -30,28 +25,21 @@ from typing import Final
 
 from nptc_shared.sctid import SCTID
 
-#: Recursion depth beyond which `normalise_json_value` raises rather than
-#: risk hitting Python's own recursion limit on a pathological structure -
-#: a loud failure at the point of the write, not a stack overflow mid
-#: transaction.
+#: Recursion depth past which `normalise_json_value` raises, a loud failure at the write rather
+#: than a stack overflow mid-transaction.
 _MAX_DEPTH: Final[int] = 32
 
-#: A JSON-safe value: what `json.dumps` can render without a custom encoder,
-#: and what Postgres `jsonb` can store. A PEP 695 `type` statement, not a
-#: `TypeAlias`-annotated assignment: it evaluates lazily, so the recursive
-#: self-reference (`list[JsonValue]`/`dict[str, JsonValue]`) needs no
+#: A JSON-safe value: what `json.dumps` renders without a custom encoder and Postgres `jsonb`
+#: stores. A PEP 695 `type` statement evaluates lazily, so the recursive reference needs no
 #: string-quoting.
 type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 
 
 class UnserialisableAuditValueError(TypeError):
-    """Raised when a value has no defined, lossless JSON representation for
-    an audit `before`/`after` payload - an unrecognised type, a NaN/±Inf
-    float, a `str` containing a NUL byte, a non-`str` mapping key, or a
-    structure deeper than `_MAX_DEPTH`. Deliberately a `TypeError` subclass:
-    the caller handed this function a value shape it does not support,
-    which is a programming error at the call site, not a data-quality
-    finding to report and continue past."""
+    """Raised when a value has no defined, lossless JSON form for an audit payload: an
+    unrecognised type, a NaN or infinite float, a `str` with a NUL byte, a non-`str` mapping
+    key, or nesting deeper than `_MAX_DEPTH`. A `TypeError` because the caller passed an
+    unsupported shape, a programming error and not a data-quality finding."""
 
 
 def _normalise_str(value: str) -> str:
@@ -62,22 +50,18 @@ def _normalise_str(value: str) -> str:
             "this, not a silent escape that would make the audit record differ "
             "from what was written"
         )
-    # str(value) rather than returning value unchanged: a str subclass (e.g.
-    # StrEnum) must normalise to a genuine str, not merely something that
-    # behaves like one - json.dumps would render it identically either way,
-    # but a plain str is what a reader of the stored JSONB actually gets
-    # back, and what compute_entry_hash's dict-key coercion already assumes.
+    # `str(value)`, not `value`: a `str` subclass such as `StrEnum` must become a genuine `str`,
+    # which is what a reader of the stored JSONB gets and what `compute_entry_hash`'s dict-key
+    # coercion assumes.
     return str(value)
 
 
 def normalise_json_value(value: object, *, _depth: int = 0) -> JsonValue:
-    """Recursively normalises `value` into a JSON-safe form, raising
-    `UnserialisableAuditValueError` rather than tolerating anything this
-    module does not explicitly recognise.
+    """Recursively normalises `value` into JSON-safe form, raising
+    `UnserialisableAuditValueError` for anything not explicitly recognised.
 
-    Order matters: `bool` is checked before `int` (it is a subclass of
-    `int` in Python), and `str`/`StrEnum` before other `Enum` members
-    (`StrEnum` is itself a `str` subclass).
+    Order matters: `bool` before `int` (a subclass), and `str` (including `StrEnum`) before
+    other `Enum` members.
     """
     if _depth > _MAX_DEPTH:
         raise UnserialisableAuditValueError(
@@ -98,13 +82,11 @@ def normalise_json_value(value: object, *, _depth: int = 0) -> JsonValue:
     if isinstance(value, str):
         return _normalise_str(value)
     if isinstance(value, Enum):
-        # A non-str Enum (str-subclass Enums, e.g. StrEnum, are already
-        # caught by the `isinstance(value, str)` branch above) recurses on
-        # its own `.value`, so e.g. an IntEnum normalises as its int.
+        # A non-`str` Enum recurses on its `.value`, so an `IntEnum` becomes its int. `StrEnum`
+        # was already caught by the `str` branch.
         return normalise_json_value(value.value, _depth=_depth + 1)
     if isinstance(value, Decimal):
-        # Never float: a Decimal's exact scale (e.g. "1.50") would be
-        # silently lost or altered by a float round-trip.
+        # Never float: it would lose a Decimal's exact scale ("1.50").
         return _normalise_str(str(value))
     if isinstance(value, SCTID):
         return _normalise_str(value.value)

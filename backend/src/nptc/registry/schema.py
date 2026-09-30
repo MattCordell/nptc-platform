@@ -1,30 +1,20 @@
-"""Per-property JSON Schema derivation, memoisation and value validation
-(issue #52, FR-09, FR-10, ADR-0012).
+"""Per-property JSON Schema derivation, memoisation and value validation (FR-09, FR-10,
+ADR-0012).
 
-**Derived, never stored.** ADR-0012's Decision section is explicit: "JSON
-Schema is derived from the definition row by the handler, memoised
-in-process against `(key, row_version)`, and persisted nowhere." This
-module is that derivation, plus the memoisation cache keyed on exactly that
-pair - `row_version`, not `key` alone, is what makes a narrowing amendment
-visible without a restart (FR-09): a stale `key`-only cache would keep
-serving the old schema until the process restarted, which is precisely the
-outcome FR-09 forbids.
+**Derived, never stored.** The handler derives the schema from the definition row. It is
+memoised in-process against `(key, row_version)` and persisted nowhere (ADR-0012).
+`row_version`, not `key` alone, makes a narrowing amendment visible without a restart (FR-09):
+a `key`-only cache would keep serving the old schema until the process restarted.
 
-**A leaf module** (ADR-0013 SS2): takes a frozen `PropertyDefinitionSpec`
-and a `DatatypeHandler`, never the ORM `PropertyDefinition` row. The
-`row_version` used as the second half of the cache key is passed in by the
-caller for the same reason - this package must not read `nptc.db` to get
-it.
+**A leaf module** (ADR-0013 SS2): it takes a frozen `PropertyDefinitionSpec` and a
+`DatatypeHandler`, never the ORM row. The caller passes `row_version` for the same reason.
 
 **Cardinality is enforced here, not by the schema fragment.** A handler's
-`json_schema_fragment` describes one value's shape; the multi-valued
-envelope (how many values are permitted) is `PropertyDefinitionSpec.
-cardinality`, which ADR-0012 states plainly the `property_value` primary
-key cannot close ("it does not enforce cardinality's upper bound... #52
-enforces the upper bound at validation time"). `_cardinality_bounds` is a
-`match` on the closed `"0..1" | "1..1" | "0..*" | "1..*"` vocabulary, not a
-datatype switch, so it is not something `test_datatype_dispatch.py`'s
-AST guard is scoped around.
+`json_schema_fragment` describes one value. The `property_value` primary key cannot enforce
+cardinality's upper bound (ADR-0012), so `PropertyDefinitionSpec.cardinality` does, at
+validation time. `_cardinality_bounds` is a `match` on the closed
+`"0..1" | "1..1" | "0..*" | "1..*"` vocabulary, not a datatype switch, so
+`test_datatype_dispatch.py` does not scope it.
 """
 
 from __future__ import annotations
@@ -45,38 +35,29 @@ __all__ = [
     "validate_values",
 ]
 
-#: Bounded, not unbounded - a runaway number of distinct (key, row_version)
-#: pairs (every amendment to every property, forever) must not grow this
-#: cache without limit. 512 is generous against PRD SS6.5's expected
-#: registry size (tens of properties) with headroom for amendment churn
-#: across a long-running process.
+#: Bounded so that amendments to every property over a long-running process cannot grow the
+#: cache without limit. 512 is generous against PRD SS6.5's expected registry size (tens of
+#: properties).
 _SCHEMA_CACHE_SIZE = 512
 
-#: `(key, row_version) -> derived fragment`. An `OrderedDict`, not
-#: `functools.lru_cache`, because the thing being cached is derived from
-#: two arguments (`spec`, `handler`) that are not usefully hashable
-#: together - `handler` is a shared, long-lived instance and `spec` is a
-#: frozen dataclass rebuilt per call, so keying on it directly would never
-#: hit. `key`/`row_version` alone are exactly ADR-0012's own cache key.
-#: `move_to_end` on a hit makes this genuinely LRU (not FIFO) with a single
-#: structure to keep in sync - no separate order list that a concurrent
-#: miss on the same key could desynchronise from the dict.
+#: `(key, row_version) -> derived fragment`, ADR-0012's own cache key. An `OrderedDict`, not
+#: `functools.lru_cache`: the fragment derives from `spec` and `handler`, which do not hash
+#: usefully together (`handler` is shared and long-lived, `spec` is a frozen dataclass rebuilt
+#: per call, so keying on it would never hit). `move_to_end` on a hit makes it LRU, not FIFO,
+#: with one structure to keep in sync.
 _FRAGMENT_CACHE: OrderedDict[tuple[str, int], Mapping[str, Any]] = OrderedDict()
 
 
 class MalformedConstraintsError(ValueError):
-    """Raised by `validate_constraints` when a `PropertyDefinition.
-    constraints` document does not conform to its own handler's
-    `constraints_schema()`. Distinct from `ValidationIssue` (which reports
-    a bad *value*): a malformed `constraints` document is a defect in the
-    property definition itself, caught before it can ever be used to judge
-    a value."""
+    """Raised by `validate_constraints` when a `PropertyDefinition.constraints` document does
+    not conform to its handler's `constraints_schema()`. Distinct from `ValidationIssue`, which
+    reports a bad *value*: this is a defect in the definition itself, caught before it can
+    judge a value."""
 
 
 def _cardinality_bounds(cardinality: str) -> tuple[int, int | None]:
-    """Returns `(minimum, maximum)` values permitted, `maximum=None` for
-    unbounded. Closed match over ADR-0012's fixed four-member vocabulary,
-    the same one `property_definition`'s own `CHECK` constrains to."""
+    """Returns `(minimum, maximum)` permitted values, `maximum=None` for unbounded. Closed over
+    the four-member vocabulary that `property_definition`'s own `CHECK` enforces."""
     match cardinality:
         case "0..1":
             return (0, 1)
@@ -93,13 +74,9 @@ def _cardinality_bounds(cardinality: str) -> tuple[int, int | None]:
 def property_schema(
     spec: PropertyDefinitionSpec, handler: DatatypeHandler, *, row_version: int
 ) -> Mapping[str, Any]:
-    """The whole-property JSON Schema for `spec`: the handler's own
-    `json_schema_fragment(spec)`, memoised in-process against
-    `(spec.key, row_version)` per ADR-0012 - `row_version`, not `key`
-    alone, so a narrowing amendment is picked up without a restart (FR-09).
-    Callers validating a *set* of values (the normal multi-valued case)
-    call this once and reuse the result - `validate_values` below does
-    exactly that."""
+    """The whole-property JSON Schema for `spec`: the handler's `json_schema_fragment(spec)`,
+    memoised against `(spec.key, row_version)` (ADR-0012). Callers validating a set of values
+    call this once and reuse the result, as `validate_values` does."""
     cache_key = (spec.key, row_version)
     cached = _FRAGMENT_CACHE.get(cache_key)
     if cached is not None:
@@ -115,29 +92,20 @@ def property_schema(
 def reset_schema_cache() -> None:
     """Clears the module-level `(key, row_version)` cache.
 
-    The cache is process-global by design (ADR-0012: "memoised
-    in-process") - there is deliberately no per-`DatatypeRegistry`
-    instance, since two registries in the same process are still one
-    process. That is exactly wrong for a test suite reusing the same
-    property `key` (e.g. `"test_property"`) with `row_version=1` across
-    unrelated test functions and different `PropertyDefinitionSpec`
-    shapes: without a reset between tests, the second test would silently
-    receive the first test's cached fragment. Test modules exercising
-    `property_schema`/`validate_values` call this in an autouse fixture;
-    production code never calls it - a real amendment changes
-    `row_version`, which is what actually invalidates the cache."""
+    The cache is process-global by design (ADR-0012), with no per-`DatatypeRegistry` instance.
+    That breaks a test suite that reuses a property `key` with `row_version=1` across
+    unrelated tests and different specs: the second test would receive the first's cached
+    fragment. Test modules call this in an autouse fixture. Production code never does,
+    because an amendment changes `row_version`, which invalidates the cache."""
     _FRAGMENT_CACHE.clear()
 
 
 def validate_constraints(spec: PropertyDefinitionSpec, handler: DatatypeHandler) -> None:
-    """Validates `spec.constraints`'s interior against
-    `handler.constraints_schema()`. Raises `MalformedConstraintsError`
-    rather than returning `ValidationIssue`s - a bad `constraints`
-    document is a defect in the *definition*, not something a caller
-    submitting a *value* could have avoided."""
-    # `dict(...)`: `jsonschema`'s own type stubs want `dict[Any, Any]`,
-    # narrower than the `Mapping[str, Any]` every handler's
-    # `constraints_schema()` returns.
+    """Validates `spec.constraints`'s interior against `handler.constraints_schema()`. Raises
+    `MalformedConstraintsError`, not `ValidationIssue`s: a bad `constraints` document is a
+    defect in the definition, not something a caller submitting a value could have avoided."""
+    # `dict(...)`: `jsonschema`'s stubs want `dict[Any, Any]`, narrower than the
+    # `Mapping[str, Any]` that handlers return.
     constraints_schema = dict(handler.constraints_schema())
     validator_cls = jsonschema.validators.validator_for(constraints_schema)
     validator_cls.check_schema(constraints_schema)
@@ -160,17 +128,13 @@ def validate_values(
     *,
     row_version: int,
 ) -> Sequence[ValidationIssue]:
-    """Validates a whole set of values for one property against `spec`:
-    JSON Schema shape (per value), each handler's own local/structural
-    `validate()` (per value, including FR-10's binding check for `code`),
-    and finally the cardinality bounds ADR-0012 assigns here. Order matters
-    only for readability - every value is checked regardless of an earlier
-    one's outcome, so a caller sees every problem in one round trip rather
-    than one-error-at-a-time.
+    """Validates a whole set of values for one property against `spec`: JSON Schema shape per
+    value, each handler's `validate()` per value (including FR-10's binding check for `code`),
+    then the cardinality bounds (ADR-0012). Every value is checked whatever an earlier one's
+    outcome, so a caller sees every problem in one round trip.
 
-    `path` on a returned `ValidationIssue` is a decimal string ordinal
-    (`"0"`, `"1"`, ...) for a per-value issue, or `None` for a
-    cardinality issue that applies to the property as a whole.
+    `path` on a returned `ValidationIssue` is a decimal string ordinal (`"0"`, `"1"`, ...) for
+    a per-value issue, or `None` for a cardinality issue on the property as a whole.
     """
     fragment = dict(property_schema(spec, handler, row_version=row_version))
     validator_cls = jsonschema.validators.validator_for(fragment)
@@ -184,10 +148,8 @@ def validate_values(
             issues.append(
                 ValidationIssue(code="schema-violation", message=error.message, path=str(ordinal))
             )
-        # A value that fails the JSON Schema shape check is not passed to
-        # the handler's own validate() - e.g. CodeHandler.validate() would
-        # otherwise be asked to Verhoeff-check a value that is not even a
-        # coding object.
+        # A value that fails the schema shape check skips the handler's `validate()`:
+        # `CodeHandler` would otherwise Verhoeff-check something that is not a coding object.
         if schema_errors:
             continue
         for issue in handler.validate(value, spec):

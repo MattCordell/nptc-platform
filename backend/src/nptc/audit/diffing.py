@@ -1,42 +1,19 @@
-"""Field-level `before`/`after` diffs for an audit event (issue #37,
-NFR-08, PRD Section 16).
+"""Field-level `before`/`after` diffs for an audit event (NFR-08, PRD Section 16).
 
-`diff_instance` is the primary entry point: it reads a mapped instance's
-own SQLAlchemy attribute history rather than a caller-supplied snapshot, so
-a caller cannot forget or hand-roll the "before" - there is no `before=`
-parameter to omit, and the "before" is the value SQLAlchemy actually
-loaded, never a hand-copied approximation that can drift from it.
+`diff_instance` reads a mapped instance's own SQLAlchemy attribute history, so a caller
+cannot omit or hand-copy the "before". `diff_snapshots` is the second path, for a write with
+no ORM instance to read (a JSONB property bag, a bulk reclassify). Design and rejected
+alternatives: ADR-0018.
 
-**Use `state.attrs[key].load_history()`, not `.history`.** `.history` runs
-with `PASSIVE_NO_INITIALIZE` and returns `HISTORY_BLANK` for an unloaded or
-expired attribute - i.e. it silently reports "no change" on an expired
-instance. `load_history()` issues the `SELECT` needed to fetch the
-committed value first. This is the single most important implementation
-detail in this module: get it wrong and a genuinely-changed field on an
-instance whose session called `expire_all()` (or committed and moved on)
-reports as unchanged, which is a silent NFR-08 gap, not a loud one.
+**`load_history()`, not `.history`.** `.history` is passive and returns `HISTORY_BLANK` for an
+unloaded or expired attribute, which reports "no change". `load_history()` issues the `SELECT`
+for the committed value first.
 
-**The honest limitation.** SQLAlchemy's attribute history is cleared by
-`flush()`. `nptc.audit.recording.record_change` computes the diff before
-delegating to `nptc.audit.writer.append_audit_event` (which itself
-flushes), so the ordinary call sequence is safe. But if the *caller*
-flushes first, history is already empty by the time `diff_instance` runs,
-and "already flushed, nothing to diff" becomes indistinguishable from
-"nothing changed" - both report no changes. `record_change` raises on an
-empty diff (see that module) so this surfaces as a loud `AuditNoOpError`
-rather than a silently missing audit event; for `kind=CREATED` it
-additionally asserts the instance is still in `session.new` (since a
-flushed insert has already left that set) and then flushes the session
-before diffing, so `after_payload()` reflects the instance's fully
-populated, server-default-included state rather than its pre-flush Python
-values. Both are documented here again, not only there, because this is
-where the constraint actually bites.
-
-**`diff_snapshots` is a first-class second path, not an escape hatch.**
-Not every future auditable write has an ORM instance to read history from
-- #51's `PropertyValue` is JSONB rather than columns, and a bulk
-reclassify may materialise no per-row ORM object at all. Designing this in
-now avoids a second, divergent diffing helper appearing later.
+**`flush()` clears history.** `record_change` diffs before `append_audit_event` flushes, so the
+ordinary call order is safe. If the caller flushes first, an empty diff is indistinguishable
+from no change, so `record_change` raises `AuditNoOpError` on an empty diff. For `CREATED` it
+also asserts the instance is still in `session.new`, then flushes before diffing so
+`after_payload()` includes server defaults.
 """
 
 from __future__ import annotations
@@ -89,10 +66,8 @@ class FieldDiff:
     redacted: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
-        # `frozen=True` only stops reassigning the `changes` attribute
-        # itself - the dict it points to is otherwise freely mutable.
-        # Wrapping it here makes the dataclass's own frozen-ness apply to
-        # its contents too, not just its field bindings.
+        # `frozen=True` stops rebinding `changes`, not mutating the dict it holds. Wrapping it
+        # makes the contents read-only too.
         object.__setattr__(self, "changes", MappingProxyType(dict(self.changes)))
 
     def is_empty(self) -> bool:
@@ -119,10 +94,7 @@ class FieldDiff:
             name: pick(change) for name, change in self.changes.items()
         }
         if self.redacted:
-            # cast: `sorted(self.redacted)` is `list[str]`, and JsonValue's
-            # recursive Union makes `list[str]` and `list[JsonValue]`
-            # structurally identical here but not identical *types* under
-            # mypy's invariant list checking.
+            # cast: `list` is invariant, so mypy rejects `list[str]` as `list[JsonValue]`.
             payload[REDACTED_KEY] = cast("list[JsonValue]", sorted(self.redacted))
         return payload
 
@@ -144,11 +116,9 @@ def _history_new(history: History) -> object:
 
 
 def diff_instance(instance: DeclarativeBase, *, kind: ChangeKind) -> FieldDiff:
-    """The field-level diff for `instance`, derived from its own
-    SQLAlchemy attribute history (or, for `CREATED`, its current attribute
-    values - a transient instance has no history to read). See the module
-    docstring for why `load_history()` and not `.history`, and for the
-    flush-ordering constraint this function's caller must honour.
+    """The field-level diff for `instance`, from its SQLAlchemy attribute history (for
+    `CREATED`, from its current values: a transient instance has no history). The module
+    docstring covers the flush-ordering constraint on callers.
     """
     policy = policy_for(type(instance))
     state = sa_inspect(instance)
@@ -195,12 +165,9 @@ def diff_snapshots(
     after: Mapping[str, object] | None,
     kind: ChangeKind,
 ) -> FieldDiff:
-    """The non-ORM diffing path: `before`/`after` are plain snapshots (e.g.
-    a JSONB property bag) rather than a mapped instance's own attribute
-    history. Every key of both mappings is re-checked against
-    `DENIED_FIELD_NAME_RE` here as well as at policy-construction time, so
-    a hand-assembled dict cannot smuggle a credential-shaped key past a
-    mapper-derived policy that never declared it.
+    """The non-ORM diffing path: `before`/`after` are plain snapshots, such as a JSONB property
+    bag. Every key is re-checked against `DENIED_FIELD_NAME_RE`, so a hand-built dict cannot
+    carry a credential-shaped key past a mapper-derived policy.
     """
     before = before or {}
     after = after or {}
@@ -226,13 +193,8 @@ def diff_snapshots(
         if not has_before and not has_after:
             continue
         if kind is ChangeKind.UPDATED and has_before != has_after:
-            # A field present in only one of before/after is ambiguous for
-            # an UPDATED diff - unlike diff_instance, which always knows
-            # both the old and new value for a touched attribute, a
-            # hand-built snapshot pair has no such guarantee. Silently
-            # treating the missing side as null would record a spurious
-            # null-to-value (or value-to-null) change for a field the
-            # caller never actually reported on that side.
+            # A field on one side only is ambiguous for UPDATED. Treating the missing side as
+            # null would record a change nobody reported.
             raise AmbiguousSnapshotFieldError(
                 f"{policy.entity_type}: snapshot key {name!r} is present in only "
                 "one of before/after for an UPDATED diff - include it in both "

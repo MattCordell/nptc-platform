@@ -78,12 +78,10 @@ class StringHandler:
     def filter_clause(
         self, op: FilterOp, value: Any, column: ColumnElement[Any]
     ) -> ColumnElement[bool]:
-        """`jsonb_root_as_text(column)`, not `cast(column, String)` (issue
-        #54, FR-13): the latter renders `CAST(value AS VARCHAR)`, which
-        stays JSON-quoted (`'"abc"'`, never `abc`) and so can never match
-        an unquoted filter value - see that function's own docstring, and
-        `nptc.db.property_indexes.create_statement`, which builds this
-        property's `TEXT_SCALAR` index over the identical expression."""
+        """`jsonb_root_as_text(column)`, not `cast(column, String)` (FR-13): the cast stays
+        JSON-quoted (`'"abc"'`, never `abc`), so it cannot match an unquoted filter value. See
+        `jsonb_root_as_text`, and `nptc.db.property_indexes.create_statement`, which builds the
+        `TEXT_SCALAR` index over the same expression."""
         text_value = jsonb_root_as_text(column)
         if op is FilterOp.EQUALS:
             return type_cast("ColumnElement[bool]", text_value == value)
@@ -97,8 +95,7 @@ class StringHandler:
         raise UnsupportedFilterOpError(f"string handler does not support {op}")
 
     def facet_expression(self, column: ColumnElement[Any]) -> ColumnElement[Any] | None:
-        """`jsonb_root_as_text(column)`, not `cast(column, String)` (issue
-        #54 review) - see `filter_clause` above for why: the latter stays
-        JSON-quoted, so a facet's own value could never be fed back into
-        `filter_clause`'s unquoted predicate to select for it."""
+        """`jsonb_root_as_text(column)`, not `cast(column, String)`; see `filter_clause`. The
+        cast stays JSON-quoted, so a facet value could not be fed back into `filter_clause`'s
+        unquoted predicate."""
         return jsonb_root_as_text(column)

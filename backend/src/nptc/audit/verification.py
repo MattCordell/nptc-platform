@@ -1,38 +1,28 @@
-"""`verify_chain`: walks `audit_event` in `sequence` order and confirms the
-NFR-10 hash chain is intact (issue #36).
+"""`verify_chain`: walks `audit_event` in `sequence` order and confirms the NFR-10 hash chain
+is intact.
 
-`SELECT` only - no write role required, so this can run against a
-read-only replica. Streams rows via `yield_per` rather than loading the
-whole table, so it scales to a large table. The operator CLI wrapping this
-- `scripts/verify_audit_chain.py` (issue #38) - also uses `head_hash` below
-to detect tail truncation, a gap this walk cannot close on its own (see
-docs/adr/0017-audit-hash-chain.md and hazard H-06).
+`SELECT` only, so no write role is needed and it can run against a read-only replica. It
+streams rows via `yield_per` rather than loading the table. `scripts/verify_audit_chain.py`
+wraps it and also uses `head_hash` to detect tail truncation, which this walk cannot detect
+alone (ADR-0017, hazard H-06).
 
-It reports the **first** break and stops, since that is the location an
-operator needs; a chain broken at row 5 does not need every subsequent row
-re-confirmed as also "broken" once the first divergence is found.
+It reports the **first** break and stops, because that is the location an operator needs.
 
-Two properties this deliberately does **not** assert:
+It deliberately does **not** assert:
 
-- **`sequence` contiguity.** A rolled-back transaction burns an identity
-  value, so gaps in `sequence` are legitimate and expected, not a sign of
-  tampering. Deletion of a row is instead caught by the linkage itself:
-  the successor's `prev_hash` no longer matches the previous *surviving*
-  row's `entry_hash`.
-- **`occurred_at` monotonicity.** `clock_timestamp()` can step backwards
-  across a clock adjustment (e.g. NTP correction); that is an operational
-  fact, not evidence of tampering.
+- **`sequence` contiguity.** A rolled-back transaction burns an identity value, so gaps are
+  legitimate. A deleted row is caught by linkage: the successor's `prev_hash` no longer
+  matches the previous surviving row's `entry_hash`.
+- **`occurred_at` monotonicity.** `clock_timestamp()` can step backwards across a clock
+  adjustment such as an NTP correction. That is operational, not tampering.
 
-Genesis is well-defined: the first row's `prev_hash` must equal
-`GENESIS_HASH`. An empty table and a single-row chain both verify
-`ok=True` rather than raising - both are explicit acceptance criteria.
+The first row's `prev_hash` must equal `GENESIS_HASH`. An empty table and a single-row chain
+both verify `ok=True`.
 
-**Known limit** (see docs/adr/0017-audit-hash-chain.md): an attacker
-holding table-owner credentials can recompute the entire chain from the
-point of edit forward, since nothing here is anchored outside the
-database itself. An unanchored chain detects casual tampering, not a
-determined rewrite; periodic off-box publication of the head hash is the
-mitigation, and is out of scope for this issue.
+**Known limit** (ADR-0017): an attacker holding table-owner credentials can recompute the
+chain from the point of edit forward, because nothing is anchored outside the database. An
+unanchored chain detects casual tampering, not a determined rewrite. Periodic off-box
+publication of the head hash is the mitigation and is out of scope here.
 """
 
 from __future__ import annotations
@@ -53,30 +43,23 @@ _DEFAULT_BATCH_SIZE = 500
 @dataclass(frozen=True)
 class ChainVerification:
     ok: bool
-    #: On failure, this is rows *walked up to the break*, not the total
-    #: row count in the table - verification stops at the first break, so
-    #: rows after it are never counted. Only equal to the table's total
-    #: row count when `ok` is True. Relevant to #38: don't read this as a
-    #: total without checking `ok` first.
+    #: Rows walked up to the break on failure, not the table total. Equals the total only when
+    #: `ok` is True, so check `ok` first.
     record_count: int
     first_sequence: int | None
-    #: On failure, the `sequence` of the last row walked before the break
-    #: (i.e. `first_broken_sequence`), not the last `sequence` value in the
-    #: table - same caveat as `record_count` above.
+    #: On failure, the `sequence` of the last row walked (`first_broken_sequence`), not the last
+    #: one in the table.
     last_sequence: int | None
     #: The `sequence` of the first row found broken, or None if `ok`.
     first_broken_sequence: int | None
     #: "prev_hash mismatch" | "entry_hash mismatch" | None if `ok`.
     break_reason: str | None
-    #: The last row's `entry_hash` accepted before the walk stopped - the
-    #: current chain head when `ok`, otherwise the last hash confirmed
-    #: before the break. `None` for an empty table. Taken from the same
-    #: walk rather than a second query, so it reflects exactly the rows
-    #: this call examined rather than a possibly-different later snapshot.
-    #: scripts/verify_audit_chain.py (#38) reports this and compares it
-    #: against an operator-supplied expectation to catch tail truncation -
-    #: see docs/adr/0017-audit-hash-chain.md's "Known limit" and hazard
-    #: H-06 - which a forward walk from genesis cannot detect on its own.
+    #: The last `entry_hash` accepted before the walk stopped: the chain head when `ok`,
+    #: otherwise the last hash confirmed before the break. `None` for an empty table. It comes
+    #: from the same walk, not a second query, so it reflects exactly the rows this call
+    #: examined. `scripts/verify_audit_chain.py` compares it with an operator-supplied value to
+    #: catch tail truncation, which a forward walk from genesis cannot detect (ADR-0017,
+    #: hazard H-06).
     head_hash: str | None
 
 

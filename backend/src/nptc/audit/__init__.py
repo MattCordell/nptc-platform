@@ -1,32 +1,19 @@
 """Append-only audit log, hash chain, and field-level diffing.
 
-`nptc.audit.hashing` builds the SHA-256 digest each `audit_event` row
-carries (NFR-10); `nptc.audit.writer` is the only sanctioned way to append
-a row (`append_audit_event`, NFR-08); `nptc.audit.verification` walks a
-chain and reports the first break, if any (`verify_chain`). See
-`docs/architecture/data-model.md` for the design and
-`docs/adr/0017-audit-hash-chain.md` for the rejected alternatives.
+- `nptc.audit.hashing`: the SHA-256 digest each `audit_event` row carries (NFR-10).
+- `nptc.audit.writer`: `append_audit_event`, the only sanctioned way to append a row (NFR-08).
+- `nptc.audit.verification`: `verify_chain` walks a chain and reports the first break.
+- `nptc.audit.serialisation`: strict normalisation of a value into JSON-safe form, the
+  counterpart to `hashing`'s total normalisation.
+- `nptc.audit.policy`: which columns of a mapped model may appear in a diff (NFR-26).
+- `nptc.audit.diffing`: a `FieldDiff` from a mapped instance's attribute history or from a
+  pair of snapshots.
+- `nptc.audit.recording`: the entry point domain code calls (`record_change`,
+  `record_snapshot_change`, `record_batch_summary`).
+- `nptc.audit.queries`: the NFR-12 administrator read model, consumed by
+  `nptc.api.routers.audit`.
 
-`nptc.audit.serialisation` normalises a value into JSON-safe form, failing
-loud on anything it doesn't recognise (issue #37) - the strict counterpart
-to `hashing`'s own total normalisation, which must tolerate unfamiliar
-content read back from Postgres. `nptc.audit.policy` declares which
-columns of a mapped model may ever appear in a diff (allowlist + deny-list,
-NFR-26). `nptc.audit.diffing` computes a `FieldDiff` from either a mapped
-instance's own SQLAlchemy attribute history or a pair of snapshots.
-`nptc.audit.recording` is the one entry point domain code calls
-(`record_change`/`record_snapshot_change`), refusing an empty diff rather
-than emitting nothing silently. See
-`docs/adr/0018-field-level-audit-diffing.md` for the design and rejected
-alternatives.
-
-The operator-facing CLI that wraps `verify_chain` with stable exit codes
-(`scripts/verify_audit_chain.py`, issue #38) lives outside this package - see
+Designs and rejected alternatives: ADR-0017 (chain), ADR-0018 (diffing), ADR-0039 (read and
+export). The operator CLI that wraps `verify_chain` is `scripts/verify_audit_chain.py`; see
 `docs/operations/runbooks/verify-audit-chain.md`.
-
-`nptc.audit.queries` is the NFR-12 administrator read model
-(`search_audit_events`, issue #286): filter/page `audit_event` by actor,
-entity, action and date range, serving the stored `before`/`after`
-verbatim - safe because `diffing` already redacted it at write time.
-`nptc.api.routers.audit` is its one HTTP consumer.
 """

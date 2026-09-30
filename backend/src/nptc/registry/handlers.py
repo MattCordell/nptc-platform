@@ -1,19 +1,15 @@
 """The datatype handler contract (FR-77, ADR-0013).
 
-Transcribed from ADR-0013 SS10, with one deliberate change: the ADR's ``sort_key``
-member is dropped (open question 5, which the ADR explicitly authorises #53 to
-resolve either way) - no caller needs it, and an unused member is a cost every
-future handler pays. The Protocol below has ten members, not eleven.
+The Protocol has ten members. ADR-0013 names an eleventh, ``sort_key``, which was dropped
+(see its open question 5).
 
-``nptc.registry`` is a leaf (ADR-0013 SS2): it may import ``nptc_shared``,
-SQLAlchemy, ``jsonschema`` and the stdlib, and nothing else from ``nptc``. This
-is what keeps a handler's input a frozen ``PropertyDefinitionSpec`` rather than
-the ORM model - #51's storage layer builds one of these from a row, but this
-module never imports #51's model to do it.
+``nptc.registry`` is a leaf (ADR-0013 SS2): it may import ``nptc_shared``, SQLAlchemy,
+``jsonschema`` and the stdlib, and nothing else from ``nptc``. A handler's input is therefore
+a frozen ``PropertyDefinitionSpec``, which the storage layer builds from a row, never the ORM
+model.
 
-``datatype`` is plain ``str`` throughout - deliberately not ``enum.Enum`` or a
-closed ``typing.Literal`` union, both of which would be a second enumeration of
-the valid set that ``BUILTIN_DATATYPES`` (in ``registry.datatypes``) already is.
+``datatype`` is a plain ``str`` throughout, not an ``enum.Enum`` or a closed ``Literal``: either
+would be a second enumeration of the valid set that ``BUILTIN_DATATYPES`` already is.
 """
 
 from __future__ import annotations
@@ -39,17 +35,15 @@ class BindingSpec:
     value_set_uri: str | None
     strength: str  # "required" | "extensible" | "example"
     edition: str
-    #: Populated only when binding_target == "local_code_system" (issue
-    #: #52, FR-10/FR-90) - names the LocalCodeSystem.key a LocalCodeLookup
-    #: resolves against. None for a value_set binding.
+    #: Names the `LocalCodeSystem.key` a `LocalCodeLookup` resolves against. Populated only when
+    #: `binding_target == "local_code_system"` (FR-10, FR-90); `None` for a value-set binding.
     local_code_system_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class PropertyDefinitionSpec:
-    """The frozen view a handler is given - never the ORM model, so
-    registry/ never imports db/ (ADR-0013 SS2) and #53's synthetic-datatype
-    test can build one by hand with no database."""
+    """The frozen view a handler is given, never the ORM model, so `registry/` does not import
+    `db/` (ADR-0013 SS2) and a test can build one by hand with no database."""
 
     key: str
     label: str
@@ -88,18 +82,17 @@ class SerialisationTarget(enum.Enum):
 
 
 class IndexKind(enum.Enum):
-    """Not a handler-supplied field (see IndexShape below) - #54 derives it
-    from ValueExpression via INDEX_KIND_BY_EXPRESSION, a fixed two-entry
-    mapping, so a handler cannot return one of the six IndexKind x
-    ValueExpression combinations when only three are meaningful."""
+    """Not a handler-supplied field (see `IndexShape`). It is derived from `ValueExpression`
+    through `INDEX_KIND_BY_EXPRESSION`, so a handler cannot return one of the six `IndexKind` x
+    `ValueExpression` combinations when only three are meaningful."""
 
     GIN = "gin"
     EXPRESSION_BTREE = "expression_btree"
 
 
 class ValueExpression(enum.Enum):
-    """Closed set #54's `match` switches over - does not grow when a
-    datatype is added (ADR-0013 SS8)."""
+    """Closed set that index generation (`nptc.db.property_indexes`) switches over. It does not
+    grow when a datatype is added (ADR-0013 SS8)."""
 
     RAW_JSONB = "raw_jsonb"
     TEXT_SCALAR = "text_scalar"
@@ -115,9 +108,8 @@ INDEX_KIND_BY_EXPRESSION: Mapping[ValueExpression, IndexKind] = {
 
 @dataclass(frozen=True, slots=True)
 class IndexShape:
-    """No `kind` field - it is unrepresentable-by-construction that a
-    handler pairs GIN with a numeric scalar. #54 looks up IndexKind from
-    `expression` via INDEX_KIND_BY_EXPRESSION."""
+    """No `kind` field: a handler cannot pair GIN with a numeric scalar, because
+    `INDEX_KIND_BY_EXPRESSION` derives the `IndexKind` from `expression`."""
 
     expression: ValueExpression
     requires_conformance_sweep: bool
@@ -138,35 +130,25 @@ class ValidationIssue:
 
 
 def jsonb_root_as_text(column: ColumnElement[Any]) -> ColumnElement[Any]:
-    """``value #>> '{}'`` - the whole JSONB document's own scalar text
-    representation, unquoted (issue #54, FR-13, ADR-0012's `TEXT_SCALAR`/
-    `NUMERIC_SCALAR` index expression). Every `filter_clause()` serving one
-    of those two shapes (`string`, `url`, `decimal`, `positiveInt`) must
-    build its predicate from this expression, never `cast(column, String)`
-    - that renders `CAST(value AS VARCHAR)`, which stays JSON-quoted
-    (`'"abc"'`, not `abc`) and so can never match an unquoted filter value,
-    and (for `decimal`/`positiveInt`) `CAST(value AS NUMERIC)` raises
-    outright the moment the retained value is a JSONB *string* rather than
-    a JSONB number - the exact "cannot cast jsonb string to type numeric"
-    failure ADR-0027 exists to close, verified directly against
-    `postgres:18.6` before writing this function.
+    """``value #>> '{}'``: the whole JSONB document's own scalar text, unquoted (FR-13,
+    ADR-0012's `TEXT_SCALAR`/`NUMERIC_SCALAR` index expression).
 
-    `nptc.db.property_indexes.create_statement` composes the identical
-    `(value #>> '{{}}')` text for the index itself (doubled braces there
-    only because `sql.SQL.format` uses `str.format` placeholder syntax) -
-    the two must never drift apart, which is what
-    `test_datatype_handlers.py`'s parity test asserts.
+    Every `filter_clause()` serving those two shapes (`string`, `url`, `decimal`,
+    `positiveInt`) builds its predicate from this, never `cast(column, String)`. The cast
+    renders `CAST(value AS VARCHAR)`, which stays JSON-quoted (`'"abc"'`, not `abc`) and so
+    never matches an unquoted filter value. For `decimal` and `positiveInt`,
+    `CAST(value AS NUMERIC)` raises when the retained value is a JSONB *string*, the "cannot
+    cast jsonb string to type numeric" failure ADR-0027 closes.
 
-    `literal_column`, not a bound parameter: the right-hand side of `#>>`
-    is the fixed, compile-time-constant empty path `'{}'`, never caller
-    data, so NFR-22's guard (a concern about runtime data reaching SQL) has
-    nothing to flag here.
+    `nptc.db.property_indexes.create_statement` composes the identical `(value #>> '{{}}')`
+    text for the index (braces doubled because `sql.SQL.format` uses `str.format`). The two
+    must not drift apart; `test_datatype_handlers.py`'s parity test asserts it.
 
-    `return_type=Text`: a bare `.op(...)` result carries no type by
-    default, which would silently drop `StringHandler`/`UrlHandler`'s
-    `.startswith(..., autoescape=True)` support (autoescape is a `String`
-    comparator behaviour) - `return_type` gives the resulting expression a
-    real `Text` comparator instead of leaving it untyped."""
+    `literal_column`, not a bound parameter: the right-hand side is the fixed empty path
+    `'{}'`, never caller data, so NFR-22 has nothing to flag.
+
+    `return_type=Text`: a bare `.op(...)` result is untyped, which would drop `StringHandler`
+    and `UrlHandler`'s `.startswith(..., autoescape=True)`, a `String` comparator behaviour."""
     return type_cast(
         "ColumnElement[Any]", column.op("#>>", return_type=Text)(literal_column("'{}'"))
     )
@@ -176,10 +158,8 @@ def jsonb_root_as_text(column: ColumnElement[Any]) -> ColumnElement[Any]:
 
 
 class DatatypeHandler(Protocol):
-    """Ten members. Four are FR-77's own sentence (json_schema_fragment,
-    validate, form_control, serialise); six are forced by the seams
-    ADR-0012 left open. (ADR-0013 names an eleventh, `sort_key`; #53 drops
-    it per open question 5 - see the module docstring.)"""
+    """Ten members. Four are FR-77's own sentence (`json_schema_fragment`, `validate`,
+    `form_control`, `serialise`); six are forced by the seams ADR-0012 left open."""
 
     @property
     def datatype(self) -> str: ...
@@ -187,14 +167,13 @@ class DatatypeHandler(Protocol):
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]: ...
 
     def constraints_schema(self) -> Mapping[str, Any]:
-        """Validates the *interior* of the constraints JSONB column
-        ADR-0012 reserved but did not define (#52)."""
+        """Validates the *interior* of the `constraints` JSONB column, which ADR-0012 reserved
+        but did not define."""
         ...
 
     def validate(self, value: Any, spec: PropertyDefinitionSpec) -> Sequence[ValidationIssue]:
-        """Local and structural. FR-10's binding check is a live terminology
-        call and reaches the server through self, not this method - the
-        code handler is constructed with a TerminologyClient (below)."""
+        """Local and structural. FR-10's binding check is a live terminology call that reaches
+        the server through `self`: the code handler is constructed with a `TerminologyClient`."""
         ...
 
     def form_control(self, spec: PropertyDefinitionSpec) -> FormControlDescriptor: ...
@@ -228,11 +207,9 @@ class UnknownDatatypeError(LookupError):
 
 
 class DuplicateDatatypeError(ValueError):
-    """Raised by DatatypeRegistry.__init__() if the handler sequence
-    contains two handlers with the same `datatype` - construction-time,
-    not a runtime surprise. There is no register() method (ADR-0013 SS4:
-    handlers are supplied to the constructor as a tuple, never added one
-    at a time)."""
+    """Raised by `DatatypeRegistry.__init__()` when two handlers share a `datatype`, at
+    construction and not as a runtime surprise. There is no `register()`: handlers are supplied
+    as a tuple to the constructor (ADR-0013 SS4)."""
 
 
 class UnsupportedFilterOpError(ValueError):
@@ -241,20 +218,16 @@ class UnsupportedFilterOpError(ValueError):
 
 
 class UnsupportedBindingError(ValueError):
-    """Raised by CodeHandler.validate() when binding_target =
-    'local_code_system' and the handler was constructed with
-    local_code_lookup=None, or when local_code_system_key is None on the
-    binding itself - a loud refusal, never a silent pass (ADR-0013 open
-    question 1). #56 supplied LocalCodeLookup's real shape; #52 wires
-    CodeHandler._validate_binding's local_code_system branch to actually
-    call resolve() against it."""
+    """Raised by `CodeHandler.validate()` for a misconfigured `local_code_system` binding: the
+    handler has no `LocalCodeLookup`, or the binding's `local_code_system_key` is `None`. A loud
+    refusal, never a silent pass (ADR-0013 open question 1)."""
 
 
 # --- the registry and its construction ------------------------------------
 
 
 class DatatypeRegistry:
-    """An instance, not module globals - #53 builds builtins-plus-synthetic
+    """An instance, not module globals, so a test can build builtins plus a synthetic handler
     without mutating shared state."""
 
     def __init__(self, handlers: Sequence[DatatypeHandler]) -> None:
@@ -278,27 +251,22 @@ class DatatypeRegistry:
             ) from None
 
     def known_datatypes(self) -> frozenset[str]:
-        """The runtime valid-datatype set, used by #51's write-time
-        registry.get() resolution and startup reconciliation."""
+        """The runtime set of valid datatypes, used for write-time resolution and startup
+        reconciliation."""
         return frozenset(self._by_datatype)
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedLocalCode:
-    """What a `LocalCodeLookup` returns for a code that exists - just
-    enough for `CodeHandler` to validate a `property_value` and render a
-    display term, without exposing the ORM row that backs it (`nptc.
-    registry` is a leaf - see the module docstring - so this dataclass,
-    not `nptc.db.models.local_code.LocalCode`, is what crosses the
-    boundary; mirrors `nptc.terminology`'s own served-label-shaped return
-    types for the same reason).
+    """What a `LocalCodeLookup` returns for a code that exists: enough for `CodeHandler` to
+    validate a `property_value` and render a display term, without exposing the ORM row.
+    `nptc.registry` is a leaf, so this dataclass crosses the boundary instead of
+    `nptc.db.models.local_code.LocalCode`.
 
-    **`status` and `system_status` are deliberately two separate fields.**
-    `nptc.catalogue.local_codes.deprecate_local_code_system` deprecates a
-    system without touching its member codes' own `status` - the two
-    facts are independent, and a handler that only checked `status` would
-    treat a code as fine after its owning system had been retired
-    wholesale."""
+    **`status` and `system_status` are deliberately separate.**
+    `nptc.catalogue.local_codes.deprecate_local_code_system` deprecates a system without
+    touching its member codes' `status`. A handler that checked only `status` would treat a
+    code as fine after its system was retired wholesale."""
 
     code: str
     display: str
@@ -308,21 +276,13 @@ class ResolvedLocalCode:
 
 
 class LocalCodeLookup(Protocol):
-    """#56 (FR-90)'s real shape for this Protocol. The read contract a
-    `code`-datatype handler needs to validate a value bound to
-    `binding_target = 'local_code_system'` (PRD line 415: "validated
-    internally against the platform's own `LocalCode` table, because
-    Ontoserver does not hold them"). Deliberately narrow - no write
-    methods; management goes through `nptc.catalogue.local_codes`, gated
-    on `Permission.REGISTRY_MANAGE` (FR-90's "administrator-only
-    management"), which is exactly why that module lives outside this
-    leaf package rather than in it. `nptc.catalogue.local_codes.
-    DatabaseLocalCodeLookup` is the database-backed implementation -
-    constructing one, and wiring `CodeHandler.validate()`'s
-    `local_code_system` branch to actually call `resolve()` rather than
-    return `[]` unconditionally, remains #53's job (see
-    `UnsupportedBindingError`'s own docstring and `CodeHandler.
-    _validate_binding`'s comment)."""
+    """The read contract a `code` handler needs to validate a value bound to
+    `binding_target = 'local_code_system'` (FR-10, FR-90): such codes are validated against the
+    platform's own `LocalCode` table because Ontoserver does not hold them. Deliberately
+    narrow, with no write methods: management goes through `nptc.catalogue.local_codes`, gated
+    on `Permission.REGISTRY_MANAGE` (FR-90), which is why that module lives outside this leaf
+    package. `nptc.catalogue.local_codes.DatabaseLocalCodeLookup` is the database-backed
+    implementation."""
 
     def resolve(self, system_key: str, code: str) -> ResolvedLocalCode | None:
         """Returns the resolved code, or `None` if `code` does not exist
@@ -340,4 +300,4 @@ class HandlerDeps:
     needs no second injection mechanism (NFR-37)."""
 
     terminology_client: TerminologyClient
-    local_code_lookup: LocalCodeLookup | None = None  # #56, FR-90
+    local_code_lookup: LocalCodeLookup | None = None  # FR-90

@@ -1,27 +1,20 @@
-"""The one entry point domain code calls to emit a field-level audit event
-(issue #37, NFR-08).
+"""The one entry point domain code calls to emit a field-level audit event (NFR-08).
 
-`record_change` and `record_snapshot_change` are thin wrappers around
-`nptc.audit.diffing` plus `nptc.audit.writer.append_audit_event`: they
-compute a diff, refuse to proceed if it is empty, and otherwise delegate to
-the writer with the diff's `before`/`after` payloads. `append_audit_event`
-itself is untouched by this issue and keeps its own signature - it stays
-the general primitive a diff-free event (a future `release.published`, or
-NFR-12's `audit.exported`) can still call directly; `close_account` already
-proves a diff-free payload is sometimes exactly right.
+`record_change` and `record_snapshot_change` compute a diff with `nptc.audit.diffing`, refuse
+an empty one, and delegate to `nptc.audit.writer.append_audit_event` with the diff's
+`before`/`after` payloads. `append_audit_event` keeps its own signature as the general
+primitive for a diff-free event (a future `release.published`, NFR-12's `audit.exported`).
 
-No lenient `record_change_if_any` variant is added here: reaching
-`record_change` is meant to assert a write happened, so an empty diff is
-always a bug (see `AuditNoOpError`). A caller with a genuinely idempotent
-no-op path short-circuits *before* reaching this module, exactly as
-`close_account`'s early return already does. Adding a lenient variant later
-is a small, reviewable act; a lenient default from day one is not.
+A caller must not flush the session first: `flush()` clears attribute history, so the change
+would read as an empty diff and raise `AuditNoOpError` (see `nptc.audit.diffing`).
 
-`record_batch_summary` (issue #265) is a third, narrower wrapper: a batch
-header event has a structured summary, not a diff, so it does not go
-through `diff_instance`/`diff_snapshots` or their `AuditNoOpError` posture -
-it exists so a caller outside this package can pass `after=` at all without
-tripping `test_audit_write_path_guard.py`'s bypass rule.
+There is no lenient `record_change_if_any`: reaching `record_change` asserts that a write
+happened, so an empty diff is always a bug (`AuditNoOpError`). A caller with a genuinely
+idempotent no-op path short-circuits before this module, as `close_account` does. ADR-0018
+records the decision.
+
+`record_batch_summary` is a third, narrower wrapper for a batch header event, which carries a
+structured summary rather than a diff.
 """
 
 from __future__ import annotations
@@ -55,8 +48,7 @@ def _default_entity_id(instance: DeclarativeBase) -> str:
             "primary key is not assigned) - pass entity_id explicitly for a "
             "not-yet-flushed CREATED instance"
         )
-    # FR-06: entity_id is always a string, even when the underlying primary
-    # key is (for every model today) a UUID.
+    # FR-06: entity_id is always a string, even for a UUID primary key.
     return str(identity[0])
 
 
@@ -71,27 +63,18 @@ def record_change(
     entity_id: str | None = None,
     reason: str | None = None,
 ) -> AuditEvent:
-    """Diffs `instance` via its own SQLAlchemy attribute history
-    (`nptc.audit.diffing.diff_instance`) and appends the result. Raises
-    `AuditNoOpError` if the diff is empty - see the module docstring and
-    `nptc.audit.diffing`'s own docstring for why that is always a bug, not
-    a legitimate no-op.
+    """Diffs `instance` from its own attribute history (`nptc.audit.diffing.diff_instance`) and
+    appends the result. Raises `AuditNoOpError` on an empty diff, which is always a bug (see
+    the module docstring and `nptc.audit.diffing`).
 
-    For `kind=ChangeKind.CREATED` specifically, `instance` must still be in
-    `session.new` *when this function is called* - a flushed insert has
-    already lost the attribute history this would otherwise read, and
-    unlike `UPDATED`/`DELETED` that ordering bug would not show up as an
-    empty diff (the `CREATED` branch of `diff_instance` reads current
-    attribute values directly, not history). Once that is checked, this
-    function flushes the *session* (there is no narrower "flush just this
-    instance" operation) before diffing or resolving `entity_id`: a
-    not-yet-flushed instance has no assigned primary key (every model
-    today gets one from a server-side default) and its own server-default
-    columns (e.g. `User.status`) still read as `None` on the Python side,
-    so diffing or deriving `entity_id` before the flush would silently
-    produce an incomplete `after` payload and/or fail outright. Postgres's
-    RETURNING-based eager defaults mean `instance`'s attributes are fully
-    populated afterwards with no extra SELECT.
+    For `kind=ChangeKind.CREATED`, `instance` must still be in `session.new` when this is
+    called. A flushed insert has lost its attribute history, and unlike `UPDATED`/`DELETED`
+    that would not show up as an empty diff, because the `CREATED` branch reads current
+    attribute values. The function then flushes the *session* (no narrower flush exists) before
+    diffing and resolving `entity_id`. Before the flush the instance has no primary key and its
+    server-default columns (for example `User.status`) read as `None`, so the `after` payload
+    would be incomplete or the call would fail. RETURNING-based eager defaults leave the
+    attributes populated afterwards with no extra `SELECT`.
     """
     if kind is ChangeKind.CREATED:
         if instance not in session.new:
@@ -125,10 +108,7 @@ def record_change(
         action=action,
         entity_type=resolved_entity_type,
         entity_id=resolved_entity_id,
-        # cast: `before_payload()`/`after_payload()` are typed as
-        # `dict[str, JsonValue] | None`, and `dict` is invariant in mypy -
-        # `dict[str, JsonValue]` is not structurally a `dict[str, object]`
-        # even though every JsonValue is an object.
+        # cast: `dict` is invariant, so mypy rejects `dict[str, JsonValue]` as `dict[str, object]`.
         before=cast("dict[str, object] | None", diff.before_payload()),
         after=cast("dict[str, object] | None", diff.after_payload()),
         reason=reason,
@@ -145,22 +125,18 @@ def record_batch_summary(
     reason: str,
     tallies: Mapping[str, int],
 ) -> AuditEvent:
-    """Appends a diff-free batch header event carrying `tallies` as a
-    structured `after` payload (issue #265 review). Not a diff: a batch
-    header summarises N *other* events rather than changing one row of its
-    own, so `record_change`/`record_snapshot_change`'s `AuditNoOpError`
-    posture does not apply here - a batch where nothing applied is a
-    legitimate reason to skip calling this at all (see the one caller's own
-    "only call this when `tallies['applied'] > 0`" rule), not an error this
-    function itself should raise on an all-zero `tallies`.
+    """Appends a diff-free batch header event carrying `tallies` as a structured `after`
+    payload.
 
-    Lives in `nptc.audit`, not the domain module that calls it, purely so
-    `after=` satisfies `test_audit_write_path_guard.py`'s rule against a
-    hand-built `before=`/`after=` keyword outside this package: the guard
-    has no way to distinguish "a hand-rolled diff bypassing `record_change`"
-    from "a structured summary that was never a diff to begin with" other
-    than by which file the call lives in. `nptc.catalogue.property_values.
-    save_property_values_for_entries` is the one caller today.
+    Not a diff: a batch header summarises N other events rather than changing a row, so
+    `AuditNoOpError` does not apply. A batch where nothing applied is a reason not to call
+    this (see the one caller's "only call this when `tallies['applied'] > 0`" rule), not an
+    error for this function to raise on all-zero `tallies`.
+
+    Lives here so `after=` satisfies `test_audit_write_path_guard.py`, which forbids a
+    hand-built `before=`/`after=` outside this package and cannot tell a structured summary
+    from a hand-rolled diff except by the file the call sits in. The one caller is
+    `nptc.catalogue.property_values.save_property_values_for_entries`.
     """
     return append_audit_event(
         session,
@@ -186,10 +162,8 @@ def record_snapshot_change(
     kind: ChangeKind,
     reason: str | None = None,
 ) -> AuditEvent:
-    """The non-ORM counterpart to `record_change`: diffs `before`/`after`
-    snapshots against `policy` (`nptc.audit.diffing.diff_snapshots`) rather
-    than reading a mapped instance's attribute history. Raises
-    `AuditNoOpError` on an empty diff, exactly as `record_change` does."""
+    """The non-ORM counterpart to `record_change`: diffs `before`/`after` snapshots against
+    `policy` (`nptc.audit.diffing.diff_snapshots`). Raises `AuditNoOpError` on an empty diff."""
     diff = diff_snapshots(policy=policy, before=before, after=after, kind=kind)
     if diff.is_empty():
         raise AuditNoOpError(
@@ -204,10 +178,7 @@ def record_snapshot_change(
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
-        # cast: `before_payload()`/`after_payload()` are typed as
-        # `dict[str, JsonValue] | None`, and `dict` is invariant in mypy -
-        # `dict[str, JsonValue]` is not structurally a `dict[str, object]`
-        # even though every JsonValue is an object.
+        # cast: `dict` is invariant, so mypy rejects `dict[str, JsonValue]` as `dict[str, object]`.
         before=cast("dict[str, object] | None", diff.before_payload()),
         after=cast("dict[str, object] | None", diff.after_payload()),
         reason=reason,
