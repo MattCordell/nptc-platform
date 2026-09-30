@@ -1,78 +1,27 @@
-"""The `catalogue_entry` table: the platform's central entity (issue #46,
-FR-03, FR-38).
+"""The `catalogue_entry` table: the platform's central entity (FR-03, FR-38).
 
-**`business_key` is minted in Python (`nptc.catalogue.entries.
-allocate_business_key`), never as a column `server_default`.** A
-`DEFAULT nextval(...)` expression would let the format (`NPTC-` plus a
-zero-padded sequence, FR-03) live only in a migration's DDL string, with no
-single Python source of truth `format_business_key`/parsing code could
-share - and every seeded row (ADR-0010: the P0 transform mints its own
-keys) would still need the default suppressed by supplying an explicit
-value. Minting in the service layer keeps one function
-(`nptc.catalogue.entries.format_business_key`) as the only place the format
-is spelled out, shared by the mint path, the seed-reconciliation path
-(`advance_sequence_past`), and the `CHECK` constraint's regular expression.
+Rationale: `docs/architecture/data-model.md`, "`business_key` minting and
+immutability" and "Optimistic locking". In short:
 
-**`row_version` is owned by exactly one write path: SQLAlchemy's
-mapper-level optimistic concurrency (`version_id_col`) on this table's
-mapped `UPDATE`** - not a migration, not a manual bump, and not
-database-generated (Postgres has no built-in per-row version counter, and a
-trigger-based one is banned by PRD Section 14.1). This is the same
-precedent ADR-0012 already fixed for `property_definition.row_version`; see
-that ADR for why a Core `sqlalchemy.update(...)`/`delete(...)` statement
-against this table bypasses `version_id_col` enforcement even though it
-still goes through the ORM `Session` - `backend/tests/
-test_sql_parameterisation.py`'s AST guard extends to `catalogue_entry` for
-exactly this reason.
-
-**`status` is `TEXT` + `CHECK`, not a native `ENUM`**, matching
-`app_user.status`'s own precedent (`ALTER TYPE ... ADD VALUE` cannot run
-inside a transaction, and Alembic autogenerate mishandles the create/drop
-pair on downgrade).
-
-**`business_key` is immutable, enforced at two independent layers.** The
-database layer is the real guarantee: `nptc_app`'s column-level `UPDATE`
-grant (`nptc.db.roles.GRANT_CATALOGUE_ENTRY_UPDATE_SQL`) excludes
-`business_key` (and `id`/`created_at`), exactly as `app_user`'s own
-column-level grant excludes `id`/`created_at` - a database invariant, not
-an application convention. The `@validates` guard below is a second,
-Python-level layer that fails loudly and immediately on a reassignment
-attempt, rather than surfacing as an opaque `InsufficientPrivilege` only at
-flush time.
-
-**Never reissued (FR-03).** Three facts combine to guarantee this: the
-minting sequence is monotonic and never rolled back by the application (a
-`nextval()` consumed by a rolled-back transaction is simply a gap, which
-FR-03 permits); `business_key` is `UNIQUE`; and there is no `DELETE`/
-`TRUNCATE` grant on this table at all (deprecation/withdrawal is a `status`
-transition, never a row removal - see `nptc.db.roles.
-REVOKE_CATALOGUE_ENTRY_DELETE_SQL`), so no key is ever freed to be
-reissued in the first place.
-
-**`preferred_term` is cleaned at entry (FR-63), and `length` is computed
-from it, never stored (FR-85/FR-24, issue #47).** This is the field FR-85
-is actually about - PRD §6.5: "it is simply the character count of the
-RCPA preferred term" - not any `designation` row (ADR-0022 is explicit
-that the catalogue's own en-AU preferred term is never duplicated into
-`designation` at all). The `@validates("preferred_term")` guard below
-calls the same `nptc.catalogue.term_hygiene.clean_term` `Designation.term`
-uses, so a trailing non-breaking space (PRD Appendix A.1) is collapsed
-here exactly as it would be on a synonym row, and `length` is a bare
-Python `@property` with deliberately no setter and no backing column -
-see `nptc.db.models.designation.Designation.length` for the same
-computation applied to a designation's own term.
-
-**`preferred_term_key` is FR-05's comparison form, stored and indexed
-(issue #49).** The same `@validates("preferred_term")` hook that cleans
-the term also derives `preferred_term_key` via
-`nptc_shared.similarity.collision_key`, so there is no code path that can
-set one without the other - a stored, indexed column rather than a
-per-save recomputation, matching `Designation.term_key`'s own treatment.
-It is deliberately not `Designation.length`'s "bare property, no column"
-pattern: FR-05 detection needs an indexed equality lookup across
-`catalogue_entry`, and `nptc.catalogue.collisions` is the only reader.
-Never independently meaningful once `preferred_term` is set, so it is
-`__audit_ignored__`, matching `row_version`'s own treatment.
+- `business_key` is minted in Python (`nptc.catalogue.entries.
+  allocate_business_key`), never as a column `server_default`, so
+  `format_business_key` is the one place the format is spelled out.
+- `row_version` is owned by `version_id_col` alone (ADR-0012). A Core
+  `update()` or `delete()` bypasses it, which `test_sql_parameterisation.py`
+  guards against.
+- `status` is `TEXT` plus `CHECK`, not a native `ENUM`, as on `app_user.status`.
+- `business_key` is immutable at two layers. The column-level `UPDATE` grant in
+  `nptc.db.roles` is the guarantee; the `@validates` guard below fails loudly
+  before flush.
+- `business_key` is never reissued (FR-03): its sequence is monotonic, it is
+  `UNIQUE`, and no role holds `DELETE` or `TRUNCATE` on the table.
+- `preferred_term` is cleaned at entry (FR-63). `length` (FR-85, FR-24) is
+  computed from it and never stored, because it counts the catalogue's own
+  preferred term, not a `designation` row (ADR-0022).
+- `preferred_term_key` (FR-05) is derived by the same `@validates` hook, so no
+  path sets one without the other. It is stored and indexed because
+  `nptc.catalogue.collisions` needs an equality lookup, and it is
+  `__audit_ignored__`.
 """
 
 from __future__ import annotations
@@ -99,36 +48,29 @@ class CatalogueEntryStatus(StrEnum):
     WITHDRAWN = "withdrawn"
 
 
-#: Plain string literal, never built from `CatalogueEntryStatus` -
-#: `test_sql_parameterisation.py`'s AST guard forbids SQL built from
-#: runtime data, and there is no runtime data here to justify the risk.
+#: A plain literal: `test_sql_parameterisation.py`'s AST guard forbids SQL
+#: built from runtime data.
 _STATUS_CHECK_SQL = "status IN ('draft','active','deprecated','withdrawn')"
 
-#: `6,` (not `6`) so the format survives a catalogue passing 999,999
-#: entries without a migration - matched against
-#: `nptc.catalogue.entries.BUSINESS_KEY_PATTERN`, the single Python source
-#: of truth this constraint mirrors.
+#: `6,` (not `6`) so the format survives a catalogue passing 999,999 entries
+#: without a migration. Mirrors `nptc.catalogue.entries.BUSINESS_KEY_PATTERN`.
 _BUSINESS_KEY_CHECK_SQL = "business_key ~ '^NPTC-[0-9]{6,}$'"
 
 
 class ImmutableFieldError(RuntimeError):
-    """Raised by the `business_key` `@validates` guard below when anything
-    other than the initial assignment tries to change it - see the module
-    docstring's "two independent layers" note. This is the fail-loud
-    Python-level layer; `nptc.db.roles.GRANT_CATALOGUE_ENTRY_UPDATE_SQL`'s
-    column exclusion is the actual database invariant."""
+    """Raised by the `business_key` `@validates` guard when anything but the
+    initial assignment changes it. The database invariant is the column
+    exclusion in `nptc.db.roles.GRANT_CATALOGUE_ENTRY_UPDATE_SQL`."""
 
 
 class CatalogueEntry(Base):
     __tablename__ = "catalogue_entry"
 
-    # nptc.audit.policy (issue #37, NFR-08): every real column must be
-    # classified. `business_key` is auditable (not ignored) so a CREATED
-    # event records the minted key - it can never appear in an UPDATE diff
-    # because it is immutable (see the module docstring), so classifying it
-    # here costs nothing on the update path. `row_version` is ignored: it
-    # is bookkeeping for FR-38, never itself a "changed field" a reviewer
-    # would want to see, exactly like `User.id`/`created_at`/`updated_at`.
+    # `nptc.audit.policy` (NFR-08) requires every real column to be classified.
+    # `business_key` is auditable so a CREATED event records the minted key; it
+    # is immutable, so it never appears in an UPDATE diff. `row_version` is
+    # bookkeeping for FR-38, never a "changed field", like `User.id` and
+    # `created_at`.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
         {"business_key", "preferred_term", "status", "specimen_unconstrained"}
     )
@@ -140,49 +82,33 @@ class CatalogueEntry(Base):
     __table_args__ = (
         CheckConstraint(_STATUS_CHECK_SQL, name="status"),
         CheckConstraint(_BUSINESS_KEY_CHECK_SQL, name="business_key"),
-        # FR-05, issue #49: an indexed lookup for a cross-entry collision -
-        # `nptc.catalogue.collisions` filters by `status` in the query
-        # itself, so a plain btree (not partial) index is sufficient here,
-        # matching `Designation.term_key`'s own treatment.
+        # FR-05: an indexed lookup for a cross-entry collision. A plain btree
+        # is enough because `nptc.catalogue.collisions` filters by `status` in
+        # the query.
         Index("ix_catalogue_entry_preferred_term_key", "preferred_term_key"),
-        # FR-14/FR-15, issue #142: the trigram index behind the public
-        # catalogue search, over `nptc.db.functions`'s `nptc_search_text`
-        # normalisation (see migration 0012 for the full reasoning, and
-        # ADR-0024 for the decision). Declared here as well as in the
-        # migration because `compare_metadata` reflects it and would
-        # otherwise propose dropping it on every autogenerate run - the
-        # expression itself is `text(...)`, which alembic compares by
-        # presence only. Deliberately not partial on `status = 'active'`
-        # even though the public API serves only active entries: #149's
-        # maintenance search covers drafts too.
+        # FR-14/FR-15: the trigram index behind public search, over
+        # `nptc_search_text` (ADR-0024). Declared here as well as in the
+        # migration, or `compare_metadata` proposes dropping it on every
+        # autogenerate run. Not partial on `status`, because maintenance
+        # search covers drafts.
         Index(
             "ix_catalogue_entry_preferred_term_trgm",
             text("nptc_search_text(preferred_term)"),
             postgresql_using="gin",
-            # `postgresql_ops` rather than appending the operator class to the
-            # expression text: alembic can only compare an expression index
-            # whose operator class is declared separately (it warns and
-            # abandons the comparison otherwise), so this is what keeps
-            # `compare_metadata` actually checking this index rather than
-            # skipping it.
+            # `postgresql_ops`, not the operator class inside the expression
+            # text: alembic skips comparing an expression index whose operator
+            # class is inline.
             postgresql_ops={"nptc_search_text(preferred_term)": "gin_trgm_ops"},
         ),
-        # FR-14/FR-15, issue #138: the full-text half of the hybrid, over
-        # `nptc_search_document` (migration 0015, ADR-0029). It sits beside
-        # the trigram index rather than replacing it because the two answer
-        # different halves of FR-15 - trigram ranks a transposition as a
-        # near-match where full-text scores it zero, and full-text matches an
-        # inflected form that trigram scores as a near-miss. `_SEARCH_SQL`
-        # scans both and keeps the better score, so both are load-bearing.
+        # FR-14/FR-15: the full-text half of the hybrid, over
+        # `nptc_search_document` (ADR-0029). It sits beside the trigram index
+        # because each finds matches the other scores as near-misses; the
+        # search keeps the better score.
         #
-        # No `postgresql_ops` here, unlike the trigram index above:
-        # `tsvector_ops` is GIN's default operator class for `tsvector` and
-        # PostgreSQL omits a default class from `indexdef`, so naming it
-        # would make this declaration and the reflected index disagree on
-        # every autogenerate run - the precise failure `postgresql_ops`
-        # exists to avoid for the trigram index, arrived at from the other
-        # direction. Not partial on status, matching the trigram index and
-        # for the same reason (#149's maintenance search covers drafts).
+        # No `postgresql_ops`: `tsvector_ops` is GIN's default class and
+        # Postgres omits a default from `indexdef`, so naming it would make the
+        # declaration and the reflected index disagree. Not partial on
+        # `status`, as above.
         Index(
             "ix_catalogue_entry_preferred_term_fts",
             text("nptc_search_document(preferred_term)"),
@@ -199,18 +125,13 @@ class CatalogueEntry(Base):
         Text, unique=True, nullable=False, active_history=True
     )
     preferred_term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
-    # FR-05/issue #49: derived from `preferred_term` by the same
-    # `@validates` hook below - never independently assignable through the
-    # ORM. Indexed (see the migration) so `nptc.catalogue.collisions` can
-    # look up a collision by equality rather than scanning every entry.
-    # `server_default=''` exists only so a raw INSERT that bypasses the ORM
-    # (every `backend/tests/test_db_*.py` constraint/privilege test) still
-    # satisfies `NOT NULL` - see `Designation.term_key`'s identical comment.
+    # FR-05: derived from `preferred_term` by the `@validates` hook below, never
+    # assigned directly. `server_default=''` exists only so a raw INSERT that
+    # bypasses the ORM (the `test_db_*.py` constraint tests) still satisfies
+    # `NOT NULL`, as on `Designation.term_key`.
     preferred_term_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
-    # A quoted literal, not the bare `CatalogueEntryStatus.DRAFT` value -
-    # matches `app_user.status`'s own precedent (an unquoted server_default
-    # string is rendered verbatim as SQL, and `DEFAULT draft` with no
-    # quotes is not valid DDL for a text column).
+    # A quoted literal: an unquoted `server_default` string is rendered
+    # verbatim, and `DEFAULT draft` is not valid DDL for a text column.
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'draft'"), active_history=True
     )
@@ -223,22 +144,15 @@ class CatalogueEntry(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
-    # FR-38: bumped by SQLAlchemy's own version_id_col machinery on every
-    # mapped UPDATE - see the module docstring for why nothing else is ever
-    # allowed to touch it.
+    # FR-38: bumped by `version_id_col` on every mapped UPDATE; nothing else
+    # may touch it (see the module docstring).
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
 
-    # Must follow the `row_version` column definition above: this binds
-    # SQLAlchemy's optimistic-concurrency machinery to the just-defined
-    # `MappedColumn`, which the declarative process resolves once mapping
-    # completes - defining it earlier in the class body (before the name
-    # `row_version` exists) is a `NameError`. Deliberately no `ClassVar`
-    # annotation: mypy treats the base class's own `__mapper_args__` as an
-    # instance variable and flags a `ClassVar`-annotated override here,
-    # even though this is SQLAlchemy's own documented pattern for
-    # `version_id_col`. The bare assignment satisfies mypy; the `noqa`
-    # below silences the ruff mutable-default-value lint that a bare dict
-    # literal class attribute would otherwise trigger.
+    # Must follow `row_version`: `version_id_col` binds to that `MappedColumn`,
+    # and the name does not exist earlier in the class body. No `ClassVar`
+    # annotation, because mypy flags a `ClassVar` override of the base class's
+    # `__mapper_args__`; the `noqa` silences ruff's mutable-class-attribute
+    # lint.
     __mapper_args__ = {"version_id_col": row_version}  # noqa: RUF012
 
     @validates("business_key")
