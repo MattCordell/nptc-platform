@@ -1,73 +1,44 @@
-"""The append-only write path for audit_event (NFR-08, NFR-10, issue #36).
+"""The append-only write path for `audit_event` (NFR-08, NFR-10).
 
-Domain code wanting a field-level diff should call
-`nptc.audit.recording.record_change`/`record_snapshot_change` (issue #37)
-rather than hand-building `before`/`after` and calling this module
-directly - see that module for why hand-building a diff is exactly the gap
-issue #37 closes.
+Domain code wanting a field-level diff calls `nptc.audit.recording.record_change` or
+`record_snapshot_change`, not this module with a hand-built `before`/`after`.
 
-`append_audit_event` is the only sanctioned way to insert a row: every
-step below exists to keep the hash chain from forking, and skipping any of
-them (whether by writing raw SQL or constructing an `AuditEvent` directly)
-reopens exactly the gap this issue exists to close. See
-`nptc.audit.hashing` for the digest itself and `nptc.audit.verification`
-for how a chain built by this writer is checked.
+`append_audit_event` is the only sanctioned way to insert a row. Every step below keeps the
+hash chain from forking, and skipping one (raw SQL, or constructing an `AuditEvent` directly)
+reopens that gap. `nptc.audit.hashing` builds the digest and `nptc.audit.verification` checks
+a chain this writer built. Design and rejected alternatives: ADR-0017.
 
-Sequence of operations, all inside the caller's own transaction (there is
-no commit here - the caller decides when the audit event and whatever
-state change it records commit together, atomically):
+Everything runs in the caller's transaction. There is no commit here, so the audit event and
+the state change it records commit together.
 
-1. `pg_advisory_xact_lock` serialises appends across concurrent
-   transactions - two concurrent appenders would otherwise both read the
-   same tail and fork the chain, the principal failure mode this issue
-   guards against. Needs no grant (advisory locks are role-agnostic) and
-   is transaction-scoped, so it releases automatically on commit or
-   rollback - not a trigger or stored function, so PRD Section 14.1 is
-   untouched. **This only serialises correctly under `READ COMMITTED`.**
-   Under `REPEATABLE READ`/`SERIALIZABLE`, a transaction's snapshot is
-   fixed at (or before) its first statement, so a blocked appender that
-   acquires the lock after the previous holder commits can still read a
-   tail predating that commit - the lock stops the two appends from
-   running concurrently, but not from forking, because "concurrently" and
-   "same snapshot" are different things above `READ COMMITTED`. Step 1a
-   below guards against this by refusing to proceed under any other
-   isolation level, rather than silently risking a fork.
-1a. Immediately after acquiring the lock, `SELECT
-    current_setting('transaction_isolation')` and raise
-    `AuditIsolationLevelError` unless it is `'read committed'` - see
-    above for why a higher isolation level is unsafe here, not merely
-    unnecessary.
-2. `session.flush()`, then read the tail (`ORDER BY sequence DESC LIMIT
-   1`). The flush matters: without it, an earlier append in the same
-   transaction would be invisible to this `SELECT` and the chain would
-   fork within a single request.
-3. `occurred_at` comes from `SELECT clock_timestamp()` - the *database*
-   clock, never the client (NFR-08) - and specifically `clock_timestamp()`
-   rather than `now()`, since `now()` is fixed at transaction start and
-   two events appended in the same transaction would otherwise share a
-   timestamp. `id` is a Python `uuid4()`. Both must be known before the
-   digest is computed, since both are digest fields.
-4. `ctx.actor_ip`, if not `None`, is canonicalised via
-   `nptc.audit.hashing.canonicalise_actor_ip` into the same textual form
-   Postgres's `inet` type stores/displays it in *before* the digest is
-   computed - not after. Without this, an input carrying an explicit host
-   mask (e.g. `"203.0.113.7/32"`) would be hashed as submitted but
-   stored/re-read as `"203.0.113.7"`, and step 6's self-check would raise
-   `AuditChainWriteError` on every such input. The canonicalised string is
-   used for both the digest and the `AuditEvent.actor_ip=` value actually
-   persisted, so what is hashed and what is stored can never diverge.
+1. `pg_advisory_xact_lock` serialises appends. Two concurrent appenders would otherwise read
+   the same tail and fork the chain. It needs no grant, it is transaction-scoped so it
+   releases on commit or rollback, and it is not a trigger or stored function (PRD Section
+   14.1).
+1a. Straight after the lock, `SELECT current_setting('transaction_isolation')` must return
+    `'read committed'`, or `AuditIsolationLevelError` is raised. Under `REPEATABLE READ` or
+    `SERIALIZABLE` the snapshot is fixed at or before the first statement, so an appender that
+    wins the lock after the previous holder commits can still read a tail that predates that
+    commit. The lock stops the appends running concurrently, not forking.
+2. `session.flush()`, then read the tail (`ORDER BY sequence DESC LIMIT 1`). Without the
+   flush, an earlier append in the same transaction is invisible to the `SELECT` and the chain
+   forks within one request.
+3. `occurred_at` is `SELECT clock_timestamp()`: the database clock, never the client (NFR-08),
+   and not `now()`, which is fixed at transaction start and would give two events in one
+   transaction the same timestamp. `id` is a Python `uuid4()`. Both are digest fields, so both
+   must be known before the digest is computed.
+4. `ctx.actor_ip`, if set, goes through `nptc.audit.hashing.canonicalise_actor_ip` before the
+   digest, into the form Postgres's `inet` stores. Otherwise `"203.0.113.7/32"` would hash as
+   submitted but be re-read as `"203.0.113.7"`, and step 6 would raise `AuditChainWriteError`.
+   The canonical string is used for both the digest and the stored value.
 5. The digest is computed and the row inserted.
-6. **Write-time self-check**: the row is re-read from the database and its
-   digest recomputed from what Postgres actually stored. A JSONB
-   round-trip divergence (a number literal Postgres normalises, e.g.
-   `1e2` -> `100.0`) would otherwise surface as an unexplained chain break
-   months later instead of a loud failure at the point of the write.
+6. **Write-time self-check**: the row is re-read and its digest recomputed from what Postgres
+   stored. A JSONB round-trip divergence (Postgres normalises `1e2` to `100.0`) would
+   otherwise surface as an unexplained chain break months later.
 
-`sequence` is `GENERATED ALWAYS AS IDENTITY`, not `GENERATED BY DEFAULT`:
-the latter would reintroduce the separate `GRANT USAGE ON SEQUENCE` issue
-#33 deliberately designed away (see `nptc.db.models.audit`) and would let
-a caller override the value - see `nptc.audit.hashing` for why `sequence`
-is excluded from the digest as a consequence.
+`sequence` is `GENERATED ALWAYS AS IDENTITY`. `GENERATED BY DEFAULT` would reintroduce a
+separate `GRANT USAGE ON SEQUENCE` and let a caller override the value (ADR-0017;
+`nptc.audit.hashing` explains why `sequence` is outside the digest).
 """
 
 from __future__ import annotations
@@ -90,31 +61,24 @@ from nptc.db.models.audit import AuditEvent
 
 
 class AuditChainWriteError(RuntimeError):
-    """Raised when the write-time self-check (step 5 above) finds the
-    digest recomputed from what Postgres actually stored does not match
-    what was written - e.g. a JSONB round-trip normalisation the digest
-    construction didn't account for. A loud failure at the point of the
-    write, not a silent chain break discovered later."""
+    """Raised when the write-time self-check (step 6 above) finds that the digest recomputed
+    from what Postgres stored differs from what was written, for example a JSONB round-trip
+    normalisation the digest construction did not account for. A loud failure at the write, not
+    a chain break found later."""
 
 
 class AuditIsolationLevelError(RuntimeError):
-    """Raised when the caller's transaction is not `READ COMMITTED` (step
-    1a above). Under `REPEATABLE READ`/`SERIALIZABLE`, the advisory lock
-    still serialises *execution* of concurrent appenders, but a snapshot
-    fixed before the lock-holder's commit can still read a stale tail once
-    it does get its turn - the lock alone is not sufficient above `READ
-    COMMITTED`, so this fails loudly instead of risking a silent fork."""
+    """Raised when the caller's transaction is not `READ COMMITTED` (step 1a above). Above that
+    level the advisory lock serialises execution, but a snapshot fixed before the previous
+    holder's commit can still read a stale tail, so this fails loudly rather than risk a silent
+    fork."""
 
 
-#: Fixed, arbitrary key for `pg_advisory_xact_lock` (step 1 above) - any
-#: fixed integer works, since advisory locks are an application-chosen
-#: namespace, not tied to any table or row. Passed as a bound parameter
-#: (`:key`) below rather than interpolated into the SQL text, so there is
-#: only ever one literal to keep in sync - and a bound parameter executed
-#: against a fixed `:key` placeholder is exactly what
-#: `backend/tests/test_sql_parameterisation.py`'s AST guard allows (it
-#: forbids building the SQL *string* from runtime data, not binding
-#: runtime data as a parameter).
+#: Fixed, arbitrary key for `pg_advisory_xact_lock` (step 1): advisory locks use an
+#: application-chosen namespace, tied to no table or row. It is bound as `:key`, not
+#: interpolated, so there is one literal to keep in sync, and
+#: `test_sql_parameterisation.py`'s AST guard, which forbids building the SQL *string* from
+#: runtime data, allows it.
 AUDIT_APPEND_LOCK_KEY: Final[int] = 64602913
 
 _ACQUIRE_APPEND_LOCK_SQL = text("SELECT pg_advisory_xact_lock(:key)")
@@ -124,11 +88,9 @@ _REQUIRED_ISOLATION_LEVEL: Final[str] = "read committed"
 
 
 class AuditContext(BaseModel):
-    """Who/what is making the write that `append_audit_event` records -
-    always supplied, never optional with a default. An optional audit
-    context is exactly how an NFR-08 gap gets introduced: a call site that
-    forgets to pass one would otherwise silently emit an unattributed
-    event instead of failing to type-check."""
+    """Who is making the write that `append_audit_event` records. Always supplied, never
+    optional: an optional context is how an NFR-08 gap gets in, because a call site that
+    forgets it would emit an unattributed event instead of failing to type-check."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -164,29 +126,12 @@ def _row_digest_fields(row: AuditEvent) -> dict[str, Any]:
 
 
 def acquire_append_lock(session: Session) -> None:
-    """Acquires the audit append lock (step 1/1a above) without performing a
-    write of its own - the piece of `append_audit_event` a multi-row caller
-    needs to run *before* taking its first row lock, not merely before its
-    first audit append (issue #265 review).
+    """Acquires the audit append lock (steps 1 and 1a above) without writing a row.
 
-    `nptc.catalogue.property_values.save_property_values_for_entries` is the
-    first caller: a transaction that mutates several `catalogue_entry` rows
-    one at a time, each followed by its own audit append, only acquires this
-    lock (indirectly, via `append_audit_event`) at whichever entry happens to
-    be the first one that actually changes something - an `unchanged`
-    (no-op) entry never calls `append_audit_event` at all. That makes the
-    lock's acquisition point data-dependent on which entries in the batch
-    turn out to be no-ops, which is the wrong thing to reason about a lock-
-    ordering invariant against. Calling this once, unconditionally, before
-    the per-entry loop starts makes the acquisition point deterministic
-    instead - see that function's own docstring and ADR-0035's addendum for
-    why this narrows, but does not by itself eliminate, the residual
-    deadlock risk against a concurrent *single*-entry writer.
-
-    `pg_advisory_xact_lock` nests safely within one transaction: calling
-    this here and then again inside `append_audit_event` for the same
-    transaction is not a double-acquire, just a redundant (and cheap)
-    re-assertion of a lock already held.
+    The catalogue-entry writers call this before their first session-touching statement, so the
+    append lock is always taken before any row or collision lock and the lock-ordering cycles
+    cannot form (ADR-0035). A later `append_audit_event` in the same transaction re-asserts the
+    lock, which is cheap and safe because `pg_advisory_xact_lock` nests within a transaction.
     """
     session.execute(_ACQUIRE_APPEND_LOCK_SQL, {"key": AUDIT_APPEND_LOCK_KEY})
 
