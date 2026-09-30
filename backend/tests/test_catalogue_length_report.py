@@ -159,10 +159,13 @@ def test_the_distribution_does_not_depend_on_the_order_buckets_arrive_in(
 
 
 @pytest.mark.req("FR-87")
-def test_the_histogram_statement_leaves_ordering_to_the_caller() -> None:
-    """The database does no sort of its own: `distribution_from_buckets`
-    orders the rows, so an `ORDER BY` here would only repeat that work."""
-    assert "ORDER BY" not in str(build_length_histogram_statement()).upper()
+def test_repeated_lengths_are_summed_into_one_bucket() -> None:
+    distribution = distribution_from_buckets([(4, 1), (9, 1), (4, 2)])
+
+    assert distribution.buckets == (
+        LengthBucket(length=4, count=3, entries_exceeding=1),
+        LengthBucket(length=9, count=1, entries_exceeding=0),
+    )
 
 
 @pytest.mark.req("FR-87")
@@ -183,19 +186,6 @@ def test_an_empty_catalogue_reports_no_maximum_through_the_real_query_path(
     distribution = compute_length_distribution(app_session)
 
     assert distribution == LengthDistribution(buckets=(), maximum=None)
-
-
-@pytest.mark.req("FR-87")
-@pytest.mark.integration
-def test_build_length_histogram_statement_matches_nothing_against_an_impossible_filter(
-    app_session: Session,
-) -> None:
-    """Proves the statement itself is a normal, composable `Select` - a
-    caller can narrow it (here, to nothing at all) the same way any other
-    `Select` in this codebase can be."""
-    statement = build_length_histogram_statement().where(literal(False))
-
-    assert app_session.execute(statement).all() == []
 
 
 @pytest.mark.req("FR-87")

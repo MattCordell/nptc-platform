@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
+from nptc.api.routers.catalogue_designations import AmendDesignationResult
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
@@ -1672,6 +1673,13 @@ def test_a_term_exactly_at_the_configured_maximum_is_not_warned(api: ApiTestApp)
 
     assert response.status_code == 200, response.text
     assert response.json()["length_warning"] is None
+
+
+@pytest.mark.req("FR-86")
+def test_the_nullable_length_warning_is_required_so_null_is_always_deliberate() -> None:
+    """`length_warning` may be `null` but not omitted: a default of `None`
+    would let a forgotten value read as "no warning"."""
+    assert AmendDesignationResult.model_fields["length_warning"].is_required()
 
 
 @pytest.mark.req("FR-86")

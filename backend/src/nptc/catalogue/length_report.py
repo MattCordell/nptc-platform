@@ -67,6 +67,7 @@ __all__ = [
 @dataclass(frozen=True, slots=True)
 class LengthBucket:
     """Every entry whose preferred term is exactly `length` characters long.
+
     `entries_exceeding` counts strictly longer entries, because FR-86 warns
     only when a length *exceeds* the configured maximum."""
 
@@ -105,8 +106,12 @@ def build_length_histogram_statement() -> Select[int, int]:
 
 def distribution_from_buckets(histogram: Iterable[tuple[int, int]]) -> LengthDistribution:
     """Builds the report from `(length, count)` pairs in any order, so the
-    result never depends on row order and the query needs no `ORDER BY`."""
-    ascending = sorted(histogram)
+    result never depends on row order and the query needs no `ORDER BY`.
+    Pairs sharing a length are summed into one bucket."""
+    totals: dict[int, int] = {}
+    for length, count in histogram:
+        totals[length] = totals.get(length, 0) + count
+    ascending = sorted(totals.items())
     exceeding = 0
     descending: list[LengthBucket] = []
     for length, count in reversed(ascending):

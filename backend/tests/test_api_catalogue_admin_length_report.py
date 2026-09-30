@@ -23,13 +23,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
 from sqlalchemy import literal, select
 from sqlalchemy.engine import Connection
 
 import nptc.catalogue.length_report as length_report
 from nptc.api.routers.catalogue_admin import LengthDistributionBucket, LengthDistributionReport
-from nptc.api.routers.catalogue_designations import AmendDesignationResult
 from nptc.audit.writer import AuditContext
 from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
@@ -185,21 +183,10 @@ def test_the_report_response_is_immutable_and_hashable() -> None:
 
 
 @pytest.mark.req("FR-87")
-@pytest.mark.req("FR-86")
-@pytest.mark.parametrize(
-    ("model", "field"),
-    [
-        (LengthDistributionReport, "maximum"),
-        (AmendDesignationResult, "length_warning"),
-    ],
-)
-def test_a_nullable_report_field_is_required_so_null_is_always_deliberate(
-    model: type[BaseModel], field: str
-) -> None:
-    """Both fields may be `null`, and neither may be omitted: a default of
-    `None` would let a forgotten value read as "empty catalogue" or "no
-    warning"."""
-    assert model.model_fields[field].is_required()
+def test_the_nullable_maximum_is_required_so_null_is_always_deliberate() -> None:
+    """`maximum` may be `null` but not omitted: a default of `None` would let
+    a forgotten value read as "empty catalogue"."""
+    assert LengthDistributionReport.model_fields["maximum"].is_required()
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) ------------------------------
