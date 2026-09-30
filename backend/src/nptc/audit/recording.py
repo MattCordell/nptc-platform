@@ -5,6 +5,9 @@ an empty one, and delegate to `nptc.audit.writer.append_audit_event` with the di
 `before`/`after` payloads. `append_audit_event` keeps its own signature as the general
 primitive for a diff-free event (a future `release.published`, NFR-12's `audit.exported`).
 
+A caller must not flush the session first: `flush()` clears attribute history, so the change
+would read as an empty diff and raise `AuditNoOpError` (see `nptc.audit.diffing`).
+
 There is no lenient `record_change_if_any`: reaching `record_change` asserts that a write
 happened, so an empty diff is always a bug (`AuditNoOpError`). A caller with a genuinely
 idempotent no-op path short-circuits before this module, as `close_account` does. ADR-0018
