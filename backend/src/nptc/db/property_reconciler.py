@@ -121,10 +121,10 @@ class ReconciliationReport:
     #: `(index_name, exception_type_name)` pairs for DDL that raised mid-run. One failure does not
     #: stop the other indexes converging.
     #:
-    #: A name here can also appear in another field: a `CREATE` that succeeded before its `COMMENT
-    #: ON INDEX` raised is in `created` and `failed`, and a rebuild whose `DROP` succeeded but whose
-    #: `CREATE` raised is in `dropped` and `failed` only, which tells an operator the property now
-    #: has no index. Carries the exception type name, never its message (NFR-26).
+    #: A name here can also appear in another field: a `CREATE` that succeeded before its
+    #: `COMMENT ON INDEX` raised is in `created` and `failed`, and a rebuild whose `DROP` succeeded
+    #: but whose `CREATE` raised is in `dropped` and `failed` only, which tells an operator the
+    #: property now has no index. Carries the exception type name, never its message (NFR-26).
     failed: tuple[tuple[str, str], ...] = ()
     #: Property keys of filterable rows whose `datatype` has no handler in this build. One such row
     #: does not abort the run, and its existing index is not dropped as an orphan. See
@@ -191,8 +191,8 @@ def reconcile_property_indexes(
 
     Builds missing indexes, drops orphans (an un-flagged property, or one whose `index_shape()` is
     now `None`), rebuilds indexes that are `indisvalid = false` or whose definition is stale against
-    an amended `datatype` or `key` (`matches_indexdef`), and repairs a missing or stale `COMMENT ON
-    INDEX`.
+    an amended `datatype` or `key` (`matches_indexdef`), and repairs a missing or stale
+    `COMMENT ON INDEX`.
 
     Idempotent. A `pg_try_advisory_lock` guards the whole run, so a concurrent caller returns
     `skipped_locked=True` instead of blocking: two runs converging on the same state are a no-op,

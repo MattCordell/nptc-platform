@@ -330,10 +330,10 @@ def deprecate_definition(
     reason: str,
 ) -> PropertyDefinition:
     """FR-11: moves `status` from `active` to `deprecated` and stamps `deprecated_at`. One-way:
-    nothing reverses it (see `PropertyReactivationRefusedError`). Refuses with a 409 for `origin =
-    'system'` (`SystemPropertyDeprecationRefusedError`) and for a definition already deprecated
-    (`PropertyAlreadyDeprecatedError`; a repeat call is a caller mistake worth surfacing). Existing
-    `property_value` rows are untouched, so they stay readable.
+    nothing reverses it (see `PropertyReactivationRefusedError`). Refuses with a 409 for
+    `origin = 'system'` (`SystemPropertyDeprecationRefusedError`) and for a definition already
+    deprecated (`PropertyAlreadyDeprecatedError`; a repeat call is a caller mistake worth
+    surfacing). Existing `property_value` rows are untouched, so they stay readable.
     """
     if definition.row_version != expected_row_version:
         raise EntryVersionConflictError(

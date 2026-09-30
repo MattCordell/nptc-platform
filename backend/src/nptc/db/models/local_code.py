@@ -5,12 +5,12 @@ SNOMED SCTID, but FR-06's discipline for `code_binding.code` applies: a `propert
 references it as a stable identifier, so it must never be coerced to a number.
 
 **`provisional` is FR-92's storage answer.** The `Subgroup` sample mixes classification axes
-(`Coagulation` and `Drug measurement` classify by analyte; `Microbial Culture`, `Mycobacteria
-culture` and `Mycobacterial microscopy` by method) and is inconsistently pluralised. PRD SS6.6
-leaves the real vocabulary to RCPA-QAP and says to migrate the existing strings verbatim as
-provisional codes until then. A migrated `Subgroup` string therefore lands with `provisional = true`
-and `definition = NULL`, so "not yet reconciled" is a stored fact. `Discipline` codes seeded from
-the PRD's verified table (migration 0011) are never provisional.
+(`Coagulation` and `Drug measurement` classify by analyte; `Microbial Culture`,
+`Mycobacteria culture` and `Mycobacterial microscopy` by method) and is inconsistently pluralised.
+PRD SS6.6 leaves the real vocabulary to RCPA-QAP and says to migrate the existing strings verbatim
+as provisional codes until then. A migrated `Subgroup` string therefore lands with
+`provisional = true` and `definition = NULL`, so "not yet reconciled" is a stored fact. `Discipline`
+codes seeded from the PRD's verified table (migration 0011) are never provisional.
 
 **Retired via `status`, never deleted**, as `code_binding.status` is. `nptc_app`'s column-level
 grant excludes `id`, `system_id` and `code`: rebinding to a different system or code is a new row.
@@ -58,8 +58,8 @@ _DEPRECATION_REASON_CHECK_SQL = (
     "(status = 'deprecated') = "
     "(deprecation_reason IS NOT NULL AND length(btrim(deprecation_reason)) > 0)"
 )
-#: Mandatory exactly when deprecated, forbidden while active. Without the CHECK, the one write path
-#: that sets it would not be a database invariant.
+#: Mandatory exactly when deprecated, forbidden while active. Without the CHECK, only the one write
+#: path (`deprecate_local_code`) would guarantee the timestamp.
 _DEPRECATED_AT_CHECK_SQL = "(status = 'deprecated') = (deprecated_at IS NOT NULL)"
 
 

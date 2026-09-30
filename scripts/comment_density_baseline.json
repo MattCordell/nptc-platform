@@ -64,7 +64,7 @@
   "backend/src/nptc/db/base.py": {"code": 12, "prose": 12, "ratio": 1.0},
   "backend/src/nptc/db/bootstrap.py": {"code": 98, "prose": 62, "ratio": 0.633},
   "backend/src/nptc/db/definitions.py": {"code": 239, "prose": 97, "ratio": 0.406},
-  "backend/src/nptc/db/errors.py": {"code": 9, "prose": 12, "ratio": 1.333},
+  "backend/src/nptc/db/errors.py": {"code": 9, "prose": 11, "ratio": 1.222},
   "backend/src/nptc/db/functions.py": {"code": 109, "prose": 89, "ratio": 0.817},
   "backend/src/nptc/db/models/__init__.py": {"code": 56, "prose": 7, "ratio": 0.125},
   "backend/src/nptc/db/models/audit.py": {"code": 51, "prose": 36, "ratio": 0.706},

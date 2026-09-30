@@ -26,8 +26,8 @@ timestamp, or an active one with a stale one, cannot exist.
 
 **`constraints` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`**: an in-place mutation
 (`definition.constraints["max"] = 5`) is invisible to the unit of work and does not persist. Handler
-code MUST replace the whole attribute (`definition.constraints = {**definition.constraints, "max":
-5}`).
+code MUST replace the whole attribute
+(`definition.constraints = {**definition.constraints, "max": 5}`).
 """
 
 from __future__ import annotations

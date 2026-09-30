@@ -11,8 +11,8 @@ transaction, and Alembic autogenerate mishandles the create/drop-type pair on do
 There is no `role` column: it would be a second place a role is granted, and FR-44 requires
 permission checks, never role-name checks (see `user_role`).
 
-The `UNIQUE` constraint on `username` relies on Postgres's default `NULLS DISTINCT`. `NULLS NOT
-DISTINCT` must never be added, because it would cap the platform at one closed (tombstoned) account.
+The `UNIQUE` constraint on `username` relies on Postgres's default `NULLS DISTINCT`.
+`NULLS NOT DISTINCT` must never be added: it would cap the platform at one closed account.
 """
 
 from __future__ import annotations

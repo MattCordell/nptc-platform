@@ -1,8 +1,7 @@
 """Reads a Postgres constraint name back out of a SQLAlchemy `IntegrityError`.
 
-`nptc.auth.identity._create_user`'s username-collision retry and
-`nptc.catalogue.bindings.create_binding`'s lost-race translation both need the
-`orig`/`diag`/`constraint_name` unwrap and the `"23505"` literal, so it lives here once.
+Every caller that translates a unique-violation race needs the `orig`/`diag`/`constraint_name`
+unwrap and the `"23505"` literal, so it lives here once.
 """
 
 from __future__ import annotations

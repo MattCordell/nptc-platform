@@ -1,5 +1,5 @@
-"""The `validation_finding` table: PRD SS6.1's `CatalogueEntry --< ValidationFinding (open /
-acknowledged / resolved / superseded)` (FR-18, FR-45, FR-55).
+"""The `validation_finding` table (FR-18, FR-45, FR-55):
+`CatalogueEntry --< ValidationFinding (open / acknowledged / resolved / superseded)` in PRD SS6.1.
 
 **Minimal and read-only, landed ahead of the P3 sweep that will populate it.** FR-45's validation
 engine (FR-52) and FR-55's acknowledge and resolve transitions are P3, and `nptc.validation` is

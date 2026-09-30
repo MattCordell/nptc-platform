@@ -178,8 +178,8 @@ class Designation(Base):
     )
     term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
     # FR-05: derived from `term` by the `@validates` hook below, never assigned directly.
-    # `server_default=''` exists only so a raw INSERT that bypasses the ORM still satisfies `NOT
-    # NULL`; every ORM write supplies the computed value.
+    # `server_default=''` exists only so a raw INSERT that bypasses the ORM still satisfies
+    # `NOT NULL`; every ORM write supplies the computed value.
     term_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
     # Plain literals, not built from the `StrEnum`s above; see `_USE_CHECK_SQL`.
     use: Mapped[str] = mapped_column(

@@ -4,8 +4,8 @@ This table's privilege grant and revoke live in the migration that creates it
 (`0002_audit_event.py`), never here: an ORM model cannot express a table ACL, and ACLs
 (`pg_class.relacl`) live and die with the table.
 
-`prev_hash` and `entry_hash` come from migration `0004_audit_event_hash_chain.py`. Both are `TEXT
-NOT NULL` with a `CHECK` pinning them to 64 lowercase hex characters (a SHA-256 digest), and
+`prev_hash` and `entry_hash` come from migration `0004_audit_event_hash_chain.py`. Both are
+`TEXT NOT NULL` with a `CHECK` pinning them to 64 lowercase hex characters (a SHA-256 digest), and
 `entry_hash` is also `UNIQUE`. See `nptc.audit.hashing` and `nptc.audit.writer` for the digest and
 append sequence, and `docs/architecture/data-model.md` for the design.
 """

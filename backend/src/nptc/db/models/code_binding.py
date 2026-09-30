@@ -13,13 +13,13 @@ strip.
 and the Verhoeff check digit) through `nptc_sctid_is_valid` (`nptc.db.functions`, ADR-0023), not
 only through `nptc.catalogue.bindings.create_binding`.
 
-**A binding is retired, never deleted (FR-08).** As with `Designation`
-(`nptc.db.roles.REVOKE_CODE_BINDING_DELETE_SQL`), with two differences. `retirement_reason` is
-mandatory exactly when `status = 'retired'`. `replaced_by_binding_id` is set only when a code is
-replaced; a withdrawn code with no successor leaves it `NULL`. `entry_id`, `system` and `code` are
+**A binding is retired, never deleted (FR-08).** `nptc.db.roles.REVOKE_CODE_BINDING_DELETE_SQL`
+enforces this, as `REVOKE_DESIGNATION_DELETE_SQL` does for `Designation`, with two differences.
+`retirement_reason` is mandatory exactly when `status = 'retired'`. `replaced_by_binding_id` is set
+only when a code is replaced; a withdrawn code leaves it `NULL`. `entry_id`, `system` and `code` are
 excluded from the `UPDATE` grant, so rebinding to a different concept is a retire-and-replace and
 FR-82's provenance is a privilege-level invariant. `fsn` and `au_preferred_term` stay updatable so
-the FR-45 validation sweep can refresh a drifted label from the server.
+the FR-45 validation sweep can refresh a drifted label.
 
 **One active binding per code (FR-08).** `ix_code_binding_one_active_per_entry` stops one entry
 holding two active bindings. `ix_code_binding_one_active_entry_per_code` stops one code being active
