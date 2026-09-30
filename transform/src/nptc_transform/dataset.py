@@ -1,50 +1,42 @@
-"""Builds and writes the import dataset (FR-70, FR-76, issue #31, P0-9).
+"""Builds and writes the import dataset (FR-70, FR-76).
 
-``build_dataset`` consumes ``RunResult.findings`` in process - never the
-report file - the coupling ADR-0009 already committed to. It must only be
-called once a caller has already confirmed ``result`` carries no blocking
-finding (``RunResult.has_blocking_findings``); a caller that doesn't is a bug
-in that caller, not something this module re-checks, the same "true by
-construction" style ``Finding`` itself uses (PRD:310's "the seeded baseline
-cannot be created until RCPA-QAP resolves those collisions editorially").
+``build_dataset`` consumes ``RunResult.findings`` in process, never the report
+file (ADR-0009). Call it only once the caller has confirmed ``result`` carries no
+blocking finding (``RunResult.has_blocking_findings``). A caller that doesn't is
+at fault; this module does not re-check, in the "true by construction" style
+``Finding`` uses. The seeded baseline cannot be created until RCPA-QAP resolves
+the collisions editorially.
 
-One file, ``import-dataset.json``, written into the same ``--report-dir`` as
-``report.json``/``report.md`` - the CLI's "no file outside --report-dir is
-ever touched" invariant survives untouched. Same envelope discipline as
-``report_writer.py``: own ``schema_version``, no clock value, basename-only
-source, every collection explicitly sorted or built in a deterministic
-order, ``encoding="utf-8"``, ``newline="\\n"``, overwrite in place (FR-73).
+One file, ``import-dataset.json``, goes into the same ``--report-dir`` as
+``report.json``/``report.md``, so the CLI's "no file outside --report-dir is
+touched" invariant holds. The envelope discipline is ``report_writer.py``'s: own
+``schema_version``, no clock value, basename-only source, deterministic order,
+``encoding="utf-8"``, ``newline="\\n"``, overwrite in place (FR-73).
 
-**What is carried, and what is not.** ``Length``, ``Version`` and ``History``
-are not carried as entry fields: ``Length`` MUST NOT be storable (FR-85) - it
-is computed in the export layer, not here - and ``Version``/``History`` MUST
-be generated from release membership (FR-59), which is precisely what
-``baseline_release`` replaces. The *existing* hand-typed ``Version``/
-``History`` values carry real provenance, so they are preserved verbatim
-under ``source.legacy_version``/``legacy_history`` - immutable seeding
-provenance, never an editable field, so no information is destroyed at
-cutover.
+**What is carried.** ``Length``, ``Version`` and ``History`` are not entry
+fields. ``Length`` must not be storable (FR-85) and is computed in the export
+layer. ``Version``/``History`` are generated from release membership (FR-59),
+which ``baseline_release`` replaces. The existing hand-typed values carry real
+provenance, so they are kept verbatim under ``source.legacy_version`` and
+``legacy_history``: immutable seeding provenance, not editable fields, so cutover
+destroys no information.
 
-**Specimen: verbatim always, code only where certain** (FR-88/FR-92
-precedent). A specimen value's ``code`` is populated only on an *exact*
-``SPECIMEN_TABLE`` surface-form match (``cell_defects.resolve_specimen_term``)
-- never the word-boundary substring heuristic ``semantic_drift.py`` uses for
-its own free-text review, which is calibrated for a different, lower-stakes
-purpose. An unmapped value is still seeded, verbatim, with no code
+**Specimen: verbatim always, code only where certain** (FR-88, FR-92). A
+specimen value's ``code`` is set only on an *exact* ``SPECIMEN_TABLE``
+surface-form match (``cell_defects.resolve_specimen_term``), never the
+word-boundary substring heuristic ``semantic_drift.py`` uses for lower-stakes
+review. An unmapped value is still seeded verbatim with no code
 (``SPECIMEN_VALUE_UNMAPPED``, informational). ``'Any'`` sets
-``specimen_unconstrained: true`` and yields no specimen value for itself
-(FR-89), but does not discard any other value the same cell asserts: the
-published data is not guaranteed to keep 'Any' from co-occurring with a
-named specimen on one row, and this module must seed exactly what the report
-already describes for that cell, never less.
+``specimen_unconstrained: true`` and yields no value itself (FR-89), but keeps
+any other value the cell asserts. The published data can put 'Any' beside a named
+specimen, and this module must seed exactly what the report describes for that
+cell.
 
-**Terminology-served enrichment is out of scope for this issue.** Without
+**Terminology-served enrichment is not done here.** Without
 ``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
-``fsn``/``au_preferred_term`` come from the published cell text/``None``.
-Populating these from a live sweep's served designations (FR-82) needs the
-per-code ``SweepResult`` threaded through further than ``RunResult`` carries
-it today, and is deferred to a follow-up issue (see the PR body) rather than
-widening this one's scope.
+``fsn``/``au_preferred_term`` come from the published cell text or ``None``.
+Filling them from a live sweep's served designations (FR-82) needs the per-code
+``SweepResult`` threaded further than ``RunResult`` carries it.
 """
 
 from __future__ import annotations
@@ -193,10 +185,10 @@ def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designati
 def _has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
     """True if ``row_cells`` resolves a non-empty code binding.
 
-    A code cell that exists but holds only empty/whitespace text does not
-    count - the same test ``cell_defects._scan_missing_code_binding`` and
-    ``terminology_check.collect_code_bindings`` already apply, so all three
-    agree on what "resolves a code binding" means (#132).
+    A code cell holding only empty or whitespace text does not count. This is the
+    test ``cell_defects._scan_missing_code_binding`` and
+    ``terminology_check.collect_code_bindings`` apply, so all three agree on what
+    "resolves a code binding" means.
     """
     code_cell = row_cells.get(ColumnRole.CODE)
     return code_cell is not None and bool(code_cell.text.strip())
@@ -220,13 +212,11 @@ def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBind
 
 
 def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[tuple[PropertyValue, ...], bool]:
-    """Mirrors ``cell_defects._scan_specimen`` exactly: 'Any' sets
-    ``specimen_unconstrained`` but never short-circuits the remaining values
-    in the cell. The published data is not guaranteed to keep 'Any' from
-    co-occurring with a named specimen on the same row, so a co-occurring
-    named value is seeded alongside it rather than silently discarded - the
-    report already carries a finding for every value in the cell, named or
-    not, and this must seed exactly what the report describes.
+    """Mirrors ``cell_defects._scan_specimen``: 'Any' sets
+    ``specimen_unconstrained`` but does not short-circuit the cell's remaining
+    values. A named value beside 'Any' is seeded, not discarded, because the
+    report has a finding for every value in the cell and this must seed what it
+    describes.
     """
     specimen_cell = row_cells.get(ColumnRole.SPECIMEN)
     if specimen_cell is None:
@@ -260,13 +250,12 @@ def build_dataset(
 ) -> ImportDataset:
     """Builds the import dataset from ``sheets`` and ``result`` (FR-70, FR-76).
 
-    Entries are numbered ``NPTC-000001``.. sequentially over rows carrying
-    both a preferred term and a code binding, in ``(sheet name, row)`` order
-    - a stable order across runs is what keeps FR-73's byte-identical
-    guarantee meaningful once the pipeline actually transforms content, not
-    just when it happens to agree with the workbook's own sheet order. A row
-    skipped for either reason (FR-100) shifts every subsequent business key
-    down by one - there is no gap left for it.
+    Entries are numbered ``NPTC-000001``.. over rows carrying both a preferred
+    term and a code binding, in ``(sheet name, row)`` order. A stable order is
+    what keeps FR-73's byte-identical guarantee meaningful once the pipeline
+    transforms content, not only when it happens to match the workbook's sheet
+    order. A row skipped for either reason (FR-100) shifts every later business
+    key down by one; no gap is left.
     """
     entries: list[ImportEntry] = []
     sequence = 0
@@ -277,17 +266,14 @@ def build_dataset(
         row_cells = source_row.cells
         preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
         if preferred_cell is None:
-            # A row that resolves a code binding with no preferred term is
-            # MISSING_PREFERRED_TERM (cell_defects.py) - data-defect, so it
-            # already blocked emission before build_dataset was called; a
-            # row with neither a code nor a preferred term is simply not a
-            # SPIA data row at all. Either way, there is nothing to seed.
+            # A code binding with no preferred term is MISSING_PREFERRED_TERM, a
+            # data defect that already blocked emission. A row with neither is
+            # not a SPIA data row. Either way, nothing to seed.
             continue
         if not _has_code_binding(row_cells):
-            # The mirror case (#132): a preferred term with no code binding
-            # is MISSING_CODE_BINDING - data-defect, so it already blocked
-            # emission before build_dataset was called. Never seeded with an
-            # empty code_bindings list - it is judged layout, not an entry.
+            # The mirror case: MISSING_CODE_BINDING, a data defect that already
+            # blocked emission. Never seeded with an empty code_bindings list;
+            # it is judged layout, not an entry.
             continue
         sequence += 1
         specimen, unconstrained = _build_specimen(row_cells)
@@ -392,9 +378,8 @@ def _render_json(dataset: ImportDataset) -> str:
 def write_dataset(dataset: ImportDataset, report_dir: Path) -> None:
     """Writes ``import-dataset.json`` into ``report_dir``, overwriting in place.
 
-    Mirrors ``report_writer.write_report``'s own discipline exactly: same
-    directory, ``encoding="utf-8"``, ``newline="\\n"``, never appended or
-    numbered (FR-73).
+    Follows ``report_writer.write_report``: same directory, ``encoding="utf-8"``,
+    ``newline="\\n"``, never appended or numbered (FR-73).
     """
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / DATASET_JSON_NAME).write_text(
