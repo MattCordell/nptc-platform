@@ -1,43 +1,21 @@
 """Bounded edit-distance tokenising and near-match primitives (FR-79, H-04),
-and the FR-05 collision comparison key (issue #49).
+and the FR-05 collision comparison key.
 
-Lives in ``shared``, not ``transform``, because FR-79's misspelling
-detection has two call sites that must never independently drift (FR-74,
-ADR-0003): the seeding transform (this PR) and, once FR-36 lands, the same
-check on save in the application. A new module rather than an addition to
-``nptc_shared.text`` - that module's own docstring scopes it to Unicode
-hygiene (NFC normalisation, invisible-character detection), not to fuzzy
-comparison. ``tokenise`` and ``near_match_distance`` build on
-``text.normalise_for_comparison`` rather than reimplementing it.
+Lives in ``shared``, not ``transform``, because FR-79's misspelling detection
+has two call sites that must never drift apart (FR-74, ADR-0003): the seeding
+transform and the on-save check (FR-36). It is a module of its own because
+``nptc_shared.text`` is scoped to Unicode hygiene, not fuzzy comparison.
 
-**Why ``collision_key`` lives here too.** FR-05 requires collision
-detection to normalise case, Unicode whitespace *and punctuation* before
-comparing two terms - a strictly stronger fold than
-``text.normalise_for_comparison`` deliberately provides, since that
-function's own docstring explains why it preserves case and punctuation
-(FR-82's as-served label reconciliation treats a case difference as real
-editorial signal, not noise). ``collision_key`` cannot live in ``text.py``
-without ``text.py`` depending on tokenisation; it composes ``tokenise``
-(which already collapses whitespace via ``normalise_for_comparison`` and
-splits on every non-word character, i.e. punctuation) and ``token_key``
-(casefold), so a punctuation difference and a case difference are both
-folded away for comparison, exactly as a delimiter difference already is
-for ``tokenise``'s own FR-71 purpose.
+``collision_key`` is here, not in ``text.py``, because FR-05 needs a stronger
+fold than ``text.normalise_for_comparison`` (case and punctuation as well as
+whitespace) and it composes ``tokenise``. ``normalise_for_comparison`` keeps
+case and punctuation on purpose: FR-82 treats a case difference as editorial
+signal.
 
-**Suspect vs. reference eligibility, and where the line sits.** FR-79's
-heuristic needs two related but distinct gates: every token that can be
-compared at all (too short, or carrying a digit, is never worth comparing -
-an abbreviation like ``ADA``/``AFP``/``CSF`` is 2-4 characters and a code
-like ``ADA2``/``5HIAA`` is definitionally not a spelling question), and a
-*stricter* gate for a token that could be the misspelled one - an
-all-uppercase surface form (``ALPHAFETOPROTEIN``) is always a fine
-*reference* to compare against, but must never itself be flagged as a
-*suspect*, since an initialism/acronym rendered in caps is not "probably a
-typo" the way a mixed-case word is. This module owns only the first, looser
-gate (``is_comparable_token``: length and digit content, applied to both
-suspects and references); the second, case-based restriction is
-misspelling-specific policy, not a text-shape primitive, and lives in
-``nptc_transform.misspelling`` instead.
+``is_comparable_token`` is the looser gate (length and digit content), applied
+to suspects and references alike. The stricter suspect-only gate (an
+all-uppercase token is never flagged, so an initialism is not read as a typo)
+is misspelling policy and lives in ``nptc_transform.misspelling``.
 """
 
 from __future__ import annotations
@@ -47,59 +25,46 @@ import re
 from nptc_shared.text import normalise_for_comparison
 
 #: Every RCPA Appendix A.5 abbreviation (ADA, AFP, CSF, Ab, RBC) is 2-4
-#: characters - below this length a token is not a comparable word at all,
-#: only ever noise for this heuristic.
+#: characters, so a shorter token is only noise for this heuristic.
 MIN_TOKEN_LENGTH = 5
 
-#: FR-79's own words, "one or two characters", as a hard ceiling on what
-#: ``near_match_distance`` will ever admit.
+#: FR-79's "one or two characters", as a hard ceiling on what
+#: ``near_match_distance`` admits.
 MAX_EDIT_DISTANCE = 2
 
-#: Distance 2 is only admissible between tokens at least this long - below
-#: it, two edits is too large a fraction of the word to be a confident
-#: misspelling signal rather than two genuinely different short words.
+#: Distance 2 is only admissible between tokens at least this long; below it,
+#: two edits is too large a fraction of the word to signal a misspelling.
 LONG_TOKEN_LENGTH = 8
 
 _TOKEN_PATTERN = re.compile(r"[^\W_]+")
 
 
 def tokenise(text: str) -> tuple[str, ...]:
-    """Splits ``text`` into its word/number runs, delimiter-independent.
+    """Splits ``text`` into its word and number runs, whatever the delimiter.
 
-    Built on ``normalise_for_comparison`` (NFC, every non-ASCII space
-    collapsed to an ordinary one, edge-stripped) so an interior non-breaking
-    space is a separator exactly like an ordinary one. ``[^\\W_]+`` matches
-    runs of letters and digits, excluding underscore - so a comma, a
-    semicolon, a hyphen and a bare space are all equally non-word
-    separators. This is what makes ``'ADA RBC, ADA red cells'``, the same
-    text with semicolons in place of commas, and the same text with bare
-    spaces in place of every delimiter, tokenise identically - sidestepping
-    FR-71's own unresolved comma-vs-semicolon delimiter question for the
-    ``RCPA Synonyms`` column (PRD Appendix A.4) rather than having to answer
-    it.
+    Built on ``normalise_for_comparison``, so a non-breaking space separates
+    like an ordinary one. ``[^\\W_]+`` excludes underscore, so a comma,
+    semicolon, hyphen and bare space are all separators. ``'ADA RBC, ADA red
+    cells'`` therefore tokenises the same with semicolons or bare spaces,
+    which sidesteps FR-71's unresolved comma-versus-semicolon question (PRD
+    Appendix A.4).
     """
     return tuple(_TOKEN_PATTERN.findall(normalise_for_comparison(text)))
 
 
 def token_key(token: str) -> str:
-    """A casefolded comparison key for ``token`` - never for display.
+    """A casefolded comparison key for ``token``, never for display.
 
-    Every message quoting a token must quote the original surface form
-    (``escape_invisible``-wrapped); this exists only so two tokens differing
-    solely in case are recognised as the same word for counting, authority-set
-    membership and edit-distance comparison.
+    Messages must quote the original surface form (``escape_invisible``-wrapped).
     """
     return token.casefold()
 
 
 def is_comparable_token(token: str) -> bool:
-    """The length+digit gate every comparable token must pass.
+    """The length-and-digit gate every comparable token must pass, as suspect or reference.
 
-    Shared by suspect- and reference-eligibility (see the module docstring):
-    a token shorter than ``MIN_TOKEN_LENGTH``, or containing any digit, is
-    never worth comparing at all, in either role. The stricter,
-    suspect-only "not all-uppercase" restriction is layered on top of this
-    by ``nptc_transform.misspelling``, not here.
+    The suspect-only "not all-uppercase" restriction is layered on top by
+    ``nptc_transform.misspelling``.
     """
     return len(token) >= MIN_TOKEN_LENGTH and not any(ch.isdigit() for ch in token)
 
@@ -108,20 +73,11 @@ def bounded_edit_distance(a: str, b: str, *, max_distance: int) -> int | None:
     """Levenshtein distance between ``a`` and ``b``, or ``None`` past ``max_distance``.
 
     Deliberately plain Levenshtein, not Damerau-Levenshtein: an adjacent
-    transposition costs two edits here (a substitution each way, or a
-    delete-then-insert), never one - see ``test_similarity.py`` for this as
-    a documented design fact, not an oversight.
+    transposition costs two edits, never one (``test_similarity.py`` pins this).
 
-    A length prefilter is checked first (``None`` immediately if the length
-    difference alone exceeds ``max_distance`` - no edit sequence can close a
-    length gap wider than the budget). The DP itself is restricted to a
-    band of width ``2 * max_distance + 1`` around the main diagonal - a cell
-    outside the band can only be reached by an edit count already past
-    ``max_distance``, so it is never computed, only assigned a sentinel
-    value larger than the budget. The running minimum of each completed row
-    is checked before starting the next; once it exceeds ``max_distance``,
-    every path through that row already does too, so the function returns
-    ``None`` without finishing the remaining rows.
+    The DP is restricted to a band of width ``2 * max_distance + 1``. A cell
+    outside it needs more than ``max_distance`` edits, so it keeps a sentinel
+    above the budget. A row whose minimum exceeds the budget ends the search.
     """
     if abs(len(a) - len(b)) > max_distance:
         return None
@@ -146,10 +102,8 @@ def bounded_edit_distance(a: str, b: str, *, max_distance: int) -> int | None:
             current[j] = value
             if value < row_min:
                 row_min = value
-        # Equivalent to min(current), but computed inline over the populated
-        # band instead of a second O(len_b) pass over the whole row - every
-        # cell outside the band is still ``sentinel`` by construction, so it
-        # can never be the minimum.
+        # The running minimum is taken over the band only: every cell outside
+        # it is still ``sentinel``, so it cannot be the minimum.
         if row_min > max_distance:
             return None
         previous = current
@@ -161,17 +115,12 @@ def near_match_distance(a: str, b: str, *, max_distance: int = MAX_EDIT_DISTANCE
     """The admissible edit distance between ``a`` and ``b``, capped at
     ``max_distance``, or ``None``.
 
-    Distance 1 is admissible whenever ``max_distance`` allows it. Distance 2
-    is admissible only when ``max_distance`` allows it *and* the *shorter*
-    of the two tokens has length at least ``LONG_TOKEN_LENGTH`` - below that,
-    two edits is too large a fraction of a short word to be a confident
-    misspelling signal (``urine``/``urate``, both length 5, must be refused
-    even though they are exactly distance 2 apart).
+    Distance 2 needs the *shorter* token to be at least ``LONG_TOKEN_LENGTH``
+    long: ``urine``/``urate`` (length 5, distance 2) must be refused.
 
-    ``max_distance`` is a real ceiling, not just a hint to the second probe:
-    a caller passing ``max_distance=0`` must never see a distance-1 result
-    back (this module is shared with FR-36's on-save check, which may want a
-    tighter ceiling than FR-79's own default).
+    ``max_distance`` is a real ceiling: ``max_distance=0`` never returns 1,
+    because FR-36's on-save check may want a tighter ceiling than FR-79's
+    default.
     """
     first_probe = min(1, max_distance)
     distance = bounded_edit_distance(a, b, max_distance=first_probe)
@@ -185,25 +134,17 @@ def near_match_distance(a: str, b: str, *, max_distance: int = MAX_EDIT_DISTANCE
 
 
 def collision_key(term: str) -> str:
-    """FR-05's comparison form for ``term``: casefolded, with every
-    punctuation/whitespace character treated as a separator rather than
-    compared literally, so ``'17-OHP'`` and ``'17 OHP'`` collide while
-    ``'AntiDNA'`` and ``'Anti-DNA'`` do not lose the token boundary that
-    distinguishes them from a different compound word entirely - the same
-    posture ``tokenise`` already takes for FR-71's delimiter-independence,
-    applied here to FR-05's case-and-punctuation fold instead.
+    """FR-05's comparison form for ``term``: casefolded, with punctuation and
+    whitespace treated as separators.
 
-    Two tokens joined by a single ordinary space, never re-concatenated
-    into one word - collapsing ``'17 OHP'`` to ``'17ohp'`` would make it
-    collide with the unrelated token ``'17OHP'`` typed with no separator at
-    all, which is a coincidence FR-05 has no basis to treat as the same
-    designation.
+    ``'17-OHP'`` and ``'17 OHP'`` collide. ``'AntiDNA'`` and ``'Anti-DNA'`` do
+    not, because the token boundary is kept.
 
-    Falls back to a plain casefolded, whitespace-collapsed comparison for a
-    term that tokenises to nothing at all (e.g. one consisting only of
-    punctuation) - such a term is pathological input this function must
-    still return a stable, non-empty-unless-genuinely-empty key for, not a
-    case ``tokenise`` needs to special-case for its own FR-79 purpose.
+    Tokens are joined by a space, never concatenated: ``'17 OHP'`` as
+    ``'17ohp'`` would collide with the unrelated ``'17OHP'``.
+
+    A term with no tokens (only punctuation) falls back to its casefolded,
+    whitespace-collapsed form.
     """
     tokens = tokenise(term)
     if not tokens:
