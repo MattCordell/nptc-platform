@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, all-status listing/search, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #227, #248, #249, #265, #313)
+# The catalogue admin API: entry read, all-status listing/search, length distribution, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #152, #227, #248, #249, #265, #313)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -122,6 +122,26 @@ where that token has to come from without a second read per selected row.
 
 No 404: neither route can produce one - an unmatched query or filter is an empty page,
 not a missing resource, matching the public collection routes' own contract.
+
+## Preferred-term length distribution (FR-87, issue #152)
+
+| Path | Method | Returns |
+|---|---|---|
+| `/catalogue/admin/preferred-term-length-distribution` | `GET` | `200 LengthDistributionReport {buckets: [{length, count, entries_exceeding}], maximum}` |
+
+Served by `nptc.api.routers.catalogue_admin`, gated on `catalogue.edit_published` like the
+other admin reads. It counts entries of every status. What each field means, and how to
+choose a maximum from it, is in
+[configuration.md](../operations/configuration.md#the-fr-87-length-distribution-report).
+
+### Errors (length distribution)
+
+| Status | When |
+|---|---|
+| 401 | No credential, or one that could not be verified. |
+| 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
+
+No 404 or 422: the route takes no path or query parameter.
 
 ## Code bindings
 
@@ -291,13 +311,20 @@ for the same reason those two stay apart from each other.
 | Path | Method | Body | Returns |
 |---|---|---|---|
 | `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason, expected_row_version}` | `201 {designations: [Designation], warnings: [CollisionWarning], row_version}` |
-| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], length_warning: LengthWarning \| null, row_version}` |
 | `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, row_version}` |
 | `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
 | `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
 
 `business_key` accepts any status, the same as the code binding routes, via the same
 `load_entry_for_update` loader.
+
+`length_warning` (FR-86) is `{length, max_length}`. It is `null` unless the request took the
+preferred-term branch, `NPTC_MAX_PREFERRED_TERM_LENGTH` is set, and the saved preferred term
+is longer than it. The save always succeeds: a warning never becomes a 4xx. It is a separate
+field from `warnings` because `CollisionWarning` describes another entry's synonym and has
+nowhere to carry this entry's own length. See
+[configuration.md](../operations/configuration.md#choosing-a-maximum-preferred-term-length-nptc_max_preferred_term_length).
 
 ### Addressing a designation: by term in the body, never a path segment or an id
 
@@ -885,4 +912,6 @@ HTTP methods regardless. Issue #266's `GET /catalogue/admin/entries` and
 own negative-auth coverage is `test_api_catalogue_admin_listing.py`, and
 `test_api_catalogue_admin_read.py::test_every_catalogue_admin_get_route_401s_anonymously`
 picks both up automatically (it discovers every `catalogue-admin`-tagged GET from the
-OpenAPI document rather than naming routes by hand).
+OpenAPI document rather than naming routes by hand). Issue #152's `GET /catalogue/admin/
+preferred-term-length-distribution` is a GET too, so it needs no `COVERED_WRITE_ROUTES`
+entry either; its negative-auth coverage is `test_api_catalogue_admin_length_report.py`.
