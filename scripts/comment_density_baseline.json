@@ -71,7 +71,7 @@
   "backend/src/nptc/db/models/catalogue_entry.py": {"code": 85, "prose": 74, "ratio": 0.871},
   "backend/src/nptc/db/models/code_binding.py": {"code": 172, "prose": 79, "ratio": 0.459},
   "backend/src/nptc/db/models/designation.py": {"code": 134, "prose": 77, "ratio": 0.575},
-  "backend/src/nptc/db/models/designation_collision_acknowledgement.py": {"code": 64, "prose": 34, "ratio": 0.531},
+  "backend/src/nptc/db/models/designation_collision_acknowledgement.py": {"code": 64, "prose": 33, "ratio": 0.516},
   "backend/src/nptc/db/models/local_code.py": {"code": 105, "prose": 36, "ratio": 0.343},
   "backend/src/nptc/db/models/local_code_snomed_map.py": {"code": 74, "prose": 39, "ratio": 0.527},
   "backend/src/nptc/db/models/local_code_system.py": {"code": 65, "prose": 38, "ratio": 0.585},
