@@ -189,9 +189,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _log_if_over_maximum_length(entry: CatalogueEntry, maximum: int | None) -> None:
-    """FR-86 on the write path: one warning record when `entry`'s preferred
-    term is over `maximum`, carrying the business key and the length but
-    never the term. Never raises, so an over-length term still saves."""
+    """FR-86: logs the business key and length, never the term text."""
     if maximum is None:
         return
     length = entry.length
@@ -219,7 +217,9 @@ def create_entry(
     """Creates a new entry. `business_key` is minted via
     `allocate_business_key` unless the caller supplies one explicitly - the
     seeded-import path (ADR-0010) supplies its own, positionally-derived
-    key rather than minting.
+    key rather than minting. Every bulk loader must come through here: a
+    Core `insert()` or `COPY` skips `clean_term`, so the FR-87 report's
+    `char_length` would disagree with the length FR-85 publishes.
 
     `reason` (FR-37) is validated before the append lock and before
     anything is added to the session - see the module docstring. FR-05's

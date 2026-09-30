@@ -261,11 +261,7 @@ class CatalogueEntry(Base):
         """FR-85/FR-24: the character count of `preferred_term` after the
         same whitespace cleaning applied at entry - computed here, never
         stored, never settable. See the module docstring for why this is
-        the field FR-85 is actually about.
-
-        Memoised against the term it was computed for, so a second read of
-        an unchanged term costs nothing and a reassigned or refreshed term
-        can never serve a stale figure."""
+        the field FR-85 is actually about."""
         term = self.preferred_term
         memo = self.__dict__.get("_length_memo")
         if memo is not None and memo[0] == term:

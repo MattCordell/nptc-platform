@@ -22,14 +22,17 @@ statement.
 **`char_length` on the stored column, not a second `preferred_term_length`
 implementation.** `nptc.catalogue.term_hygiene.preferred_term_length`'s own
 docstring makes "the one function every caller must use" the rule this
-report would otherwise break by recomputing a length in SQL. It does not:
-`preferred_term` is stored already cleaned (`CatalogueEntry`'s
-`@validates("preferred_term")` hook runs `clean_term` before every write), so
-`char_length` on the stored value and `preferred_term_length()` on that same
-value necessarily agree -
-`test_length_report_char_length_matches_preferred_term_length` in
-`backend/tests/test_catalogue_length_report.py` asserts that equivalence
-explicitly rather than assuming it silently.
+report would otherwise break by recomputing a length in SQL. The two agree
+only while every row reached the table through the ORM: `CatalogueEntry`'s
+`@validates("preferred_term")` hook runs `clean_term` before each ORM write,
+but a Core `insert()`, `COPY` or data migration skips it and can store a term
+`clean_term` would have shortened. Every loader must therefore write through
+`nptc.catalogue.entries.create_entry`.
+`test_char_length_matches_preferred_term_length` in
+`backend/tests/test_catalogue_length_report.py` pins the agreement for
+ORM-written rows, and
+`test_a_row_that_skips_the_orm_is_where_char_length_and_the_published_length_disagree`
+pins the gap for the rest.
 
 **Every status is counted, deliberately - this is not an oversight.**
 `build_length_histogram_statement` carries no `WHERE status = ...`, so a

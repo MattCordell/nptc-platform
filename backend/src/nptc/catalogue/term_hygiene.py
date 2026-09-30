@@ -130,10 +130,5 @@ def preferred_term_length(term: str) -> int:
 
 
 def exceeds_maximum_length(length: int, maximum: int) -> bool:
-    """FR-86: whether a preferred-term `length` is over the configured
-    `maximum`. A term exactly at the maximum is within it.
-
-    `maximum` is not optional: a caller with no configured maximum has
-    nothing to compare, so it must not compute a `length` either.
-    """
+    """FR-86: a length equal to `maximum` is within it."""
     return length > maximum

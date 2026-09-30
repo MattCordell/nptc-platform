@@ -15,15 +15,16 @@ container is shared with every other test in the run.
 from __future__ import annotations
 
 from collections import Counter
+from typing import cast
 
 import pytest
-from sqlalchemy import event, literal
+from sqlalchemy import Table, event, func, insert, literal, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 import nptc.catalogue.length_report as length_report
 from nptc.audit.writer import AuditContext
-from nptc.catalogue.entries import create_entry
+from nptc.catalogue.entries import allocate_business_key, create_entry
 from nptc.catalogue.length_report import (
     LengthBucket,
     LengthDistribution,
@@ -93,9 +94,9 @@ def test_entries_exceeding_is_the_number_of_entries_strictly_longer_than_each_le
     app_session: Session,
 ) -> None:
     """FR-86 warns when an entry's length *exceeds* the configured maximum
-    (`catalogue_designations._length_warning`'s own `<=` short-circuit) - so
-    a candidate threshold set to a given length must count entries longer
-    than it, not entries at or past it."""
+    (`term_hygiene.exceeds_maximum_length`) - so a candidate threshold set
+    to a given length must count entries longer than it, not entries at or
+    past it."""
     short = "Iron"
     long_a = "Full blood count"
     long_b = "Full blood count, automated"
@@ -278,6 +279,35 @@ def test_char_length_matches_preferred_term_length_for_a_non_ascii_term(
 
     assert after_count - before.get(cleaned_length, 0) == 1
     assert cleaned_length == preferred_term_length(entry.preferred_term)
+
+
+@pytest.mark.req("FR-87")
+@pytest.mark.req("FR-85")
+@pytest.mark.integration
+def test_a_row_that_skips_the_orm_is_where_char_length_and_the_published_length_disagree(
+    app_session: Session,
+) -> None:
+    """The premise behind `char_length` in the report: it agrees with FR-85
+    only for a term that went through `clean_term`. A Core `insert()` skips
+    `@validates`, so a trailing no-break space stays in the column and the
+    two figures differ by one. Scoped to the one row this test inserts, so it
+    asserts nothing about the rest of the shared table."""
+    nbsp = chr(0x00A0)
+    raw_term = f"Premise probe{nbsp}"
+    business_key = allocate_business_key(app_session)
+    table = cast(Table, CatalogueEntry.__table__)
+
+    app_session.execute(insert(table).values(business_key=business_key, preferred_term=raw_term))
+    stored_term, sql_length = app_session.execute(
+        select(
+            CatalogueEntry.preferred_term, func.char_length(CatalogueEntry.preferred_term)
+        ).where(CatalogueEntry.business_key == business_key)
+    ).one()
+
+    assert stored_term == raw_term
+    assert sql_length == len(raw_term)
+    assert preferred_term_length(stored_term) == len(raw_term) - 1
+    assert sql_length != preferred_term_length(stored_term)
 
 
 @pytest.mark.req("FR-87")

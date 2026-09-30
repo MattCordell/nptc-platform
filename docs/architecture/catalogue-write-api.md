@@ -326,6 +326,15 @@ field from `warnings` because `CollisionWarning` describes another entry's synon
 nowhere to carry this entry's own length. See
 [configuration.md](../operations/configuration.md#choosing-a-maximum-preferred-term-length-nptc_max_preferred_term_length).
 
+The check is not the route's alone. `nptc.catalogue.entries.create_entry`, `save_entry` and
+`save_entries` take an optional `max_preferred_term_length`, and when a written preferred term
+is over it they log one warning carrying the business key and the length (never the term). They
+never raise, and a save that does not change the term logs nothing. The route passes
+`NPTC_MAX_PREFERRED_TERM_LENGTH` to `save_entry`, so a writer other than this route can opt in
+the same way. All three callers, and the FR-87 report's `entries_exceeding`, decide "over the
+maximum" with `nptc.catalogue.term_hygiene.exceeds_maximum_length`: a length equal to the
+maximum is within it.
+
 ### Addressing a designation: by term in the body, never a path segment or an id
 
 The public `Designation` model carries no `id` (NFR-04/NFR-26, the same rule
