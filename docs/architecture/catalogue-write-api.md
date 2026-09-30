@@ -321,7 +321,7 @@ for the same reason those two stay apart from each other.
 
 `length_warning` (FR-86) is `{length, max_length}`. It is `null` unless the request took the
 preferred-term branch, `NPTC_MAX_PREFERRED_TERM_LENGTH` is set, and the saved preferred term
-is longer than it. The save always succeeds: a warning never becomes a 4xx. It is a separate
+is longer than it. The length warning never blocks the save or becomes a 4xx of its own. It is a separate
 field from `warnings` because `CollisionWarning` describes another entry's synonym and has
 nowhere to carry this entry's own length. See
 [configuration.md](../operations/configuration.md#choosing-a-maximum-preferred-term-length-nptc_max_preferred_term_length).
@@ -870,6 +870,9 @@ that name a status, so nothing checks for this case.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.
+- Showing `length_warning` to an editor. The designations panel forwards only
+  `result.warnings`, so no screen renders the field yet, and FR-86 stays `in-progress`
+  in `docs/requirements/requirements.yaml` until issue #367 does.
 - Server-side SCTID resolution for the code binding form. `POST .../bindings` and
   `/replacement` still take `fsn`/`au_preferred_term` as caller-supplied fields, exactly
   as documented above - issue #240 (FR-26) adds `GET /api/v1/terminology/concepts/{code}`
@@ -912,6 +915,7 @@ HTTP methods regardless. Issue #266's `GET /catalogue/admin/entries` and
 own negative-auth coverage is `test_api_catalogue_admin_listing.py`, and
 `test_api_catalogue_admin_read.py::test_every_catalogue_admin_get_route_401s_anonymously`
 picks both up automatically (it discovers every `catalogue-admin`-tagged GET from the
-OpenAPI document rather than naming routes by hand). Issue #152's `GET /catalogue/admin/
-preferred-term-length-distribution` is a GET too, so it needs no `COVERED_WRITE_ROUTES`
-entry either; its negative-auth coverage is `test_api_catalogue_admin_length_report.py`.
+OpenAPI document rather than naming routes by hand). Issue #152's
+`GET /catalogue/admin/preferred-term-length-distribution` is a GET too, so it needs no
+`COVERED_WRITE_ROUTES` entry either; its negative-auth coverage is
+`test_api_catalogue_admin_length_report.py`.
