@@ -1,66 +1,41 @@
-"""The `designation` table: catalogue-side preferred/synonym designations
-(issue #47, FR-04, FR-24, FR-37, FR-85). See PRD §6.3.
+"""The `designation` table: catalogue-side preferred and synonym designations (FR-04, FR-24, FR-37,
+FR-85). See PRD §6.3.
 
-**This table is catalogue-side only - it never stores a SNOMED CT-served
-label.** There are three preferred-term-shaped strings in this platform, and
-they live in three different places with three different edit postures:
+**Catalogue-side only: it never stores a SNOMED CT-served label (ADR-0022).** Three
+preferred-term-shaped strings live in three places:
 
-- The RCPA/catalogue preferred term - `catalogue_entry.preferred_term`
-  (issue #46), user-maintained, and exists *before* any code binding is
-  created.
-- The SNOMED CT-AU preferred term - `code_binding.au_preferred_term`
-  (issue #48), stored exactly as served (FR-82), never editable.
-- The SNOMED CT Fully Specified Name - `code_binding.fsn` (issue #48), as
-  served, semantic tag intact, never editable.
+- The RCPA/catalogue preferred term is `catalogue_entry.preferred_term`. Users maintain it, and it
+  exists before any code binding.
+- The SNOMED CT-AU preferred term is `code_binding.au_preferred_term`, stored as served (FR-82) and
+  never editable.
+- The SNOMED CT Fully Specified Name is `code_binding.fsn`, as served with its semantic tag, and
+  never editable.
 
-Copying a served label into a `designation` row would destroy FR-82's
-as-served guarantee and make an unchangeable label editable through this
-table's write path, so `designation` holds only catalogue-authored
-synonyms and non-en-AU preferred-term variants. The catalogue's own en-AU
-preferred term stays exactly where #46 put it -
-`catalogue_entry.preferred_term` - never duplicated into a row here; see
-`_NO_EN_AU_PREFERRED_CHECK_SQL` below for the constraint that makes that a
-database invariant rather than a convention.
+So `designation` holds only catalogue-authored synonyms and non-en-AU preferred variants. Copying a
+served label here would make it editable and break FR-82. The catalogue's en-AU preferred term is
+never duplicated here; `_NO_EN_AU_PREFERRED_CHECK_SQL` enforces that.
 
-**`length` has no column, anywhere.** FR-85's `Length` is specifically the
-*catalogue's* preferred term's character count (PRD §6.5), which lives on
-`CatalogueEntry.preferred_term` - see that model's own `length` property
-for the field FR-85 is actually about. `Designation.length` below is the
-same computation applied to a designation's own `term` (a synonym or a
-non-en-AU preferred variant) - useful for the same reason, but not itself
-the FR-85 published figure. Neither gets a column: giving either one a
-column at all, even one nothing ever writes to, would leave a seam a
-future migration could accidentally populate. Both are bare Python
-`@property`s, computed by `nptc.catalogue.term_hygiene.
-preferred_term_length`, with deliberately no setter.
+**`length` has no column.** FR-85's `Length` is the character count of the catalogue's preferred
+term (PRD §6.5; see `CatalogueEntry.length`). `Designation.length` applies the same computation to a
+designation's `term` but is not the published FR-85 figure. Neither gets a column, because even one
+nothing writes to would leave a seam for a migration to populate. Both are `@property`s over
+`nptc.catalogue.term_hygiene.preferred_term_length`, with no setter.
 
-**Never `DELETE`d, only retired.** A designation that stops being current
-moves to `status='retired'` (mirroring `CatalogueEntryStatus.WITHDRAWN`'s
-own precedent) - `nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a
-privilege-level guarantee, the same trick already used for
-`catalogue_entry`.
+**Never `DELETE`d, only retired.** A designation moves to `status='retired'`, as
+`CatalogueEntryStatus.WITHDRAWN` does. `nptc.db.roles.REVOKE_DESIGNATION_DELETE_SQL` makes this a
+privilege-level guarantee.
 
-**`retired_at`, issue #313.** Mirrors `code_binding.retired_at` (issue
-#140, FR-17) exactly: mandatory when `status = 'retired'`, forbidden
-otherwise (`_RETIRED_AT_CHECK_SQL` below), set by `retire_designation` and
-cleared by `reinstate_designation`. It exists so two retired rows sharing
-one `entry_id`/`term_key`/`language` - a term added, retired, and re-added
-twice over - have a real ordering column to break the tie on
-(`retired_at DESC`, then `id ASC`), the same reasoning
-`get_entry_by_code`'s multi-way retired-binding tie-break already applies.
-`__audit_ignored_fields__`, matching `code_binding.retired_at`'s own
-treatment: bookkeeping the audit event's own timestamp already covers, not
-an independent business fact.
+**`retired_at`.** As `code_binding.retired_at` (FR-17): mandatory when `status = 'retired'`,
+forbidden otherwise (`_RETIRED_AT_CHECK_SQL`), set by `retire_designation` and cleared by
+`reinstate_designation`. It orders retired rows that share one `entry_id`, `term_key` and `language`
+(`retired_at DESC`, then `id ASC`). It is `__audit_ignored_fields__`, as on `code_binding`.
 
-**`term_key` is FR-05's comparison form, stored and indexed (issue #49).**
-The same `@validates("term")` hook that cleans the term also derives
-`term_key` via `nptc_shared.similarity.collision_key` - casefolded, with
-punctuation and whitespace folded to a separator, strictly stronger than
-`clean_term`'s own whitespace-only fold. Stored rather than a bare
-`@property` (unlike `length` above) because `nptc.catalogue.collisions`
-needs an indexed equality lookup across every entry's designations, not a
-per-row computation. Never independently meaningful once `term` is set,
-so it is `__audit_ignored__`.
+**`term_key` is FR-05's comparison form, stored and indexed.** The `@validates("term")` hook that
+cleans the term also derives `term_key` with `nptc_shared.similarity.collision_key`: casefolded,
+with punctuation and whitespace folded to a separator, which is stronger than `clean_term`'s
+whitespace fold. It is stored rather than a `@property` because `nptc.catalogue.collisions` needs an
+indexed equality lookup across every entry's designations. It is never meaningful on its own, so it
+is `__audit_ignored_fields__`.
 """
 
 from __future__ import annotations
@@ -106,40 +81,29 @@ class DesignationStatus(StrEnum):
     RETIRED = "retired"
 
 
-#: Plain string literals, never built from the `StrEnum`s above -
-#: `test_sql_parameterisation.py`'s AST guard forbids SQL built from
-#: runtime data, matching `catalogue_entry.py`'s own precedent.
+#: Plain literals, never built from the `StrEnum`s above: `test_sql_parameterisation.py`'s AST guard
+#: forbids SQL built from runtime data.
 _USE_CHECK_SQL = "use IN ('preferred','synonym')"
 _STATUS_CHECK_SQL = "status IN ('active','retired')"
-#: Same shape as `user_identity.py`'s `issuer_not_blank`/`subject_not_blank` -
-#: a blank term that silently matches every other blank term is a defect
-#: worth a constraint, not just a code-review note.
+#: A blank term would silently match every other blank term.
 _TERM_NOT_BLANK_SQL = "length(btrim(term)) > 0"
-#: A syntactic BCP-47 well-formedness check at the database layer too, not
-#: only in `nptc_shared.language.is_well_formed_language_tag` (which this
-#: model's own `@validates("language")` hook calls) - so a row inserted by
-#: anything other than that hook (a future bulk-load path, say) still
-#: can't carry a malformed tag. Built from `LANGUAGE_TAG_PATTERN.pattern`
-#: rather than hand-copied, so the two can never silently diverge -
-#: `test_designation_language_check_matches_the_shared_pattern` pins this.
+#: BCP-47 well-formedness at the database layer too, so a row inserted outside the
+#: `@validates("language")` hook (a future bulk load) cannot carry a malformed tag. Built from
+#: `LANGUAGE_TAG_PATTERN.pattern` so the two cannot diverge;
+#: `test_designation_language_check_agrees_with_the_shared_pattern` pins it.
 _LANGUAGE_CHECK_SQL = f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"
-#: The database-layer half of "the catalogue en-AU preferred term lives in
-#: exactly one place" (module docstring) - `catalogue_entry.preferred_term`,
-#: never a `designation` row. A non-en-AU catalogue-authored preferred
-#: variant is still permitted.
+#: The database half of "the en-AU preferred term lives only in `catalogue_entry.preferred_term`". A
+#: non-en-AU preferred variant is still permitted.
 _NO_EN_AU_PREFERRED_CHECK_SQL = "NOT (use = 'preferred' AND language = 'en-AU')"
-#: FR-17-style tie-break column for designations (issue #313): mandatory
-#: exactly when retired, forbidden otherwise - mirrors
-#: `code_binding._RETIRED_AT_CHECK_SQL` exactly.
+#: Mandatory exactly when retired, forbidden otherwise; mirrors
+#: `code_binding._RETIRED_AT_CHECK_SQL`.
 _RETIRED_AT_CHECK_SQL = "(status = 'retired') = (retired_at IS NOT NULL)"
 
 
 class Designation(Base):
     __tablename__ = "designation"
 
-    # nptc.audit.policy (issue #37, NFR-08): every real column classified.
-    # id/created_at/updated_at are ignored, matching every other model's
-    # own treatment of its primary key and bookkeeping timestamps.
+    # nptc.audit.policy (NFR-08): every real column classified.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
         {"entry_id", "term", "use", "language", "status"}
     )
@@ -155,10 +119,8 @@ class Designation(Base):
         CheckConstraint(_LANGUAGE_CHECK_SQL, name="language"),
         CheckConstraint(_NO_EN_AU_PREFERRED_CHECK_SQL, name="no_en_au_preferred"),
         CheckConstraint(_RETIRED_AT_CHECK_SQL, name="retired_at"),
-        # Explicit names throughout: NAMING_CONVENTION's "ix" rule keys off
-        # `column_0_label` alone, so two partial indexes both leading with
-        # `entry_id` would otherwise both autogenerate the same name and
-        # collide.
+        # Explicit names: NAMING_CONVENTION's `ix` rule keys off `column_0_label` alone, so two
+        # partial indexes leading with `entry_id` would autogenerate the same name.
         Index(
             "ix_designation_one_active_preferred_per_entry_language",
             "entry_id",
@@ -166,14 +128,10 @@ class Designation(Base):
             unique=True,
             postgresql_where=text("status = 'active' AND use = 'preferred'"),
         ),
-        # No duplicate active (entry_id, term_key, language) - the same
-        # synonym attached twice to one entry (whether from a doubled
-        # delimiter, a whitespace variant, or now a case/punctuation
-        # variant, PRD Appendix A.4) collapses to one row rather than being
-        # representable at all. Keyed on `term_key`, not `term`, since
-        # issue #49 - two surface forms that fold to the same collision key
-        # are one synonym for this purpose, matching `add_synonyms`'s own
-        # dedup-before-insert behaviour.
+        # No duplicate active (entry_id, term_key, language): the same synonym attached twice
+        # (doubled delimiter, whitespace, case or punctuation variant; PRD Appendix A.4) collapses
+        # to one row. Keyed on `term_key` so surface forms that fold together count as one synonym,
+        # matching `add_synonyms`'s dedup.
         Index(
             "ix_designation_no_duplicate_active_term",
             "entry_id",
@@ -182,17 +140,12 @@ class Designation(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
-        # FR-05, issue #49: an indexed lookup for a cross-entry collision -
-        # `nptc.catalogue.collisions` filters this by `status`/entry status
-        # in the query itself, so a plain btree (not partial) index is
-        # sufficient here.
+        # FR-05: an indexed lookup for cross-entry collisions. `nptc.catalogue.collisions` filters
+        # status in the query, so a plain btree suffices.
         Index("ix_designation_term_key", "term_key"),
-        # FR-14/FR-15, issue #142: the synonym half of the public catalogue
-        # search - see `CatalogueEntry`'s own trigram index for why this is
-        # declared in the model as well as in migration 0012. Partial on
-        # `status = 'active'`, unlike the entry-side index: a retired
-        # synonym is history, never a way into the catalogue, so search
-        # never matches one.
+        # FR-14/FR-15: the synonym half of public search (see `CatalogueEntry`'s trigram index for
+        # why it is declared in the model and in a migration). Partial on `status = 'active'`,
+        # unlike the entry-side index: a retired synonym is history and search never matches it.
         Index(
             "ix_designation_term_trgm",
             text("nptc_search_text(term)"),
@@ -200,11 +153,7 @@ class Designation(Base):
             postgresql_ops={"nptc_search_text(term)": "gin_trgm_ops"},
             postgresql_where=text("status = 'active'"),
         ),
-        # FR-14/FR-15, issue #138: the full-text half over the same rows.
-        # See `CatalogueEntry`'s own FTS index for why both index types are
-        # needed and why no `postgresql_ops` is declared. Partial on
-        # `status = 'active'` for the same reason as the trigram index
-        # immediately above.
+        # FR-14/FR-15: the full-text half over the same rows; partial for the same reason.
         Index(
             "ix_designation_term_fts",
             text("nptc_search_document(term)"),
@@ -218,10 +167,8 @@ class Designation(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # `active_history=True` on every column named in __audit_fields__ above
-    # (issue #37) - without it, diff_instance's load_history() call cannot
-    # recover a prior value reassigned on this instance before it was ever
-    # (re)loaded.
+    # `active_history=True` on every column in `__audit_fields__`: without it `diff_instance`'s
+    # `load_history()` cannot recover a prior value reassigned before the instance was loaded.
     entry_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("catalogue_entry.id"),
@@ -230,18 +177,11 @@ class Designation(Base):
         active_history=True,
     )
     term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
-    # FR-05/issue #49: derived from `term` by the same `@validates` hook
-    # below - never independently assignable through the ORM. See the
-    # module docstring. `server_default=''` exists only so a raw INSERT
-    # that bypasses the ORM entirely (every `backend/tests/test_db_*.py`
-    # constraint/privilege test) still satisfies `NOT NULL` - every write
-    # that goes through `Designation` itself always supplies the real,
-    # computed value, which overrides this default.
+    # FR-05: derived from `term` by the `@validates` hook below, never assigned directly.
+    # `server_default=''` exists only so a raw INSERT that bypasses the ORM still satisfies
+    # `NOT NULL`; every ORM write supplies the computed value.
     term_key: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
-    # Plain literals, not built from the `StrEnum`s above -
-    # `test_sql_parameterisation.py`'s AST guard forbids a SQL call's first
-    # argument being built from an f-string, matching `catalogue_entry.py`'s
-    # own `status` column precedent.
+    # Plain literals, not built from the `StrEnum`s above; see `_USE_CHECK_SQL`.
     use: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'synonym'"), active_history=True
     )
@@ -251,10 +191,7 @@ class Designation(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'active'"), active_history=True
     )
-    #: Issue #313, mirroring `code_binding.retired_at` (FR-17). Set by
-    #: `retire_designation`, cleared by `reinstate_designation` - see the
-    #: module docstring for why this is a real column rather than an
-    #: `updated_at` proxy.
+    #: Mirrors `code_binding.retired_at` (FR-17); see the module docstring.
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -265,11 +202,10 @@ class Designation(Base):
 
     @validates("entry_id")
     def _validate_entry_id_immutable(self, _key: str, value: uuid.UUID) -> uuid.UUID:
-        """A designation is retired and re-created on a different entry,
-        never reparented (matching `CatalogueEntry.business_key`'s own
-        immutability guard) - `nptc.db.roles.GRANT_DESIGNATION_UPDATE_SQL`'s
-        column exclusion is the actual database invariant; this is the
-        fail-loud Python-level layer."""
+        """A designation is retired and re-created on another entry, never reparented.
+        `nptc.db.roles.GRANT_DESIGNATION_UPDATE_SQL`'s column exclusion is the database invariant;
+        this is the fail-loud Python layer.
+        """
         if "entry_id" in self.__dict__ and self.__dict__["entry_id"] is not None:
             raise ImmutableFieldError(
                 "Designation.entry_id is immutable and cannot be reassigned "
@@ -289,11 +225,7 @@ class Designation(Base):
 
     @property
     def length(self) -> int:
-        """The character count of this designation's own `term` - the
-        same computation FR-85 requires for `CatalogueEntry.
-        preferred_term` (see that model's own `length` property for the
-        field FR-85 actually publishes), applied here for a synonym or a
-        non-en-AU preferred variant. Never stored, never settable - see
-        the module docstring for why this is a bare `@property` with no
-        backing column at all."""
+        """The character count of this designation's own `term`. Not the FR-85 published figure (see
+        the module docstring). Never stored or settable.
+        """
         return preferred_term_length(self.term)

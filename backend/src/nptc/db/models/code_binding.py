@@ -1,76 +1,36 @@
-"""The `code_binding` table: the terminology server's served labels for a
-`catalogue_entry` (issue #48, FR-06, FR-08, FR-82, FR-83). See PRD SS6.4.
+"""The `code_binding` table: the terminology server's served labels for a `catalogue_entry` (FR-06,
+FR-08, FR-82, FR-83). See PRD SS6.4.
 
-**Stored exactly as served, forever (FR-82).** `fsn` and `au_preferred_term`
-carry no `@validates` hook at all - unlike `Designation.term`/
-`CatalogueEntry.preferred_term`, which both run their value through a
-whitespace-cleaning hook before it is ever assigned. That asymmetry is
-deliberate: a stored value that has been transformed cannot be
-distinguished from one that has not, and that ambiguity is the entire source
-of FR-83's tag-stripping hazard - strip `Microscopy (acid fast bacilli)
-(procedure)` twice and you silently get `Microscopy`. `docs/adr/0022-
-designation-storage.md` is the sibling decision that keeps a served label out
-of `designation` for the same reason; this module is the other half of that
-decision, where the served labels actually live.
+**Stored exactly as served (FR-82).** `fsn` and `au_preferred_term` have no `@validates` hook,
+unlike `Designation.term` and `CatalogueEntry.preferred_term`. A transformed value cannot be told
+from an untransformed one, which is the ambiguity behind FR-83's tag-stripping hazard: stripping
+`Microscopy (acid fast bacilli) (procedure)` twice silently gives `Microscopy`. ADR-0022 keeps
+served labels out of `designation` for the same reason. `backend/tests/test_catalogue_bindings.py`
+fails if this module references the term-cleaning helper or the export renderer's semantic-tag
+strip.
 
-`backend/tests/test_catalogue_bindings.py` pins this module's source as
-having no reference to the cleaning helper `nptc.catalogue.term_hygiene`
-exposes, nor to the export renderer's semantic-tag strip - a future edit
-that starts transforming either column at write time fails a test rather
-than passing review unnoticed.
+**`code` is `TEXT`, never numeric, and the database enforces both halves of FR-06** (`^[0-9]{6,18}$`
+and the Verhoeff check digit) through `nptc_sctid_is_valid` (`nptc.db.functions`, ADR-0023), not
+only through `nptc.catalogue.bindings.create_binding`.
 
-**`code` is `TEXT`, never numeric, and the database itself enforces both
-halves of FR-06** - `^[0-9]{6,18}$` and the Verhoeff check digit - via
-`nptc_sctid_is_valid` (`nptc.db.functions`, issue #48/ADR-0023). A malformed
-or Verhoeff-failing SCTID is rejected at the database layer, not only by
-`nptc.catalogue.bindings.create_binding`'s own `SCTID(...)` construction.
+**A binding is retired, never deleted (FR-08).** `nptc.db.roles.REVOKE_CODE_BINDING_DELETE_SQL`
+enforces this, as `REVOKE_DESIGNATION_DELETE_SQL` does for `Designation`, with two differences.
+`retirement_reason` is mandatory exactly when `status = 'retired'`. `replaced_by_binding_id` is set
+only when a code is replaced; a withdrawn code leaves it `NULL`. `entry_id`, `system` and `code` are
+excluded from the `UPDATE` grant, so rebinding to a different concept is a retire-and-replace and
+FR-82's provenance is a privilege-level invariant. `fsn` and `au_preferred_term` stay updatable so
+the FR-45 validation sweep can refresh a drifted label.
 
-**A binding is retired, never deleted (FR-08).** Mirrors `Designation`'s own
-"never `DELETE`d, only retired" precedent
-(`nptc.db.roles.REVOKE_CODE_BINDING_DELETE_SQL`), with two differences a
-designation doesn't need: `retirement_reason` is mandatory exactly when
-`status = 'retired'` (`ck_code_binding_retirement_reason` below), and
-`replaced_by_binding_id` is populated only in the replacement case PRD FR-08
-actually describes ("where a code is being replaced following
-inactivation") - a code simply withdrawn with no successor leaves it `NULL`.
-`entry_id`, `system` and `code` are excluded from the `UPDATE` grant for the
-same reason `business_key` is excluded on `catalogue_entry`: rebinding to a
-different concept is a retire-and-replace, never an in-place edit - that is
-what makes FR-82's provenance guarantee a privilege-level invariant rather
-than an application convention. `fsn`/`au_preferred_term` *are* updatable:
-the FR-45 validation sweep must be able to refresh a drifted label from the
-server, which is a refresh from the wire, not a re-derivation.
+**One active binding per code (FR-08).** `ix_code_binding_one_active_per_entry` stops one entry
+holding two active bindings. `ix_code_binding_one_active_entry_per_code` stops one code being active
+on two entries. Both are partial on `status = 'active'`, so a retired code is immediately
+rebindable. `create_binding`'s pre-insert check only turns the violation into a domain error.
 
-**Blocking severity, issue #49: one active binding per code, full stop.**
-`ix_code_binding_one_active_per_entry` above only rules out *one entry*
-holding two active bindings; it says nothing about the same code being
-bound active on *two different* entries, which is FR-08's other
-half. `ix_code_binding_one_active_entry_per_code` below closes that gap -
-a genuine database invariant, not merely `nptc.catalogue.bindings.
-create_binding`'s own pre-insert check, which exists only so the
-rejection is a domain error rather than a raw `IntegrityError`. Partial on
-`status = 'active'`, matching every other index on this table, so a code
-freed by retirement is immediately rebindable elsewhere.
-
-**`retired_at`, issue #140 (FR-17).** `ix_code_binding_one_active_entry_
-per_code` above is scoped to *active* bindings only - two different
-entries can each hold the same code as a *retired* binding (a code is
-retired and replaced, never rebound in place, so each retirement is a new
-row), which is the one place FR-17's "unambiguous" lookup needs a
-tie-break. `retired_at` (mandatory exactly when `status = 'retired'`,
-mirroring `retirement_reason`'s own CHECK) is that tie-break's ordering
-column - `nptc.catalogue.queries.get_entry_by_code` orders a multi-way
-retired collision by `retired_at DESC, business_key ASC`, see
-`docs/adr/0033-exact-code-lookup-routes.md`. Set once, by
-`nptc.catalogue.bindings.retire_binding`, alongside `status`/
-`retirement_reason` - never updated again, but not immutable at the
-database layer the way `code`/`entry_id` are, since nothing else in this
-table treats a retirement as reversible enough to need that guard.
-`__audit_ignored_fields__`, not `__audit_fields__`: it is bookkeeping
-rather than an independent business fact, the same treatment
-`created_at`/`updated_at` already get - the audit event's own timestamp
-already records when the retirement happened, and `retirement_reason`
-(which *is* audited) carries the human-readable half of that transition.
+**`retired_at` (FR-17).** Mandatory exactly when `status = 'retired'`. It orders a multi-way retired
+collision (`retired_at DESC, business_key ASC`, ADR-0033), because two entries can each hold the
+same code as a retired binding. `nptc.catalogue.bindings.retire_binding` sets it once. It is
+`__audit_ignored_fields__`, like `created_at`: the audit event's own timestamp records when the
+retirement happened.
 """
 
 from __future__ import annotations
@@ -94,9 +54,8 @@ __all__ = [
     "CodeBindingStatus",
 ]
 
-#: PRD SS6.4's default system URI. Not itself a column-level CHECK - PRD SS6.4
-#: dropped the speculative `binding_role`/LOINC anticipation, and pinning
-#: `system` to one value would be that speculation inverted.
+#: PRD SS6.4's default system URI. Not a column CHECK: PRD SS6.4 dropped the speculative
+#: `binding_role`/LOINC anticipation, and pinning `system` to one value would invert that.
 SNOMED_CT_SYSTEM = "http://snomed.info/sct"
 
 
@@ -111,9 +70,8 @@ class CodeBindingStatus(StrEnum):
     RETIRED = "retired"
 
 
-#: Plain string literals, never built from the `StrEnum`s above - matches
-#: `designation.py`'s/`catalogue_entry.py`'s own precedent, enforced by
-#: `test_sql_parameterisation.py`'s AST guard.
+#: Plain literals, never built from the `StrEnum`s above: `test_sql_parameterisation.py`'s AST guard
+#: forbids SQL built from runtime data.
 _SYSTEM_NOT_BLANK_SQL = "length(btrim(system)) > 0"
 _FSN_NOT_BLANK_SQL = "length(btrim(fsn)) > 0"
 _AU_PREFERRED_TERM_NOT_BLANK_SQL = (
@@ -121,31 +79,24 @@ _AU_PREFERRED_TERM_NOT_BLANK_SQL = (
 )
 _EDITION_HINT_CHECK_SQL = "edition_hint IN ('au','int','unknown')"
 _STATUS_CHECK_SQL = "status IN ('active','retired')"
-#: FR-08: mandatory exactly when retired, forbidden while active - so a
-#: retirement reason can never linger on a binding that becomes active again
-#: (bindings are never reactivated, but the constraint costs nothing extra to
-#: hold that line too).
+#: FR-08: mandatory exactly when retired, forbidden while active.
 _RETIREMENT_REASON_CHECK_SQL = (
     "(status = 'retired') = "
     "(retirement_reason IS NOT NULL AND length(btrim(retirement_reason)) > 0)"
 )
 _REPLACED_BY_REQUIRES_RETIRED_SQL = "replaced_by_binding_id IS NULL OR status = 'retired'"
 _NO_SELF_SUPERSESSION_SQL = "replaced_by_binding_id IS NULL OR replaced_by_binding_id <> id"
-#: FR-17, issue #140: mandatory exactly when retired, forbidden while
-#: active - mirrors `_RETIREMENT_REASON_CHECK_SQL` above exactly, and exists
-#: for the same reason: a real timestamp to order a multi-way retired-code
-#: collision by, rather than a proxy (`updated_at` moves on any column
-#: update, not only a retirement).
+#: FR-17: mandatory exactly when retired, forbidden while active. A real timestamp to order retired
+#: collisions by, because `updated_at` moves on any column update.
 _RETIRED_AT_CHECK_SQL = "(status = 'retired') = (retired_at IS NOT NULL)"
-#: The database-layer half of FR-06 - see the module docstring and
-#: `nptc.db.functions.CREATE_SCTID_VALIDATION_FUNCTION_SQL`.
+#: The database half of FR-06; see the module docstring.
 _CODE_CHECK_SQL = "nptc_sctid_is_valid(code)"
 
 
 class CodeBinding(Base):
     __tablename__ = "code_binding"
 
-    # nptc.audit.policy (issue #37, NFR-08): every real column classified.
+    # nptc.audit.policy (NFR-08): every real column classified.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
         {
             "entry_id",
@@ -160,12 +111,7 @@ class CodeBinding(Base):
         }
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
-    # `retired_at` joins `created_at`/`updated_at` here rather than
-    # `__audit_fields__` above: it is bookkeeping, not an independent
-    # business fact - the audit event's own timestamp already records when
-    # the `code_binding.retired` action happened, and `retirement_reason`
-    # (which *is* audited) already carries the human-readable half of the
-    # same transition.
+    # Bookkeeping, not an independent business fact; see the module docstring.
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
         {"id", "created_at", "updated_at", "retired_at"}
     )
@@ -181,18 +127,15 @@ class CodeBinding(Base):
         CheckConstraint(_RETIRED_AT_CHECK_SQL, name="retired_at"),
         CheckConstraint(_REPLACED_BY_REQUIRES_RETIRED_SQL, name="replaced_by_requires_retired"),
         CheckConstraint(_NO_SELF_SUPERSESSION_SQL, name="no_self_supersession"),
-        # FR-08: at most one active binding per entry - a partial unique
-        # index, explicit name (NAMING_CONVENTION's `ix` rule keys off
-        # `column_0_label` alone, matching `designation.py`'s own
-        # precedent for why this can't be left to autogeneration).
+        # FR-08: at most one active binding per entry. The name is explicit because
+        # NAMING_CONVENTION's `ix` rule keys off `column_0_label` alone (as in `designation.py`).
         Index(
             "ix_code_binding_one_active_per_entry",
             "entry_id",
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
-        # FR-08/issue #49: at most one active binding per code, across every
-        # entry - the module docstring's "blocking severity" invariant.
+        # FR-08: at most one active binding per code, across every entry.
         Index(
             "ix_code_binding_one_active_entry_per_code",
             "system",
@@ -200,48 +143,27 @@ class CodeBinding(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
-        # FR-17, issue #140: `nptc.catalogue.queries.get_entry_by_code`'s
-        # lookup, which must see retired rows as well as active ones (FR-08),
-        # so it carries no `status` predicate the index above's partial
-        # `WHERE status = 'active'` could be proven to satisfy - the planner
-        # cannot use a partial index for a query that does not repeat its
-        # predicate. Deliberately non-partial and non-unique (two entries can
-        # legitimately share a *retired* binding on the same code - see
-        # `docs/adr/0033-exact-code-lookup-routes.md`), so it exists purely
-        # to make the exact-code lookup route an index scan rather than a
-        # sequential one; `test_db_code_binding_index_plan.py` proves it.
+        # FR-17: `nptc.catalogue.queries.get_entry_by_code` must see retired rows too, so its query
+        # carries no `status` predicate and the planner cannot use the partial indexes above.
+        # Non-partial and non-unique because two entries can share a retired binding on one code
+        # (ADR-0033); `test_db_code_binding_index_plan.py` proves the index scan.
         Index("ix_code_binding_system_code", "system", "code"),
-        # FR-14, issue #138: the three fields this table contributes to the
-        # single search box. All five indexes below are partial on
-        # `status = 'active'`, matching `ix_designation_term_trgm`'s reason
-        # exactly - a retired binding is history, and search never returns a
-        # way into the catalogue through a code or label that was withdrawn.
-        # `_SEARCH_SQL` spells that predicate as the literal `'active'` so
-        # the planner can prove these partial indexes cover the query.
+        # FR-14: this table's contribution to the single search box. All five indexes below are
+        # partial on `status = 'active'`, like `ix_designation_term_trgm`: a retired binding is
+        # history and search never returns it. `_SEARCH_SQL` spells the predicate as the literal
+        # `'active'` so the planner can prove the indexes cover the query.
         #
-        # The code is matched by equality, not similarity, so it gets a
-        # btree rather than a trigram index. `ix_code_binding_one_active_
-        # entry_per_code` above cannot serve the lookup despite covering the
-        # same column: `code` is its *second* column, and the search box has
-        # no `system` to offer as a leading equality qualifier. Trigram over
-        # an 8-digit string was considered and rejected in ADR-0029 - a code
-        # is right or wrong, and near-miss digit runs clear the 0.3 threshold
-        # in bulk.
+        # The code is matched by equality, so it gets a btree; ADR-0029 rejects trigram over digits.
+        # `ix_code_binding_one_active_entry_per_code` cannot serve the lookup, because `code` is its
+        # second column and the search box has no `system` to lead with.
         Index(
             "ix_code_binding_code",
             "code",
             postgresql_where=text("status = 'active'"),
         ),
-        # The two stored SNOMED labels, each indexed both ways - see
-        # `CatalogueEntry`'s trigram/FTS pair for why both mechanisms and why
-        # only the trigram indexes declare `postgresql_ops`. Both are indexed
-        # tag-intact, exactly as stored (FR-82): the semantic tag is extra
-        # text to trigram and its own lexeme to full-text, so an FSN searched
-        # with the tag typed in full and the same FSN with it omitted both
-        # reach the entry without a second, stripped copy of the column. See
-        # ADR-0029 on why a SQL-side tag stripper was rejected (it would put
-        # a second copy of the semantic-tag regex in the database, which
-        # ADR-0006 records as the defect class FR-83 exists to prevent).
+        # The two stored labels, each indexed both ways (trigram and full-text; see
+        # `CatalogueEntry`). Both are indexed tag-intact, as stored (FR-82), so an FSN searched with
+        # or without its semantic tag reaches the entry. ADR-0029 rejects a SQL-side tag stripper.
         Index(
             "ix_code_binding_fsn_trgm",
             text("nptc_search_text(fsn)"),
@@ -255,11 +177,9 @@ class CodeBinding(Base):
             postgresql_using="gin",
             postgresql_where=text("status = 'active'"),
         ),
-        # `au_preferred_term` is nullable, and both `nptc_search_text` and
-        # `nptc_search_document` are `STRICT`, so a binding without one
-        # indexes as NULL and is simply unfindable through this column -
-        # which is correct, and the reason the strictness of those functions
-        # is a correctness property rather than tidiness.
+        # `au_preferred_term` is nullable and `nptc_search_text`/`nptc_search_document` are
+        # `STRICT`, so a binding without one indexes as NULL and is unfindable through this column.
+        # That is correct, so the strictness is a correctness property.
         Index(
             "ix_code_binding_au_preferred_term_trgm",
             text("nptc_search_text(au_preferred_term)"),
@@ -280,8 +200,7 @@ class CodeBinding(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # `active_history=True` on every column named in __audit_fields__ above
-    # (issue #37) - matches `designation.py`'s own precedent.
+    # `active_history=True` on every column in `__audit_fields__`, as in `designation.py`.
     entry_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("catalogue_entry.id"),
@@ -289,12 +208,8 @@ class CodeBinding(Base):
         index=True,
         active_history=True,
     )
-    # A plain literal, not built from `SNOMED_CT_SYSTEM` -
-    # `test_sql_parameterisation.py`'s AST guard rejects an f-string
-    # first argument to `text(...)` even when the interpolated value is a
-    # module-level constant, matching `designation.py`'s own
-    # `use`/`language`/`status` defaults, which are hand-written literals
-    # for the same reason.
+    # A plain literal, not built from `SNOMED_CT_SYSTEM`: `test_sql_parameterisation.py`'s AST guard
+    # rejects an f-string first argument to `text(...)`.
     system: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -302,9 +217,7 @@ class CodeBinding(Base):
         active_history=True,
     )
     code: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
-    # No `@validates` hook on `fsn`/`au_preferred_term` - see module
-    # docstring: a served label is stored exactly as served (FR-82), never
-    # cleaned, trimmed or otherwise transformed at rest.
+    # No `@validates` hook: a served label is stored as served (FR-82); see the module docstring.
     fsn: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
     au_preferred_term: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     edition_hint: Mapped[str] = mapped_column(
@@ -320,11 +233,8 @@ class CodeBinding(Base):
         active_history=True,
     )
     retirement_reason: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
-    #: FR-17, issue #140 - see the module docstring's `retired_at` note.
-    #: No `active_history=True`: that flag matters only for `auditable |
-    #: withheld` fields (`policy_for`), and this column is
-    #: `__audit_ignored_fields__` - it would buy nothing but an extra
-    #: old-value load on every set.
+    #: No `active_history=True`: it matters only for auditable or withheld fields, and this column
+    #: is `__audit_ignored_fields__`.
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -335,11 +245,10 @@ class CodeBinding(Base):
 
     @validates("entry_id")
     def _validate_entry_id_immutable(self, _key: str, value: uuid.UUID) -> uuid.UUID:
-        """A binding is retired and replaced by a new row, never
-        reparented - matching `Designation._validate_entry_id_immutable`'s
-        own guard. `nptc.db.roles.GRANT_CODE_BINDING_UPDATE_SQL`'s column
-        exclusion is the actual database invariant; this is the fail-loud
-        Python-level layer."""
+        """A binding is retired and replaced, never reparented.
+        `nptc.db.roles.GRANT_CODE_BINDING_UPDATE_SQL`'s column exclusion is the database invariant;
+        this is the fail-loud Python layer.
+        """
         if "entry_id" in self.__dict__ and self.__dict__["entry_id"] is not None:
             raise ImmutableFieldError(
                 "CodeBinding.entry_id is immutable and cannot be reassigned "
@@ -349,11 +258,10 @@ class CodeBinding(Base):
 
     @validates("code")
     def _validate_code_immutable(self, _key: str, value: str) -> str:
-        """A binding is retired and replaced by a new row rather than
-        rebound in place (FR-82's provenance guarantee) -
-        `nptc.db.roles.GRANT_CODE_BINDING_UPDATE_SQL`'s column exclusion is
-        the actual database invariant; this is the fail-loud Python-level
-        layer, matching `CatalogueEntry._validate_business_key_immutable`."""
+        """A binding is retired and replaced, never rebound in place (FR-82's provenance guarantee).
+        `nptc.db.roles.GRANT_CODE_BINDING_UPDATE_SQL`'s column exclusion is the database invariant;
+        this is the fail-loud Python layer.
+        """
         if "code" in self.__dict__ and self.__dict__["code"] is not None:
             raise ImmutableFieldError(
                 f"CodeBinding.code is immutable and cannot be reassigned "

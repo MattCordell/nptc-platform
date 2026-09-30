@@ -1,24 +1,18 @@
-"""The internal `app_user` table (issue #42).
+"""The internal `app_user` table.
 
-Physical name `app_user`, not `"user"`: the latter is a reserved word (and
-an unquoted `FROM user` is a `current_user` trap), so every literal in
-`roles.py`, migrations and tests would need quoting for no benefit -
-NFR-04 fixes the *shape* of user identity (never the IdP's `sub`), not the
-identifier chosen for it.
+Physical name `app_user`, not `"user"`: `user` is a reserved word (an unquoted `FROM user` is a
+`current_user` trap), so every literal in `roles.py`, migrations and tests would need quoting for no
+benefit. NFR-04 fixes the shape of user identity (never the IdP's `sub`), not the identifier.
 
-`status` is `TEXT` + `CHECK`, not a native `ENUM`: `ALTER TYPE ... ADD
-VALUE` cannot run inside a transaction and Alembic autogenerate mishandles
-the create/drop-type pair on downgrade - `data-model.md` already sets this
-precedent for `property_definition.status`.
+`status` is `TEXT` plus `CHECK`, not a native `ENUM`: `ALTER TYPE ... ADD VALUE` cannot run inside a
+transaction, and Alembic autogenerate mishandles the create/drop-type pair on downgrade.
+`data-model.md` sets the same precedent for `property_definition.status`.
 
-No `role` column: adding one here would create a second place a role is
-granted, and FR-44 requires permission checks, never role-name checks.
-Role grants land with #44.
+There is no `role` column: it would be a second place a role is granted, and FR-44 requires
+permission checks, never role-name checks (see `user_role`).
 
-The `UNIQUE` constraint on `username` relies on Postgres's default
-`NULLS DISTINCT` behaviour - `NULLS NOT DISTINCT` must never be added to
-it, since that would cap the platform at exactly one closed (tombstoned)
-account system-wide.
+The `UNIQUE` constraint on `username` relies on Postgres's default `NULLS DISTINCT`.
+`NULLS NOT DISTINCT` must never be added: it would cap the platform at one closed account.
 """
 
 from __future__ import annotations
@@ -45,17 +39,11 @@ class UserStatus(StrEnum):
 class User(Base):
     __tablename__ = "app_user"
 
-    # nptc.audit.policy (issue #37, NFR-08/NFR-26): status/closed_at are
-    # recorded in full on a diff; the three identifying columns are
-    # withheld (changed-by-name only, under REDACTED_KEY) - this turns
-    # ADR-0017's close_account posture (see docs/adr/0018-*.md) into a
-    # general policy rather than one function's own care. id/created_at/
-    # updated_at are explicitly ignored, not merely omitted: the primary
-    # key is never itself a "changed field", and the two bookkeeping
-    # timestamps are server-maintained rather than meaningful edits -
-    # policy_for requires every column be classified into exactly one of
-    # auditable/withheld/ignored, so a future column added here without a
-    # classification fails loudly rather than silently escaping audit.
+    # nptc.audit.policy (NFR-08, NFR-26): `status` and `closed_at` are recorded in full on a diff.
+    # The three identifying columns are withheld (changed-by-name only, under `REDACTED_KEY`), which
+    # makes ADR-0017's `close_account` posture (see ADR-0018) a general policy. `id`, `created_at`
+    # and `updated_at` are ignored, not omitted: `policy_for` requires every column in exactly one
+    # of auditable, withheld or ignored, so a new unclassified column fails loudly.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"status", "closed_at"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset(
         {"username", "display_name", "organisation"}
@@ -65,17 +53,14 @@ class User(Base):
     )
 
     __table_args__ = (
-        # Constraint text is a plain string literal, never f-string joined
-        # from UserStatus - backend/tests/test_sql_parameterisation.py's AST
-        # guard forbids building SQL from runtime data, and there is no
-        # runtime data here to justify the risk in the first place.
+        # A plain string literal, never joined from `UserStatus`: `test_sql_parameterisation.py`'s
+        # AST guard forbids SQL built from runtime data.
         CheckConstraint(
             "status IN ('active','suspended','closed')",
             name="status",
         ),
-        # This is what makes NFR-17 a database invariant, not an
-        # application convention: a row cannot be marked closed while any
-        # identifying data remains on it, and cannot be active without one.
+        # Makes NFR-17 a database invariant: a row cannot be closed while identifying data remains,
+        # and cannot be active without it.
         CheckConstraint(
             "(status = 'closed' AND username IS NULL AND display_name IS NULL "
             "AND organisation IS NULL) "
@@ -95,21 +80,16 @@ class User(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # `active_history=True` on every column named in __audit_fields__/
-    # __audit_withheld_fields__ above (issue #37): without it, SQLAlchemy
-    # only knows an attribute's *prior* value if it was already loaded
-    # before being reassigned - reassigning an expired-but-unread attribute
-    # leaves nptc.audit.diffing.diff_instance's load_history() call with no
-    # committed value to report, silently turning a real change into
-    # before=None instead of the true prior value.
+    # `active_history=True` on every column in `__audit_fields__` and `__audit_withheld_fields__`:
+    # SQLAlchemy knows an attribute's prior value only if it was loaded before reassignment, so
+    # without it `diff_instance`'s `load_history()` would report `before=None` for a real change.
     username: Mapped[str | None] = mapped_column(
         Text, unique=True, nullable=True, active_history=True
     )
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     organisation: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
-    # A quoted literal, not the bare `UserStatus.ACTIVE` value: an
-    # unquoted server_default string is rendered verbatim as SQL, and
-    # `DEFAULT active` (no quotes) is not valid DDL for a text column.
+    # A quoted literal: an unquoted `server_default` string is rendered verbatim as SQL, and
+    # `DEFAULT active` is not valid DDL for a text column.
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'active'"), active_history=True
     )

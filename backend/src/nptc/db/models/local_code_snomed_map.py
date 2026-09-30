@@ -1,54 +1,34 @@
-"""The `local_code_snomed_map` table: an advisory, non-authoritative map
-from a `local_code` to a SNOMED CT concept (issue #56, FR-91). See PRD
-SS6.6.
+"""The `local_code_snomed_map` table: an advisory, non-authoritative map from a `local_code` to a
+SNOMED CT concept (FR-91). See PRD SS6.6.
 
-**Never a `code_binding`, structurally.** `code_binding` binds a
-*catalogue entry* to the code the terminology server actually serves for
-it (FR-06/FR-08/FR-82) - a `code_binding` row is authoritative, revalidated
-by the FR-45 sweep, and the acceptance criterion for this issue is that
-the sweep must never treat a row here the same way. There is no
-`entry_id` anywhere on this table, and no foreign key to
-`catalogue_entry` at all - a change that starts joining this table into
-sweep logic would have to invent that join from nothing, which is the
-point. `backend/tests/test_catalogue_local_codes.py` pins this with an AST
-guard: no module under `nptc.validation` or `nptc.catalogue.bindings` may
-reference `LocalCodeSnomedMap`.
+**Never a `code_binding`, structurally.** `code_binding` binds a catalogue entry to the code the
+terminology server serves for it (FR-06, FR-08, FR-82). It is authoritative and the FR-45 sweep
+revalidates it; a row here must never be treated that way. This table has no `entry_id` and no
+foreign key to `catalogue_entry`, so a change that joins it into sweep logic would have to invent
+that join. `backend/tests/test_catalogue_local_codes.py` pins this with an AST guard: no module
+under `nptc.validation` or `nptc.catalogue.bindings` may reference `LocalCodeSnomedMap`.
 
-**Advisory in three independent, structural ways, not by convention:**
-`match_strength` has no counterpart in `code_binding` at all, so a row
-read out of context still announces what kind of claim it is making;
-`advisory_note` is mandatory, never optional, so every row explains its
-own caveat; and there is deliberately **no row** for `Molecular` or
-`Serology` - PRD SS6.6's verification found no SNOMED concept that is a
-genuine match for either (the nearest candidates, `1236877003` and
-`708179009`/`708188000`, are a different discipline and healthcare
-*service* concepts respectively, confirmed not-subsumed by
-`check_subsumption`), and FR-91 requires that gap to "stay visible" rather
-than be papered over with a plausible-looking wrong mapping. An absent row
-is the honest representation of "no match exists", exactly as
-`code_binding.py`'s FR-82 note treats an untransformed served label - the
-absence itself carries the meaning.
+**Advisory in three structural ways.** `match_strength` has no counterpart in `code_binding`, so a
+row read out of context still says what kind of claim it makes. `advisory_note` is mandatory, so
+every row explains its own caveat. There is deliberately no row for `Molecular` or `Serology`: PRD
+SS6.6's verification found no SNOMED concept that genuinely matches either. The nearest candidates
+(`1236877003`, and `708179009`/`708188000`) are a different discipline and healthcare *service*
+concepts, confirmed not subsumed by `check_subsumption`. FR-91 requires that gap to stay visible, so
+an absent row is the honest representation of "no match exists".
 
-**No uniqueness constraint on `local_code_id`.** PRD SS6.6's own
-verification table records `Microbiology` as genuinely ambiguous between
-two SNOMED candidates (`408454008` \\|Clinical microbiology\\| and
-`394820005` \\|Medical microbiology\\|, neither named plainly
-"Microbiology"). Collapsing that to one row would be exactly the kind of
-approximation FR-91 forbids, so a local code may have zero, one, or
-several map rows, each with its own `match_strength`.
+**No uniqueness constraint on `local_code_id`.** PRD SS6.6 records `Microbiology` as genuinely
+ambiguous between `408454008` |Clinical microbiology| and `394820005` |Medical microbiology|.
+Collapsing that to one row would be the approximation FR-91 forbids, so a local code may have zero,
+one or several map rows, each with its own `match_strength`.
 
-**`code`/`system` reuse `code_binding`'s own validation, not a copy of
-it** - `nptc_sctid_is_valid` (`nptc.db.functions`, issue #48/ADR-0023) is
-the same database function, so a SNOMED identifier here is held to the
-same format-and-Verhoeff standard as a real binding even though this row
-is never itself revalidated by the sweep.
+**`code` and `system` reuse `code_binding`'s validation.** `nptc_sctid_is_valid`
+(`nptc.db.functions`, ADR-0023) is the same database function, so a SNOMED identifier here meets the
+same format-and-Verhoeff standard as a real binding.
 
-**Never edited, only replaced.** A map row records a point-in-time
-editorial judgement about which concept is the nearest analogue - like
-`designation_collision_acknowledgement`, there is no update path; a
-revised mapping is a new row, and the sweep-exclusion guard above means an
-old row growing stale carries no safety consequence the way a stale
-`code_binding` would."""
+**Never edited, only replaced.** A row records a point-in-time editorial judgement about the nearest
+analogue. As with `designation_collision_acknowledgement`, there is no update path: a revised
+mapping is a new row, and the sweep-exclusion guard means a stale row carries no safety consequence.
+"""
 
 from __future__ import annotations
 
@@ -75,9 +55,8 @@ class SnomedMapMatchStrength(StrEnum):
     AMBIGUOUS = "ambiguous"
 
 
-#: Plain string literals, never built from the `StrEnum` above - matches
-#: `code_binding.py`'s own precedent, enforced by
-#: `test_sql_parameterisation.py`'s AST guard.
+#: Plain literals, never built from the `StrEnum` above: `test_sql_parameterisation.py`'s AST guard
+#: forbids SQL built from runtime data.
 _SYSTEM_NOT_BLANK_SQL = "length(btrim(system)) > 0"
 _CODE_CHECK_SQL = "nptc_sctid_is_valid(code)"
 _DISPLAY_NOT_BLANK_SQL = "length(btrim(display)) > 0"
@@ -88,7 +67,7 @@ _ADVISORY_NOTE_NOT_BLANK_SQL = "length(btrim(advisory_note)) > 0"
 class LocalCodeSnomedMap(Base):
     __tablename__ = "local_code_snomed_map"
 
-    # nptc.audit.policy (issue #37, NFR-08): every real column classified.
+    # nptc.audit.policy (NFR-08): every real column classified.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
         {"local_code_id", "system", "code", "display", "match_strength", "advisory_note"}
     )
@@ -130,21 +109,17 @@ class LocalCodeSnomedMap(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # `onupdate` is unreachable in practice - `REVOKE_LOCAL_CODE_SNOMED_MAP_
-    # WRITE_SQL` revokes UPDATE outright, and the module docstring's "never
-    # edited, only replaced" is the actual policy. Kept anyway, rather than
-    # a bare `created_at`-only shape, so this table's column set matches
-    # every sibling table's (`created_at`/`updated_at` are always a pair in
-    # this schema) - a future privilege change would not also have to
-    # remember to add the column back.
+    # `onupdate` is unreachable in practice: `REVOKE_LOCAL_CODE_SNOMED_MAP_WRITE_SQL` revokes
+    # UPDATE, and the module docstring's "never edited, only replaced" is the policy. It stays so
+    # the column set matches every sibling table (`created_at` and `updated_at` are always a pair),
+    # and a future privilege change need not re-add it.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
     @validates("local_code_id")
     def _validate_local_code_id_immutable(self, _key: str, value: uuid.UUID) -> uuid.UUID:
-        """A revised mapping is a new row, never a reparented one - see
-        the module docstring's "never edited, only replaced"."""
+        """A revised mapping is a new row, never a reparented one."""
         if "local_code_id" in self.__dict__ and self.__dict__["local_code_id"] is not None:
             raise ImmutableFieldError(
                 "LocalCodeSnomedMap.local_code_id is immutable and cannot be reassigned "

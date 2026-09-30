@@ -1,45 +1,30 @@
-"""ORM-backed PropertyDefinition service: create/amend/deprecate/list/load
-(issue #55, FR-11, FR-12). This absorbed the full admin router's backing
-service - #151 (frontend) depends on it and no other issue owns it.
+"""ORM-backed PropertyDefinition service: create, amend, deprecate, list and load (FR-11, FR-12).
 
-**Lives under `nptc.db`, not `nptc.registry`**, for the same leaf-rule
-reason `nptc.db.bootstrap`/`nptc.db.property_specs`/`nptc.db.property_indexes`
-do (ADR-0013 SS2): it imports the `PropertyDefinition` ORM model directly.
-`nptc.registry.definitions` holds the datatype-agnostic typed errors and the
-`DefinitionAudience` vocabulary this module raises/consumes.
+**Lives under `nptc.db`, not `nptc.registry`**, for the leaf-rule reason that `nptc.db.bootstrap`,
+`nptc.db.property_specs` and `nptc.db.property_indexes` do (ADR-0013 SS2): it imports the
+`PropertyDefinition` ORM model directly. `nptc.registry.definitions` holds the typed errors and the
+`DefinitionAudience` vocabulary this module raises and consumes.
 
 **Concurrent-insert races.** `create_definition` follows
-`nptc.db.bootstrap.seed_system_properties`'s own savepoint pattern: the
-insert runs inside `session.begin_nested()`, and only a unique violation on
-`uq_property_definition_key` (identified via `nptc.db.errors.
-unique_violation_constraint`, not a raw sqlstate literal - issue #223
-review finding 2) is caught and re-raised as the typed
-`PropertyDefinitionKeyExistsError` - any other `IntegrityError` propagates
-unchanged, since it is a genuine defect in the write, not a race.
+`nptc.db.bootstrap.seed_system_properties`'s savepoint pattern: the insert runs inside
+`session.begin_nested()`, and only a unique violation on `uq_property_definition_key` (identified by
+`nptc.db.errors.unique_violation_constraint`, not a raw sqlstate) becomes
+`PropertyDefinitionKeyExistsError`. Any other `IntegrityError` propagates, because it is a defect in
+the write, not a race.
 
-**`datatype` and `constraints` are validated against the resolved handler
-before a row is ever written** (issue #223 review findings 3/4).
-`create_definition` and `amend_definition` both take a `DatatypeRegistry`
-for exactly this: an unrecognised `datatype` raises
-`PropertyDatatypeUnknownError` (422) and a `constraints` document that does
-not conform to the resolved handler's own `constraints_schema()` raises
-`PropertyConstraintsInvalidError` (422) - both before `session.add`/
-`setattr`, never surfacing later as a broken row that only misbehaves at
-the first value write.
+**`datatype` and `constraints` are validated against the resolved handler before a row is written.**
+`create_definition` and `amend_definition` take a `DatatypeRegistry` for this. An unrecognised
+`datatype` raises `PropertyDatatypeUnknownError` (422). `constraints` that do not conform to the
+handler's `constraints_schema()` raise `PropertyConstraintsInvalidError` (422). Both happen before
+`session.add` or `setattr`.
 
-**`key` immutability is enforced twice, deliberately.** `amend_definition`
-never assigns to `.key` at all (so `PropertyDefinition._validate_key_immutable`
-can never even fire from this path) and instead raises
-`PropertyKeyImmutableError` itself, before touching any other attribute, the
-moment a caller's amendment would move `key` away from what it already is.
-The HTTP layer closes the same gap a third way: `PatchDefinitionRequest`
-carries no `key` field at all, so a request body naming one is a 422 at the
-pydantic layer, never reaching this function.
+**`key` immutability is enforced in layers, deliberately.** `amend_definition` never assigns `.key`.
+It raises `PropertyKeyImmutableError` itself, before touching any other attribute, so
+`PropertyDefinition._validate_key_immutable` cannot fire from this path. The HTTP layer adds a third
+guard: `PatchDefinitionRequest` has no `key` field, so a body naming one is a 422.
 
-**One audit event per write**, matching `nptc.catalogue.bindings`'s own
-precedent: `record_change` diffs the mapped instance's own attribute
-history, so `create`/`amend`/`deprecate` each produce exactly one
-`audit_event` row (NFR-08).
+**One audit event per write** (NFR-08): `record_change` diffs the instance's attribute history, so
+create, amend and deprecate each produce exactly one `audit_event` row.
 """
 
 from __future__ import annotations
@@ -81,27 +66,17 @@ __all__ = [
     "load_definition",
 ]
 
-#: The unique constraint `create_definition` races against - see the
-#: module docstring's concurrent-insert note.
+#: The unique constraint `create_definition` races against; see the module docstring.
 _UQ_PROPERTY_DEFINITION_KEY = "uq_property_definition_key"
 
-#: The only fields `amend_definition` will ever `setattr` (issue #223
-#: review finding 5) - trimmed, per round-2 review minor finding 1, to
-#: exactly the fields `AmendPropertyDefinitionRequest.changes()` (`nptc.api.
-#: routers.registry`) can ever populate. `cardinality`/`scope`/`strength`/
-#: `binding_target` used to be admitted here too, but the router's request
-#: model never exposed any of them - untested, service-only surface that
-#: let a direct caller reach `amend_definition(..., binding_target=None)`
-#: on a `datatype='code'` property and hit the `binding_required_for_code`
-#: database `CHECK` as an unhandled `23514` (500), because `_binding_spec`
-#: (`nptc.db.property_specs`) returns `None` silently for a `None`
-#: `binding_target` rather than validating it. Re-admit a field here only
-#: alongside the router field that exposes it, with a test for both. Every
-#: other mapped column is either immutable (`key`), owned by a dedicated
-#: function (`origin`, `status`, `deprecated_at`), or simply not yet
-#: amendable at all. A caller naming any other key is a service-layer
-#: contract violation, not a request the caller could have gotten right by
-#: chance.
+#: The only fields `amend_definition` will `setattr`: exactly those
+#: `AmendPropertyDefinitionRequest.changes()` (`nptc.api.routers.registry`) can populate.
+#: `binding_target` is deliberately absent: `_binding_spec` (`nptc.db.property_specs`) returns
+#: `None` silently for a `None` target, so a direct `binding_target=None` on a `datatype='code'`
+#: property would reach the `binding_required_for_code` CHECK as an unhandled `23514` (500).
+#: Re-admit a field only alongside the router field that exposes it, with a test for both. Every
+#: other mapped column is immutable (`key`), owned by a dedicated function (`origin`, `status`,
+#: `deprecated_at`), or not amendable.
 _AMENDABLE_FIELDS = frozenset(
     {
         "label",
@@ -115,12 +90,11 @@ _AMENDABLE_FIELDS = frozenset(
 
 
 def _validate_registry_shape(registry: DatatypeRegistry, definition: PropertyDefinition) -> None:
-    """Resolves `definition.datatype` against `registry` and validates
-    `definition.constraints` against that handler's own
-    `constraints_schema()` (issue #223 review findings 3/4) - called before
-    `definition` is ever written, so a bad `datatype` or a malformed
-    `constraints` document is a 422 at request time, never a broken row
-    that only misbehaves at the first value write."""
+    """Resolves `definition.datatype` against `registry` and validates `definition.constraints`
+    against that handler's `constraints_schema()`. Called before `definition` is written, so a bad
+    `datatype` or `constraints` is a 422 at request time, not a broken row that fails at the first
+    value write.
+    """
     try:
         handler = registry.get(definition.datatype)
     except UnknownDatatypeError as error:
@@ -132,22 +106,15 @@ def _validate_registry_shape(registry: DatatypeRegistry, definition: PropertyDef
         raise PropertyConstraintsInvalidError(str(error)) from error
 
 
-#: Every field `_merged_for_validation` may overlay onto a copy of
-#: `definition` - deliberately every mapped field the transient copy needs
-#: to carry, not just `_AMENDABLE_FIELDS`, since `PropertyDefinition.
-#: __init__` needs a value for each of these regardless of whether `changes`
-#: touches it.
+#: Every field `_merged_for_validation` overlays onto a copy of `definition`: every mapped field the
+#: transient copy needs, because `PropertyDefinition.__init__` needs a value for each, not only
+#: `_AMENDABLE_FIELDS`.
 #:
-#: **Read via `getattr`/a `field in changes` membership test, in a loop over
-#: this tuple - never a literal `changes.get("scope", ...)` or
-#: `changes["scope"]`.** `nptc.registry.handlers.PropertyDefinitionSpec`'s
-#: own `scope` field collides, by name only, with one of `test_token_
-#: verification_guard.py`'s NFR-07 restricted JWT claim keys (issue #223
-#: review: that AST guard flags any literal `"scope"` subscript/`.get()` key
-#: anywhere outside `nptc/auth/tokens.py`, on the assumption it can only be
-#: a JWT `scope` claim) - looping over a runtime field name here, rather
-#: than writing the literal key at each call site, keeps this function
-#: outside that pattern without weakening the guard itself.
+#: **Read through a loop over this tuple, never a literal `changes.get("scope", ...)` or
+#: `changes["scope"]`.** `PropertyDefinitionSpec.scope` collides by name with a restricted JWT claim
+#: key in `test_token_verification_guard.py`'s NFR-07 AST guard, which flags any literal `"scope"`
+#: subscript or `.get()` key outside `nptc/auth/tokens.py`. A runtime field name keeps this function
+#: outside that pattern without weakening the guard.
 _MERGE_FIELDS: tuple[str, ...] = (
     "key",
     "label",
@@ -171,13 +138,10 @@ _MERGE_FIELDS: tuple[str, ...] = (
 def _merged_for_validation(
     definition: PropertyDefinition, changes: dict[str, Any]
 ) -> PropertyDefinition:
-    """A transient, never-persisted `PropertyDefinition` carrying
-    `definition`'s current values overlaid with `changes` - used only to
-    build the `PropertyDefinitionSpec` `_validate_registry_shape` checks an
-    amendment against, without mutating the live, session-tracked
-    `definition` until every guard has already passed (mirrors this
-    module's own "raise before touching any attribute" posture for `key`
-    and `status`)."""
+    """A transient, never-persisted `PropertyDefinition` holding `definition`'s values overlaid with
+    `changes`. It builds the spec `_validate_registry_shape` checks, so the live `definition` is not
+    mutated until every guard has passed.
+    """
     merged = {
         field: changes[field] if field in changes else getattr(definition, field)
         for field in _MERGE_FIELDS
@@ -186,12 +150,11 @@ def _merged_for_validation(
 
 
 def load_definition(session: Session, key: str) -> PropertyDefinition:
-    """The one place a caller resolves a `key` to a row - raises
-    `PropertyDefinitionNotFoundError` (reused from `nptc.catalogue.
-    property_values`, see `nptc.registry.definitions`'s own docstring) for
-    an unknown key, whatever its status - a deprecated definition is still
-    loadable by key (FR-11: "retained, forever"), only excluded from the
-    `DATA_ENTRY` audience of `list_definitions`."""
+    """Resolves a `key` to a row, raising `PropertyDefinitionNotFoundError` (from
+    `nptc.catalogue.property_values`) for an unknown key whatever its status. A deprecated
+    definition is still loadable (FR-11: "retained, forever"); only the `DATA_ENTRY` audience of
+    `list_definitions` excludes it.
+    """
     definition = session.execute(
         select(PropertyDefinition).where(PropertyDefinition.key == key)
     ).scalar_one_or_none()
@@ -203,18 +166,13 @@ def load_definition(session: Session, key: str) -> PropertyDefinition:
 def list_definitions(
     session: Session, *, audience: DefinitionAudience, scope: PropertyScope | None = None
 ) -> Sequence[PropertyDefinition]:
-    """Ordered by `display_order, key` (matching `nptc.db.bootstrap`'s own
-    seeded ordering). `audience=DATA_ENTRY` excludes a `deprecated` property
-    entirely; `audience=EXPORT` returns every status - see
-    `DefinitionAudience`'s own docstring for why these two callers need
-    different sets.
+    """Ordered by `display_order, key`, matching `nptc.db.bootstrap`'s seeded ordering.
+    `audience=DATA_ENTRY` excludes `deprecated` properties; `audience=EXPORT` returns every status
+    (see `DefinitionAudience`).
 
-    `scope`, when given, is inclusive of `PropertyScope.BOTH` - filtering to
-    exactly `scope` would silently drop a property meant for both screens
-    from either one. Issue #223 review finding 8 dropped this filter as
-    YAGNI (no caller, no test); issue #248 (`GET /registry/properties
-    ?scope=`) is that caller, re-adding it with a test as that finding
-    anticipated."""
+    `scope`, when given, includes `PropertyScope.BOTH`: filtering to exactly `scope` would drop a
+    property meant for both screens.
+    """
     stmt = select(PropertyDefinition).order_by(
         PropertyDefinition.display_order, PropertyDefinition.key
     )
@@ -247,19 +205,12 @@ def create_definition(
     constraints: dict[str, Any] | None = None,
     reason: str,
 ) -> PropertyDefinition:
-    """Inserts a new `origin = 'admin'` property definition, racing the
-    same `uq_property_definition_key` unique-violation
-    `nptc.db.bootstrap.seed_system_properties` guards against - translated
-    the same way `nptc.catalogue.bindings.create_binding` translates its
-    own unique-violation race: the insert runs inside `session.
-    begin_nested()`, then `record_change(kind=CREATED)` (which flushes the
-    session as part of building the CREATED diff, per its own docstring)
-    inside the `try`, so the loser's `IntegrityError` surfaces from that
-    flush rather than a separate one this function would otherwise have to
-    add itself.
-
-    `datatype` and `constraints` are validated against `registry` before
-    the insert - see `_validate_registry_shape`."""
+    """Inserts a new `origin = 'admin'` property definition. As in
+    `nptc.catalogue.bindings.create_binding`, the insert runs inside `session.begin_nested()` with
+    `record_change(kind=CREATED)` inside the `try`, so the loser of a `uq_property_definition_key`
+    race gets its `IntegrityError` from `record_change`'s flush and it is translated. `datatype` and
+    `constraints` are validated against `registry` first (`_validate_registry_shape`).
+    """
     definition = PropertyDefinition(
         key=key,
         label=label,
@@ -309,46 +260,29 @@ def amend_definition(
     reason: str,
     **changes: Any,
 ) -> PropertyDefinition:
-    """Applies `changes` to `definition`, guarded by `expected_row_version`
-    (FR-38), exactly one audit event, or none if nothing actually changed.
+    """Applies `changes` to `definition`, guarded by `expected_row_version` (FR-38). Emits one audit
+    event, or none if nothing changed.
 
-    `changes` may only name a field in `_AMENDABLE_FIELDS` - every other
-    mapped column is either immutable (`key`), owned by a dedicated
-    function (`origin`, `status`, `deprecated_at`), or simply not yet
-    amendable independently (see `_AMENDABLE_FIELDS`'s own comment) - a
-    caller naming any other key gets `ValueError`, a service-layer contract
-    violation this function enforces itself rather than relying on the
-    HTTP router's own whitelist (issue #223 review finding 5: calling this
-    directly with, say, `status=PropertyStatus.DEPRECATED` used to slip
-    past the router's reactivation guard entirely and reach `setattr`
-    unfiltered, breaking the `deprecated_at_required` CHECK at flush as an
-    unhandled 500).
+    `changes` may name only a field in `_AMENDABLE_FIELDS`; any other key raises `ValueError`. This
+    function enforces that itself rather than relying on the HTTP router's whitelist, because a
+    direct call with `status=PropertyStatus.DEPRECATED` would otherwise reach `setattr` and break
+    the `deprecated_at_required` CHECK as an unhandled 500.
 
-    Raises `PropertyKeyImmutableError` if `changes` contains a `key` field
-    at all (belt-and-braces: the HTTP request model already forbids the
-    field outright), `EntryVersionConflictError` for a stale
-    `expected_row_version` (reused here matching `nptc.catalogue.
-    property_values.save_property_values`'s own precedent of one conflict
-    type per entity, not a second one), and - when `changes` touches
-    `constraints`, `cardinality`, `scope`, `strength` or `binding_target` -
-    `PropertyConstraintsInvalidError` if the resulting `constraints` no
-    longer conforms to the (immutable) datatype's own `constraints_schema()`
-    (issue #223 review finding 4), checked via a transient, unpersisted copy
-    of `definition` so a rejected amendment never mutates the live,
-    session-tracked instance.
+    Raises `PropertyKeyImmutableError` if `changes` contains `key` (the HTTP request model also
+    forbids it), `EntryVersionConflictError` for a stale `expected_row_version` (one conflict type
+    per entity, as in `nptc.catalogue.property_values.save_property_values`), and
+    `PropertyConstraintsInvalidError` if the amended `constraints` no longer conform to the
+    datatype's `constraints_schema()`. That last check runs on a transient copy, so a rejected
+    amendment never mutates the live instance.
     """
     if "key" in changes:
         raise PropertyKeyImmutableError(
             "PropertyDefinition.key cannot be amended (FR-12); create a new "
             "property definition instead"
         )
-    # Checked before the generic allowlist rejection below so this specific,
-    # named transition still gets its own 409 rather than folding into the
-    # generic 'not an amendable field' ValueError - `status` itself is not
-    # in `_AMENDABLE_FIELDS` (owned by `deprecate_definition`), so any other
-    # `status` value (e.g. a caller naming `PropertyStatus.DEPRECATED`
-    # directly, issue #223 review finding 5's own example) still falls
-    # through to that generic rejection just below.
+    # Before the generic allowlist check so this transition gets its own 409 instead of the generic
+    # `ValueError`. `status` is not in `_AMENDABLE_FIELDS` (`deprecate_definition` owns it), so any
+    # other `status` value falls through to that `ValueError`.
     if (
         changes.get("status") == PropertyStatus.ACTIVE
         and definition.status == PropertyStatus.DEPRECATED
@@ -395,21 +329,11 @@ def deprecate_definition(
     expected_row_version: int,
     reason: str,
 ) -> PropertyDefinition:
-    """FR-11: moves `status` from `active` to `deprecated`, stamping
-    `deprecated_at`. One-way - see `nptc.registry.definitions.
-    PropertyReactivationRefusedError`'s own docstring; there is no function
-    that reverses this.
-
-    Refuses (`SystemPropertyDeprecationRefusedError`, 409) for
-    `origin = 'system'` - see that error's own docstring for why this is an
-    explicit assumption, not a PRD requirement. Refuses
-    (`PropertyAlreadyDeprecatedError`, 409) for a definition already
-    deprecated - not idempotent-success, since a repeat call is a caller
-    mistake worth surfacing.
-
-    Existing `property_value` rows for this property are untouched - FR-11's
-    whole point is that they remain readable; nothing here deletes or
-    rewrites a single one.
+    """FR-11: moves `status` from `active` to `deprecated` and stamps `deprecated_at`. One-way:
+    nothing reverses it (see `PropertyReactivationRefusedError`). Refuses with a 409 for
+    `origin = 'system'` (`SystemPropertyDeprecationRefusedError`) and for a definition already
+    deprecated (`PropertyAlreadyDeprecatedError`; a repeat call is a caller mistake worth
+    surfacing). Existing `property_value` rows are untouched, so they stay readable.
     """
     if definition.row_version != expected_row_version:
         raise EntryVersionConflictError(
