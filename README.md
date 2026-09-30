@@ -43,6 +43,9 @@ Copy-Item deploy/.env.example deploy/.env
 docker compose -f deploy/compose.yml up -d --build
 ```
 
+Replace every `change-me` in `deploy/.env` with your own password before the first run, or
+the database and Keycloak start with a password anyone can read here.
+
 This builds two images and starts, on a clean volume:
 
 - **PostgreSQL** (pinned to UTF-8; the version is in `deploy/compose.yml`) on `${POSTGRES_PORT:-5432}`
