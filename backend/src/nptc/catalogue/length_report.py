@@ -66,11 +66,9 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class LengthBucket:
-    """Every entry whose preferred term is exactly `length` characters long,
-    and how many entries a maximum set to `length` would affect (FR-86 warns
-    an entry whose length *exceeds* the configured maximum, so
-    `entries_exceeding` counts strictly greater, matching
-    `catalogue_designations._length_warning`'s own comparison)."""
+    """Every entry whose preferred term is exactly `length` characters long.
+    `entries_exceeding` counts strictly longer entries, because FR-86 warns
+    only when a length *exceeds* the configured maximum."""
 
     length: int
     count: int
@@ -106,15 +104,8 @@ def build_length_histogram_statement() -> Select[int, int]:
 
 
 def distribution_from_buckets(histogram: Iterable[tuple[int, int]]) -> LengthDistribution:
-    """Builds the report from `(length, count)` pairs in any order: sorts
-    them ascending, then derives every length's `entries_exceeding` as a
-    suffix sum over the histogram already in hand.
-
-    The sort lives here, not in the statement's `ORDER BY`, so the result
-    never depends on the order the database returns rows and the database
-    does no sort of its own - a histogram has one row per *distinct* length,
-    a few dozen at most.
-    """
+    """Builds the report from `(length, count)` pairs in any order, so the
+    result never depends on row order and the query needs no `ORDER BY`."""
     ascending = sorted(histogram)
     exceeding = 0
     descending: list[LengthBucket] = []
