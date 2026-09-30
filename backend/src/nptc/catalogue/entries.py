@@ -188,19 +188,21 @@ class EntryChanges:
 _logger = logging.getLogger(__name__)
 
 
-def _log_if_over_maximum_length(entry: CatalogueEntry, maximum: int | None) -> None:
+_LOGGED_KEY_LIMIT = 10
+
+
+def _is_over_maximum_length(entry: CatalogueEntry, maximum: int | None) -> bool:
+    return maximum is not None and exceeds_maximum_length(entry.length, maximum)
+
+
+def _log_over_maximum_length(entry: CatalogueEntry, maximum: int) -> None:
     """FR-86: logs the business key and length, never the term text."""
-    if maximum is None:
-        return
-    length = entry.length
-    if exceeds_maximum_length(length, maximum):
-        _logger.warning(
-            "preferred term over the configured maximum length: "
-            "business_key=%s length=%d maximum=%d",
-            entry.business_key,
-            length,
-            maximum,
-        )
+    _logger.warning(
+        "preferred term over the configured maximum length: business_key=%s length=%d maximum=%d",
+        entry.business_key,
+        entry.length,
+        maximum,
+    )
 
 
 def create_entry(
@@ -266,7 +268,10 @@ def create_entry(
         kind=ChangeKind.CREATED,
         reason=validated_reason,
     )
-    _log_if_over_maximum_length(entry, max_preferred_term_length)
+    if max_preferred_term_length is not None and _is_over_maximum_length(
+        entry, max_preferred_term_length
+    ):
+        _log_over_maximum_length(entry, max_preferred_term_length)
     return entry
 
 
@@ -616,6 +621,7 @@ def save_entry(
     changes: EntryChanges,
     reason: str,
     max_preferred_term_length: int | None = None,
+    over_maximum_keys: list[str] | None = None,
 ) -> CatalogueEntry:
     """Applies `changes` to the entry identified by `business_key`,
     enforcing FR-38 optimistic locking. Raises `EntryVersionConflictError`
@@ -624,6 +630,10 @@ def save_entry(
     `version_id_col` backstop for a genuine concurrent race - see the
     module docstring for why neither path ever leaves an audit event
     behind.
+
+    A preferred term that changed to one over `max_preferred_term_length` is
+    logged, or its business key appended to `over_maximum_keys` when a batch
+    caller wants one record for the lot.
 
     `reason` (FR-37) is validated first, before the lock and before the
     entry is loaded: that check never touches the session, so a rejected
@@ -744,8 +754,15 @@ def save_entry(
             )
         ) from None
 
-    if entry.preferred_term != previous_term:
-        _log_if_over_maximum_length(entry, max_preferred_term_length)
+    if (
+        max_preferred_term_length is not None
+        and entry.preferred_term != previous_term
+        and _is_over_maximum_length(entry, max_preferred_term_length)
+    ):
+        if over_maximum_keys is None:
+            _log_over_maximum_length(entry, max_preferred_term_length)
+        else:
+            over_maximum_keys.append(entry.business_key)
     return entry
 
 
@@ -778,7 +795,8 @@ def save_entries(
     this package does."""
     validate_changelog_note(reason)
     acquire_append_lock(session)
-    return [
+    over_maximum_keys: list[str] = []
+    saved = [
         save_entry(
             session,
             ctx,
@@ -787,6 +805,15 @@ def save_entries(
             changes=changes,
             reason=reason,
             max_preferred_term_length=max_preferred_term_length,
+            over_maximum_keys=over_maximum_keys,
         )
         for business_key, expected_row_version, changes in updates
     ]
+    if over_maximum_keys:
+        _logger.warning(
+            "%d preferred terms over the configured maximum length: maximum=%s business_keys=%s",
+            len(over_maximum_keys),
+            max_preferred_term_length,
+            ", ".join(over_maximum_keys[:_LOGGED_KEY_LIMIT]),
+        )
+    return saved

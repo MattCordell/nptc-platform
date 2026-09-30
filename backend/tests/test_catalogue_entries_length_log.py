@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entries, save_entry
+from nptc.catalogue.errors import EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
 
 _LOGGER = "nptc.catalogue.entries"
@@ -223,3 +224,61 @@ def test_a_batch_save_logs_one_record_per_over_length_term(
     assert len(records) == 1
     assert long_entry.business_key in records[0].getMessage()
     assert [entry.preferred_term for entry in saved] == ["Copper", "Zinc, serum, quantitative"]
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.integration
+def test_a_large_batch_logs_one_summary_record_naming_a_bounded_number_of_keys(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    entries = [_new_entry(session, f"Batch cap probe {n:02d}") for n in range(12)]
+    updates = [
+        (
+            entry.business_key,
+            entry.row_version,
+            EntryChanges(preferred_term=f"{entry.preferred_term}, extended"),
+        )
+        for entry in entries
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        save_entries(
+            session,
+            AuditContext.system(),
+            updates=updates,
+            reason=_REASON,
+            max_preferred_term_length=10,
+        )
+
+    records = _records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert message.startswith("12 preferred terms")
+    named = [entry.business_key for entry in entries if entry.business_key in message]
+    assert len(named) == 10
+
+
+@pytest.mark.req("FR-86")
+@pytest.mark.integration
+def test_a_batch_that_fails_part_way_logs_nothing(
+    session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The record is emitted once every save has succeeded, so a batch that
+    a later stale version refuses does not claim terms it will not keep."""
+    first = _new_entry(session, "Iron")
+    second = _new_entry(session, "Zinc")
+    updates = [
+        (first.business_key, first.row_version, EntryChanges(preferred_term="Full blood count")),
+        (second.business_key, second.row_version + 1, EntryChanges(preferred_term="Copper")),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(EntryVersionConflictError):
+        save_entries(
+            session,
+            AuditContext.system(),
+            updates=updates,
+            reason=_REASON,
+            max_preferred_term_length=10,
+        )
+
+    assert _records(caplog) == []

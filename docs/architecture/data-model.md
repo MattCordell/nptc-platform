@@ -598,7 +598,8 @@ directly on `CatalogueEntry.length` in `backend/tests/test_catalogue_designation
 `ApiSettings.max_preferred_term_length` (`NPTC_MAX_PREFERRED_TERM_LENGTH`,
 [configuration.md](../operations/configuration.md)), compared against `CatalogueEntry.length`
 at write time, by `nptc.catalogue.term_hygiene.exceeds_maximum_length`, in the
-designation-amendment route and in `nptc.catalogue.entries` - never stored, and unset by
+designation-amendment route (and in `nptc.catalogue.entries` for a writer that passes the
+maximum) - never stored, and unset by
 default so no entry is ever warned until an operator sets one. FR-87's distribution report
 (`nptc.catalogue.length_report`) is likewise computed on demand, from
 `char_length(catalogue_entry.preferred_term)` in one aggregate statement, not a

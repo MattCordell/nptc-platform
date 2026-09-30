@@ -17,7 +17,8 @@ exactly one: `char_length(preferred_term)`. A plain
 query; the maximum and the per-length "how many entries exceed this" figure
 FR-87 asks for are both derived from that histogram alone, in Python, using
 the same `exceeds_maximum_length` predicate FR-86's warning uses - no second
-statement.
+statement. Each bucket rescans the histogram, which is quadratic in the number
+of distinct lengths (a few dozen), the price of sharing the predicate.
 
 **`char_length` on the stored column, not a second `preferred_term_length`
 implementation.** `nptc.catalogue.term_hygiene.preferred_term_length`'s own
