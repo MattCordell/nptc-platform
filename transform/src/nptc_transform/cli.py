@@ -1,7 +1,7 @@
 """CLI entry point for the P0 seeding transform.
 
 ``run`` (FR-70, FR-73) reads the SPIA workbook and writes a report, or the
-import dataset (FR-76, issue #31, P0-9). Report-only is the default mode;
+import dataset (FR-76). Report-only is the default mode;
 ``--emit-dataset`` opts into the mutating mode, and requires ``--release-name``.
 ``--check-terminology`` opts into the FR-52 batch validation pass, which is
 the only part of the tool that opens a network connection.
@@ -30,13 +30,12 @@ from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
 
-#: FR-57's release-name convention, e.g. ``2026-06``. The name cannot be
-#: derived from the workbook or the clock - guessing it from either would
-#: break FR-73's determinism guarantee - so it is a required, validated flag.
-#: The month group is constrained to 01-12, not just two digits: the value
-#: lands verbatim in ``baseline_release.name``, which FR-60 will later diff
-#: against, so an impossible month like ``2026-13`` must be refused here
-#: rather than accepted and only ever discovered downstream.
+#: FR-57's release-name convention, e.g. ``2026-06``. The name cannot come from
+#: the workbook or the clock without breaking FR-73's determinism, so it is a
+#: required, validated flag. The month is constrained to 01-12, not just two
+#: digits: the value lands verbatim in ``baseline_release.name``, which FR-60
+#: diffs against, so an impossible month like ``2026-13`` is refused here rather
+#: than found downstream.
 _RELEASE_NAME_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 app = typer.Typer(
@@ -57,12 +56,11 @@ class ExitCode(IntEnum):
 
 
 def _remove_stale_dataset(report_dir: Path) -> None:
-    """Removes a previous run's ``import-dataset.json`` when this run will
-    not write a fresh one - the invariant is "the file exists iff this run
-    emitted it", so a run that will not emit one this time (report-only, or
-    blocked) must not leave an earlier run's dataset sitting beside its
-    refreshed report: a missing file is an unambiguous signal, a stale one
-    is not (issue #130)."""
+    """Removes a previous run's ``import-dataset.json`` when this run will not
+    write a fresh one. The invariant is "the file exists iff this run emitted it":
+    a report-only or blocked run must not leave an earlier dataset beside its
+    refreshed report, because a missing file is an unambiguous signal and a stale
+    one is not."""
     try:
         (report_dir / DATASET_JSON_NAME).unlink(missing_ok=True)
     except OSError as exc:
@@ -83,10 +81,9 @@ def _callback() -> None:
 def _terminology_sweep(enabled: bool) -> Iterator[TerminologySweep | None]:
     """A configured sweep, or ``None`` when terminology checking is off.
 
-    The client is built from ``NPTC_TX_*`` (see
-    docs/operations/configuration.md) and closed on the way out, whatever the
-    run did. Nothing is constructed at all when the flag is off, so a plain
-    ``run`` neither reads terminology configuration nor opens a connection.
+    The client is built from ``NPTC_TX_*`` (see docs/operations/configuration.md)
+    and always closed on exit. With the flag off nothing is constructed, so a
+    plain ``run`` reads no terminology configuration and opens no connection.
     """
     if not enabled:
         yield None
@@ -183,15 +180,13 @@ def run(
 
     start = time.monotonic()
 
-    # Read the workbook before opening any network connection: a corrupt or
-    # missing workbook is a usage error the operator needs to see, and a
-    # malformed NPTC_TX_* value should never pre-empt that clearer message
-    # just because client construction happened to run first.
+    # Read the workbook before opening any connection: a corrupt or missing
+    # workbook is a usage error, and a malformed NPTC_TX_* value must not
+    # pre-empt that clearer message.
     try:
         source, sheets = read_source(workbook)
     except WorkbookReadError as exc:
-        # WorkbookReadError's own message already names the path and reason -
-        # echo it as-is rather than wrapping it a second time.
+        # The message already names the path and reason; echo it unwrapped.
         typer.echo(f"{exc}. Pass --workbook a valid, readable .xlsx file.", err=True)
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
 
@@ -203,9 +198,8 @@ def run(
             result = run_transform_sheets(source, sheets, mode=mode, sweep=sweep)
     except TerminologyConfigError as exc:
         # A subclass of TerminologyError, caught ahead of it: a malformed
-        # NPTC_TX_* value is a deployment typo, not a server outage, and
-        # belongs in the usage-error exit code an operator or CI would fix
-        # rather than retry.
+        # NPTC_TX_* value is a deployment typo, not an outage, so it takes the
+        # usage-error exit code that an operator fixes rather than retries.
         typer.echo(
             f"invalid terminology configuration: {exc}. Check the NPTC_TX_* environment "
             "variables (see docs/operations/configuration.md).",
@@ -213,10 +207,9 @@ def run(
         )
         raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
     except TerminologyError as exc:
-        # No report is written at all. A partial report - cell defects
-        # complete, terminology findings silently missing - is the FR-54
-        # hazard in its most dangerous form: it would look exactly like a run
-        # in which every code validated cleanly.
+        # No report is written. A partial one (cell defects complete,
+        # terminology findings missing) is FR-54's hazard at its worst: it looks
+        # like a run where every code validated cleanly.
         typer.echo(
             f"terminology validation failed: {exc}. No report was written. "
             "Re-run without --check-terminology to produce the cell-defect report alone.",
@@ -226,9 +219,9 @@ def run(
     try:
         write_report(result, report_dir)
     except OSError as exc:
-        # Anything the filesystem refuses is the operator's to fix, so say which
-        # path and why - never a traceback, and never exit 1, which is reserved
-        # for "the report itself contains blocking findings".
+        # A filesystem refusal is the operator's to fix: say which path and why,
+        # never a traceback and never exit 1, which means "the report contains
+        # blocking findings".
         typer.echo(
             f"could not write the report into {report_dir}: {exc.strerror or exc}. "
             "Pass --report-dir a writable directory path.",
@@ -243,9 +236,8 @@ def run(
     typer.echo(f"nptc-transform: bands: {summary}", err=True)
 
     if result.has_blocking_findings:
-        # Echo the blocking signal before attempting any cleanup: a failed
-        # removal below must not suppress the FR-71 blocked message, nor the
-        # BLOCKING_FINDINGS exit code a CI caller branches on.
+        # Echo the blocking signal before any cleanup: a failed removal must not
+        # suppress the FR-71 message or the exit code a CI caller branches on.
         typer.echo(
             "nptc-transform: import blocked - the report contains at least one "
             "requires-human-decision or data-defect finding (FR-71)",
@@ -255,8 +247,7 @@ def run(
         raise typer.Exit(code=ExitCode.BLOCKING_FINDINGS)
 
     if emit_dataset:
-        # release_name's YYYY-MM shape was already validated above; mypy
-        # cannot see that the earlier branch makes this unreachable as None.
+        # Validated above; mypy cannot see that None is unreachable here.
         assert release_name is not None
         try:
             dataset = build_dataset(sheets, result, release_name=release_name)
@@ -270,9 +261,7 @@ def run(
             raise typer.Exit(code=ExitCode.USAGE_ERROR) from exc
         typer.echo(f"nptc-transform: wrote import dataset to {report_dir}", err=True)
     else:
-        # This run will not emit a dataset either - the same stale-dataset
-        # invariant applies on the report-only success path, not just the
-        # blocked one.
+        # The stale-dataset invariant holds on the report-only success path too.
         _remove_stale_dataset(report_dir)
 
     raise typer.Exit(code=ExitCode.OK)

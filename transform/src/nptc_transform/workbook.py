@@ -223,10 +223,9 @@ def read_workbook(path: Path) -> tuple[Sheet, ...]:
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=False)
         sheets = []
         for worksheet in workbook.worksheets:
-            # A worksheet title can itself carry an Appendix A.1 defect (Excel
-            # permits U+00A0 in a sheet name) - escaped once here so it can
-            # never put a raw invisible character into a Cell.reference, and
-            # therefore into a report, via the sheet side of the reference.
+            # A worksheet title can carry an Appendix A.1 defect (Excel permits
+            # U+00A0 in a sheet name). Escaped here once so no raw invisible
+            # character reaches a Cell.reference or, through it, a report.
             sheet_name = escape_invisible(worksheet.title)
             row_iter = worksheet.iter_rows()
             try:
@@ -247,17 +246,14 @@ def read_workbook(path: Path) -> tuple[Sheet, ...]:
         ValueError,
         OSError,
     ) as exc:
-        # openpyxl's read-only mode parses a worksheet's dimensions as soon as
-        # it opens (eagerly, inside load_workbook), but the rest of the sheet
-        # lazily, as it's iterated - so a corrupt or unreadable workbook can
-        # fail at either point, and both need the same treatment here.
-        # ValueError/IndexError cover content-level corruption openpyxl makes
-        # no promise not to raise: parse_cell() calls int()/float() on a
-        # numeric cell's raw text (ValueError on garbage), from_ISO8601() on a
-        # malformed date (ValueError), and indexes into sharedStrings by
-        # position for a text cell (IndexError on a truncated sharedStrings
-        # part) - openpyxl/worksheet/_reader.py, no try/except around any of
-        # them.
+        # openpyxl's read-only mode parses a worksheet's dimensions eagerly inside
+        # load_workbook and the rest lazily during iteration, so a corrupt
+        # workbook can fail at either point. ValueError and IndexError cover
+        # content corruption openpyxl does not promise to catch
+        # (openpyxl/worksheet/_reader.py has no try/except around any of these):
+        # parse_cell() calls int()/float() on a numeric cell's text and
+        # from_ISO8601() on a date (ValueError), and indexes sharedStrings by
+        # position for a text cell (IndexError on a truncated part).
         raise WorkbookReadError(f"could not read workbook {path}: {exc}") from exc
     finally:
         if workbook is not None:
