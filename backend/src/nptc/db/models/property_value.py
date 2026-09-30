@@ -1,34 +1,24 @@
-"""The `property_value` table: one row per value, keyed by
-`(entry_id, property_key, ordinal)` (issue #51, FR-09, FR-10). See
-ADR-0012 for the full design record.
+"""The `property_value` table: one row per value, keyed by `(entry_id, property_key, ordinal)`
+(FR-09, FR-10). ADR-0012 records the design.
 
-**One row per value, not a JSON array column.** `(entry_id, property_key,
-ordinal)` is the primary key - it is already exactly what every write and
-every FK needs to address a value by, and a PK subsumes the uniqueness
-this table requires; no separate surrogate id.
+**One row per value, not a JSON array column.** `(entry_id, property_key, ordinal)` is the primary
+key: it is what every write and FK needs to address a value by, and it subsumes the uniqueness this
+table requires, so there is no surrogate id.
 
-**The FK targets `property_definition(key)`, not a surrogate id** - FR-12
-already rules out the usual objection to a natural key (that it might
-change). That FK is a secondary backstop only: it blocks deleting or
-renaming a `property_definition` row *while a dependent value exists*, not
-the mechanism that makes FR-11/FR-12 unconditional (the column-level
-privilege grants in `nptc.db.roles`).
+**The FK targets `property_definition(key)`, not a surrogate id**, because FR-12 rules out the usual
+objection to a natural key (that it might change). The FK is a secondary backstop: it blocks
+deleting or renaming a `property_definition` row while a dependent value exists. The column-level
+grants in `nptc.db.roles` are what make FR-11 and FR-12 unconditional.
 
-**`ordinal` is zero-based** (the first value of a multi-valued property is
-`ordinal = 0`). Its uniqueness (via the PK) closes only the trivial race -
-two inserts cannot land on the same slot - it does **not** enforce
-cardinality's upper bound; that is issue #52's job at validation time.
+**`ordinal` is zero-based.** Its uniqueness through the PK closes only the trivial race of two
+inserts landing on one slot. It does not enforce cardinality's upper bound; validation does.
 
-**`justification` supports FR-10's extensible-strength case** - a coded
-value bound to an `extensible` value set may carry free text explaining an
-out-of-valueset choice.
+**`justification` supports FR-10's extensible-strength case**: a coded value bound to an
+`extensible` value set may carry free text explaining an out-of-valueset choice.
 
-**`value` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`** - an
-in-place mutation of a dict/list-shaped value (`instance.value["x"] = 1`)
-is invisible to the unit of work and will not persist. Every write MUST
-replace the whole attribute (`instance.value = {**instance.value, "x": 1}`)
-rather than mutate it in place; #52/#137, which will read and write this
-column, need to honour that.
+**`value` is plain `JSONB`, not wrapped in `sqlalchemy.ext.mutable`**: an in-place mutation
+(`instance.value["x"] = 1`) is invisible to the unit of work and does not persist. Every write MUST
+replace the whole attribute (`instance.value = {**instance.value, "x": 1}`).
 """
 
 from __future__ import annotations
@@ -44,16 +34,15 @@ from nptc.db.base import Base
 
 __all__ = ["PropertyValue"]
 
-#: Plain string literal, never built from runtime data -
-#: `test_sql_parameterisation.py`'s AST guard, matching every other
-#: model's own precedent.
+#: A plain string literal: `test_sql_parameterisation.py`'s AST guard forbids SQL built from runtime
+#: data.
 _ORDINAL_CHECK_SQL = "ordinal >= 0"
 
 
 class PropertyValue(Base):
     __tablename__ = "property_value"
 
-    # nptc.audit.policy (issue #37, NFR-08): every real column classified.
+    # nptc.audit.policy (NFR-08): every real column classified.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
         {"entry_id", "property_key", "ordinal", "value", "justification"}
     )
@@ -67,11 +56,9 @@ class PropertyValue(Base):
             ["property_definition.key"],
             name="property_key_property_definition",
         ),
-        # property_key is only the *second* column of the composite PK, so
-        # it gets no index of its own from the PK alone - both FK-side
-        # maintenance on property_definition and a "which entries use this
-        # property" lookup (#55's deprecation workflow) would otherwise be
-        # a sequential scan.
+        # `property_key` is only the second column of the composite PK, so the PK gives it no index
+        # of its own. Without this index, FK maintenance on `property_definition` and the
+        # deprecation workflow's "which entries use this property" lookup would be sequential scans.
         Index("ix_property_value_property_key", "property_key"),
     )
 
@@ -83,16 +70,11 @@ class PropertyValue(Base):
     )
     property_key: Mapped[str] = mapped_column(Text, primary_key=True, active_history=True)
     ordinal: Mapped[int] = mapped_column(Integer, primary_key=True, active_history=True)
-    # No `| None` in the annotation: the column is `NOT NULL`, and
-    # SQLAlchemy's JSONB serialises a Python `None` as SQL `NULL` (not
-    # `'null'::jsonb`) - so a `None` would type-check under `mypy --strict`
-    # and then fail at flush with a constraint violation instead of a type
-    # error. A property with no recorded value is simply absent as a row
-    # (FR-09's row-per-value shape), never a value of `None`.
-    # `int` listed explicitly alongside `float` - this column's whole point
-    # is holding arbitrary JSON scalars, and it type-checked without `int`
-    # only via mypy's numeric-tower promotion to `float`, which is less
-    # clear than naming it.
+    # No `| None`: the column is `NOT NULL`, and SQLAlchemy's JSONB serialises Python `None` as SQL
+    # `NULL` (not `'null'::jsonb`), so a `None` would pass `mypy --strict` and then fail at flush. A
+    # property with no value is an absent row (FR-09), never `None`. `int` is listed beside `float`
+    # because the column holds arbitrary JSON scalars and mypy accepts `int` only through
+    # numeric-tower promotion.
     value: Mapped[dict[str, object] | list[object] | str | int | float | bool] = mapped_column(
         JSONB, nullable=False, active_history=True
     )

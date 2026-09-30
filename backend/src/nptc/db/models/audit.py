@@ -1,19 +1,13 @@
-"""The audit_event table (issue #33) plus its hash chain (issue #36).
+"""The `audit_event` table and its hash chain (NFR-08, NFR-10).
 
-NFR-08 faithful (every state-changing write emits an event); the
-TRUNCATE-refusal re-assertion after a downgrade/upgrade round-trip stays
-with #35. This table's own privilege grant/revoke lives in the migration
-that creates it (0002_audit_event.py), never here - an ORM model has no
-way to express a table ACL, and table ACLs (pg_class.relacl) are cluster
-state that lives and dies with the table itself.
+This table's privilege grant and revoke live in the migration that creates it
+(`0002_audit_event.py`), never here: an ORM model cannot express a table ACL, and ACLs
+(`pg_class.relacl`) live and die with the table.
 
-``prev_hash``/``entry_hash`` (NFR-10) are added by migration
-0004_audit_event_hash_chain.py. Both are ``TEXT NOT NULL`` with a
-``CHECK`` constraint pinning them to 64 lowercase hex characters
-(a SHA-256 digest), and ``entry_hash`` is additionally ``UNIQUE`` - see
-``nptc.audit.hashing``/``nptc.audit.writer`` for the digest construction
-and append sequence, and ``docs/architecture/data-model.md`` for the full
-design writeup.
+`prev_hash` and `entry_hash` come from migration `0004_audit_event_hash_chain.py`. Both are `TEXT
+NOT NULL` with a `CHECK` pinning them to 64 lowercase hex characters (a SHA-256 digest), and
+`entry_hash` is also `UNIQUE`. See `nptc.audit.hashing` and `nptc.audit.writer` for the digest and
+append sequence, and `docs/architecture/data-model.md` for the design.
 """
 
 from __future__ import annotations
@@ -33,34 +27,25 @@ from nptc.db.base import Base
 class AuditEvent(Base):
     __tablename__ = "audit_event"
 
-    # nptc.audit.policy (issue #37): exempt, not merely undeclared - this
-    # table *is* the log, so diffing it would be circular. `None` plus a
-    # mandatory __audit_exempt_reason__ is how a deliberate exemption is
-    # told apart from a model someone forgot to classify -
-    # test_audit_redaction.py's model-coverage walk requires exactly this
-    # shape for every mapped class.
+    # nptc.audit.policy: exempt, not merely undeclared. This table is the log, so diffing it would
+    # be circular. `None` plus a mandatory `__audit_exempt_reason__` tells a deliberate exemption
+    # from a forgotten model; `test_audit_redaction.py`'s model-coverage walk requires that shape
+    # for every mapped class.
     __audit_fields__: ClassVar[frozenset[str] | None] = None
     __audit_exempt_reason__: ClassVar[str] = (
         "audit_event is the audit log itself; diffing it is circular"
     )
 
     __table_args__ = (
-        # Constraint text is a plain string literal, matched verbatim in
-        # migration 0004_audit_event_hash_chain.py - see User's own
-        # __table_args__ for the same NFR-22 rationale. 64 lowercase hex
-        # characters is the textual shape of a SHA-256 digest.
+        # A plain string literal, matched verbatim in migration 0004 (see `User.__table_args__` for
+        # the NFR-22 rationale). 64 lowercase hex characters is a SHA-256 digest.
         CheckConstraint("prev_hash ~ '^[0-9a-f]{64}$'", name="prev_hash_hex"),
         CheckConstraint("entry_hash ~ '^[0-9a-f]{64}$'", name="entry_hash_hex"),
-        # Added by migration 0018 (issue #141 PR review): `nptc.catalogue.
-        # history.load_history` is the first read against this table from an
-        # anonymous, unauthenticated endpoint, and the only index that
-        # existed before this one was `sequence`'s own `UNIQUE`, useless
-        # against a query that equates on `entity_type`/`entity_id` first.
-        # Plain ascending, not `sequence DESC`: a btree index is scanned
-        # backwards at the same cost as forwards, so `ORDER BY sequence
-        # DESC` is served by this index either direction - and ascending
-        # keeps the ORM declaration and the migration's plain
-        # `op.create_index` textually identical, which is what
+        # Migration 0018: `nptc.catalogue.history.load_history` reads this table from an anonymous
+        # endpoint, and the only earlier index was `sequence`'s `UNIQUE`, useless for a query that
+        # equates on `entity_type` and `entity_id` first. Plain ascending: a btree is scanned
+        # backwards at the same cost, so `ORDER BY sequence DESC` is served, and the declaration
+        # stays textually identical to the migration's `op.create_index`, which
         # `test_upgrade_head_matches_models` compares.
         Index(
             "ix_audit_event_entity_type_entity_id_sequence",
@@ -68,12 +53,9 @@ class AuditEvent(Base):
             "entity_id",
             "sequence",
         ),
-        # Added by migration 0019 (issue #286, NFR-12): the three other
-        # filters `nptc.audit.queries.search_audit_events` accepts, each
-        # paired with `sequence` for the same reason as the index above -
-        # plain ascending, scanned backwards for `ORDER BY sequence DESC`
-        # at no extra cost, and textually identical between this
-        # declaration and the migration's `op.create_index`.
+        # Migration 0019 (NFR-12): the other three filters of
+        # `nptc.audit.queries.search_audit_events`, each paired with `sequence` for the reasons
+        # above.
         Index("ix_audit_event_actor_user_id_sequence", "actor_user_id", "sequence"),
         Index("ix_audit_event_action_sequence", "action", "sequence"),
         Index("ix_audit_event_occurred_at_sequence", "occurred_at", "sequence"),
@@ -84,23 +66,16 @@ class AuditEvent(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # Identity, not a `serial` default: an identity column's backing sequence
-    # is an internal dependency of the column and isn't ACL-checked against
-    # the inserting role, so INSERT on the table alone suffices. A `serial`
-    # default is a plain nextval(...) evaluated with the *inserting* role's
-    # own privileges and would silently need its own
-    # GRANT USAGE ON SEQUENCE - the classic thing forgotten on a
-    # re-migration. Proven empirically by
-    # backend/tests/test_db_audit_privileges.py, not assumed.
+    # Identity, not a `serial` default: an identity column's sequence is not ACL-checked against the
+    # inserting role, so INSERT on the table suffices. A `serial` default is evaluated with the
+    # inserting role's privileges and would need its own `GRANT USAGE ON SEQUENCE`.
+    # `backend/tests/test_db_audit_privileges.py` proves it.
     sequence: Mapped[int] = mapped_column(BigInteger, Identity(always=True), unique=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    # Nullable FK to app_user (issue #42): a system-initiated event has no
-    # human actor. Never deleted, only pseudonymised (NFR-17) - the FK is
-    # what makes "pseudonymise, never delete" structural rather than an
-    # application convention: app_user.id survives closure unchanged, so
-    # this reference is never dangling.
+    # Nullable: a system-initiated event has no human actor. Never deleted, only pseudonymised
+    # (NFR-17); the FK makes that structural, because `app_user.id` survives closure unchanged.
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_user.id"), nullable=True
     )
@@ -113,12 +88,9 @@ class AuditEvent(Base):
     before: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     after: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # NFR-10 hash chain (issue #36). No server default on either column:
-    # there is no way to invent a hash for a pre-existing row, so this
-    # migration only ever applies to an empty audit_event (pre-alpha, no
-    # write path has ever run - see docs/operations/upgrade.md).
-    # `nptc.audit.hashing.GENESIS_HASH` (64 `0`s) is the first row's
-    # prev_hash. entry_hash is UNIQUE, which is what makes the chain a
-    # path rather than a DAG and a replayed row structurally impossible.
+    # NFR-10 hash chain. No server default: a hash cannot be invented for an existing row, so the
+    # migration applies only to an empty `audit_event` (see `docs/operations/upgrade.md`).
+    # `nptc.audit.hashing.GENESIS_HASH` (64 `0`s) is the first row's `prev_hash`. `entry_hash` is
+    # UNIQUE, which makes the chain a path rather than a DAG and a replayed row impossible.
     prev_hash: Mapped[str] = mapped_column(Text, nullable=False)
     entry_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
