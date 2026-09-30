@@ -224,6 +224,7 @@ def test_a_batch_save_logs_one_record_per_over_length_term(
     assert len(records) == 1
     assert long_entry.business_key in records[0].getMessage()
     assert [entry.preferred_term for entry in saved] == ["Copper", "Zinc, serum, quantitative"]
+    assert "more)" not in records[0].getMessage()
 
 
 @pytest.mark.req("FR-86")
@@ -256,6 +257,7 @@ def test_a_large_batch_logs_one_summary_record_naming_a_bounded_number_of_keys(
     assert message.startswith("12 preferred terms")
     named = [entry.business_key for entry in entries if entry.business_key in message]
     assert len(named) == 10
+    assert message.endswith("... (2 more)")
 
 
 @pytest.mark.req("FR-86")

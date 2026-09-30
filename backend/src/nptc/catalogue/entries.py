@@ -191,8 +191,8 @@ _logger = logging.getLogger(__name__)
 _LOGGED_KEY_LIMIT = 10
 
 
-def _is_over_maximum_length(entry: CatalogueEntry, maximum: int | None) -> bool:
-    return maximum is not None and exceeds_maximum_length(entry.length, maximum)
+def _is_over_maximum_length(entry: CatalogueEntry, maximum: int) -> bool:
+    return exceeds_maximum_length(entry.length, maximum)
 
 
 def _log_over_maximum_length(entry: CatalogueEntry, maximum: int) -> None:
@@ -810,10 +810,13 @@ def save_entries(
         for business_key, expected_row_version, changes in updates
     ]
     if over_maximum_keys:
+        shown = ", ".join(over_maximum_keys[:_LOGGED_KEY_LIMIT])
+        if len(over_maximum_keys) > _LOGGED_KEY_LIMIT:
+            shown += f", ... ({len(over_maximum_keys) - _LOGGED_KEY_LIMIT} more)"
         _logger.warning(
-            "%d preferred terms over the configured maximum length: maximum=%s business_keys=%s",
+            "%d preferred terms over the configured maximum length: maximum=%d business_keys=%s",
             len(over_maximum_keys),
             max_preferred_term_length,
-            ", ".join(over_maximum_keys[:_LOGGED_KEY_LIMIT]),
+            shown,
         )
     return saved
