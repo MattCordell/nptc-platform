@@ -45,6 +45,7 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -56,8 +57,13 @@ from nptc.api.dependencies import (
     get_terminology_client,
     get_token_verifier,
 )
+from nptc.audit.writer import AuditContext
+from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.jwks import SigningKeys
+from nptc.auth.permissions import Role
 from nptc.auth.tokens import TokenVerifier
+from nptc.db.models.user import User
+from nptc.db.models.user_identity import UserIdentity
 from nptc.settings import ApiSettings, AuthSettings
 from nptc_shared.terminology import StubTerminologyClient
 
@@ -124,6 +130,34 @@ class ApiTestApp:
         kwargs.setdefault("issuer", self.issuer)
         kwargs.setdefault("audience", AUDIENCE)
         return str(mint_token(self.key, kid=KID, **kwargs))
+
+    def token_for_role(self, *, subject: str, role: Role, with_mfa: bool = True) -> str:
+        """Signs `subject` in through the real auth chain, grants `role`, and
+        returns a token carrying the `acr` claim the realm maps to LoA-2
+        unless `with_mfa` is `False`."""
+        bootstrap = self.token(subject=subject)
+        self.get("/auth/me", token=bootstrap)
+        # By `subject`, not "the newest `User` row": `created_at` is
+        # server-side `now()`, so two users provisioned inside one transaction
+        # can tie on it, and the wrong one would be granted `role`.
+        user = self.session.execute(
+            select(User)
+            .join(UserIdentity, UserIdentity.user_id == User.id)
+            .where(UserIdentity.subject == subject)
+        ).scalar_one()
+        grant_role_unchecked(
+            self.session,
+            target_user_id=user.id,
+            role=role,
+            granted_by_user_id=None,
+            audit=AuditContext.system(),
+        )
+        self.session.flush()
+        extra_claims = {"acr": "2"} if with_mfa else {}
+        return self.token(subject=subject, extra_claims=extra_claims)
+
+    def admin_token(self, *, subject: str, with_mfa: bool = True) -> str:
+        return self.token_for_role(subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
 
     def request(self, method: str, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
         """The general form `get`/`post` below are thin wrappers over -

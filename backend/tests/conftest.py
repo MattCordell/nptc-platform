@@ -20,6 +20,11 @@ Fixture graph::
     app_engine          (session)  engine authenticating as nptc_app_login
     db / app_db         (function) a connection in an outer transaction,
                                     rolled back after the test
+    owner_session /     (function) an ORM Session joined to db / app_db
+    app_session                     through a SAVEPOINT, so its commit() stays
+                                    inside the rolled-back transaction
+    capture_statements  (function) context manager recording the SQL a
+                                    connection or engine executes
     pristine_audit_event (function) wipes committed audit_event/user_role/
                                     app_user leftovers before AND after the
                                     test - requested explicitly by the few
@@ -44,7 +49,8 @@ no egress, not the container).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +58,9 @@ import pytest
 import yaml
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from nptc.db.provision_login import APP_LOGIN_ROLE, provision_app_login
@@ -186,6 +193,63 @@ def app_db(app_engine: Engine) -> Iterator[Connection]:
             yield connection
         finally:
             transaction.rollback()
+
+
+def _savepoint_session(connection: Connection) -> Session:
+    """`join_transaction_mode="create_savepoint"` is what lets the ORM's own
+    `commit()` calls nest inside the outer transaction `db`/`app_db` roll back
+    at teardown. Without it, a `commit()` would end that outer transaction and
+    leave the test's rows in the shared container."""
+    return Session(bind=connection, join_transaction_mode="create_savepoint")
+
+
+@pytest.fixture
+def app_session(app_db: Connection) -> Session:
+    """An ORM `Session` on `app_db`, i.e. as the `nptc_app_login` role."""
+    return _savepoint_session(app_db)
+
+
+@pytest.fixture
+def owner_session(db: Connection) -> Session:
+    """The same session shape on the owner connection `db`, for a test whose
+    subject is SQL logic rather than the app role's privileges."""
+    return _savepoint_session(db)
+
+
+StatementFilter = Callable[[str, object], bool]
+StatementCapture = Callable[..., AbstractContextManager[list[str]]]
+
+
+@pytest.fixture
+def capture_statements() -> StatementCapture:
+    """Returns a context manager `capture(bind, keep=None)` that yields the
+    list of SQL statements `bind` (a connection or engine) executes inside the
+    `with` block. `keep(statement, parameters)` narrows what is recorded."""
+
+    @contextmanager
+    def capture(
+        bind: Connection | Engine, keep: StatementFilter | None = None
+    ) -> Iterator[list[str]]:
+        statements: list[str] = []
+
+        def _record(
+            conn: object,
+            cursor: object,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            if keep is None or keep(statement, parameters):
+                statements.append(statement)
+
+        event.listen(bind, "before_cursor_execute", _record)
+        try:
+            yield statements
+        finally:
+            event.remove(bind, "before_cursor_execute", _record)
+
+    return capture
 
 
 def _wipe_committed_audit_state(owner_engine: Engine) -> None:
