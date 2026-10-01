@@ -67,27 +67,23 @@ uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
 uv run pytest --req=FR-07            # tests tagged against a specific requirement (conftest.py; -m has no call syntax)
 ```
 
-Fast iteration vs. full sweep: over half of `backend/tests` carries
+Fast iteration vs. full sweep: a large share of `backend/tests` carries
 `@pytest.mark.integration` (testcontainers Postgres or Keycloak), and those tests take
 most of the wall time. `backend/tests/conftest.py` adds the marker at collection to any
 test that reaches `postgres_container`, directly or through `db`, `app_db` or
 `app_engine`. A test that starts its own container, as the Keycloak tests do, needs the
 marker written by hand. No test in `transform/tests`, `shared/tests` or `scripts/tests`
-carries the marker. Counts as of 2026-10-01, as collected items (each parametrised case
-counts separately):
+carries the marker.
 
-| Tree | Collected | `integration` | Unmarked |
-|---|---:|---:|---:|
-| `backend/tests` | 1,980 | 1,143 | 837 |
-| `transform/tests`, `shared/tests`, `scripts/tests` | 927 | 0 | 927 |
-| Whole suite | 2,907 | 1,143 | 1,764 |
+This file carries no test counts, because they go stale within days. To measure, run
+`uv run pytest --collect-only -q -m integration` (or `-m "not integration"`, optionally
+with a tree path); the last line gives the count, and each parametrised case counts
+separately. `docs/operations/backend-test-container-split.md` records a dated snapshot with
+timings.
 
-To re-measure, run `uv run pytest --collect-only -q -m integration` (or
-`-m "not integration"`, optionally with a tree path); the last line gives the count.
-
-So `-m "not integration"` runs about three fifths of the whole suite but under half of
-`backend/tests`, and starts no container. For backend work it is a quick check, not a
-stand-in for the container tests.
+So `-m "not integration"` runs every `transform`, `shared` and `scripts` test but only
+part of `backend/tests`, and starts no container. For backend work it is a quick
+check, not a stand-in for the container tests.
 
 Run the fast subset while iterating, and the full suite (optionally parallelised via
 `pytest-xdist`) once before pushing:
