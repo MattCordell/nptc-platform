@@ -12,6 +12,10 @@ sign-in service.
 [`backend-test-container-split.md`](backend-test-container-split.md) records which backend
 tests need a Postgres container, with counts per file and timings (issue #363).
 
+[`code-size-remeasurement.md`](code-size-remeasurement.md) compares prose density and
+function length with the milestone-one review, and records which long functions to split
+(issue #366).
+
 [`repo-configuration.md`](repo-configuration.md) records the exact commands that configure
 labels, milestones and the branch protection ruleset.
 
