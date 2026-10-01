@@ -27,6 +27,7 @@ designation ``use``, ``ck_designation_no_en_au_preferred``) is not mapped
 here: it is refused as a pydantic 422 at the request-body layer, before the
 ORM is touched (``nptc.api.routers.catalogue_designations``).
 """
+
 from __future__ import annotations
 
 import logging
