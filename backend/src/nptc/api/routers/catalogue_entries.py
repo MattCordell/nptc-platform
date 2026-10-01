@@ -144,8 +144,8 @@ class PatchEntryRequest(BaseModel):
 
 
 class EntryCoreWriteResult(BaseModel):
-    """The entry's core columns after the write, plus its new `row_version`
-    - mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
+    """The entry's core columns after the write, plus its new `row_version` -
+    mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
     editing client never has to re-fetch the entry just to learn its next
     lock token. `status` is typed `CatalogueEntryStatus`, matching the
     request field it round-trips into (`entry.status` is a plain `str` at

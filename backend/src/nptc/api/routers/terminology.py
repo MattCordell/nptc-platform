@@ -115,8 +115,8 @@ _READ = Depends(permission_dep(Permission.REGISTRY_READ))
 class ConceptLookup(BaseModel):
     """One `$lookup`'s answer, on the wire.
 
-    `code` is a string end-to-end (FR-06), echoed back rather than assumed
-    - `$lookup` itself does not echo it, and a caller matching a late
+    `code` is a string end-to-end (FR-06), echoed back rather than assumed -
+    `$lookup` itself does not echo it, and a caller matching a late
     response to the field that asked needs it. `fsn` keeps its semantic
     tag intact and is nullable: the server may return no FSN designation
     at all, and `LookupResult.fully_specified_name` never falls back to

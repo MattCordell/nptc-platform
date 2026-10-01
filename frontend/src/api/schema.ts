@@ -1163,8 +1163,8 @@ export interface components {
          *     never do this instead, ADR-0035).
          *
          *     `business_key`'s shape is validated here, in the request body, the same
-         *     pattern `BusinessKeyPath` enforces on the singular route's path segment
-         *     - derivable from the request alone, so it belongs on the whole-request
+         *     pattern `BusinessKeyPath` enforces on the singular route's path segment -
+         *     derivable from the request alone, so it belongs on the whole-request
          *     side of the split (see `BulkSavePropertyValuesRequest`'s own docstring):
          *     a malformed key is a 422 for the whole batch, not a `not-found` outcome
          *     indistinguishable from a well-formed key that simply does not exist.
@@ -1320,8 +1320,8 @@ export interface components {
          * ConceptLookup
          * @description One `$lookup`'s answer, on the wire.
          *
-         *     `code` is a string end-to-end (FR-06), echoed back rather than assumed
-         *     - `$lookup` itself does not echo it, and a caller matching a late
+         *     `code` is a string end-to-end (FR-06), echoed back rather than assumed -
+         *     `$lookup` itself does not echo it, and a caller matching a late
          *     response to the field that asked needs it. `fsn` keeps its semantic
          *     tag intact and is nullable: the server may return no FSN designation
          *     at all, and `LookupResult.fully_specified_name` never falls back to
@@ -1509,8 +1509,8 @@ export interface components {
         };
         /**
          * EntryCoreWriteResult
-         * @description The entry's core columns after the write, plus its new `row_version`
-         *     - mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
+         * @description The entry's core columns after the write, plus its new `row_version` -
+         *     mirroring `catalogue_properties.PropertyValuesWriteResult`, so an
          *     editing client never has to re-fetch the entry just to learn its next
          *     lock token. `status` is typed `CatalogueEntryStatus`, matching the
          *     request field it round-trips into (`entry.status` is a plain `str` at
