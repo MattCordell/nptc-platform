@@ -63,11 +63,20 @@ def test_committed_openapi_document_matches_the_app() -> None:
 
 
 @pytest.mark.req("FR-20")
-def test_document_build_ignores_the_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`ApiSettings` refuses `fsn_semantic_tag=stripped`, so a build that read
-    `NPTC_*` would raise here instead of producing the document."""
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("NPTC_FSN_SEMANTIC_TAG", "stripped"),
+        ("NPTC_MAX_PREFERRED_TERM_LENGTH", "0"),
+    ],
+)
+def test_document_build_ignores_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    """Each value is one `ApiSettings` refuses, so a build that read `NPTC_*`
+    would raise here instead of producing the document."""
     committed = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
-    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+    monkeypatch.setenv(variable, value)
 
     assert build_document() == committed
 
