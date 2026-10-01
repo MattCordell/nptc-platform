@@ -23,8 +23,9 @@ way to reach a preferred term that a synonym shadows.
 **Every write requires `expected_row_version` (FR-38).** `designation` has no version column,
 so the designation writes lock on `catalogue_entry.row_version` through
 `nptc.catalogue.entries.entry_child_write`. The preferred-term branch of `/amendment` writes
-`catalogue_entry` directly and locks through `save_entry`. The field is required, not optional: bumping the version on a write
-that omitted it would invalidate every other editor's still-current token.
+`catalogue_entry` directly and locks through `save_entry`. The field is required, not
+optional: bumping the version on a write that omitted it would invalidate every other
+editor's still-current token.
 
 **Warning-severity collisions come back on the write response**, not from a `GET`.
 `warning_collisions` never raises, and a separate `GET` under `/catalogue` would be found by

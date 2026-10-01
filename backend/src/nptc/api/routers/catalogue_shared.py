@@ -1,6 +1,5 @@
 """Response models and helpers shared by the public read router (`catalogue.py`, FR-20),
-the admin read router (`catalogue_admin.py`) and the write routers
-(`catalogue_bindings.py`, `catalogue_designations.py`).
+the admin read router (`catalogue_admin.py`) and the catalogue write routers.
 
 Each router stays a separate module (see their docstrings), but a row written or read by
 one must come back out looking exactly like the same row read by another. The response
