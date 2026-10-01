@@ -17,9 +17,10 @@ Few tests are worth moving, and moving them saves little time.
 - The other 956 items verify SQL behaviour, or read back rows written through the real
   write path. They stay.
 
-The recommendation is to move nothing now. Moving all 187 candidates would save an
-estimated 74 seconds of a 978-second serial run. Three tests that wait for a refused connection
-cost 391 seconds on the measured machine, so fixing them is the larger lever. The
+The recommendation is to move nothing now. Moving 185 of the 187 candidates would save an
+estimated 74 seconds of a 978-second serial run. The other two are CLI tests that save nothing
+until their connect wait is fixed. Three tests that wait for a refused connection cost 391
+seconds on the measured machine, so fixing them is the larger lever. The
 [Timings](#timings) section has the evidence.
 
 ## How the counts were taken
@@ -38,7 +39,7 @@ Reproduce the totals and the per-file counts:
 uv run pytest backend/tests --collect-only -q -m integration
 ```
 
-Each parametrised case is one item, because `-m` selects collected items. The issue's
+Each parametrised case is one item, because `-m` selects collected items. Issue #363's
 "908 of 1,429" counted test functions instead.
 
 Since #397 the marker is derived from fixture use, so tests that reach the container
@@ -235,8 +236,9 @@ Neither stand-in exists today. `build_api_test_app` takes a real connection, and
 ### Candidates that stay
 
 - The 11 `test_lock_ordering.py` rejected-note tests. A fake session that fails on any call
-  proves a stricter claim than "no lock statement reached the wire". The guard rail says to
-  leave lock-ordering tests where they are when in doubt.
+  proves a stricter claim than "no lock statement reached the wire". The rule for this note is
+  that a speed gain is not worth weakening coverage of locks, constraints, triggers or row
+  versioning, so a lock-ordering test stays when in doubt.
 - Two borderline HTTP tests that validate first but then read the row back to prove nothing
   was written: `test_patch_entry_with_no_reason_is_422` and
   `test_bulk_save_with_no_reason_is_422_before_touching_any_entry`.
@@ -273,9 +275,12 @@ uv run pytest backend/tests -q --durations=0
 | Fast subset (`-m "not integration"`) | 829 passed, 8 skipped | 194 s |
 | Full backend run | 1,972 passed, 8 skipped | 978 s |
 
-### Where the 978 seconds go
+### Where the test time goes
 
-| Bucket | Seconds | Share |
+The per-test timings sum to 970 s. The other 8 s of the 978 s wall time is not attributed to any
+test, for example collection.
+
+| Bucket | Seconds | Share of 970 s |
 |---|---:|---:|
 | Three tests that wait for a refused connection | 391 | 40% |
 | Keycloak test files (8 integration items) | 153 | 16% |
@@ -290,16 +295,16 @@ The three tests connect to `127.0.0.1:1` and expect a failure:
 
 Each takes about 130 s. `psycopg.connect` to that address took 130.1 s without a
 `connect_timeout` and 3.0 s with `connect_timeout=3`. A plain socket connect to the same
-address failed in 2.1 s. The same wait reproduced when two of the tests ran alone. I measured
-this on Windows only. A Linux runner may refuse the connection at once, which would fit CI's
-roughly 8-minute runs against 16 minutes here.
+address failed in 2.1 s. The same wait reproduced when two of the tests ran alone. This was
+measured on Windows only. A Linux runner may refuse the connection at once, which would fit
+CI's roughly 8-minute runs against 16 minutes on the measured machine.
 
 The `test_missing_dbapi_driver_exits_3_not_1` docstring says `psycopg2` is not installed.
-`importlib` finds no `psycopg2` here, yet the test waits 131 s, so it appears to reach a
+`importlib` finds no `psycopg2` in the test environment, yet the test waits 131 s, so it appears to reach a
 connection attempt rather than fail at the driver import. This was not investigated further.
 
 Of the fast subset's 194 s, 130 s is the one unmarked test. The rest takes about 64 s. Moving
-the two Tier A CLI tests into the fast subset would add about 260 s on this machine.
+the two Tier A CLI tests into the fast subset would add about 260 s on the measured machine.
 
 ### What the container costs
 
@@ -332,7 +337,8 @@ Move no tests now.
 - **Movable set:** 187 items, which is 16% of the 1,143. Of these, 3 need no code change, 42
   need a validator or session change, and 115 need a no-database HTTP builder. The other 27
   are weaker or partial moves (tiers C, D and E).
-- **Saving:** about 74 s of 978 s on this machine, and the full run's wall time barely moves.
+- **Saving:** about 74 s of 978 s on the measured machine, from 185 candidates. The two CLI
+  tests save nothing until their connect wait is fixed. The full run's wall time barely moves.
 - **Larger lever:** give the three refused-connection tests a `connect_timeout`. That removes
   about 380 s from the full run and 127 s from the fast subset on Windows. It changes no
   assertion.
