@@ -17,7 +17,8 @@ counting every status in a report.
 Only `business_key` is unique, so paging by any other column needs a
 composite keyset over `(sort_value, business_key)`, with `business_key` as
 the tie-break. ADR-0024 (amendment of 2026-09-10) records the cursor design
-and why no index accompanies it.
+and why no index accompanies it. `status` has four distinct values, too few
+for the planner to use an index on it in any case.
 
 - `status` orders by lifecycle (`draft`, `active`, `deprecated`,
   `withdrawn`), not alphabetically. `_SORT_COLUMNS["status"]` is a `CASE`
