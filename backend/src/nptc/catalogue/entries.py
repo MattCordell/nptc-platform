@@ -1,61 +1,41 @@
-"""The `catalogue_entry` service layer: business_key minting and the FR-38
-optimistic-locking write path (issue #46).
+"""The `catalogue_entry` service layer: `business_key` minting and the FR-38
+optimistic-locking write path.
 
-**Why `save_entry`/`save_entries` never build a Core `sqlalchemy.update()`
-statement.** ADR-0012 already names the hazard for `property_definition`:
-a Core-style bulk update goes through the ORM `Session` but bypasses
-`version_id_col` enforcement entirely, silently turning every concurrent
-editor's optimistic lock into decoration. Every write here loads the
-mapped instance and lets the ORM's own `UPDATE ... WHERE row_version = ...`
-do the real work - `backend/tests/test_sql_parameterisation.py`'s AST guard
-enforces this statically for `catalogue_entry` the same way it does for
-SQL string construction.
+**No Core `sqlalchemy.update()`.** A Core-style update bypasses
+`version_id_col`, so every concurrent editor's lock would be decoration
+(ADR-0012). Every write here loads the mapped instance and lets the ORM issue
+`UPDATE ... WHERE row_version = ...`. `test_sql_parameterisation.py`'s AST
+guard enforces this for `catalogue_entry`.
 
-**Two layers of conflict detection, not one.** `save_entry` first checks
-`expected_row_version` against the freshly loaded row *before* mutating
-anything (`assert_entry_row_version`, public since issue #227 so a write
-against something *attached to* an entry can take the same lock without
-inventing a second counter) - this is the path that can build a useful
-`ConflictReport`, because both the caller's stale view and the current row
-are in hand uncorrupted. `version_id_col` is the backstop for the genuine race: two
-callers who both pass that first check and then interleave between load
-and flush. That second case surfaces as SQLAlchemy's own `StaleDataError`
-at `session.flush()` time, wrapped inside a `session.begin_nested()`
-savepoint so only this entry's attempted write rolls back - not the whole
-request, which matters for `save_entries`' multi-entry, one-savepoint-per-
-entry loop that #63's bulk reclassify is meant to call. `entry_child_write`
-(issue #60) applies the same two layers to a write against a table that
-hangs off `entry` but keeps no `row_version` of its own - see its own
-docstring.
+**Two layers of conflict detection.** `save_entry` first checks
+`expected_row_version` against the freshly loaded row before mutating
+anything (`assert_entry_row_version`). That layer can build a useful
+`ConflictReport`, because the caller's stale view and the current row are both
+in hand. `version_id_col` is the backstop for two callers who both pass that
+check and then interleave before the flush. It surfaces as `StaleDataError`
+inside a `session.begin_nested()` savepoint, so only this entry's write rolls
+back, which `save_entries`' one-savepoint-per-entry loop needs.
+`entry_child_write` applies both layers to a table that keeps no
+`row_version` of its own.
 
-**Why no audit event is ever written for a rejected save.** The first
-layer raises before `nptc.audit.recording.record_change` is ever called.
-The second layer's `StaleDataError` is raised by `session.flush()` *inside*
-`nptc.audit.writer.append_audit_event`'s own flush step, which runs before
-that function ever constructs or adds an `AuditEvent` row - so the
-savepoint rollback discards only the attempted (and never-persisted)
-`UPDATE`, and no audit row is ever built in the first place. Both paths
-have their own test (`backend/tests/test_catalogue_optimistic_locking.py`);
-one passing proves nothing about the other.
+**A rejected save writes no audit event.** Layer one raises before
+`record_change` is called. Layer two raises inside `append_audit_event`'s
+flush, before it builds an `AuditEvent`. Each path has its own test in
+`test_catalogue_optimistic_locking.py`; one passing proves nothing about the
+other.
 
-**FR-89's cross-field invariant, the reverse direction (issue #249).**
-`nptc.catalogue.property_values.save_property_values` already refuses a
-specimen value on an entry already flagged `specimen_unconstrained`; `save_
-entry` calls that module's `assert_specimen_flag_allowed` to refuse the
-other direction - setting the flag on an entry that already holds specimen
-values - so the invariant holds no matter which write path a caller takes.
-This is an import from `nptc.catalogue.property_values`, not the reverse:
-that module has no need to import anything from this one, so there is no
-cycle.
+**FR-89, reverse direction.** `save_property_values` refuses a specimen value
+on an entry flagged `specimen_unconstrained`. `save_entry` calls
+`assert_specimen_flag_allowed` to refuse setting the flag on an entry that
+already holds specimen values. `property_values` imports this module only
+inside a function, to break the cycle.
 
-**FR-37 (issue #47): `reason` is a required argument, not an optional one.**
-Every write path here validates it via
-`nptc.catalogue.changelog.validate_changelog_note` *before* touching the
-row - the same precondition-before-mutation posture the row-version check
-above already uses - so a rejected note leaves neither a partial write nor
-an audit event behind. There is no exemption: the ADR-0010 seeded-import
-path supplies `nptc.catalogue.changelog.SEED_IMPORT_NOTE`, which passes
-validation on its own merits rather than bypassing it.
+**FR-37.** `reason` is required and validated by `validate_changelog_note`
+before the row is touched. The seeded-import path (ADR-0010) supplies
+`SEED_IMPORT_NOTE`, which passes that validation rather than bypassing it.
+
+Every writer takes the audit append lock before any session-touching
+statement; see ADR-0035 and `test_lock_ordering.py`.
 """
 
 from __future__ import annotations
@@ -94,26 +74,21 @@ from nptc.db.models.designation import DesignationUse
 from nptc.db.models.user import User
 from nptc_shared.language import DEFAULT_LANGUAGE
 
-#: The single Python source of truth for the FR-03 format - shared by
-#: `format_business_key`, `advance_sequence_past`, and mirrored (never
-#: generated from this constant, per test_sql_parameterisation.py's ban on
-#: SQL built from runtime data) by `CatalogueEntry`'s own CHECK constraint
-#: and migration 0006's sequence-backed default.
+#: The single Python source of truth for the FR-03 format. `CatalogueEntry`'s
+#: CHECK constraint and migration 0006's sequence default mirror it; they are
+#: not generated from it, because `test_sql_parameterisation.py` bans SQL
+#: built from runtime data.
 BUSINESS_KEY_PREFIX: Final[str] = "NPTC-"
 BUSINESS_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(r"^NPTC-([0-9]{6,})$")
 
-#: Fixed name, referenced identically here and in migration
-#: 0006_catalogue_entry.py (via `nptc.db.roles`) - a single source of truth
-#: for the one identifier that must match on both sides.
+#: Must match migration 0006_catalogue_entry.py (via `nptc.db.roles`).
 BUSINESS_KEY_SEQUENCE_NAME: Final[str] = "catalogue_entry_business_key_seq"
 
 
 def format_business_key(sequence_value: int) -> str:
     """`NPTC-` plus a 6-digit zero-padded sequence value (FR-03), for
-    example `NPTC-000247`. Not capped at 6 digits: `BUSINESS_KEY_PATTERN`
-    (and the database CHECK it mirrors) accept more, so a catalogue that
-    outgrows six digits needs no migration - only a wider zero-pad here
-    would need to change, and even that is cosmetic once past 999999."""
+    example `NPTC-000247`. Past 999999 the key widens; the database CHECK
+    accepts it."""
     return f"{BUSINESS_KEY_PREFIX}{sequence_value:06d}"
 
 
@@ -129,29 +104,17 @@ def allocate_business_key(session: Session) -> str:
 
 
 def advance_sequence_past(session: Session, business_key: str) -> None:
-    """Reconciles the backend's minting sequence with a seeded baseline
-    (ADR-0010): the P0 transform mints its own `business_key`s
-    deterministically and positionally, so after a seeded import this must
-    be called once with the *highest* seeded key to guarantee the next
-    `allocate_business_key` call mints a key strictly greater than every
-    seeded one.
+    """Reconciles the minting sequence with a seeded baseline (ADR-0010):
+    call once with the highest seeded key, so the next `allocate_business_key`
+    mints a strictly greater one.
 
-    Deliberately a single atomic statement, not a read-then-compare: a
-    freshly created sequence reports `last_value = 1` even though nothing
-    has ever been dispensed from it (`is_called` is what actually
-    distinguishes "never called" from "1 was issued", and comparing
-    against `last_value` alone treats the two identically) - reading
-    `last_value` directly would therefore silently no-op the very first
-    reconciliation against a seeded baseline as small as `NPTC-000001`,
-    and the next `allocate_business_key` call would reissue that exact
-    key. Calling `nextval()` first and subtracting 1 gives the correct
-    "highest value already dispensed" figure regardless of `is_called`,
-    and folding the read and the write into one `setval` call also closes
-    the read-then-write race a separate read statement would otherwise
-    leave open against a concurrent reconciliation. The cost is one
-    consumed (and permanently skipped) sequence value per call - harmless,
-    since FR-03 only requires `business_key` is never *reused*, not that
-    the sequence itself never has gaps."""
+    A single statement, not read-then-compare. A fresh sequence reports
+    `last_value = 1` before anything is dispensed, and only `is_called`
+    separates that from "1 was issued", so reading `last_value` would skip the
+    first reconciliation against `NPTC-000001`. `nextval() - 1` gives the highest
+    dispensed value whatever `is_called` says, and one `setval` closes the
+    read-then-write race. The cost is one skipped sequence value per call, which
+    FR-03 allows: it forbids reuse, not gaps."""
     match = BUSINESS_KEY_PATTERN.match(business_key)
     if match is None:
         raise ValueError(f"{business_key!r} does not match the NPTC business_key format")
@@ -217,30 +180,20 @@ def create_entry(
     max_preferred_term_length: int | None = None,
 ) -> CatalogueEntry:
     """Creates a new entry. `business_key` is minted via
-    `allocate_business_key` unless the caller supplies one explicitly - the
-    seeded-import path (ADR-0010) supplies its own, positionally-derived
-    key rather than minting. Every bulk loader must come through here: a
-    Core `insert()` or `COPY` skips `clean_term`, so the FR-87 report's
-    `char_length` would disagree with the length FR-85 publishes.
+    `allocate_business_key` unless the caller supplies one, as the
+    seeded-import path (ADR-0010) does. Every bulk loader must come through
+    here: a Core `insert()` or `COPY` skips `clean_term`, so the FR-87
+    report's `char_length` would disagree with the length FR-85 publishes.
 
-    `reason` (FR-37) is validated before the append lock and before
-    anything is added to the session - see the module docstring. FR-05's
-    error-severity collision check (`nptc.catalogue.collisions.
-    assert_no_error_collisions`) runs immediately after that, before
-    `business_key` is even minted - a rejected collision must not consume a
-    sequence value. There is no exemption for the seeded-import path: PRD
-    Section 6.3's own consequence is that a baseline carrying a genuine
-    error-severity collision cannot be created until it is resolved
-    editorially.
-
-    `validate_changelog_note` and `clean_term` run first because neither
-    touches the session: a rejected note or term takes no lock.
-    `acquire_append_lock` then runs before `assert_no_error_collisions`,
-    matching `entry_child_write`'s own precedent (issue #281): that check
-    takes its own advisory lock (keyed per comparison-key), and taking it
-    before the audit append lock is the reverse of the order every other
-    write path here now uses - a lock-ordering cycle no different from the
-    row-lock one, just against a different pair of locks.
+    Order of checks: `validate_changelog_note` (FR-37) and `clean_term` first,
+    because neither touches the session and a rejected note or term takes no
+    lock. Then `acquire_append_lock`, then FR-05's `assert_no_error_collisions`,
+    then minting, so a rejected collision consumes no sequence value. The append
+    lock precedes the collision check because that check takes its own advisory
+    lock, and the reverse order is a lock-ordering cycle (ADR-0035). The
+    seeded-import path has no exemption: a baseline with a genuine
+    error-severity collision cannot be created until it is resolved editorially
+    (PRD Section 6.3).
     """
     validated_reason = validate_changelog_note(reason)
     cleaned_preferred_term = clean_term(preferred_term)
@@ -276,26 +229,17 @@ def create_entry(
 
 
 def load_entry_for_update(session: Session, business_key: str) -> CatalogueEntry:
-    """One entry by `business_key`, any status - unlike
-    `nptc.catalogue.queries.get_entry`, which is the *public* read path and
-    filters to `PUBLIC_STATUSES` on purpose (an unpublished entry must stay
-    invisible to an anonymous caller). An editing surface needs the entry
-    regardless of status - a draft has to be editable before it can ever
-    become `active` - so this loader carries no status filter at all.
+    """One entry by `business_key`, any status. Unlike
+    `nptc.catalogue.queries.get_entry` (the public read path, filtered to
+    `PUBLIC_STATUSES`), an editing surface must reach a `draft` entry before it
+    can become `active`. The length report counts every status for the same
+    reason; see the `nptc.catalogue.length_report` module docstring.
 
-    Public (not `_load_for_update`) so a write route elsewhere in the
-    `nptc.catalogue`/`nptc.api` write surface (issue #219) can resolve the
-    same entry this module's own `save_entry`/`save_entries` do, rather than
-    re-querying `CatalogueEntry` by hand.
-
-    A plain `select()`, deliberately - no `.with_for_update()`. That stays
-    true even though the name suggests a write-path-only helper: issue
-    #228's `catalogue_admin` read route also resolves the entry through
-    this function (the same status-unfiltered lookup a write needs, wanted
-    here for a `GET`), so adding a row lock here to serve some future write
-    caller would silently make every admin *read* hold that lock for the
-    request's lifetime too. A write that genuinely needs `SELECT ... FOR
-    UPDATE` should add it at its own call site, not here.
+    Public so write and admin read routes resolve the entry as `save_entry`
+    does. A plain `select()` with no `.with_for_update()`: the admin `GET` route
+    calls it too, and a row lock here would make every admin read hold it for the
+    request. A write that needs `SELECT ... FOR UPDATE` adds it at its own call
+    site.
     """
     entry = session.execute(
         select(CatalogueEntry).where(CatalogueEntry.business_key == business_key)
@@ -309,17 +253,14 @@ def _latest_change_attribution(
     session: Session, entry_id: uuid.UUID
 ) -> tuple[str | None, datetime | None]:
     """`(changed_by, changed_at)` for the most recent audit event against
-    this entry - ordered by `sequence`, the chain's own canonical ordering
-    (matching `nptc.audit.writer.append_audit_event`'s own tail read),
-    not `occurred_at`: two events in the same transaction share a
-    `clock_timestamp()`-derived value closely enough that ordering by it
-    alone leaves a tie-break undefined.
+    this entry. Ordered by `sequence`, the chain's canonical ordering (as in
+    `append_audit_event`'s tail read), not `occurred_at`: two events in one
+    transaction can share a timestamp.
 
-    `changed_by` is resolved to `app_user.display_name` - never the
-    internal UUID (NFR-04/NFR-26) - and is `None` for a system-initiated
-    change or an actor account since pseudonymised on closure (NFR-17
-    clears `display_name`, not the row itself, so the join always
-    succeeds; only the name is ever missing)."""
+    `changed_by` is `app_user.display_name`, never the internal UUID
+    (NFR-04/NFR-26). It is `None` for a system change or an actor pseudonymised
+    on closure; NFR-17 clears `display_name`, not the row, so the join always
+    succeeds."""
     row = session.execute(
         select(User.display_name, AuditEvent.occurred_at)
         .select_from(AuditEvent)
@@ -363,19 +304,16 @@ def _build_conflict_report(
 
 
 def _would_change(entry: CatalogueEntry, changes: EntryChanges) -> bool:
-    """Whether applying `changes` to `entry` would actually alter anything.
+    """Whether applying `changes` to `entry` would alter anything.
 
-    `preferred_term` is compared *cleaned*, because that is what would be
-    stored: `CatalogueEntry`'s own `@validates` hook runs `clean_term` on
-    assignment, so a submitted term differing only by a normalisable space
-    (PRD Appendix A.1) is the same string once stored, and treating it as a
-    change would write an audit event saying nothing changed.
+    `preferred_term` is compared cleaned, because that is what is stored:
+    `CatalogueEntry`'s `@validates` hook runs `clean_term`, so a term differing
+    only by a normalisable space (PRD Appendix A.1) is no change, and treating
+    it as one would audit a change that did not happen.
 
-    `clean_term` can raise `TermCleaningError` on a term with no single
-    correct repair (FR-63). That is deliberately not caught: the caller
-    submitted an unstorable term, and refusing it here - before the
-    savepoint, like every other precondition in this module - is the same
-    answer they would have got a few lines later.
+    `clean_term` may raise `TermCleaningError` (FR-63). It is not caught: the
+    term is unstorable, and refusing it here, before the savepoint, is the
+    answer the caller would get a few lines later.
     """
     submitted = changes.as_dict()
     if "preferred_term" in submitted:
@@ -384,45 +322,34 @@ def _would_change(entry: CatalogueEntry, changes: EntryChanges) -> bool:
 
 
 def _has_pending_audit_changes(entry: CatalogueEntry) -> bool:
-    """Whether `entry` already carries an unflushed change to a field
-    `record_change` would audit - a mutation made by the caller directly on
-    the loaded instance, rather than declared through `EntryChanges`.
+    """Whether `entry` holds an unflushed change to a field `record_change`
+    would audit, made directly on the loaded instance rather than through
+    `EntryChanges`.
 
-    `_would_change` alone cannot see one. It compares against the entry's
-    *current* attribute values, which a direct mutation has already moved,
-    so a caller who set `entry.status` by hand and then passed a
-    coincidentally-matching `EntryChanges` would look like a no-op and have
-    that mutation flushed with no audit event (NFR-08).
+    `_would_change` cannot see one: it compares against current attribute
+    values, which a direct mutation already moved. Without this check a caller
+    who set `entry.status` by hand, then passed a matching `EntryChanges`, would
+    look like a no-op and have the mutation flushed with no audit event (NFR-08).
 
-    **Net history, not `sa_inspect(entry).modified`** (issue #227 review).
-    `modified` is a set-*event* flag: SQLAlchemy raises it on any
-    assignment, including one that writes the value already there - and
-    `CatalogueEntry`'s own `@validates("preferred_term")` hook assigns
-    `preferred_term_key` as well, so one assignment trips it twice. Gating
-    on it would send an identical re-assignment straight back to
-    `record_change`, into the empty diff and unmapped `AuditNoOpError` this
-    short-circuit exists to prevent. `load_history().has_changes()` is the
-    net question, and returns `False` for a same-value assignment (verified:
-    such a value lands in the history's `unchanged`, not `added`/`deleted`).
+    Uses `load_history().has_changes()` (ADR-0018), not `sa_inspect(entry).modified`.
+    `modified` is raised by any assignment, including one writing the value
+    already there, and the `@validates("preferred_term")` hook assigns
+    `preferred_term_key` as well. Gating on it would send an identical
+    re-assignment into `record_change`, which raises `AuditNoOpError` on the
+    empty diff.
 
-    Scoped to the fields the audit policy actually diffs, matching
-    `nptc.audit.diffing.diff_instance`'s own iteration, so this and the diff
-    it is predicting cannot disagree about which fields count.
+    Scoped to the fields `diff_instance` iterates, so this and the diff it
+    predicts cannot disagree.
 
-    What this buys is a *loud* failure rather than a silent one. It does not
-    make a pre-mutated instance saveable: `save_entry` cannot build a
-    correct diff for one, because opening its savepoint flushes the pending
-    change and clears the history `record_change` reads, so the caller gets
-    `AuditNoOpError` - which names exactly that case and calls it a bug.
-    Short-circuiting instead would return successfully having written the
-    mutation with no audit row at all, and that is the NFR-08 failure worth
-    preventing. `save_entry` is the sole sanctioned mutator of the instance
-    it loads; this is what enforces it rather than assuming it.
+    This gives a loud failure, not a saveable pre-mutated instance: opening the
+    savepoint flushes the pending change and clears the history `record_change`
+    reads, so the caller gets `AuditNoOpError`. Short-circuiting would instead
+    write the mutation with no audit row (NFR-08). `save_entry` is the sole
+    sanctioned mutator of the instance it loads.
 
-    Reachable only with autoflush suppressed: normally
-    `load_entry_for_update`'s own `SELECT` flushes a pending mutation before
-    `save_entry` reaches this point, which bumps `row_version` and makes the
-    save a version conflict instead.
+    Reachable only with autoflush suppressed. Normally `load_entry_for_update`'s
+    `SELECT` flushes the pending mutation first, which bumps `row_version` and
+    makes the save a version conflict.
     """
     policy = policy_for(CatalogueEntry)
     state = sa_inspect(entry)
@@ -439,31 +366,23 @@ def assert_entry_row_version(
     *,
     changes: EntryChanges | None = None,
 ) -> None:
-    """FR-38's first layer, on its own: raises `EntryVersionConflictError`
+    """FR-38's first layer on its own: raises `EntryVersionConflictError`
     with a full `ConflictReport` if `entry.row_version` has moved past
-    `expected_row_version`, and does nothing at all otherwise.
+    `expected_row_version`, and does nothing otherwise.
 
-    Extracted from `save_entry` (issue #227) so a write that changes
-    something *attached to* an entry can take the same lock the entry's own
-    writes take, against the same counter, without going through
-    `save_entry` - which would insist on an `EntryChanges` it has nothing to
-    put in. `nptc.catalogue.property_values.save_property_values` already
-    established that `catalogue_entry.row_version` is the one optimistic
-    lock a caller tracks per entry, covering more than `catalogue_entry`'s
-    own columns; this is that argument applied to `designation`.
+    Public so a write to something attached to an entry (a designation) takes
+    the same lock against the same counter as `save_entry`, without needing an
+    `EntryChanges`. `catalogue_entry.row_version` is the one optimistic lock a
+    caller tracks per entry, covering `property_value` and `designation` rows as
+    well as its own columns.
 
-    `changes` is only ever used to populate `ConflictReport.conflicts` -
-    the fields the caller submitted whose stored value has since moved. A
-    caller with no entry-level changes to declare (the designation case)
-    omits it and gets `conflicts=()`, which is exactly the
-    non-overlapping-field conflict `ConflictReport`'s own docstring
-    describes: still rejected, because the version is the contract
-    regardless, and still carrying `current_row_version`/`changed_by`/
-    `changed_at` so the caller is never left with nothing to show.
+    `changes` only populates `ConflictReport.conflicts`. A caller with none to
+    declare omits it and gets `conflicts=()`: still rejected, because the
+    version is the contract, and still carrying `current_row_version`,
+    `changed_by` and `changed_at`.
 
-    This is layer *one* only. `save_entry` and `entry_child_write` each
-    keep their own `StaleDataError` backstop for the genuine load-to-flush
-    race, which no precondition check can see - see the module docstring.
+    Layer two, the `StaleDataError` backstop for the load-to-flush race, stays in
+    `save_entry` and `entry_child_write`; see the module docstring.
     """
     if entry.row_version == expected_row_version:
         return
@@ -481,18 +400,12 @@ def assert_entry_row_version(
 
 def bump_entry_row_version(entry: CatalogueEntry) -> None:
     """Advances `entry.row_version` by one, so the next writer's
-    `expected_row_version` must be the value this write just produced.
+    `expected_row_version` must be the value this write produced.
 
-    `entry.row_version += 1`, never a Core `update()` - the ORM assignment
-    is what `version_id_col` actually enforces at flush, and
-    `test_sql_parameterisation.py`'s AST guard rejects a Core-style update
-    against `catalogue_entry` for the reason ADR-0012 already gives for
-    `property_definition`. Called from inside `entry_child_write` on a
-    clean exit. Deliberately **not** adopted by `save_property_values`,
-    whose own inline `entry.row_version += 1` is conditional on that
-    function's no-op short-circuit - a schedule `entry_child_write` below
-    does not share - so refactoring it onto this helper is out of scope
-    here (see `entry_child_write`'s own docstring)."""
+    An ORM assignment, never a Core `update()`, for the reason in the module
+    docstring. Called from `entry_child_write` on a clean exit.
+    `save_property_values` does not use it: its own increment is conditional on
+    its no-op short-circuit, which `entry_child_write` does not share."""
     entry.row_version += 1
 
 
@@ -505,81 +418,44 @@ def entry_child_write(
     reason: str | None = None,
 ) -> Iterator[None]:
     """Wraps a write to a table that hangs off `entry` but keeps no
-    `row_version` of its own - `code_binding` is the first caller (issue
-    #60) - so it shares `catalogue_entry.row_version` as its one optimistic
-    lock, the same argument `save_property_values`'s own docstring already
-    makes for `property_value`.
+    `row_version` of its own (`code_binding`, `designation`), so it shares
+    `catalogue_entry.row_version` as its one optimistic lock, as
+    `save_property_values` does for `property_value`.
 
-    **Both of FR-38's layers, not just the first (issue #60 review).**
-    `assert_entry_row_version` below is layer one - a precondition check
-    against the row `entry` was already loaded with - and on its own it
-    cannot see two callers who both load the same version and interleave
-    between that check and the flush that actually enforces
-    `version_id_col`. So the caller's writes (yielded) and `bump_entry_
-    row_version` run inside one `session.begin_nested()` savepoint, flushed
-    before that savepoint commits: a `StaleDataError` at that flush is
-    caught here and translated into `EntryVersionConflictError`, the same
-    two-layer shape `save_entry`/`save_property_values_for_entries` already
-    use - applied here to a caller with no `EntryChanges` of its own to
-    report, so the translated `ConflictReport` carries `conflicts=()`,
-    exactly like `assert_entry_row_version`'s designation caller. Without
-    this, that race reached a caller as an uncaught `StaleDataError` - a
-    500, not a 409 - because before this issue no binding write touched
-    `catalogue_entry` at all, so `version_id_col` had nothing to collide on.
+    **Both FR-38 layers.** `assert_entry_row_version` is layer one. It cannot see
+    two callers who load the same version and interleave before the flush that
+    enforces `version_id_col`. So the yielded writes and
+    `bump_entry_row_version` run inside one `session.begin_nested()` savepoint,
+    flushed before it commits. A `StaleDataError` at that flush becomes
+    `EntryVersionConflictError` with `conflicts=()`, since this caller has no
+    `EntryChanges`. Without it that race reached the caller as a 500, not a 409.
+    One savepoint also lets the replace-binding route's three-step body share
+    a single `with` and roll back together, leaving no partial replacement and
+    no audit event. A caller needs no `session.flush()` after the block.
 
-    Wrapping the body's writes in the *same* savepoint as the version bump
-    is also what lets `replace_binding`'s three-step body share a single
-    `with`: a stale version caught only at the final flush still rolls back
-    all three writes together, leaving no partial replacement and no audit
-    event - the same guarantee a version already known stale up front gets
-    from the precondition check.
+    `reason`, when given, is validated before the lock, so a rejected note takes
+    no lock. `None` skips the check for a caller whose body validates its own.
 
-    `reason`, when given, is validated before the lock: a route passes its
-    request's note so a rejected one takes no lock, because the wrapped
-    writers only validate it once this context manager already holds the
-    lock. `None` skips the check for a caller whose body validates its own.
+    **Lock order.** `acquire_append_lock` is the first session-touching
+    statement, before the savepoint and so before any `catalogue_entry` row lock.
+    Setting `entry.row_version` does not touch the database; the
+    `UPDATE ... WHERE row_version = ...` at this block's flush does, always after
+    the append lock (ADR-0035).
 
-    `acquire_append_lock` is the first session-touching statement below -
-    before the savepoint opens, and so before anything that could take a `catalogue_
-    entry` row lock. Setting `entry.row_version` does not touch the
-    database by itself; the `UPDATE ... WHERE row_version = ...` `version_
-    id_col` issues is what does, and that now happens at this context
-    manager's own flush, inside the savepoint, always after the append
-    lock. `save_property_values_for_entries` already establishes the same
-    order for its own multi-row case; this is that argument applied to a
-    single entry's child write.
+    **The conflict handler re-loads by `business_key`, never refreshes `entry`
+    in place.** `session.refresh(entry)` on a row another transaction deleted
+    raises `ObjectDeletedError` inside the handler for it, which would reach the
+    caller as an unmapped 500. `business_key` is captured before the savepoint
+    opens. `load_entry_for_update` then finds the current row or raises the
+    domain `EntryNotFoundError`, mapped to 404 and not caught here, as in
+    `save_entry`. No hard-delete path exists today; this keeps both handlers
+    failing the same way if one is added.
 
-    A caller no longer needs its own `session.flush()` after the `with`
-    block: by the time control returns here, this context manager's own
-    flush has already run and any `StaleDataError` it raised has already
-    been translated.
-
-    **The `StaleDataError`/`ObjectDeletedError` handler re-loads by
-    `business_key`, never by refreshing `entry` in place (issue #60
-    review).** `session.refresh(entry)` on a row another transaction has
-    since hard-deleted raises `ObjectDeletedError` itself - inside the
-    handler *for* `ObjectDeletedError` - which would reach the caller as an
-    unmapped 500. `business_key` is captured before the savepoint opens, so
-    reading it never touches an expired attribute; `load_entry_for_update`
-    then either finds the current row or raises the *domain*
-    `EntryNotFoundError` - mapped centrally to a real 404, never caught
-    here - the same shape `save_entry`'s own identical handler already
-    relies on. `catalogue_entry` has no hard-delete path in this codebase
-    today, so this branch is not known to be reachable in practice; it
-    exists so that if one is ever added, this handler fails the same way
-    `save_entry`'s does rather than differently.
-
-    **Any exception the wrapped body raises that is not one of these two
-    still rolls the savepoint back (issue #60 review).** A domain error
-    from the body - `load_active_binding`'s 404, `create_binding`'s
-    translated `CodeBindingAlreadyActiveError` - is not a version conflict
-    and is re-raised unchanged, but leaving the savepoint open would make
-    the "no partial write" guarantee depend on the caller's own teardown
-    (today, `session_scope` rolling back the whole request on any
-    exception) rather than being local to this context manager - the same
-    posture `save_entry` takes, and one a future caller that catches a
-    per-entry domain error and keeps using the session (as `save_entries`
-    already does for #63's bulk shape) would need to be able to rely on.
+    **Any other exception from the body still rolls the savepoint back.** A
+    domain error from the body is re-raised unchanged, but leaving the savepoint
+    open would make "no partial write" depend on the caller's teardown. A caller
+    that catches a per-entry error and keeps using the session needs the
+    guarantee to be local to this block.
     """
     if reason is not None:
         validate_changelog_note(reason)
@@ -626,69 +502,44 @@ def save_entry(
     """Applies `changes` to the entry identified by `business_key`,
     enforcing FR-38 optimistic locking. Raises `EntryVersionConflictError`
     (never a silent overwrite) if `expected_row_version` is stale, whether
-    caught by the explicit precondition check below or by the
-    `version_id_col` backstop for a genuine concurrent race - see the
-    module docstring for why neither path ever leaves an audit event
-    behind.
+    caught by the precondition check or by the `version_id_col` backstop; see
+    the module docstring for why neither leaves an audit event.
 
     A preferred term that changed to one over `max_preferred_term_length` is
     logged, or its business key appended to `over_maximum_keys` when a batch
     caller wants one record for the lot.
 
-    `reason` (FR-37) is validated first, before the lock and before the
-    entry is loaded: that check never touches the session, so a rejected
-    note takes no lock and never reaches the row-version check.
-    `acquire_append_lock` then runs before the entry load, the collision
-    check, and the savepoint whose flush issues the implicit row-locking
-    UPDATE - the same ordering `entry_child_write` already establishes for a
-    child-table write (issue #281), applied here to the entry's own columns.
-    See that statement's own comment for why "before any session-touching
-    statement, unconditionally" rather than only once a genuine change is
-    confirmed."""
+    `reason` (FR-37) is validated first; it never touches the session, so a
+    rejected note takes no lock. `acquire_append_lock` then runs before the entry
+    load, the collision check and the savepoint whose flush issues the
+    row-locking UPDATE, as `entry_child_write` does (ADR-0035)."""
     validated_reason = validate_changelog_note(reason)
-    # Before `load_entry_for_update` - matching `entry_child_write`'s own
-    # precedent (round-2 review, issue #281). `load_entry_for_update` is an
-    # ORM `select()`, and SQLAlchemy's default autoflush means any pending
-    # `catalogue_entry` mutation already sitting in this session (from
-    # earlier in the same transaction) would otherwise flush - taking a row
-    # lock - before this function ever reaches its own, later call.
-    # Acquiring unconditionally here, rather than only once a genuine change
-    # is confirmed, gives up the "a no-op resubmission takes no lock"
-    # optimisation a narrower placement would allow, in exchange for a
-    # guarantee that holds at this function's own boundary rather than
-    # depending on every caller having no unflushed state.
+    # Before `load_entry_for_update`: that ORM `select()` autoflushes any
+    # pending `catalogue_entry` mutation, which would take a row lock before
+    # the append lock. Unconditional, so a no-op resubmission takes the lock
+    # too; the guarantee then holds at this function's boundary instead of
+    # depending on every caller entering with a clean session.
     acquire_append_lock(session)
     entry = load_entry_for_update(session, business_key)
 
     assert_entry_row_version(session, entry, expected_row_version, changes=changes)
 
-    # A no-op save (the same values resubmitted) returns before anything is
-    # touched - `nptc.catalogue.property_values.save_property_values` makes
-    # the same check for the same reasons, and `nptc.catalogue.designations.
-    # amend_designation` does for a term resubmitted unchanged.
-    #
-    # Deliberately *after* the row-version check above, not before: a stale
-    # caller whose submitted values happen to coincide with the current ones
-    # is still refused, because the version is the contract regardless
-    # (`test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
-    # have_matched_still_reports_zero_conflicts`).
-    #
-    # Without this, `record_change` raises `AuditNoOpError` on the empty
-    # diff - an unmapped error, so an editor re-saving a form without having
-    # changed the term got a 500 (found reviewing issue #227's own new
-    # route, where a `preferred_term` differing only by a normalisable space
-    # cleans to the stored value and reaches exactly this path). A no-op
-    # resubmission is not a caller mistake, and `row_version` must not move
-    # for one: doing so would invalidate a concurrent editor's still-current
-    # token for no actual change.
+    # A no-op save returns before anything is touched, as in
+    # `save_property_values` and `amend_designation`. It sits after the
+    # row-version check on purpose: a stale caller whose values happen to match
+    # is still refused, because the version is the contract
+    # (`test_a_stale_save_that_would_have_matched_still_reports_zero_conflicts`).
+    # Without it `record_change` raises `AuditNoOpError` on the empty diff, a
+    # 500 for an editor who re-saved a form unchanged. A no-op must not move
+    # `row_version`, which would invalidate a concurrent editor's current token.
     if not _would_change(entry, changes) and not _has_pending_audit_changes(entry):
         return entry
 
     if changes.preferred_term is not None:
-        # FR-05: checked after the row_version precondition (a stale
-        # caller should see the version conflict, not a collision against
-        # data it never actually saw) and before the savepoint opens - a
-        # rejected collision must never reach `record_change`.
+        # FR-05: after the row_version precondition (a stale caller should
+        # see the version conflict, not a collision with data it never saw),
+        # and before the savepoint so a rejected collision never reaches
+        # `record_change`.
         assert_no_error_collisions(
             session,
             entry=entry,
@@ -698,26 +549,17 @@ def save_entry(
         )
 
     if changes.specimen_unconstrained and not entry.specimen_unconstrained:
-        # FR-89, the reverse direction (issue #249): refused before the
-        # savepoint opens, same posture as the collision check above - a
-        # rejected flag-set must never reach `record_change`. Only checked
-        # on the *transition* to True, not merely when the submitted value
-        # is True: an entry that already holds `specimen_unconstrained =
-        # True` (a state the service layer itself never produces alongside
-        # specimen values, but a direct-SQL or seeded row could) must stay
-        # editable for its other columns without an editor having to first
-        # "clear" a flag they never touched - #149's edit screen resends
-        # the whole form, both fields, on every save. Clearing the flag
-        # (`False`) never conflicts with anything a specimen value could
-        # hold, so it is excluded either way.
+        # FR-89, reverse direction: refused before the savepoint, like the
+        # collision check. Checked only on the transition to True. An entry
+        # already holding the flag (a direct-SQL or seeded row) stays editable
+        # for its other columns, because the edit screen resends the whole form
+        # on every save. Clearing the flag never conflicts with a specimen value.
         assert_specimen_flag_allowed(session, entry)
 
-    # The savepoint must open *before* any attribute is mutated: opening
-    # one autoflushes any already-pending state, and if that happened
-    # after the setattr calls below it would flush the mutation straight
-    # to the database and clear SQLAlchemy's attribute history before
-    # record_change ever gets to read it - turning every save into a
-    # spurious AuditNoOpError regardless of whether it actually conflicts.
+    # The savepoint opens before any attribute changes: opening one autoflushes
+    # pending state, and a flush after the setattr calls would write the
+    # mutation and clear the attribute history `record_change` reads, turning
+    # every save into a spurious `AuditNoOpError`.
     previous_term = entry.preferred_term
     savepoint = session.begin_nested()
     try:
@@ -732,12 +574,9 @@ def save_entry(
             kind=ChangeKind.UPDATED,
             reason=validated_reason,
         )
-        # Committing the savepoint here, inside the try, makes the
-        # guarantee local to this function: it relies only on
-        # record_change/append_audit_event raising if anything above
-        # failed, not on the separate assumption that append_audit_event
-        # always flushes before returning (true today, but a detail of
-        # that module rather than a contract this one should depend on).
+        # Committed inside the try so the guarantee is local: it relies on
+        # `record_change` raising if anything above failed, not on
+        # `append_audit_event` always flushing before it returns.
         savepoint.commit()
     except (StaleDataError, ObjectDeletedError):
         savepoint.rollback()
@@ -775,24 +614,17 @@ def save_entries(
     max_preferred_term_length: int | None = None,
 ) -> list[CatalogueEntry]:
     """Applies a batch of `(business_key, expected_row_version, changes)`
-    updates, one `save_entry` call - and one savepoint - per entry (FR-39's
-    "one audit event per affected entry"). This is the seam for a bulk
-    write to `EntryChanges`' own columns (`preferred_term`/`status`/
-    `specimen_unconstrained`) - it is **not** the seam for #63's bulk
-    reclassify, which sets a coded registry property (discipline,
-    `origin=system`) and so must go through
-    `nptc.catalogue.property_values.save_property_values_for_entries`
-    instead (issue #265).
+    updates, one `save_entry` call and one savepoint per entry (FR-39's "one
+    audit event per affected entry"). This is the seam for bulk writes to
+    `EntryChanges`' own columns. It is not the seam for bulk reclassify, which
+    sets a coded registry property and goes through
+    `nptc.catalogue.property_values.save_property_values_for_entries` (ADR-0035).
 
-    `reason` is validated first because that check never touches the
-    session, so a rejected note takes no lock - including for an empty
-    `updates`, which no longer succeeds silently with a bad note.
-    `acquire_append_lock` then runs before any session-touching statement,
-    for the same reason `add_synonyms` does (issue #281 round-3 review):
-    each `save_entry` call below already re-asserts the same lock on this
-    function's behalf, so this is a cheap, safe re-assertion, kept so this
-    function satisfies the same uniform invariant every other writer in
-    this package does."""
+    `reason` is validated first, so a rejected note takes no lock, even for an
+    empty `updates`. `acquire_append_lock` then runs before any session-touching
+    statement. Each `save_entry` call re-asserts the lock, so this is redundant
+    but keeps the invariant `test_lock_ordering.py` checks uniform across
+    writers."""
     validate_changelog_note(reason)
     acquire_append_lock(session)
     over_maximum_keys: list[str] = []
