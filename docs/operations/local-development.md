@@ -95,6 +95,12 @@ expected at this stage. The admin catalogue list (`/admin/catalogue`) and the ca
 screen are real. Check the route tree for the current state before assuming something is
 missing.
 
+## Running the backend tests
+
+`CLAUDE.md` lists the test commands. Most backend tests start a Postgres container, so the full
+run is slow. [Which backend tests need a database](backend-test-container-split.md) records
+which tests need the container and what the timings are, so you do not repeat that work.
+
 ## Known gotchas
 
 - `cp` does not exist in PowerShell. Use `Copy-Item`.

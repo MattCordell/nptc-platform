@@ -9,6 +9,9 @@ from a clean checkout to a signed-in browser (NFR-41). [`local-development.md`](
 covers running the API and web app on your own machine against that stack's database and
 sign-in service.
 
+[`backend-test-container-split.md`](backend-test-container-split.md) records which backend
+tests need a Postgres container, with counts per file and timings (issue #363).
+
 [`repo-configuration.md`](repo-configuration.md) records the exact commands that configure
 labels, milestones and the branch protection ruleset.
 
