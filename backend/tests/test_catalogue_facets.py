@@ -18,7 +18,7 @@ uses #54's generated index.
 
 from __future__ import annotations
 
-from typing import Any
+import uuid
 
 import pytest
 from sqlalchemy import Select
@@ -501,7 +501,7 @@ def test_the_bucket_cap_is_a_named_constant() -> None:
 # --- the combined statement (issue #275) -----------------------------------
 
 
-def _base_for(descriptor: FacetDescriptor) -> Select[Any]:
+def _base_for(descriptor: FacetDescriptor) -> Select[uuid.UUID]:
     """A stand-in for `search._matching_entry_ids` - what matters to this
     module's unit tests is the shape `build_facet_counts_statement` unions,
     not a real scored CTE (that half is `test_db_search_index.py`'s job)."""

@@ -56,6 +56,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import math
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -483,7 +484,7 @@ def _select_from_scored(
     predicates: Sequence[ColumnElement[bool]],
     *,
     statuses: Sequence[str] = PUBLIC_STATUSES,
-) -> Select[Any]:
+) -> Select[*tuple[Any, ...]]:
     """The one join between `catalogue_entry` and the scored CTE, filtered to
     `statuses` and this request's filter predicates.
 
@@ -506,7 +507,7 @@ def _matching_entry_ids(
     predicates: Sequence[ColumnElement[bool]],
     *,
     statuses: Sequence[str] = PUBLIC_STATUSES,
-) -> Select[Any]:
+) -> Select[uuid.UUID]:
     """The entry ids `q` and `predicates` between them select, so the result page
     and every facet count answer the same question about the same population
     (`test_api_public_search.py` has the count/result parity test).
@@ -521,7 +522,7 @@ def build_search_statement(
     after_key: str | None = None,
     limit: int,
     statuses: Sequence[str] = PUBLIC_STATUSES,
-) -> Select[Any]:
+) -> Select[str, str, str, bool, datetime, int, Any]:
     """The composed result statement `search_entries` runs.
 
     Public because `test_db_search_index.py` `EXPLAIN`s the statement the module

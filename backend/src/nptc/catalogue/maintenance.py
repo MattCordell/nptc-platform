@@ -252,7 +252,7 @@ def build_listing_statement(
     after_sort_value: Any = None,
     after_key: str | None = None,
     limit: int,
-) -> Select[Any]:
+) -> Select[str, str, str, bool, datetime, int, Any]:
     """The composed statement `list_entries_any_status` runs.
 
     Public so `backend/tests/test_db_search_index.py` can `EXPLAIN` the
