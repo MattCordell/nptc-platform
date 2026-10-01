@@ -1,78 +1,36 @@
-"""The authenticated admin read API over the catalogue, any status (issues
-#228, #266, FR-17, FR-36, FR-14, FR-15, FR-16, FR-44).
+"""The authenticated admin read API over the catalogue, any status (FR-17, FR-36, FR-14,
+FR-15, FR-16, FR-44).
 
-Every catalogue entry is born `draft` (`create_entry`'s own default
-status), and the #219/#224 write routes already resolve a `draft` entry
-fine for writing - `load_entry_for_update` carries no status filter, on
-purpose (see its own docstring). What was missing is a read route an edit
-screen (#149) can call first to render the form: `routers/catalogue.py`'s
-public detail route resolves the entry through `nptc.catalogue.queries.
-get_entry`, which filters to `PUBLIC_STATUSES` (`active` only) and 404s a
-`draft` identically to a `business_key` that was never minted - and that
-indistinguishability is FR-20's own deliberate contract, not a gap to
-close there.
+The public detail route resolves through `nptc.catalogue.queries.get_entry`, which filters
+to `PUBLIC_STATUSES`, so it 404s a `draft` exactly as it does a key never minted. That is
+FR-20's deliberate contract. These routes give an edit screen an authenticated read of an
+entry of any status. `docs/architecture/catalogue-write-api.md` describes them.
 
-**A separate router from `catalogue.py`, on purpose** - same reasoning as
-`catalogue_bindings.py`/`catalogue_designations.py`'s own module
-docstrings: `catalogue.py` is the public, unauthenticated surface, and
-`test_api_public_status_filter.py`/`test_api_public_response_hygiene.py`
-both derive what they scan from its route table. Folding a permission-gated
-branch into that module's existing route would mean carving an exception
-into both of those guard tests for the one route in the file that is not
-actually public; a second router with its own tag needs neither.
+**A separate router from `catalogue.py`.** `test_api_public_status_filter.py` and
+`test_api_public_response_hygiene.py` derive what they scan from that module's route
+table. A permission-gated route there would need an exception in both guard tests. One URL
+per audience also lets a reviewer permission-audit each route on its own.
 
-**The path is `/catalogue/admin/...`, not a widened `/catalogue/...`.** One
-URL per audience: a vendor integration and an authenticated edit screen
-have different failure contracts (compare `_RESPONSE_404` below, which
-names no detail, against `catalogue.py`'s own, which explains *why* it
-names none) and are safest kept as separate routes a reviewer can
-permission-audit independently, rather than one route whose behaviour
-depends on who is asking.
+**Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, not a new read permission.** The
+audience that loads an entry to edit it is the audience that saves the edit, so it needs
+one credential posture, MFA step-up included. A narrower `catalogue.read_unpublished` was
+rejected: `test_permission_matrix.py` asserts `ROLE_PERMISSIONS` cell by cell against the
+PRD table, so a new permission needs a PRD change.
 
-**Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, not a new read
-permission.** The audience for these routes is exactly the audience for the
-#224 write routes - an edit screen has to be able to load what it is about
-to save, and issue #266's listing/search are how that screen finds the
-entry in the first place - so reusing the write permission means that
-audience needs one credential posture, not two, and needing MFA step-up for
-a read that only exists to feed a write is the same posture PRD SS4.7
-already assigns Administrator's write capability. A narrower
-`catalogue.read_unpublished` permission was considered and rejected:
-`ROLE_PERMISSIONS` is asserted cell-by-cell against the PRD's own table by
-`test_permission_matrix.py`, so minting one would mean a PRD change this
-issue does not ask for.
+**Entries resolve through `load_entry_for_update`, not a new query function.**
+`nptc.catalogue.queries` applies `PUBLIC_STATUSES` as its only status filter, so an
+unfiltered getter does not belong there. The collection routes follow the same rule
+through `maintenance.list_entries_any_status`.
 
-**Resolves the entry via `load_entry_for_update`, not a new query
-function.** `nptc.catalogue.queries`' own module docstring makes
-`PUBLIC_STATUSES` "the only status filter" it applies, so an
-unfiltered getter does not belong there. `load_entry_for_update` already
-is that unfiltered getter - the #224 write routes prove it resolves a
-`draft` correctly - and is `public` (not `_load_for_update`) precisely so
-another part of the write/admin surface can share it rather than
-re-querying `CatalogueEntry` by hand. The all-status *collection* routes
-(issue #266) use the same reasoning one level up: `nptc.catalogue.
-maintenance.list_entries_any_status` is `queries.list_entries` with the
-status tuple widened, kept as a separate function for the identical reason
-- `queries.py`'s rule one is that `PUBLIC_STATUSES` is the *only* filter it
-ever applies, not merely the default one.
+**The detail route serves the public `EntryDetail` shape**, assembled from the same
+loaders and `nptc.catalogue.search` ranking, with `status` on the wire. See
+`catalogue_shared.py` for why the model and its helpers live there. The two collection
+routes serve `AdminEntryPage` and `AdminSearchPage`: the public shape plus `row_version`
+per row (see `AdminEntrySummary`). Neither has a 404, matching `catalogue.py`'s
+`PUBLIC_COLLECTION_ERROR_RESPONSES`: an unmatched query is an empty page.
 
-**Serves the identical `EntryDetail` shape the public detail route does**,
-assembled from the same loaders and the same `nptc.catalogue.search`
-ranking - an edit screen consuming this route today gets the same fields a
-public consumer of the same entry, once published, would see, just with
-every status in scope and `status` on the wire so a caller can tell a draft
-from an active entry (issue #266's own acceptance criterion). See
-`catalogue_shared.py`'s own docstring for why this model and its assembly
-helpers live there rather than being duplicated here.
-
-**The two collection routes serve `AdminEntryPage`/`AdminSearchPage`, not
-`EntryPage`/`SearchPage`** (issue #267): the same shape as their public
-counterparts, plus `row_version` per row. Defined in this module, not
-`catalogue_shared.py` - see `AdminEntrySummary`'s own docstring for why.
-
-**The two collection routes have no 404**, matching
-`catalogue.py`'s own `PUBLIC_COLLECTION_ERROR_RESPONSES`: an unmatched
-query or an empty catalogue is an empty page, not a missing resource.
+**The length report counts entries of every status, on purpose.** The
+`nptc.catalogue.length_report` module docstring gives the reason.
 """
 
 from __future__ import annotations
@@ -123,11 +81,8 @@ _RESPONSE_403: Final[dict[str, Any]] = {
         "(the response then also carries a `WWW-Authenticate` step-up challenge)."
     ),
 }
-#: Deliberately the same generic wording as `catalogue.py`'s own
-#: `_RESPONSE_404`, and for the same reason on this route as on that one:
-#: this route exists so an *authenticated* caller can see a `draft`, but a
-#: business key that was never minted is still just absent, not a
-#: distinguishable "found, but you can't have it".
+#: The same generic wording as `catalogue.py`'s `_RESPONSE_404`: a business key
+#: that was never minted is absent, not "found, but you can't have it".
 _RESPONSE_404: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "No catalogue entry, of any status, has this business key.",
@@ -136,10 +91,8 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": "The business key is not `NPTC-nnnnnn`.",
 }
-#: No 500: this route used to render a `display_term`, matching
-#: `catalogue.py`'s own equivalent route, but FR-98 (issue #144) removed
-#: the read path's only rendering call site - there is nothing left here
-#: that can fail this way.
+#: No 500: FR-98 removed the read path's only rendering call site, so nothing
+#: here can fail that way.
 _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
@@ -147,22 +100,15 @@ _RESPONSES_ADMIN_READ: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: `GET /catalogue/admin/preferred-term-length-distribution` (FR-87, issue
-#: #152): takes no path parameter and cannot 404 or 422, matching the two
-#: collection routes' own `_RESPONSES_ADMIN_LISTING`/`_RESPONSES_ADMIN_SEARCH`
-#: reasoning above - the whole catalogue is either empty or it isn't, never a
-#: query the caller got wrong.
+#: `GET /catalogue/admin/preferred-term-length-distribution` (FR-87) takes no
+#: parameter, so it cannot 404 or 422.
 _RESPONSES_ADMIN_LENGTH_REPORT: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
 }
 
-#: `GET /catalogue/admin/entries`' own 422 - it takes no `q`, so it cannot
-#: produce a blank-search-query refusal the way the search route can (issue
-#: #266 review: a shared response description that named the wrong cause for
-#: a given route is worse than two short ones). Issue #287 adds the cursor/
-#: sort mismatch case, mirroring the search route's own cursor-mismatch
-#: wording below.
+#: `GET /catalogue/admin/entries`' own 422. It takes no `q`, so it has no
+#: blank-query refusal; each route names only the causes it can produce.
 _RESPONSE_422_LISTING: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -187,9 +133,7 @@ _RESPONSE_422_SEARCH: Final[dict[str, Any]] = {
     ),
 }
 
-#: The two all-status collection routes (issue #266). No 404, matching
-#: `catalogue.py`'s own `PUBLIC_COLLECTION_ERROR_RESPONSES` - see the module
-#: docstring.
+#: The two all-status collection routes. No 404; see the module docstring.
 _RESPONSES_ADMIN_LISTING: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
@@ -201,9 +145,8 @@ _RESPONSES_ADMIN_SEARCH: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422_SEARCH,
 }
 
-#: `filter_parameter` (`catalogue_shared.py`) takes the search path so its
-#: description points a caller at *this* surface's own facet-and-counts
-#: route rather than the public one's (issue #266 review).
+#: `filter_parameter` takes the search path so its description points a caller at
+#: this surface's own facet-and-counts route, not the public one.
 _ADMIN_FILTER_OPENAPI: Final[dict[str, Any]] = {
     "parameters": [filter_parameter("/catalogue/admin/search")]
 }
@@ -280,11 +223,8 @@ class AdminSearchPage(BaseModel):
 def _admin_summary_from_row(
     row: maintenance.ListingRow, has_open_finding: bool
 ) -> AdminEntrySummary:
-    """`summary_from_entry`'s admin counterpart, over a `maintenance.
-    ListingRow` rather than a mapped `CatalogueEntry` (issue #287's sort
-    made the listing statement select explicit columns, matching
-    `nptc.catalogue.search.SearchHit`'s own precedent - see that module's
-    docstring)."""
+    """The admin counterpart of `summary_from_entry`, over a `maintenance.ListingRow`
+    because the listing statement selects explicit columns, not a mapped entity."""
     return AdminEntrySummary(
         **entry_summary_fields(
             row.business_key,
@@ -304,14 +244,10 @@ def _admin_filter_request(
     session: SessionDep,
     registry: RegistryDep,
 ) -> FilterRequest:
-    """`catalogue.py`'s own `_filter_request`, scoped to
-    `maintenance.MAINTENANCE_STATUSES` instead of `queries.PUBLIC_STATUSES`
-    (issue #266) - so `?filter.status=draft` is a real filter here rather
-    than the well-formed-but-empty-page refusal it would be on the public
-    surface (see `_core_facets`' own docstring in `nptc.catalogue.facets`).
-    `FilterRequest` itself is reused unchanged: the shape (a facet context
-    plus a parsed selection) does not depend on which statuses that context
-    permits.
+    """`catalogue.py`'s `_filter_request`, scoped to `maintenance.MAINTENANCE_STATUSES`
+    instead of `queries.PUBLIC_STATUSES`, so `?filter.status=draft` is a real filter here
+    and not the empty page it gives on the public surface (see `_core_facets` in
+    `nptc.catalogue.facets`).
     """
     context = load_facet_context(session, registry, status_values=maintenance.MAINTENANCE_STATUSES)
     return FilterRequest(
@@ -322,10 +258,8 @@ def _admin_filter_request(
 
 AdminFiltersDep = Annotated[FilterRequest, Depends(_admin_filter_request)]
 
-#: `?sort=` (issue #287). A `Literal`, not a hand-validated free string - see
-#: `nptc.catalogue.maintenance.SortName`'s own docstring for why: FastAPI
-#: puts the enum in `docs/api/openapi.json` for free and 422s an
-#: unrecognised value before this handler ever runs.
+#: `?sort=`. A `Literal`, so FastAPI publishes the enum in the OpenAPI document and
+#: 422s an unrecognised value before the handler runs.
 SortQuery = Annotated[
     SortName,
     Query(
@@ -339,17 +273,11 @@ SortQuery = Annotated[
     ),
 ]
 
-#: `GET /catalogue/admin/entries`'s own cursor type (issue #287) - forked
-#: from `catalogue_shared.EntryCursorQuery`, which stays a bare
-#: `business_key`-shaped string for the *public* `/catalogue/entries` route,
-#: unchanged. This route's cursor is no longer always a `business_key` - it
-#: is `"<sort value>:<digest>:<business key>"` for every `sort`, including
-#: `business_key` itself (see `nptc.catalogue.maintenance`'s own module
-#: docstring on why one shape is used uniformly) - so it is validated by
-#: `nptc.catalogue.maintenance.list_entries_any_status` instead of by a
-#: `Query(pattern=...)`, the same division of labour
-#: `nptc.catalogue.search`'s `CursorQuery` already uses for its own
-#: non-business-key cursor shape.
+#: This route's cursor is `"<sort value>:<digest>:<business key>"` for every
+#: `sort`, `business_key` included, so it is not the bare business-key string of
+#: `catalogue_shared.EntryCursorQuery`. `maintenance.list_entries_any_status`
+#: validates it rather than a `Query(pattern=...)`, as `CursorQuery` does for the
+#: search cursor.
 AdminEntryCursorQuery = Annotated[
     str | None,
     Query(
