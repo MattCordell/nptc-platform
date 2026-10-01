@@ -50,7 +50,7 @@
   "backend/src/nptc/catalogue/designations.py": {"code": 325, "prose": 197, "ratio": 0.606},
   "backend/src/nptc/catalogue/entries.py": {"code": 337, "prose": 263, "ratio": 0.78},
   "backend/src/nptc/catalogue/errors.py": {"code": 29, "prose": 63, "ratio": 2.172},
-  "backend/src/nptc/catalogue/facets.py": {"code": 423, "prose": 314, "ratio": 0.742},
+  "backend/src/nptc/catalogue/facets.py": {"code": 423, "prose": 316, "ratio": 0.747},
   "backend/src/nptc/catalogue/history.py": {"code": 134, "prose": 129, "ratio": 0.963},
   "backend/src/nptc/catalogue/length_report.py": {"code": 41, "prose": 74, "ratio": 1.805},
   "backend/src/nptc/catalogue/local_codes.py": {"code": 273, "prose": 162, "ratio": 0.593},

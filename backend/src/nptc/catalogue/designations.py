@@ -215,8 +215,8 @@ def find_retired_designation(
 
     - `retired_at DESC` picks the most recently retired.
     - `created_at DESC` breaks a tie from one transaction. Postgres `now()` is
-      transaction time, so a bulk retirement ties on `retired_at`. Not `id`: a
-      UUID carries no chronological meaning.
+      transaction time, so a bulk retirement ties on `retired_at`. `id` is not
+      the second key, because a UUID carries no chronological meaning.
     - `id ASC` is the last tiebreaker, because `created_at` is also transaction
       time and a full add/retire cycle repeated in one transaction ties on both.
       Two identical requests must never disagree."""

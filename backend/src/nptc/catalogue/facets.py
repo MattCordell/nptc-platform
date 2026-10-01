@@ -633,8 +633,8 @@ def filter_digest_material(selections: Sequence[FilterSelection]) -> str:
 
     Every value is length-prefixed (`<byte length>:<value>`, a netstring), not
     joined on a separator. A value can contain any percent-encoded character, so a
-    `,`-joined scheme cannot tell `filter.discipline=in=A,B` (two OR-ed values)
-    from `filter.discipline=in=A%2CB` (one value containing a comma), and a cursor
+    `,`-joined scheme cannot tell `filter.discipline:in=A,B` (two OR-ed values)
+    from `filter.discipline:in=A%2CB` (one value containing a comma), and a cursor
     minted under one would page under the other. Length-prefixing needs no
     escaping.
 
@@ -690,8 +690,9 @@ def build_facet_count_statement(
     Public and separate from `compute_facets`, as
     `nptc.catalogue.search.build_search_statement` is:
     `test_db_property_index_plan.py` `EXPLAIN`s this statement to prove the
-    aggregation reaches the generated partial index, and explaining a hand-copied
-    approximation would test the copy.
+    aggregation reads only this property's rows (ADR-0032: the generated partial
+    index serves the filter predicate, not the `GROUP BY`), and explaining a
+    hand-copied approximation would test the copy.
 
     `base` is a `SELECT` of the entry ids in the current result set, with this
     facet's own selection already excluded by the caller.
@@ -737,9 +738,10 @@ def build_facet_counts_statement(
     facet count (ADR-0032).
 
     `build_facet_count_statement` is each branch, unmodified, so
-    `test_db_property_index_plan.py`'s `EXPLAIN` of it still proves the index and
-    the truncation (`FACET_BUCKET_CAP + 1` rows per facet) is unchanged. Each branch
-    is a subquery so its own `LIMIT` survives the union.
+    `test_db_property_index_plan.py`'s `EXPLAIN` of it still proves each branch reads
+    only its property's rows, and the truncation (`FACET_BUCKET_CAP + 1` rows per
+    facet) is unchanged. Each branch is a subquery so its own `LIMIT` survives the
+    union.
 
     Three columns are added. `facet_key` is a literal that attributes rows to their
     descriptor. `value` gets a `Text` cast, because branch value types differ
@@ -753,8 +755,8 @@ def build_facet_counts_statement(
     ordering by the cast would reorder ties and change which row `compute_facets`'
     `rows[:FACET_BUCKET_CAP]` slice drops. ADR-0032 records the defect this closes.
 
-    The cast lives in this wrapper so the grouping expression, and the index plan
-    the other module proves, stay untouched.
+    The cast lives in this wrapper so the grouping expression, and the plan that
+    `test_db_property_index_plan.py` checks for it, stay untouched.
     """
     branches: list[Select[Any]] = []
     for descriptor in descriptors:
