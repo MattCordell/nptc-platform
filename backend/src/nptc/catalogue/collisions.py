@@ -1,75 +1,55 @@
-"""FR-05 collision detection and FR-08's blocking-severity neighbour
-(issue #49) - the module `nptc.catalogue.designations`, `nptc.catalogue.
-entries` and `nptc.catalogue.bindings` all name as "not implemented here,
-layered on top of the rows those modules create".
+"""FR-05 collision detection, and FR-08's blocking-severity neighbour.
 
-Three severities, three different postures:
+`nptc.catalogue.designations`, `entries` and `bindings` all name this layer
+as "not implemented here". `docs/architecture/data-model.md` ("Collision
+detection") summarises the schema shape.
 
-- **Error** (this module's `assert_no_error_collisions`): a synonym that
-  exactly matches another live entry's preferred term, or the symmetric
-  case, a preferred term that matches another live entry's active
-  synonym or preferred term. Raised before any row is constructed, by
-  every write path in `designations.py`/`entries.py`, so a rejected save
-  leaves no audit event - the same precondition-before-mutation posture
-  `bindings.create_binding` already holds.
+Three severities, three postures:
+
+- **Error** (`assert_no_error_collisions`): a synonym that exactly matches
+  another live entry's preferred term, or the symmetric case, a preferred
+  term matching another live entry's active synonym or preferred term.
+  Raised before any row is constructed, by every write path in
+  `designations.py` and `entries.py`, so a rejected save leaves no audit
+  event - the posture `bindings.create_binding` already holds.
 - **Warning** (`warning_collisions`): the same synonym on multiple live
-  entries. Never raised - it is a query a caller (#149's edit screen)
-  asks, and permits the save by construction. `acknowledge_collision`
-  records the editorial decision that silences it for one entry.
+  entries. Never raised: the edit screen asks, and the save is permitted.
+  `acknowledge_collision` records the editorial decision that silences it
+  for one entry.
 - **Blocking** (`nptc.catalogue.bindings.CodeBindingCodeAlreadyBoundError`,
-  not this module): one active SNOMED code cannot be bound to two
-  entries at once. That check is unrepresentable at the database layer
-  (`ix_code_binding_one_active_entry_per_code`) and pre-empted in
-  `bindings.create_binding` itself, next to its sibling
-  `CodeBindingAlreadyActiveError` - it has no acknowledgement path and
-  nothing for this module to add.
+  not this module): one active SNOMED code cannot be bound to two entries.
+  The database enforces it (`ix_code_binding_one_active_entry_per_code`) and
+  `create_binding` pre-empts it. It has no acknowledgement path.
 
-**Candidate scope: `draft` and `active` entries, not only `active`.**
-FR-05's own wording is "a different active entry", but a `deprecated`/
-`withdrawn` entry never collides (PRD acceptance criterion), and a
-`draft` entry colliding with another live entry is exactly the same
-ordering hazard the moment either one is published - catching it at save
-time, before publication, is strictly safer than FR-05's literal reading.
-`_LIVE_STATUSES` is the one place this is spelled out.
+**Candidate scope: `draft` and `active` entries.** FR-05 says "a different
+active entry", but a `deprecated` or `withdrawn` entry never collides (PRD
+acceptance criterion), and a `draft` entry that collides has the same
+ordering hazard the moment either is published. Catching it at save time is
+safer than the literal reading. `_LIVE_STATUSES` is the one place this is
+spelled out.
 
-**Why the comparison is keyed on the stored `term_key`/`preferred_term_key`
-columns, never a per-call recomputation.** Both are written by the same
-`@validates` hook that cleans the underlying term (`Designation._validate_
-term`, `CatalogueEntry._validate_preferred_term`), so they can never drift
-from what `nptc_shared.similarity.collision_key` would compute fresh - see
-those models' own module docstrings. This module never calls
-`collision_key` on anything already stored; only on the term a caller is
-currently trying to save.
+**The comparison uses the stored `term_key`/`preferred_term_key` columns.**
+The `@validates` hook that cleans a term writes its key too, so the stored
+key cannot drift from `nptc_shared.similarity.collision_key`. This module
+calls `collision_key` only on the term a caller is currently trying to save.
 
-**Concurrency: `assert_no_error_collisions` is check-then-insert, so it
-takes the same advisory-lock precaution `nptc.audit.writer.
-append_audit_event` already does for the analogous "read the current
-state, then write" race.** Two concurrent transactions each saving a term
-that folds to the same comparison key could otherwise both pass the check
-against a snapshot that predates the other's still-uncommitted insert, and
-both commit - exactly the state FR-05 forbids, with nothing to detect it
-after the fact (there is no cross-row, cross-table `UNIQUE` index that
-could express "no two live rows, in either of two tables, share this
-key" - see `docs/architecture/data-model.md`'s "Collision detection"
-section for why a trigger is not the answer, PRD SS14.1). `pg_advisory_
-xact_lock(hashtext(key))`, acquired before the comparison queries run,
-serialises exactly the transactions contending for the *same* key
-(`hashtext` collisions between unrelated keys only cost extra, harmless
-serialisation, never a false negative) and is released automatically at
-commit/rollback - needs no grant (advisory locks are role-agnostic) and
-is not a trigger or stored function, so PRD SS14.1 is untouched.
-`hashtext` itself is an internal, undocumented Postgres function with no
-cross-major-version stability contract - harmless for this use (the
-value is never persisted, and a hash collision only ever costs the extra
-serialisation already described, never a correctness gap), but worth
-naming as exactly that rather than letting a reader assume it is a
-documented, guaranteed-stable function. This relies on `nptc.db.session.
-REQUIRED_ISOLATION_LEVEL` already pinning every connection to `READ
-COMMITTED` (unlike `append_audit_event`, which re-verifies this at
-runtime because it is the one write path NFR-10
-treats as security-critical enough to distrust its own caller's
-connection setup - collision detection has no equivalent runtime guard,
-and shares the connection-level guarantee instead).
+**Concurrency.** `assert_no_error_collisions` is check-then-insert. Two
+concurrent transactions saving terms that fold to the same key could each
+pass the check against a snapshot that predates the other's uncommitted
+insert, and both commit: the state FR-05 forbids, with nothing to detect it
+afterwards. No `UNIQUE` index can say "no two live rows, across two tables,
+share this key", and a trigger is excluded (PRD SS14.1). So
+`pg_advisory_xact_lock(hashtext(key))` is taken before the comparison
+queries. It serialises exactly the transactions contending for the same key
+(a `hashtext` collision between unrelated keys only costs harmless extra
+serialisation), is released at commit or rollback, and needs no grant.
+`hashtext` is an undocumented Postgres function with no cross-version
+stability contract; that is harmless here because the value is never
+persisted. The lock relies on `nptc.db.session.REQUIRED_ISOLATION_LEVEL`
+pinning every connection to `READ COMMITTED`. `append_audit_event` re-checks
+that at runtime because NFR-10 treats it as security-critical; this module
+relies on the connection-level guarantee. ADR-0035 records how this lock
+orders against the other write locks.
 """
 
 from __future__ import annotations
@@ -111,18 +91,16 @@ __all__ = [
     "warning_collisions",
 ]
 
-#: `ix_designation_collision_ack_entry_term_language`'s own literal name
-#: (issue #49) - matched against `unique_violation_constraint(exc)` the
-#: same way `nptc.catalogue.designations.add_designation` matches its own
-#: constraint names.
+#: The unique index `acknowledge_collision` can lose a race on, matched
+#: against `unique_violation_constraint(exc)` as
+#: `nptc.catalogue.designations.add_designation` matches its own.
 _COLLISION_ACK_CONSTRAINT = "ix_designation_collision_ack_entry_term_language"
 
 if TYPE_CHECKING:
     from nptc.auth.principal import Principal
 
-#: A deprecated/withdrawn entry never collides (PRD A.5's own acceptance
-#: criterion) - see the module docstring for why `draft` is nonetheless
-#: included alongside `active`.
+#: `deprecated` and `withdrawn` entries never collide; `draft` is included with
+#: `active` (module docstring).
 _LIVE_STATUSES = ("draft", "active")
 
 _ACQUIRE_COLLISION_LOCK_SQL = text("SELECT pg_advisory_xact_lock(hashtext(:key))")
@@ -136,10 +114,9 @@ class CollisionSeverity(StrEnum):
 @dataclass(frozen=True)
 class Collision:
     """One collision found against a live entry other than the one being
-    saved. `business_key`/`preferred_term` name the *other*, colliding
-    entry - its internal UUID is never exposed (NFR-04/NFR-26) - so a
-    caller (#149's edit screen) can name the conflicting entry rather than
-    show a bare 409/warning with nothing actionable in it."""
+    saved. `business_key` and `preferred_term` name the *other* entry, never
+    its internal UUID (NFR-04/NFR-26), so the edit screen can name the
+    conflicting entry rather than show a bare 409 or warning."""
 
     severity: CollisionSeverity
     term: str
@@ -155,15 +132,10 @@ class Collision:
 
 
 class DesignationCollisionError(ValueError):
-    """Raised by `assert_no_error_collisions` - the same `http_status:
-    ClassVar[int]` convention every other catalogue domain error in this
-    package carries (`nptc.catalogue.errors.EntryVersionConflictError`,
-    `nptc.catalogue.bindings.CodeBindingAlreadyActiveError`, ...), so
-    `nptc.api.errors.register_exception_handlers` has a status to read
-    rather than falling through to an unhandled 500. Carries every
-    collision found, never just the first - a caller fixing one collision
-    at a time only to discover a second on the next save is exactly the
-    frustration a single, complete report avoids."""
+    """Raised by `assert_no_error_collisions`. Carries the `http_status`
+    `ClassVar` that `nptc.api.errors.register_exception_handlers` reads, and
+    every collision found, not just the first, so a caller need not fix one
+    only to meet another on the next save."""
 
     http_status: ClassVar[int] = 409
 
@@ -178,13 +150,10 @@ class DesignationCollisionError(ValueError):
 
 
 class DesignationCollisionAcknowledgementConflictError(ValueError):
-    """Raised when two truly concurrent `acknowledge_collision` calls for
-    the same `(entry, term_key, language)` race past the select-first
-    check and both reach the `INSERT` (issue #224 closes the gap this
-    function's own docstring named as unmapped). The loser 409s rather
-    than 500ing; re-reading the collision (or simply re-submitting) finds
-    the winner's row already in place, since the two calls were
-    recording the same editorial decision."""
+    """Raised when two truly concurrent `acknowledge_collision` calls for the
+    same `(entry, term_key, language)` both pass the select-first check and
+    reach the `INSERT`. The loser 409s rather than 500ing; re-reading finds
+    the winner's row, since both calls recorded the same decision."""
 
     http_status: ClassVar[int] = 409
 
@@ -259,11 +228,9 @@ def _matching_designations(
 
 
 def _fill_term(collisions: tuple[Collision, ...], term: str) -> tuple[Collision, ...]:
-    """`_matching_entries`/`_matching_designations` don't know the
-    submitted surface form - only the caller does - so it is filled in
-    here rather than threaded through every query above. `dataclasses.
-    replace` rather than rebuilding every field by hand, so a future field
-    added to `Collision` can't silently be dropped here."""
+    """The queries above do not know the submitted surface form, so it is
+    filled in here. `replace` keeps a field later added to `Collision` from
+    being dropped."""
     return tuple(replace(c, term=term) for c in collisions)
 
 
@@ -276,27 +243,19 @@ def assert_no_error_collisions(
     use: str,
 ) -> None:
     """The mandatory FR-05 error-severity gate. `term` must already be
-    cleaned (`nptc.catalogue.term_hygiene.clean_term`) - this function
-    only derives its comparison key, never cleans it itself, matching
-    every other catalogue write path's "clean, then check" ordering.
+    cleaned (`nptc.catalogue.term_hygiene.clean_term`); this function only
+    derives its comparison key.
 
-    Call before the row/attribute mutation is constructed: every existing
-    write path in this package treats a domain-error precondition as
-    something to check before touching the session, so a rejected save
-    never leaves a partial mutation or an audit event behind.
+    Call before the row mutation is constructed, so a rejected save leaves
+    no partial mutation or audit event.
 
-    `entry` is the entry the term is being saved *to* - excluded from its
-    own comparison so an entry never collides with itself - or `None` for
-    `nptc.catalogue.entries.create_entry`'s own path, where the entry does
-    not exist yet and there is nothing to exclude. A brand-new,
-    not-yet-flushed `entry` (no identity yet, matching `nptc.catalogue.
-    bindings.create_binding`'s own precedent) is flushed here first, since
-    otherwise its `id` is `None` client-side and every comparison would
-    vacuously exclude nothing.
+    `entry` is the entry the term is being saved *to*, excluded from its own
+    comparison, or `None` for `nptc.catalogue.entries.create_entry`, where it
+    does not exist yet. A new, unflushed `entry` is flushed first: its `id`
+    is otherwise `None` and the comparison would exclude nothing.
 
-    `use` is `'preferred'` for `CatalogueEntry.preferred_term` (issue #46)
-    or `Designation.use == 'preferred'` (a non-en-AU preferred variant,
-    issue #47), `'synonym'` for a `Designation.use == 'synonym'` row.
+    `use` is `'preferred'` for `CatalogueEntry.preferred_term` or a non-en-AU
+    `Designation.use == 'preferred'`, and `'synonym'` for a synonym row.
     """
     exclude_entry_id: uuid.UUID | None = None
     if entry is not None:
@@ -304,16 +263,13 @@ def assert_no_error_collisions(
             session.flush()
         exclude_entry_id = entry.id
 
-    # Canonicalised defensively here too, not only by each call site
-    # (`add_designation`/`amend_designation` already canonicalise before
-    # calling this): every `language == DEFAULT_LANGUAGE` branch below
-    # would otherwise silently disagree with a caller-supplied `en-au`
-    # (issue #224 review finding 2).
+    # Canonicalised here as well as at the call sites: every
+    # `language == DEFAULT_LANGUAGE` branch below would otherwise disagree with
+    # a caller-supplied `en-au`.
     language = validate_language_tag(language)
     key = collision_key(term)
-    # See the module docstring's "Concurrency" note - serialises exactly
-    # the transactions contending for this key, before either's snapshot
-    # is read below.
+    # Serialises the transactions contending for this key before either
+    # reads its snapshot (module docstring, "Concurrency").
     session.execute(_ACQUIRE_COLLISION_LOCK_SQL, {"key": key})
     collisions: tuple[Collision, ...] = ()
 
@@ -330,27 +286,21 @@ def assert_no_error_collisions(
             exclude_entry_id=exclude_entry_id,
         )
     else:
-        # `use == 'preferred'`. `CatalogueEntry.preferred_term` is always
-        # en-AU (`ck_designation_no_en_au_preferred` forbids an en-AU
-        # `Designation.use == 'preferred'` row from ever existing), so
-        # `_matching_entries` only makes sense when `language ==
-        # DEFAULT_LANGUAGE` - `entries.py`'s own write paths always pass
-        # exactly that, but a non-en-AU preferred variant added via
-        # `designations.py` (issue #47's own mi-NZ example) must not be
-        # compared against an unrelated en-AU preferred term across
-        # entries just because the two surface forms happen to fold to the
-        # same key.
+        # `use == 'preferred'`. `CatalogueEntry.preferred_term` is always en-AU
+        # (`ck_designation_no_en_au_preferred` forbids an en-AU preferred
+        # `Designation`), so `_matching_entries` applies only when `language ==
+        # DEFAULT_LANGUAGE`. A non-en-AU variant, such as an `mi-NZ` preferred
+        # designation, must not be compared against an unrelated en-AU
+        # preferred term whose key happens to fold the same.
         if language == DEFAULT_LANGUAGE:
             collisions += _matching_entries(
                 session, term_key=key, exclude_entry_id=exclude_entry_id
             )
-        # Both other designation `use`s: a non-en-AU preferred variant
-        # must be checked against another live entry's *synonym* under
-        # the same key (symmetric with the `SYNONYM` branch above) *and*
-        # against another live entry's own preferred variant in the same
-        # language - two entries each holding, say, an `mi-NZ` preferred
-        # designation that folds to the same key is the most ambiguous
-        # case FR-05 names, and was silently unchecked before this line.
+        # Check both designation `use`s: another live entry's *synonym*
+        # (symmetric with the `SYNONYM` branch) and its preferred variant in
+        # the same language. Two entries each holding an `mi-NZ` preferred
+        # designation that folds to one key is the most ambiguous case FR-05
+        # names.
         collisions += _matching_designations(
             session,
             term_key=key,
@@ -379,19 +329,15 @@ def warning_collisions(
 ) -> tuple[Collision, ...]:
     """FR-05's warning-severity query: for each of `terms` (already-cleaned
     synonym surface forms), every other live entry carrying an active
-    synonym under the same comparison key and `language` - excluding a key
-    `entry` has already acknowledged via `acknowledge_collision`.
+    synonym under the same comparison key and `language`, excluding a key
+    `entry` has acknowledged via `acknowledge_collision`.
 
-    Never raises: a warning permits the save by construction. This is what
-    #149's edit screen calls to render the warning banner, both before a
-    save (on the terms about to be submitted) and when simply displaying
-    an entry's existing synonyms.
+    Never raises: a warning permits the save. The edit screen calls it before
+    a save and when displaying an entry's synonyms.
 
-    A brand-new, not-yet-flushed `entry` is flushed here first, matching
-    `assert_no_error_collisions`'s own precondition - `entry.id` is `None`
-    client-side before the first flush, which would otherwise silently
-    exclude nothing from the comparison and return an empty
-    acknowledgement set regardless of what was actually acknowledged."""
+    A new, unflushed `entry` is flushed first, as in
+    `assert_no_error_collisions`: its `id` is otherwise `None`, which would
+    find no acknowledgements whatever had been acknowledged."""
     if not sa_inspect(entry).identity:
         session.flush()
 
@@ -443,81 +389,46 @@ def acknowledge_collision(
     language: str,
     reason: str,
 ) -> tuple[DesignationCollisionAcknowledgement, bool]:
-    """Records that `acknowledger` has seen and accepted the warning-
-    severity collision on `entry` for `(term_key, language)` - FR-05's "it
-    MUST be resolvable to an acknowledged state so the same warning does
-    not recur every save". Requires `Permission.VALIDATION_ACKNOWLEDGE`
-    (FR-44: checked against a permission, never a role name); raises
-    `PermissionDeniedError` otherwise, before anything is added to the
-    session, matching `nptc.auth.grants.grant_role`'s own service-layer
-    permission-check precedent.
+    """Records that `acknowledger` has seen and accepted the warning-severity
+    collision on `entry` for `(term_key, language)` - FR-05's "resolvable to
+    an acknowledged state so the same warning does not recur every save".
+    Requires `Permission.VALIDATION_ACKNOWLEDGE` (FR-44) and raises
+    `PermissionDeniedError` before anything is added to the session.
 
-    Scoped to `entry`, not to `term_key` alone - see `Designation
-    CollisionAcknowledgement`'s own module docstring for why a fourth
-    entry later joining the group still warns once, on its own save.
+    Scoped to `entry`, not to `term_key` alone; see
+    `DesignationCollisionAcknowledgement`'s module docstring for why a fourth
+    entry joining the group still warns once, on its own save.
 
-    Idempotent: acknowledging a `(entry, term_key, language)` already
-    acknowledged returns the existing row rather than raising or writing
-    a second no-change audit event - `ix_designation_collision_ack_
-    entry_term_language`'s `UNIQUE` constraint is what a second `INSERT`
-    would otherwise hit, matching `nptc.auth.grants.grant_role`'s own
-    "granting a role already held is a no-op" precedent (there is no
-    `DesignationAlreadyRetiredError`-style "reject the repeat" case here:
-    re-acknowledging the same thing twice is not a caller error worth
-    surfacing).
+    Idempotent: a repeat returns the existing row rather than raising or
+    writing a second no-change audit event, as `nptc.auth.grants.grant_role`
+    does for a role already held. Returns `(acknowledgement, created)`;
+    `created` is `False` for the repeat, and `acknowledgement.reason` is then
+    the *stored* note, not necessarily the one just submitted.
 
-    Returns `(acknowledgement, created)`: `created` is `False` for the
-    idempotent repeat above, so a caller can tell "I just recorded this"
-    from "this was already recorded, with whatever `reason` was given the
-    first time" - the returned `acknowledgement.reason` is always the
-    *stored* note, not necessarily the one just submitted (issue #224
-    review finding 5).
+    `language` is canonicalised and `term_key` checked non-blank before
+    anything else runs. This table's model has no `@validates` hook, so
+    either would otherwise reach its `CHECK` constraints as a `23514`, which
+    `unique_violation_constraint` does not recognise, and re-raise as an
+    unmapped 500. The router cannot produce a blank `term_key`; the guard
+    covers a caller reaching this function directly.
 
-    `language` is canonicalised (`nptc.catalogue.term_hygiene.
-    validate_language_tag`) and `term_key` is checked non-blank before
-    anything else runs: unlike `Designation`, this table's model has no
-    `@validates` hook of its own, so either would otherwise reach the
-    `CHECK` constraints below as an unmapped `IntegrityError` - a `23514`
-    (check violation), which `unique_violation_constraint` does not
-    recognise, so the `except IntegrityError` further down would simply
-    re-raise it as an unmapped 500 (issue #224 review finding 1). The
-    router's own `term_key = collision_key(clean_term(body.term))` can
-    never actually produce a blank `term_key` (`clean_term` already refuses
-    a term that is blank after normalisation, and `collision_key`'s
-    fallback for a tokeniser-empty term casefolds that same non-blank
-    normalised string, which cannot casefold to nothing) - this guard is
-    for a caller reaching this function directly with an arbitrary
-    `term_key`, not a gap in the HTTP surface.
+    `reason` is validated before the idempotent-repeat lookup, so whether an
+    invalid note is rejected does not depend on whether someone acknowledged
+    this collision first.
 
-    `reason` is validated *before* the idempotent-repeat lookup below, not
-    after: validating only on the branch that actually inserts would make
-    whether an invalid note is rejected depend on whether someone already
-    acknowledged this collision first - the same precondition-before-
-    mutation posture every other write path in this package uses (issue
-    #224 review finding 5).
+    **No advisory lock here**, unlike `assert_no_error_collisions`. Two
+    concurrent first acknowledgements both read "no existing row", and one
+    hits the `UNIQUE` index at flush; that loser becomes
+    `DesignationCollisionAcknowledgementConflictError` (409). Losing this
+    race costs an occasional 409 on a rare double-click, not a false
+    negative, so a retryable refusal is proportionate and a lock would add
+    contention nobody needs.
 
-    **Not given a `pg_advisory_xact_lock` against two truly concurrent
-    acknowledgements of the same `(entry, term_key, language)`** - the
-    select-first above is still read-then-write, so two transactions that
-    both read "no existing row" before either commits will still have one
-    of them hit the `UNIQUE` index's `IntegrityError` at flush. Unlike
-    `assert_no_error_collisions`'s own race (see the module docstring's
-    "Concurrency" note), that loser is translated to
-    `DesignationCollisionAcknowledgementConflictError` (409) rather than
-    given a lock (issue #224): the failure mode of losing this race is an
-    occasional 409 on a rare double-click, not a safety-relevant false
-    negative, so a typed refusal the caller can retry is proportionate -
-    a lock would only add contention no caller has demonstrated needing.
-
-    Deliberately does not check that `(term_key, language)` is currently
-    a live `warning_collisions` finding for `entry` - acknowledging ahead
-    of an actual warning is harmless (it only ever suppresses a warning
-    that would otherwise fire) and letting a caller do so avoids a
-    read-then-write race between checking and acknowledging that would
-    gain nothing here, unlike the error-severity check's own race (see
-    the module docstring's "Concurrency" note), since a false-positive
-    *suppression* has no safety consequence in the way a false-negative
-    *collision* would."""
+    The function does not check that `(term_key, language)` is a live
+    `warning_collisions` finding for `entry`. Acknowledging ahead of a
+    warning only suppresses a warning that would otherwise fire, and a
+    wrongly suppressed *warning* has no safety consequence of the kind a
+    missed *error* collision has."""
     if not acknowledger.has(Permission.VALIDATION_ACKNOWLEDGE):
         raise PermissionDeniedError(
             f"permission {Permission.VALIDATION_ACKNOWLEDGE.value!r} is required"
@@ -531,14 +442,10 @@ def acknowledge_collision(
         )
     validated_reason = validate_changelog_note(reason)
 
-    # Read into a local once, up front: reused below both for the query
-    # and (if the insert loses its race) inside the `except` block, where
-    # re-reading `entry.id` from the ORM instance would be the bug this
-    # guards against - a failed flush leaves every instance the session
-    # tracks expired, so touching an already-loaded attribute afterwards
-    # triggers a reload against a session that is not yet rolled back,
-    # raising `PendingRollbackError` in place of the domain error this is
-    # meant to raise (issue #224 review).
+    # Read once up front: a failed flush expires every instance the session
+    # tracks, so reading `entry.id` in the `except` block would reload against
+    # a session not yet rolled back and raise `PendingRollbackError` in place
+    # of the domain error.
     entry_id = entry.id
 
     existing = session.execute(
