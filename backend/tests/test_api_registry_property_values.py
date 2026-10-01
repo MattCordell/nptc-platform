@@ -20,12 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from nptc.api.errors import _DETAIL_PROPERTY_VALUE_SELECTION_CONFLICT
-from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.property_definition import (
@@ -36,8 +33,6 @@ from nptc.db.models.property_definition import (
     PropertyOrigin,
     PropertyScope,
 )
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 from nptc_shared.terminology import (
     SNOMED_CT_AU,
     ExpandedConcept,
@@ -67,26 +62,6 @@ _SPECIMEN_ECL = "<123038009"
 @pytest.fixture
 def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
-
-
-def _role_token(api: ApiTestApp, *, subject: str, role: Role) -> str:
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    revoke_all_roles_unchecked(api.session, target_user_id=user.id, audit=AuditContext.system())
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    return api.token(subject=subject)
 
 
 def _seed(api: ApiTestApp) -> None:
@@ -119,7 +94,7 @@ def test_specimen_lists_snomed_concepts_via_one_expand_call(api: ApiTestApp) -> 
         _expansion([("122192001", "Acanthamoeba culture")]),
         edition=SNOMED_CT_AU,
     )
-    token = _role_token(api, subject="sub-values-specimen", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-specimen", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token)
 
@@ -139,7 +114,7 @@ def test_specimen_filter_query_param_narrows_the_expand_call(api: ApiTestApp) ->
         edition=SNOMED_CT_AU,
         filter="acantha",
     )
-    token = _role_token(api, subject="sub-values-specimen-filter", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-specimen-filter", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, filter="acantha")
 
@@ -155,7 +130,7 @@ def test_discipline_lists_local_codes_with_no_terminology_call(api: ApiTestApp) 
     verbatim: "the same response shape, with no terminology-server call at
     all"."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-discipline", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-discipline", role=Role.PROVISIONAL)
 
     response = _get_values(api, "discipline", token)
 
@@ -170,7 +145,7 @@ def test_discipline_lists_local_codes_with_no_terminology_call(api: ApiTestApp) 
 def test_response_shape_is_identical_for_both_binding_targets(api: ApiTestApp) -> None:
     _seed(api)
     api.terminology.seed_expansion(_SPECIMEN_ECL, _expansion([]), edition=SNOMED_CT_AU)
-    token = _role_token(api, subject="sub-values-shape-parity", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-shape-parity", role=Role.PROVISIONAL)
 
     specimen = _get_values(api, "specimen", token)
     discipline = _get_values(api, "discipline", token)
@@ -185,7 +160,7 @@ def test_response_shape_is_identical_for_both_binding_targets(api: ApiTestApp) -
 @pytest.mark.integration
 def test_discipline_count_query_param_pages_results(api: ApiTestApp) -> None:
     _seed(api)
-    token = _role_token(api, subject="sub-values-paging", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-paging", role=Role.PROVISIONAL)
 
     response = _get_values(api, "discipline", token, count=1)
 
@@ -207,7 +182,7 @@ def test_specimen_offset_query_param_is_forwarded_to_expand(api: ApiTestApp) -> 
         _expansion([("122192001", "Acanthamoeba culture")]),
         edition=SNOMED_CT_AU,
     )
-    token = _role_token(api, subject="sub-values-offset-forwarded", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-offset-forwarded", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, offset=5)
 
@@ -230,7 +205,7 @@ def test_code_query_param_resolves_snomed_codes_via_one_expand_call(api: ApiTest
         _expansion([("122192001", "Acanthamoeba culture"), ("71388002", "Procedure")]),
         edition=SNOMED_CT_AU,
     )
-    token = _role_token(api, subject="sub-values-code-specimen", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-specimen", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001", "71388002"])
 
@@ -246,7 +221,7 @@ def test_code_query_param_resolves_snomed_codes_via_one_expand_call(api: ApiTest
 @pytest.mark.integration
 def test_code_query_param_resolves_local_codes_with_no_terminology_call(api: ApiTestApp) -> None:
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-discipline", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-discipline", role=Role.PROVISIONAL)
 
     response = _get_values(api, "discipline", token, code=["chemical_pathology"])
 
@@ -264,7 +239,7 @@ def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
     own request-validation handler instead of the one this route actually
     means to raise."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-filter-conflict", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-filter-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], filter="acantha")
 
@@ -276,7 +251,7 @@ def test_code_combined_with_filter_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None:
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-offset-conflict", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-offset-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], offset=5)
 
@@ -288,7 +263,7 @@ def test_code_combined_with_a_non_default_offset_is_422(api: ApiTestApp) -> None
 @pytest.mark.integration
 def test_code_combined_with_a_non_default_count_is_422(api: ApiTestApp) -> None:
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-count-conflict", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-count-conflict", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=["122192001"], count=10)
 
@@ -306,7 +281,7 @@ def test_code_combined_with_explicit_defaults_is_accepted(api: ApiTestApp) -> No
     test, and it is exactly the assertion a stricter, sentinel-based
     conflict check would break)."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-explicit-defaults", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-explicit-defaults", role=Role.PROVISIONAL)
 
     response = _get_values(
         api, "discipline", token, code=["chemical_pathology"], offset=0, count=50
@@ -321,7 +296,7 @@ def test_code_combined_with_explicit_defaults_is_accepted(api: ApiTestApp) -> No
 def test_more_than_200_codes_is_422(api: ApiTestApp) -> None:
     """`code` accepts at most 200 values, matching `count`'s own ceiling."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-too-many", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-code-too-many", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, code=[str(i) for i in range(201)])
 
@@ -334,7 +309,7 @@ def test_more_than_200_codes_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-10")
 @pytest.mark.integration
 def test_unknown_key_is_404(api: ApiTestApp) -> None:
-    token = _role_token(api, subject="sub-values-unknown-key", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-unknown-key", role=Role.PROVISIONAL)
 
     response = _get_values(api, "not_a_real_property", token)
 
@@ -347,7 +322,7 @@ def test_non_code_property_is_422(api: ApiTestApp) -> None:
     """`usage_guidance` (`nptc.db.bootstrap`) is `datatype == "string"` - it
     has no bound value source at all."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-non-code", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-non-code", role=Role.PROVISIONAL)
 
     response = _get_values(api, "usage_guidance", token)
 
@@ -358,7 +333,7 @@ def test_non_code_property_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_negative_offset_is_422(api: ApiTestApp) -> None:
     _seed(api)
-    token = _role_token(api, subject="sub-values-negative-offset", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-negative-offset", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token, offset=-1)
 
@@ -370,7 +345,7 @@ def test_negative_offset_is_422(api: ApiTestApp) -> None:
 def test_terminology_unavailable_is_503(api: ApiTestApp) -> None:
     _seed(api)
     api.terminology.seed_error(Operation.EXPAND, TerminologyTransportError("connection refused"))
-    token = _role_token(api, subject="sub-values-unavailable", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-unavailable", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token)
 
@@ -384,7 +359,7 @@ def test_unclassified_terminology_failure_is_502(api: ApiTestApp) -> None:
     api.terminology.seed_error(
         Operation.EXPAND, TerminologyOutcomeError("server refused the request")
     )
-    token = _role_token(api, subject="sub-values-upstream", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-upstream", role=Role.PROVISIONAL)
 
     response = _get_values(api, "specimen", token)
 
@@ -419,7 +394,7 @@ def test_misconfigured_value_set_uri_is_500(api: ApiTestApp) -> None:
         )
     )
     api.session.flush()
-    token = _role_token(api, subject="sub-values-misconfigured", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-values-misconfigured", role=Role.PROVISIONAL)
 
     response = _get_values(api, "misconfigured_value_set_http_test", token)
 
@@ -444,7 +419,7 @@ def test_authenticated_without_registry_read_is_403(api: ApiTestApp) -> None:
     `Permission.REGISTRY_READ` (ADR-0028) - see
     `test_api_registry_properties.py`'s identical precedent."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-observer", role=Role.OBSERVER)
+    token = api.exact_role_token(subject="sub-values-observer", role=Role.OBSERVER)
 
     response = _get_values(api, "specimen", token)
 
@@ -459,7 +434,7 @@ def test_code_query_param_without_registry_read_is_403(api: ApiTestApp) -> None:
     the test above already covers - `code` is refused by the same
     `Permission.REGISTRY_READ` gate, not a second, unguarded branch."""
     _seed(api)
-    token = _role_token(api, subject="sub-values-code-observer", role=Role.OBSERVER)
+    token = api.exact_role_token(subject="sub-values-code-observer", role=Role.OBSERVER)
 
     response = _get_values(api, "specimen", token, code=["122192001"])
 

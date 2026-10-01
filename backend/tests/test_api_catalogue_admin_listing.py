@@ -24,17 +24,13 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
-from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.maintenance import MAINTENANCE_STATUSES
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -176,33 +172,6 @@ def sortable(api: ApiTestApp) -> SortableCatalogue:
     return _seed_sortable(api.session)
 
 
-def _token_with_role(api: ApiTestApp, *, subject: str, role: Role, with_mfa: bool = True) -> str:
-    """Matching `test_api_catalogue_admin_read.py`'s own helper of the same
-    name - duplicated rather than imported, following this test tree's
-    convention that a `test_*.py` module is never imported by another."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    return _token_with_role(api, subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
-
-
 def _admin_list(api: ApiTestApp, token: str | None, **params: Any) -> Any:
     return api.get("/catalogue/admin/entries", token=token, params=params)
 
@@ -244,7 +213,7 @@ def test_maintenance_statuses_is_ordered_by_lifecycle() -> None:
 def test_hidden_entries_are_in_the_admin_listing_and_absent_from_the_public_one(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    token = _admin_token(api, subject="sub-list-visibility")
+    token = api.admin_token(subject="sub-list-visibility")
 
     # No `after`: issue #287 binds the admin listing cursor to a digest, so
     # it can no longer be a hand-constructed `before_all` sentinel the way
@@ -278,7 +247,7 @@ def test_hidden_entries_are_in_the_admin_search_and_absent_from_the_public_one(
     (see `public_catalogue_support.seed_public_catalogue`'s own note) - a
     query the hidden entries do not match would prove nothing about the
     status filter."""
-    token = _admin_token(api, subject="sub-search-visibility")
+    token = api.admin_token(subject="sub-search-visibility")
 
     admin_response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
     assert admin_response.status_code == 200, admin_response.text
@@ -309,7 +278,7 @@ def test_each_row_carries_its_own_status(
         "withdrawn": seeded.withdrawn,
         "active": seeded.canonical,
     }[status]
-    token = _admin_token(api, subject=f"sub-status-{status}")
+    token = api.admin_token(subject=f"sub-status-{status}")
 
     response = _admin_list(api, token, limit=200)
 
@@ -326,7 +295,7 @@ def test_each_row_carries_its_own_status(
 def test_the_listing_pages_with_no_offset_and_a_null_cursor_on_the_last_page(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    token = _admin_token(api, subject="sub-list-paging")
+    token = api.admin_token(subject="sub-list-paging")
 
     first = _admin_list(api, token, limit=1)
     assert first.status_code == 200, first.text
@@ -346,7 +315,7 @@ def test_the_listing_pages_with_no_offset_and_a_null_cursor_on_the_last_page(
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
 def test_a_malformed_listing_cursor_is_a_422(api: ApiTestApp, seeded: SeededCatalogue) -> None:
-    token = _admin_token(api, subject="sub-list-bad-cursor")
+    token = api.admin_token(subject="sub-list-bad-cursor")
 
     response = _admin_list(api, token, after="not-a-business-key")
 
@@ -356,7 +325,7 @@ def test_a_malformed_listing_cursor_is_a_422(api: ApiTestApp, seeded: SeededCata
 @pytest.mark.req("FR-14")
 @pytest.mark.integration
 def test_a_malformed_search_cursor_is_a_422(api: ApiTestApp, seeded: SeededCatalogue) -> None:
-    token = _admin_token(api, subject="sub-search-bad-cursor")
+    token = api.admin_token(subject="sub-search-bad-cursor")
 
     response = _admin_search(api, token, q=_seed.CANONICAL_TERM, after="not-a-cursor-at-all")
 
@@ -368,7 +337,7 @@ def test_a_malformed_search_cursor_is_a_422(api: ApiTestApp, seeded: SeededCatal
 def test_a_search_cursor_replayed_under_a_different_query_is_a_422(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    token = _admin_token(api, subject="sub-search-cursor-mismatch")
+    token = api.admin_token(subject="sub-search-cursor-mismatch")
 
     first = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=1)
     assert first.status_code == 200, first.text
@@ -392,7 +361,7 @@ def test_a_search_cursor_does_not_cross_the_public_admin_status_boundary(
     business_key)` keyset over a *different* population - an administrator
     paging from a public cursor would silently skip every hidden entry
     scoring above it, rather than getting this refusal."""
-    token = _admin_token(api, subject="sub-cursor-cross-surface")
+    token = api.admin_token(subject="sub-cursor-cross-surface")
 
     public_first = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM, "limit": 1})
     assert public_first.status_code == 200, public_first.text
@@ -427,7 +396,7 @@ def test_the_status_facet_has_more_than_one_bucket(
     facet context is built from `MAINTENANCE_STATUSES` instead, so the same
     facet has real buckets to offer once more than one status is actually
     present in the matched result set."""
-    token = _admin_token(api, subject="sub-status-facet")
+    token = api.admin_token(subject="sub-status-facet")
 
     response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
 
@@ -455,7 +424,7 @@ def test_the_status_facet_count_matches_the_filtered_page(
     the_number_of_rows_that_bucket_returns`'s own pattern for the public
     one. A facet count computed against a differently-scoped population
     looks entirely plausible and is simply wrong."""
-    token = _admin_token(api, subject="sub-status-facet-parity")
+    token = api.admin_token(subject="sub-status-facet-parity")
 
     search_response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
     assert search_response.status_code == 200, search_response.text
@@ -489,7 +458,7 @@ def test_filtering_by_a_hidden_status_is_accepted_and_narrows_the_page(
     not_an_empty_page` proves `active` is the only value it accepts) - here
     it is a real filter, because `AdminFiltersDep` builds its facet context
     from `MAINTENANCE_STATUSES`."""
-    token = _admin_token(api, subject="sub-status-filter")
+    token = api.admin_token(subject="sub-status-filter")
 
     response = _admin_list(api, token, limit=200, **{"filter.status": "draft"})
 
@@ -508,7 +477,7 @@ def test_the_listing_carries_row_version_per_row(api: ApiTestApp, seeded: Seeded
     on `(business_key, expected_row_version)` (FR-38, FR-39), so
     `AdminEntryPage`'s rows - unlike the public `EntryPage`'s own
     `EntrySummary` rows - carry the token without a second read."""
-    token = _admin_token(api, subject="sub-list-row-version")
+    token = api.admin_token(subject="sub-list-row-version")
 
     response = _admin_list(api, token, limit=200)
 
@@ -522,7 +491,7 @@ def test_the_listing_carries_row_version_per_row(api: ApiTestApp, seeded: Seeded
 def test_the_search_carries_row_version_per_row(api: ApiTestApp, seeded: SeededCatalogue) -> None:
     """The search counterpart of the test above - `AdminSearchHit` carries
     `row_version` the same way `AdminEntrySummary` does."""
-    token = _admin_token(api, subject="sub-search-row-version")
+    token = api.admin_token(subject="sub-search-row-version")
 
     response = _admin_search(api, token, q=_seed.CANONICAL_TERM, limit=200)
 
@@ -582,7 +551,7 @@ def test_sorting_by_each_column_orders_the_page(
     without giving up the ordering claim, which is exactly what asserting a
     relative sequence rather than an absolute count is for.
     """
-    token = _admin_token(api, subject=f"sub-sort-{sort}")
+    token = api.admin_token(subject=f"sub-sort-{sort}")
     expected = getattr(sortable, expected_attr)
     fixture_keys = set(expected)
 
@@ -606,7 +575,7 @@ def test_explicit_business_key_sort_matches_the_default(
     responses - the "default-vs-explicit parity" the plan for this issue
     calls for, proving the unified cursor grammar did not quietly special-
     case the pre-existing default."""
-    token = _admin_token(api, subject="sub-sort-parity")
+    token = api.admin_token(subject="sub-sort-parity")
 
     default_response = _admin_list(api, token, limit=2)
     explicit_response = _admin_list(api, token, sort="business_key", limit=2)
@@ -640,7 +609,7 @@ def test_paging_under_a_non_default_sort_is_stable_and_total(
     this file never exercises that round-trip at all - a single page never
     mints or parses a cursor.
     """
-    token = _admin_token(api, subject=f"sub-sort-paging-{sort}")
+    token = api.admin_token(subject=f"sub-sort-paging-{sort}")
 
     seen: list[str] = []
     params: dict[str, Any] = {"sort": sort, "limit": 1}
@@ -662,7 +631,7 @@ def test_paging_under_a_non_default_sort_is_stable_and_total(
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
 def test_an_unrecognised_sort_value_is_a_422(api: ApiTestApp, sortable: SortableCatalogue) -> None:
-    token = _admin_token(api, subject="sub-sort-unrecognised")
+    token = api.admin_token(subject="sub-sort-unrecognised")
 
     response = _admin_list(api, token, sort="not-a-real-sort", limit=200)
 
@@ -675,7 +644,7 @@ def test_an_unrecognised_sort_value_is_a_422(api: ApiTestApp, sortable: Sortable
 def test_a_malformed_listing_cursor_is_a_422_for_every_sort(
     api: ApiTestApp, sortable: SortableCatalogue, sort: str
 ) -> None:
-    token = _admin_token(api, subject=f"sub-sort-bad-cursor-{sort}")
+    token = api.admin_token(subject=f"sub-sort-bad-cursor-{sort}")
 
     response = _admin_list(api, token, sort=sort, after="not-a-cursor-at-all", limit=200)
 
@@ -690,7 +659,7 @@ def test_a_listing_cursor_replayed_under_a_different_sort_is_a_422(
     """The acceptance criterion this issue's plan states directly: a cursor
     minted under one `sort` means nothing replayed under another, because
     `sort_value > :after` compares against a different column."""
-    token = _admin_token(api, subject="sub-sort-cursor-mismatch")
+    token = api.admin_token(subject="sub-sort-cursor-mismatch")
 
     first = _admin_list(api, token, sort="preferred_term", limit=1)
     assert first.status_code == 200, first.text
@@ -711,7 +680,7 @@ def test_a_listing_cursor_replayed_under_a_different_filter_set_is_a_422(
     case above (issue #287's own plan: "as an independent case, not combined
     with the sort case, so a bug checking only one axis can't hide behind
     the other")."""
-    token = _admin_token(api, subject="sub-sort-filter-mismatch")
+    token = api.admin_token(subject="sub-sort-filter-mismatch")
 
     first = _admin_list(api, token, limit=1, **{"filter.status": "active"})
     assert first.status_code == 200, first.text
@@ -767,7 +736,7 @@ def test_no_credential_is_401_even_with_invalid_parameters(
 def test_authenticated_observer_is_403_with_no_challenge(
     api: ApiTestApp, seeded: SeededCatalogue, call: Any
 ) -> None:
-    token = _token_with_role(api, subject=f"sub-observer-{call.__name__}", role=Role.OBSERVER)
+    token = api.token_for_role(subject=f"sub-observer-{call.__name__}", role=Role.OBSERVER)
 
     response = call(api, token, q=_seed.CANONICAL_TERM)
 
@@ -782,7 +751,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp, seeded: SeededCatalogue,
     """A Reviewer holds `validation.acknowledge` but not
     `catalogue.edit_published` - proving the gate is this specific
     permission, not "any elevated role"."""
-    token = _token_with_role(api, subject=f"sub-reviewer-{call.__name__}", role=Role.REVIEWER)
+    token = api.token_for_role(subject=f"sub-reviewer-{call.__name__}", role=Role.REVIEWER)
 
     response = call(api, token, q=_seed.CANONICAL_TERM)
 
@@ -795,7 +764,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp, seeded: SeededCatalogue,
 def test_administrator_without_mfa_gets_a_step_up_challenge(
     api: ApiTestApp, seeded: SeededCatalogue, call: Any
 ) -> None:
-    token = _admin_token(api, subject=f"sub-admin-no-mfa-{call.__name__}", with_mfa=False)
+    token = api.admin_token(subject=f"sub-admin-no-mfa-{call.__name__}", with_mfa=False)
 
     response = call(api, token, q=_seed.CANONICAL_TERM)
 

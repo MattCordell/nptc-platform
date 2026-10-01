@@ -31,7 +31,6 @@ from sqlalchemy.engine import Connection
 import nptc.db.models.catalogue_entry as catalogue_entry_module
 from nptc.api.routers.catalogue_designations import AmendDesignationResult
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.catalogue.term_hygiene import preferred_term_length
@@ -41,8 +40,6 @@ from nptc.db.models.designation import Designation
 from nptc.db.models.designation_collision_acknowledgement import (
     DesignationCollisionAcknowledgement,
 )
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -83,35 +80,6 @@ def _seed_entry(
     )
     api.session.flush()
     return entry.business_key
-
-
-def _token_with_role(api: ApiTestApp, *, subject: str, role: Role, with_mfa: bool = True) -> str:
-    """Signs `subject` in, grants `role`, and returns a token - with an
-    `acr` claim the realm maps to LoA-2 unless `with_mfa` is `False`,
-    matching `test_api_catalogue_bindings.py::_admin_token`'s own shape,
-    generalised over the role since this router's four routes are gated
-    on two different permissions held by two different roles."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    return _token_with_role(api, subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
 
 
 def _audit_event_count(api: ApiTestApp) -> int:
@@ -222,7 +190,7 @@ def _reinstate(api: ApiTestApp, business_key: str, token: str | None, **override
 @pytest.mark.integration
 def test_add_designations_returns_201_with_the_batch_as_stored(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-add-happy")
+    token = api.admin_token(subject="sub-add-happy")
     before = _audit_event_count(api)
 
     response = _add(api, business_key, token, terms=["FBC", "CBC"])
@@ -248,7 +216,7 @@ def test_add_designation_audits_the_created_row_with_reason(api: ApiTestApp) -> 
     declares - and the changelog note supplied on the request reaches
     `AuditEvent.reason` verbatim (FR-37, PRD SS13.2)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-add-audit")
+    token = api.admin_token(subject="sub-add-audit")
     entry_id = _entry_id(api, business_key)
     reason = "Adding the SPIA-current synonym for this entry."
 
@@ -275,7 +243,7 @@ def test_add_designations_location_header_points_at_a_route_that_actually_serves
     api: ApiTestApp,
 ) -> None:
     business_key = _seed_entry(api, status="active")
-    token = _admin_token(api, subject="sub-add-location")
+    token = api.admin_token(subject="sub-add-location")
 
     response = _add(api, business_key, token)
 
@@ -294,7 +262,7 @@ def test_add_designations_location_header_points_at_a_route_that_actually_serves
 @pytest.mark.integration
 def test_add_a_non_en_au_preferred_designation(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-add-preferred")
+    token = api.admin_token(subject="sub-add-preferred")
 
     response = _add(
         api,
@@ -323,7 +291,7 @@ def test_add_a_non_en_au_preferred_designation(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_amend_designation_edits_the_term_and_returns_it(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-amend-happy")
+    token = api.admin_token(subject="sub-amend-happy")
     _add(api, business_key, token)
     version = _stored_row_version(api, business_key)
     before = _audit_event_count(api)
@@ -359,7 +327,7 @@ def test_amend_designation_audits_only_the_term_field_with_reason(api: ApiTestAp
     whole-record snapshot (PRD SS13.2's "field-level, not whole-record
     blobs")."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-amend-audit")
+    token = api.admin_token(subject="sub-amend-audit")
     _add(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
@@ -386,7 +354,7 @@ def test_amend_resolves_a_case_and_punctuation_variant_of_the_stored_term(
     (`load_active_designation`) - naming a variant of the stored term
     still resolves it."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-amend-variant")
+    token = api.admin_token(subject="sub-amend-variant")
     _add(api, business_key, token, terms=["17-OHP"])
 
     response = _amend(
@@ -407,7 +375,7 @@ def test_amend_resolves_a_case_and_punctuation_variant_of_the_stored_term(
 @pytest.mark.integration
 def test_retire_designation_requires_and_records_a_reason(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-happy")
+    token = api.admin_token(subject="sub-retire-happy")
     _add(api, business_key, token)
     version = _stored_row_version(api, business_key)
     before = _audit_event_count(api)
@@ -429,7 +397,7 @@ def test_retire_designation_requires_and_records_a_reason(api: ApiTestApp) -> No
 @pytest.mark.integration
 def test_retire_designation_audits_the_status_change_with_reason(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-audit")
+    token = api.admin_token(subject="sub-retire-audit")
     _add(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     designation_id = _designation_id(api, entry_id=entry_id, term="FBC")
@@ -456,7 +424,7 @@ def test_reinstate_designation_returns_200_with_the_same_row_active_again(
     the audit history splits across two unrelated-looking rows as a
     result."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-happy")
+    token = api.admin_token(subject="sub-reinstate-happy")
     _add(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     designation_id_before = _designation_id_any_status(api, entry_id=entry_id, term="FBC")
@@ -484,7 +452,7 @@ def test_reinstate_designation_returns_200_with_the_same_row_active_again(
 @pytest.mark.integration
 def test_reinstate_designation_audits_the_status_change_with_reason(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-audit")
+    token = api.admin_token(subject="sub-reinstate-audit")
     _add(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     _retire(api, business_key, token)
@@ -511,7 +479,7 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     three adenosine deaminase entries, differing only by specimen. Warns
     on the third add, permits the save, and stops warning for that entry
     once acknowledged (FR-05)."""
-    token = _admin_token(api, subject="sub-ada2")
+    token = api.admin_token(subject="sub-ada2")
     first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
     second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
     third_entry = _seed_entry(api, preferred_term="Adenosine deaminase pleural fluid")
@@ -558,7 +526,7 @@ def test_reinstate_returns_a_warning_for_an_unacknowledged_collision(api: ApiTes
     after_reinstatement` below: with no acknowledgement recorded,
     reinstating a term that collides with another live entry's synonym
     reports the warning on the response, the same as a fresh add would."""
-    token = _admin_token(api, subject="sub-ada2-reinstate-unacked")
+    token = api.admin_token(subject="sub-ada2-reinstate-unacked")
     first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
     second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
     _add(api, first_entry, token, terms=["ADA2"])
@@ -584,7 +552,7 @@ def test_an_acknowledged_warning_stays_silenced_after_reinstatement(api: ApiTest
     warning once the *same* row is reinstated - not only after a fresh
     add, which the test above already covers via a retire-and-re-add
     cycle."""
-    token = _admin_token(api, subject="sub-ada2-reinstate")
+    token = api.admin_token(subject="sub-ada2-reinstate")
     first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
     second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
     _add(api, first_entry, token, terms=["ADA2"])
@@ -620,7 +588,7 @@ def test_acknowledge_collision_audits_the_created_row_with_reason(api: ApiTestAp
     unusually `reason` is *both* the audit event's own `reason` column and
     a declared auditable field on the row itself (see the model's own
     docstring) - both must carry the note supplied."""
-    token = _admin_token(api, subject="sub-ack-audit")
+    token = api.admin_token(subject="sub-ack-audit")
     first_entry = _seed_entry(api, preferred_term="Adenosine deaminase")
     second_entry = _seed_entry(api, preferred_term="Adenosine deaminase CSF")
     third_entry = _seed_entry(api, preferred_term="Adenosine deaminase pleural fluid")
@@ -678,7 +646,7 @@ def test_add_a_term_colliding_with_another_entrys_preferred_term_is_409_naming_i
 ) -> None:
     """PRD Appendix A.5's error-severity fixture, and PRD SS17.2 item 5:
     the refusal names the colliding entry, not a bare 409."""
-    token = _admin_token(api, subject="sub-collision")
+    token = api.admin_token(subject="sub-collision")
     adrenal_ab_entry = _seed_entry(api, preferred_term="Adrenal Ab")
     other_entry = _seed_entry(api, preferred_term="21-Hydroxylase Ab")
 
@@ -703,7 +671,7 @@ def test_add_a_term_colliding_with_another_entrys_preferred_term_is_409_naming_i
 @pytest.mark.integration
 def test_add_a_duplicate_active_term_on_the_same_entry_is_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-duplicate")
+    token = api.admin_token(subject="sub-duplicate")
     _add(api, business_key, token, terms=["FBC"])
 
     response = _add(api, business_key, token, terms=["FBC"])
@@ -715,7 +683,7 @@ def test_add_a_duplicate_active_term_on_the_same_entry_is_409(api: ApiTestApp) -
 @pytest.mark.integration
 def test_a_second_active_preferred_term_in_one_language_is_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-second-preferred")
+    token = api.admin_token(subject="sub-second-preferred")
     _add(api, business_key, token, terms=["Panui toto katoa"], use="preferred", language="mi-NZ")
 
     response = _add(
@@ -732,7 +700,7 @@ def test_adding_an_en_au_preferred_designation_is_422_not_500(api: ApiTestApp) -
     pydantic 422 before the request ever reaches the ORM, not an unmapped
     `IntegrityError`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-en-au-preferred")
+    token = api.admin_token(subject="sub-en-au-preferred")
 
     response = _add(api, business_key, token, terms=["Full blood count"], use="preferred")
 
@@ -747,7 +715,7 @@ def test_adding_a_lowercase_en_au_preferred_designation_is_422_not_201(api: ApiT
     (`_WithLanguage`), so a caller cannot bypass it with a differently-cased
     tag (issue #224 review finding 2)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-en-au-preferred-lowercase")
+    token = api.admin_token(subject="sub-en-au-preferred-lowercase")
 
     response = _add(
         api, business_key, token, terms=["Full blood count"], use="preferred", language="en-au"
@@ -760,7 +728,7 @@ def test_adding_a_lowercase_en_au_preferred_designation_is_422_not_201(api: ApiT
 @pytest.mark.integration
 def test_adding_more_than_one_preferred_term_at_once_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-preferred-batch")
+    token = api.admin_token(subject="sub-preferred-batch")
 
     response = _add(
         api,
@@ -777,7 +745,7 @@ def test_adding_more_than_one_preferred_term_at_once_is_422(api: ApiTestApp) -> 
 @pytest.mark.integration
 def test_add_an_unrecognised_use_is_422_not_500(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bad-use")
+    token = api.admin_token(subject="sub-bad-use")
 
     response = _add(api, business_key, token, use="not-a-real-use")
 
@@ -787,7 +755,7 @@ def test_add_an_unrecognised_use_is_422_not_500(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_add_a_malformed_language_tag_is_422_not_500(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bad-language")
+    token = api.admin_token(subject="sub-bad-language")
 
     response = _add(api, business_key, token, language="not a bcp47 tag")
 
@@ -797,7 +765,7 @@ def test_add_a_malformed_language_tag_is_422_not_500(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_add_a_blank_term_is_422_not_500(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-blank-term")
+    token = api.admin_token(subject="sub-blank-term")
 
     response = _add(api, business_key, token, terms=["   "])
 
@@ -811,7 +779,7 @@ def test_adding_more_than_the_batch_limit_of_terms_is_422(api: ApiTestApp) -> No
     (`add_synonyms`'s own docstring) - an unbounded batch is unbounded lock
     contention for one request (issue #224 review finding 4)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-batch-limit")
+    token = api.admin_token(subject="sub-batch-limit")
 
     response = _add(api, business_key, token, terms=[f"Term {i}" for i in range(101)])
 
@@ -825,7 +793,7 @@ def test_amending_a_term_that_is_not_currently_active_is_404_not_409(api: ApiTes
     addressable this way any more, matching `CodeBindingNotFoundError`'s
     own reasoning."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-amend-not-found")
+    token = api.admin_token(subject="sub-amend-not-found")
 
     response = _amend(
         api, business_key, token, term="No such term", new_term="Something else", reason=_REASON
@@ -837,7 +805,7 @@ def test_amending_a_term_that_is_not_currently_active_is_404_not_409(api: ApiTes
 @pytest.mark.integration
 def test_retiring_an_already_retired_term_is_404_not_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-twice")
+    token = api.admin_token(subject="sub-retire-twice")
     _add(api, business_key, token)
     _retire(api, business_key, token, reason="First retirement")
 
@@ -852,7 +820,7 @@ def test_reinstating_a_term_that_was_never_added_is_404(api: ApiTestApp) -> None
     `load_retired_designation`'s own 404, the reinstatement analogue of
     `test_amending_a_term_that_is_not_currently_active_is_404_not_409`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-not-found")
+    token = api.admin_token(subject="sub-reinstate-not-found")
 
     response = _reinstate(api, business_key, token, term="No such term")
 
@@ -867,7 +835,7 @@ def test_reinstating_a_currently_active_term_is_409_not_404(api: ApiTestApp) -> 
     a term with no retired row at all gets, since this address already has
     something live to conflict with."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-active")
+    token = api.admin_token(subject="sub-reinstate-active")
     _add(api, business_key, token)
 
     response = _reinstate(api, business_key, token)
@@ -888,7 +856,7 @@ def test_reinstating_a_term_superseded_by_a_re_add_is_409(api: ApiTestApp) -> No
     `test_catalogue_designations.py`'s own service-level test for this
     exercises directly."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-superseded")
+    token = api.admin_token(subject="sub-reinstate-superseded")
     _add(api, business_key, token)
     _retire(api, business_key, token, reason="Retiring by mistake")
     _add(api, business_key, token, reason="Re-adding after the mistaken retirement")
@@ -909,7 +877,7 @@ def test_reinstating_a_term_colliding_with_another_entrys_preferred_term_is_409_
     term_is_409_naming_it`, but the collision only comes into existence
     *after* the term is retired (an add with this term already colliding
     would have been refused outright)."""
-    token = _admin_token(api, subject="sub-reinstate-collision")
+    token = api.admin_token(subject="sub-reinstate-collision")
     business_key = _seed_entry(api, preferred_term="21-Hydroxylase Ab")
     _add(api, business_key, token, terms=["Adrenal Ab"])
     _retire(api, business_key, token, term="Adrenal Ab", reason="Retiring before the collision")
@@ -926,7 +894,7 @@ def test_reinstating_a_term_colliding_with_another_entrys_preferred_term_is_409_
 
 @pytest.mark.integration
 def test_no_entry_for_the_given_business_key_is_404(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-no-entry")
+    token = api.admin_token(subject="sub-no-entry")
 
     # No entry exists to read a current row_version from - overridden
     # explicitly so `_add` never tries to resolve one (matching
@@ -986,7 +954,7 @@ def test_amending_the_entrys_own_preferred_term_saves_the_entry(api: ApiTestApp)
     back shaped as a `Designation` even though no `designation` row was
     touched - one mental model, two storage homes."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-happy")
+    token = api.admin_token(subject="sub-pt-happy")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1013,7 +981,7 @@ def test_amending_the_preferred_term_republishes_its_computed_length(api: ApiTes
     term, so amending that term has to move it (ADR-0022 - this is the
     figure `CatalogueEntry.length` produces, not a designation's own)."""
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject="sub-pt-length")
+    token = api.admin_token(subject="sub-pt-length")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1035,7 +1003,7 @@ def test_length_submitted_on_an_amendment_is_ignored_not_stored(api: ApiTestApp)
     into the request must not be able to set it - the published figure stays
     the character count of the term actually stored."""
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject="sub-pt-length-input")
+    token = api.admin_token(subject="sub-pt-length-input")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1067,7 +1035,7 @@ def test_amending_the_preferred_term_without_a_row_version_is_422(api: ApiTestAp
     that helper auto-fills the field unless the caller already supplied
     one, which would defeat the point of this test."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-no-version")
+    token = api.admin_token(subject="sub-pt-no-version")
     before = _audit_event_count(api)
 
     response = api.post(
@@ -1093,7 +1061,7 @@ def test_a_stale_row_version_is_409_naming_the_conflicting_values(api: ApiTestAp
     unacceptable, so the refusal has to let the caller reconcile: the
     submitted value, the current one, and who moved it - not a bare 409."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-stale")
+    token = api.admin_token(subject="sub-pt-stale")
     stale = _row_version(api, business_key, token)
     first = _amend(api, business_key, token, expected_row_version=stale)
     assert first.status_code == 200, first.text
@@ -1129,7 +1097,7 @@ def test_a_rejected_preferred_term_save_leaves_no_audit_event(api: ApiTestApp) -
     exactly as they were - a 409 that had already written an event would
     record a change that never happened."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-no-audit")
+    token = api.admin_token(subject="sub-pt-no-audit")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1149,7 +1117,7 @@ def test_a_preferred_term_colliding_with_another_live_entry_is_409(api: ApiTestA
     which runs after the version check and before anything is mutated."""
     business_key = _seed_entry(api, preferred_term="Adrenal Ab")
     other = _seed_entry(api, preferred_term="21-Hydroxylase Ab")
-    token = _admin_token(api, subject="sub-pt-collision")
+    token = api.admin_token(subject="sub-pt-collision")
     version = _row_version(api, other, token)
     before = _audit_event_count(api)
 
@@ -1176,7 +1144,7 @@ def test_a_case_variant_of_the_preferred_term_still_addresses_it(api: ApiTestApp
     (`preferred_term_key` is written by the same `collision_key` fold), so a
     caller naming a variant is not silently 404ed."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-variant")
+    token = api.admin_token(subject="sub-pt-variant")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1198,7 +1166,7 @@ def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
     only). Resolving the preferred term first would make that synonym
     unreachable for editing - a silent change to a route shipped in #224."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-shadow")
+    token = api.admin_token(subject="sub-pt-shadow")
     added = _add(api, business_key, token, terms=["Full blood count"])
     assert added.status_code == 201, added.text
     version = _row_version(api, business_key, token)
@@ -1228,7 +1196,7 @@ def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
     unreachable once such a synonym exists - and this route creates that
     state itself. `use="preferred"` says which one was meant."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-use-preferred")
+    token = api.admin_token(subject="sub-pt-use-preferred")
     added = _add(api, business_key, token, terms=["Full blood count"])
     assert added.status_code == 201, added.text
     version = _row_version(api, business_key, token)
@@ -1262,7 +1230,7 @@ def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> 
     `expected_row_version` is supplied, so nothing but the `use` check stands
     between this and a 200."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-use-synonym")
+    token = api.admin_token(subject="sub-pt-use-synonym")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1289,7 +1257,7 @@ def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
     same comparison key as the preferred term by definition, so a caller
     reaching past one always names a matching term anyway."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-use-wrong-term")
+    token = api.admin_token(subject="sub-pt-use-wrong-term")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1319,7 +1287,7 @@ def test_use_preferred_in_another_language_still_means_a_designation_row(
     real `designation` row, and `ck_designation_no_en_au_preferred` is
     exactly what guarantees there is no en-AU row to confuse it with."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-use-mi-nz")
+    token = api.admin_token(subject="sub-pt-use-mi-nz")
     added = _add(
         api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
     )
@@ -1353,7 +1321,7 @@ def test_use_preferred_still_requires_a_row_version(api: ApiTestApp) -> None:
     Bypasses `_amend` deliberately - see `test_amending_the_preferred_term_
     without_a_row_version_is_422`'s identical note."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-use-no-version")
+    token = api.admin_token(subject="sub-pt-use-no-version")
     before = _audit_event_count(api)
 
     response = api.post(
@@ -1386,7 +1354,7 @@ def test_a_stale_row_version_on_a_designation_amendment_is_409(api: ApiTestApp) 
     which is exactly `ConflictReport`'s documented non-overlapping-field
     case: still refused, because the version is the contract regardless."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-desig-stale")
+    token = api.admin_token(subject="sub-desig-stale")
     _add(api, business_key, token)
     stale = _row_version(api, business_key, token)
     renamed = _amend(api, business_key, token, expected_row_version=stale)
@@ -1423,7 +1391,7 @@ def test_a_designation_amendment_without_a_row_version_is_422(api: ApiTestApp) -
     Bypasses `_amend` deliberately - see `test_amending_the_preferred_term_
     without_a_row_version_is_422`'s identical note."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-desig-no-version")
+    token = api.admin_token(subject="sub-desig-no-version")
     _add(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1448,7 +1416,7 @@ def test_a_term_that_is_neither_a_designation_nor_the_preferred_term_is_404(
     write. `expected_row_version` is supplied, so a branch that ignored the
     term entirely would 200 here."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-desig-unknown")
+    token = api.admin_token(subject="sub-desig-unknown")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1467,7 +1435,7 @@ def test_a_non_en_au_preferred_variant_is_not_the_entrys_own_preferred_term(
     preferred variant in another language *is* a designation row (ADR-0022
     permits those), and must keep being edited as one."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-mi-nz")
+    token = api.admin_token(subject="sub-pt-mi-nz")
     added = _add(
         api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
     )
@@ -1502,7 +1470,7 @@ def test_resubmitting_the_preferred_term_unchanged_is_a_no_op_not_a_500(
     comparison has to be against the *cleaned* value, not the raw string a
     caller submitted."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-noop")
+    token = api.admin_token(subject="sub-pt-noop")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -1531,7 +1499,7 @@ def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
     `test_catalogue_optimistic_locking.py::test_a_stale_save_that_would_
     have_matched_still_reports_zero_conflicts`)."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-pt-noop-stale")
+    token = api.admin_token(subject="sub-pt-noop-stale")
     stale = _row_version(api, business_key, token)
     first = _amend(api, business_key, token, expected_row_version=stale)
     assert first.status_code == 200, first.text
@@ -1564,7 +1532,7 @@ def test_no_maximum_configured_never_produces_a_length_warning(api: ApiTestApp) 
     default) must never warn, however long the term."""
     api.set_api_settings(max_preferred_term_length=None)
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-length-unset")
+    token = api.admin_token(subject="sub-length-unset")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1584,7 +1552,7 @@ def test_no_maximum_configured_never_produces_a_length_warning(api: ApiTestApp) 
 def test_a_term_within_the_configured_maximum_is_not_warned(api: ApiTestApp) -> None:
     api.set_api_settings(max_preferred_term_length=20)
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-length-within")
+    token = api.admin_token(subject="sub-length-within")
     version = _row_version(api, business_key, token)
 
     response = _amend(api, business_key, token, new_term="Iron", expected_row_version=version)
@@ -1603,7 +1571,7 @@ def test_a_term_exceeding_the_configured_maximum_still_saves_with_a_warning(
     4xx, and the term is actually saved."""
     api.set_api_settings(max_preferred_term_length=10)
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-length-exceeded")
+    token = api.admin_token(subject="sub-length-exceeded")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1641,7 +1609,7 @@ def test_the_warning_reports_the_cleaned_length_not_the_raw_submission(api: ApiT
     assert len(raw_submission) == len(cleaned) + 1, "the NBSP must be the only difference"
     api.set_api_settings(max_preferred_term_length=len(cleaned) - 1)
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject="sub-length-cleaned")
+    token = api.admin_token(subject="sub-length-cleaned")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1667,7 +1635,7 @@ def test_a_term_exactly_at_the_configured_maximum_is_not_warned(api: ApiTestApp)
     term = "Full blood count"
     api.set_api_settings(max_preferred_term_length=len(term))
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject="sub-length-boundary")
+    token = api.admin_token(subject="sub-length-boundary")
     version = _row_version(api, business_key, token)
 
     response = _amend(
@@ -1690,7 +1658,7 @@ def test_an_amendment_computes_the_length_once_whether_or_not_a_maximum_is_set(
     add a second."""
     api.set_api_settings(max_preferred_term_length=maximum)
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject=f"sub-length-once-{maximum}")
+    token = api.admin_token(subject=f"sub-length-once-{maximum}")
     version = _row_version(api, business_key, token)
     calls: list[str] = []
 
@@ -1720,7 +1688,7 @@ def test_an_over_length_amendment_is_logged_by_the_write_path_and_still_saves(
 ) -> None:
     api.set_api_settings(max_preferred_term_length=10)
     business_key = _seed_entry(api, preferred_term="Iron")
-    token = _admin_token(api, subject="sub-length-logged")
+    token = api.admin_token(subject="sub-length-logged")
     version = _row_version(api, business_key, token)
     new_term = "Full blood count, automated"
 
@@ -1751,7 +1719,7 @@ def test_amending_a_synonym_never_carries_a_length_warning(api: ApiTestApp) -> N
     low the configured maximum is."""
     api.set_api_settings(max_preferred_term_length=1)
     business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = _admin_token(api, subject="sub-length-synonym")
+    token = api.admin_token(subject="sub-length-synonym")
     _add(api, business_key, token, terms=["FBC"])
     version = _row_version(api, business_key, token)
 
@@ -1785,7 +1753,7 @@ def test_add_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     `test_api_catalogue_bindings.py::test_bind_missing_expected_row_
     version_is_422`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-add-missing-version")
+    token = api.admin_token(subject="sub-add-missing-version")
 
     response = api.post(
         f"/catalogue/entries/{business_key}/designations",
@@ -1800,7 +1768,7 @@ def test_add_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-missing-version")
+    token = api.admin_token(subject="sub-retire-missing-version")
     _add(api, business_key, token)
 
     response = api.post(
@@ -1816,7 +1784,7 @@ def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_reinstate_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-missing-version")
+    token = api.admin_token(subject="sub-reinstate-missing-version")
     _add(api, business_key, token)
     _retire(api, business_key, token)
 
@@ -1838,7 +1806,7 @@ def test_add_then_amend_a_different_term_is_refused_on_the_stale_version(
     each changing a *different* term - here, one adding a new synonym while
     the other amends an existing one - must not silently both apply."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-cross-add-amend")
+    token = api.admin_token(subject="sub-cross-add-amend")
     _add(api, business_key, token, terms=["FBC"])
     stale = _stored_row_version(api, business_key)
 
@@ -1864,7 +1832,7 @@ def test_amend_then_retire_a_different_term_is_refused_on_the_stale_version(
     api: ApiTestApp,
 ) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-cross-amend-retire")
+    token = api.admin_token(subject="sub-cross-amend-retire")
     _add(api, business_key, token, terms=["FBC"])
     _add(api, business_key, token, terms=["CBC"])
     stale = _stored_row_version(api, business_key)
@@ -1894,7 +1862,7 @@ def test_retire_then_reinstate_a_different_term_is_refused_on_the_stale_version(
     #300), so it can refuse the same stale-`expected_row_version` 409 they
     each have their own test for - this route had none (issue #313 review)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-cross-retire-reinstate")
+    token = api.admin_token(subject="sub-cross-retire-reinstate")
     _add(api, business_key, token, terms=["FBC"])
     _add(api, business_key, token, terms=["CBC"])
 
@@ -1920,7 +1888,7 @@ def test_retire_then_amend_a_different_term_is_refused_on_the_stale_version(
     api: ApiTestApp,
 ) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-cross-retire-amend")
+    token = api.admin_token(subject="sub-cross-retire-amend")
     _add(api, business_key, token, terms=["FBC"])
     _add(api, business_key, token, terms=["CBC"])
     stale = _stored_row_version(api, business_key)
@@ -1947,7 +1915,7 @@ def test_amend_then_amend_two_different_designations_is_refused_on_the_stale_ver
     api: ApiTestApp,
 ) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-cross-amend-amend")
+    token = api.admin_token(subject="sub-cross-amend-amend")
     _add(api, business_key, token, terms=["FBC"])
     _add(api, business_key, token, terms=["CBC"])
     stale = _stored_row_version(api, business_key)
@@ -1983,7 +1951,7 @@ def test_a_batch_add_bumps_row_version_once_not_once_per_term(api: ApiTestApp) -
     that silently regresses if a future change moves the `with` inside the
     per-term loop. Three terms in one batch must still only cost `+1`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-batch-bump-once")
+    token = api.admin_token(subject="sub-batch-bump-once")
     version = _stored_row_version(api, business_key)
 
     response = _add(
@@ -2005,7 +1973,7 @@ def test_a_refused_batch_add_leaves_no_partial_write_or_audit_event(api: ApiTest
     before the wrapped `add_synonyms` call, not after, so this is refused
     up front rather than rolled back after a partial insert."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-batch-stale")
+    token = api.admin_token(subject="sub-batch-stale")
     stale = _stored_row_version(api, business_key)
     _add(api, business_key, token, terms=["Existing term"])
     before = _audit_event_count(api)
@@ -2059,7 +2027,7 @@ def test_add_authenticated_without_the_permission_is_403_with_no_challenge(
 @pytest.mark.integration
 def test_add_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-admin-no-mfa", with_mfa=False)
 
     response = _add(api, business_key, token)
 
@@ -2103,7 +2071,7 @@ def test_reinstate_authenticated_without_the_permission_is_403_with_no_challenge
 @pytest.mark.integration
 def test_reinstate_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-reinstate-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-reinstate-admin-no-mfa", with_mfa=False)
 
     response = _reinstate(api, business_key, token)
 
@@ -2156,9 +2124,9 @@ def test_a_reviewer_can_acknowledge_a_collision(api: ApiTestApp) -> None:
     only `Role.ADMINISTRATOR` - the other three routes on this router are
     Administrator-only (`catalogue.edit_published`)."""
     business_key = _seed_entry(api)
-    admin_token = _admin_token(api, subject="sub-reviewer-setup")
+    admin_token = api.admin_token(subject="sub-reviewer-setup")
     _add(api, business_key, admin_token, terms=["ADA2"])
-    reviewer_token = _token_with_role(api, subject="sub-reviewer", role=Role.REVIEWER)
+    reviewer_token = api.token_for_role(subject="sub-reviewer", role=Role.REVIEWER)
 
     response = api.post(
         f"/catalogue/entries/{business_key}/designations/acknowledgement",
@@ -2179,7 +2147,7 @@ def test_acknowledging_the_same_collision_twice_returns_created_false_the_second
     caller re-submitting the same acknowledgement should not read a `200`
     as proof its own note was kept (issue #224 review finding 5)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-ack-repeat")
+    token = api.admin_token(subject="sub-ack-repeat")
     _add(api, business_key, token, terms=["ADA2"])
     ack_url = f"/catalogue/entries/{business_key}/designations/acknowledgement"
 
@@ -2203,7 +2171,7 @@ def test_acknowledge_with_a_malformed_language_tag_is_422_not_500(api: ApiTestAp
     reached the table's `CHECK` constraint as an unmapped `IntegrityError`
     (issue #224 review finding 1)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-ack-bad-language")
+    token = api.admin_token(subject="sub-ack-bad-language")
 
     response = api.post(
         f"/catalogue/entries/{business_key}/designations/acknowledgement",
@@ -2221,7 +2189,7 @@ def test_acknowledge_with_a_malformed_language_tag_is_422_not_500(api: ApiTestAp
 @pytest.mark.integration
 def test_write_responses_contain_no_internal_identifier(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-hygiene")
+    token = api.admin_token(subject="sub-hygiene")
 
     add_response = _add(api, business_key, token, terms=["FBC"])
     assert add_response.status_code == 201, add_response.text

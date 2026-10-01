@@ -22,12 +22,9 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,57 +50,8 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
 
 
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
 def _audit_event_count(api: ApiTestApp) -> int:
     return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
-
-
-def _role_token(api: ApiTestApp, *, subject: str, role: Role) -> str:
-    """Resolves `subject` to exactly `role` - no more, no less.
-
-    `_create_user` (`nptc.auth.identity`) auto-grants every brand-new
-    identity `Role.PROVISIONAL` on first sign-in, and roles are additive
-    (`roles_for_user` returns the union of every grant, and permissions are
-    the union over that set) - so granting a role on top of a fresh
-    identity does not isolate that role's own permissions, it only adds to
-    Provisional's. `revoke_all_roles_unchecked` clears that default grant
-    first so the token in hand reflects `role` alone."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    revoke_all_roles_unchecked(api.session, target_user_id=user.id, audit=AuditContext.system())
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    return api.token(subject=subject)
 
 
 def _unique_key(prefix: str) -> str:
@@ -135,7 +83,7 @@ def _create(api: ApiTestApp, token: str, key: str, **overrides: object) -> Any:
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_create_property_returns_201_and_records_one_audit_event(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-create-happy")
+    token = api.admin_token(subject="sub-create-happy")
     before = _audit_event_count(api)
     key = _unique_key("create_happy")
 
@@ -152,7 +100,7 @@ def test_create_property_returns_201_and_records_one_audit_event(api: ApiTestApp
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
 def test_patch_property_changes_label_key_unchanged(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-happy")
+    token = api.admin_token(subject="sub-patch-happy")
     key = _unique_key("patch_happy")
     created = _create(api, token, key).json()
 
@@ -176,7 +124,7 @@ def test_patch_property_changes_label_key_unchanged(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
 def test_patch_property_with_a_key_field_in_the_body_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-key-forbidden")
+    token = api.admin_token(subject="sub-patch-key-forbidden")
     key = _unique_key("patch_key_forbidden")
     created = _create(api, token, key).json()
 
@@ -197,7 +145,7 @@ def test_patch_property_with_a_key_field_in_the_body_is_422(api: ApiTestApp) -> 
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_patch_property_with_a_stale_row_version_is_409(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-stale")
+    token = api.admin_token(subject="sub-patch-stale")
     key = _unique_key("patch_stale")
     created = _create(api, token, key).json()
 
@@ -222,7 +170,7 @@ def test_patch_property_with_an_explicit_null_is_422(api: ApiTestApp) -> None:
     refused, not a silent no-op - `AmendPropertyDefinitionRequest` treats
     "field omitted" and "field explicitly set to null" as different
     things, and none of these fields is a nullable domain value."""
-    token = _admin_token(api, subject="sub-patch-explicit-null")
+    token = api.admin_token(subject="sub-patch-explicit-null")
     key = _unique_key("patch_explicit_null")
     created = _create(api, token, key).json()
 
@@ -246,7 +194,7 @@ def test_deprecate_property_with_a_stale_row_version_is_409(api: ApiTestApp) -> 
     """Issue #223 review finding 7: `deprecate_property`'s stale-
     `expected_row_version` branch had no HTTP-layer test, mirroring
     `test_patch_property_with_a_stale_row_version_is_409` above."""
-    token = _admin_token(api, subject="sub-deprecate-stale")
+    token = api.admin_token(subject="sub-deprecate-stale")
     key = _unique_key("deprecate_stale")
     created = _create(api, token, key).json()
 
@@ -266,7 +214,7 @@ def test_create_property_with_an_unknown_datatype_is_422(api: ApiTestApp) -> Non
     all (FR-77's own extension point), so an unrecognised value must be
     refused with a 422 before the row is ever written, not a `201`
     followed by a broken row."""
-    token = _admin_token(api, subject="sub-create-bad-datatype")
+    token = api.admin_token(subject="sub-create-bad-datatype")
     response = _create(api, token, _unique_key("bad_datatype"), datatype="banana")
     assert response.status_code == 422, response.text
 
@@ -278,7 +226,7 @@ def test_create_property_with_an_invalid_cardinality_is_422(api: ApiTestApp) -> 
     exact `CHECK`-backed enum, so an invalid value is a pydantic 422, not
     the `23514` `IntegrityError` `create_definition` used to re-raise
     unchanged as an unhandled 500."""
-    token = _admin_token(api, subject="sub-create-bad-cardinality")
+    token = api.admin_token(subject="sub-create-bad-cardinality")
     response = _create(api, token, _unique_key("bad_cardinality"), cardinality="0..99")
     assert response.status_code == 422, response.text
 
@@ -290,7 +238,7 @@ def test_create_property_with_constraints_invalid_for_the_datatype_is_422(
 ) -> None:
     """Issue #223 review finding 4: `constraints` is validated against the
     resolved datatype handler's own `constraints_schema()` at create time."""
-    token = _admin_token(api, subject="sub-create-bad-constraints")
+    token = api.admin_token(subject="sub-create-bad-constraints")
     response = _create(
         api,
         token,
@@ -304,7 +252,7 @@ def test_create_property_with_constraints_invalid_for_the_datatype_is_422(
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_deprecate_property_returns_200_and_records_one_audit_event(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-deprecate-happy")
+    token = api.admin_token(subject="sub-deprecate-happy")
     key = _unique_key("deprecate_happy")
     created = _create(api, token, key).json()
     before = _audit_event_count(api)
@@ -326,7 +274,7 @@ def test_deprecate_property_returns_200_and_records_one_audit_event(api: ApiTest
 def test_list_properties_default_excludes_deprecated_include_deprecated_shows_it(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-list-audience")
+    token = api.admin_token(subject="sub-list-audience")
     key = _unique_key("list_audience")
     created = _create(api, token, key).json()
     api.post(
@@ -354,7 +302,7 @@ def test_list_properties_default_excludes_deprecated_include_deprecated_shows_it
 @pytest.mark.req("FR-77")
 @pytest.mark.integration
 def test_get_property_returns_a_form_control(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-form-control")
+    token = api.admin_token(subject="sub-form-control")
     key = _unique_key("form_control")
     _create(api, token, key)
 
@@ -433,7 +381,7 @@ def test_list_properties_returns_a_synthetic_datatypes_own_form_control(api: Api
     )
     api.app.dependency_overrides[get_datatype_registry] = lambda: registry_with_synthetic
     try:
-        token = _admin_token(api, subject="sub-synthetic-datatype")
+        token = api.admin_token(subject="sub-synthetic-datatype")
         key = _unique_key("synthetic_colour")
         response = _create(api, token, key, datatype="synthetic_colour")
         assert response.status_code == 201, response.text
@@ -466,7 +414,7 @@ def test_get_property_returns_a_code_datatypes_form_control_from_its_binding(
     `test_api_catalogue_properties.py`."""
     from nptc.db.bootstrap import seed_system_properties
 
-    token = _admin_token(api, subject="sub-form-control-code")
+    token = api.admin_token(subject="sub-form-control-code")
     seed_system_properties(api.session)
     api.session.flush()
 
@@ -510,7 +458,7 @@ def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
     from nptc.api.errors import _DETAIL_SERVER_MISCONFIGURED
     from nptc.db.models.property_definition import PropertyDefinition
 
-    token = _admin_token(api, subject="sub-list-drifted-datatype")
+    token = api.admin_token(subject="sub-list-drifted-datatype")
     key = _unique_key("drifted_datatype")
     api.session.add(
         PropertyDefinition(
@@ -541,7 +489,7 @@ def test_list_properties_with_one_drifted_datatype_is_a_whole_list_500(
 @pytest.mark.req("FR-09")
 @pytest.mark.integration
 def test_list_properties_scope_filter_is_inclusive_of_both(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-scope-filter")
+    token = api.admin_token(subject="sub-scope-filter")
     submission_key = _unique_key("scope_submission")
     maintenance_key = _unique_key("scope_maintenance")
     both_key = _unique_key("scope_both")
@@ -579,7 +527,7 @@ def test_list_properties_scope_filter_is_inclusive_of_both(api: ApiTestApp) -> N
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
 def test_create_property_with_a_duplicate_key_is_409(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-dup-key")
+    token = api.admin_token(subject="sub-dup-key")
     key = _unique_key("dup_key")
     _create(api, token, key)
 
@@ -591,7 +539,7 @@ def test_create_property_with_a_duplicate_key_is_409(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-11")
 @pytest.mark.integration
 def test_deprecate_property_twice_is_409(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-double-deprecate")
+    token = api.admin_token(subject="sub-double-deprecate")
     key = _unique_key("double_deprecate")
     created = _create(api, token, key).json()
     api.post(
@@ -613,7 +561,7 @@ def test_deprecate_property_twice_is_409(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-11")
 @pytest.mark.integration
 def test_delete_property_is_always_409(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-delete-refused")
+    token = api.admin_token(subject="sub-delete-refused")
     key = _unique_key("delete_refused")
     _create(api, token, key)
 
@@ -633,7 +581,7 @@ def test_deprecate_property_system_origin_is_409(api: ApiTestApp) -> None:
     from nptc.db.bootstrap import seed_system_properties
     from nptc.db.definitions import load_definition
 
-    token = _admin_token(api, subject="sub-deprecate-system")
+    token = api.admin_token(subject="sub-deprecate-system")
     seed_system_properties(api.session)
     api.session.flush()
     definition = load_definition(api.session, "usage_guidance")
@@ -655,7 +603,7 @@ def test_delete_property_unknown_key_is_still_409_not_404(api: ApiTestApp) -> No
     mistake either way is asking to delete at all, not naming the wrong
     key, so this is a 409 rather than a 404 that would imply deleting a
     *real* definition might otherwise have worked."""
-    token = _admin_token(api, subject="sub-delete-unknown")
+    token = api.admin_token(subject="sub-delete-unknown")
 
     response = api.request("DELETE", "/registry/properties/no_such_property_key", token=token)
 
@@ -701,7 +649,7 @@ def test_list_properties_authenticated_without_permission_is_403(api: ApiTestApp
     generate, so it is the only authenticated role without
     `Permission.REGISTRY_READ` (ADR-0028) - this is a 403, not the 200
     round-1's over-correction produced."""
-    token = _role_token(api, subject="sub-list-observer-role", role=Role.OBSERVER)
+    token = api.exact_role_token(subject="sub-list-observer-role", role=Role.OBSERVER)
     response = api.get("/registry/properties", token=token)
     assert response.status_code == 403, response.text
 
@@ -726,7 +674,7 @@ def test_create_property_authenticated_without_permission_is_403(api: ApiTestApp
 def test_create_property_administrator_without_mfa_gets_step_up_challenge(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-create-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-create-no-mfa", with_mfa=False)
     response = _create(api, token, _unique_key("no_mfa"))
     assert response.status_code == 403, response.text
     assert 'error="insufficient_user_authentication"' in response.headers["WWW-Authenticate"]
@@ -738,7 +686,7 @@ def test_get_property_no_credential_is_401(api: ApiTestApp) -> None:
     """See `test_list_properties_no_credential_is_401`'s own docstring
     (ADR-0028) - `GET /registry/properties/{key}` is gated on the same
     `Permission.REGISTRY_READ`."""
-    admin_token = _admin_token(api, subject="sub-get-setup")
+    admin_token = api.admin_token(subject="sub-get-setup")
     key = _unique_key("get_no_cred")
     _create(api, admin_token, key)
 
@@ -752,10 +700,10 @@ def test_get_property_authenticated_without_permission_is_403(api: ApiTestApp) -
     """See `test_list_properties_authenticated_without_permission_is_403`'s
     own docstring - the single-property `GET` route did not previously have
     its own 403 test (round-2 review); it is gated identically."""
-    admin_token = _admin_token(api, subject="sub-get-setup-no-permission")
+    admin_token = api.admin_token(subject="sub-get-setup-no-permission")
     key = _unique_key("get_no_special_role")
     _create(api, admin_token, key)
-    token = _role_token(api, subject="sub-get-observer-role", role=Role.OBSERVER)
+    token = api.exact_role_token(subject="sub-get-observer-role", role=Role.OBSERVER)
 
     response = api.get(f"/registry/properties/{key}", token=token)
     assert response.status_code == 403, response.text
@@ -770,7 +718,7 @@ def test_list_properties_provisional_role_is_200(api: ApiTestApp) -> None:
     `Permission.REGISTRY_READ` must not exclude `Role.PROVISIONAL`. A
     Provisional principal gets 200, not the 403 an ANON-tier caller gets
     in `test_list_properties_authenticated_without_permission_is_403`."""
-    token = _role_token(api, subject="sub-list-provisional", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-list-provisional", role=Role.PROVISIONAL)
     response = api.get("/registry/properties", token=token)
     assert response.status_code == 200, response.text
 
@@ -778,7 +726,7 @@ def test_list_properties_provisional_role_is_200(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_patch_property_records_one_audit_event(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-audit")
+    token = api.admin_token(subject="sub-patch-audit")
     key = _unique_key("patch_audit")
     created = _create(api, token, key).json()
     before = _audit_event_count(api)
@@ -801,7 +749,7 @@ def test_patch_property_records_one_audit_event(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_patch_property_no_credential_is_401(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-setup")
+    token = api.admin_token(subject="sub-patch-setup")
     key = _unique_key("patch_no_cred")
     created = _create(api, token, key).json()
 
@@ -817,7 +765,7 @@ def test_patch_property_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_patch_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-patch-setup-403")
+    admin_token = api.admin_token(subject="sub-patch-setup-403")
     key = _unique_key("patch_no_permission")
     created = _create(api, admin_token, key).json()
     token = api.token(subject="sub-patch-no-permission")
@@ -834,7 +782,7 @@ def test_patch_property_authenticated_without_permission_is_403(api: ApiTestApp)
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_deprecate_property_no_credential_is_401(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-deprecate-setup")
+    admin_token = api.admin_token(subject="sub-deprecate-setup")
     key = _unique_key("deprecate_no_cred")
     created = _create(api, admin_token, key).json()
 
@@ -849,7 +797,7 @@ def test_deprecate_property_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_deprecate_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-deprecate-setup-403")
+    admin_token = api.admin_token(subject="sub-deprecate-setup-403")
     key = _unique_key("deprecate_no_permission")
     created = _create(api, admin_token, key).json()
     token = api.token(subject="sub-deprecate-no-permission")
@@ -865,7 +813,7 @@ def test_deprecate_property_authenticated_without_permission_is_403(api: ApiTest
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_delete_property_no_credential_is_401(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-delete-setup")
+    admin_token = api.admin_token(subject="sub-delete-setup")
     key = _unique_key("delete_no_cred")
     _create(api, admin_token, key)
 
@@ -876,7 +824,7 @@ def test_delete_property_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_delete_property_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-delete-setup-403")
+    admin_token = api.admin_token(subject="sub-delete-setup-403")
     key = _unique_key("delete_no_permission")
     _create(api, admin_token, key)
     token = api.token(subject="sub-delete-no-permission")
@@ -892,7 +840,7 @@ def test_delete_property_authenticated_without_permission_is_403(api: ApiTestApp
 @pytest.mark.req("FR-12")
 @pytest.mark.integration
 def test_end_to_end_create_record_value_deprecate_still_readable(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-e2e")
+    token = api.admin_token(subject="sub-e2e")
     key = _unique_key("e2e")
     created = _create(api, token, key).json()
     entry = create_entry(

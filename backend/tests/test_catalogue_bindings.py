@@ -1,7 +1,7 @@
 """Code binding service-layer tests (issue #48, FR-06, FR-08, FR-82, FR-83).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 
 FR-84's subsumption check is out of scope here - it is the FR-45 validation
 sweep's own concern, layered on top of the rows created here.
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Index, event, func, select, text
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -47,11 +47,6 @@ _VALID_FSN = "Microscopy (acid fast bacilli) (procedure)"
 _VALID_AU_PREFERRED_TERM = "Microscopy (acid fast bacilli)"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

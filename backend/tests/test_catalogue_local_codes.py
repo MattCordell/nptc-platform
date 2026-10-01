@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -44,11 +43,6 @@ from nptc_shared.sctid import InvalidSCTIDError
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _VALID_SNOMED_CODE = "394596001"
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

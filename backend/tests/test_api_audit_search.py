@@ -42,7 +42,6 @@ build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
 _audit_support = _load("audit_api_support")
-_admin_token = _audit_support.admin_token
 _create_active_user = _audit_support.create_active_user
 _seed = _audit_support.seed_event
 
@@ -61,7 +60,7 @@ def test_read_audit_events_returns_the_event_shape(api: ApiTestApp) -> None:
     entity_type = f"test-api-happy-{uuid.uuid4()}"
     actor = _create_active_user(api, "kate-api-audit")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type, action="test.created")
-    token = _admin_token(api, subject="sub-audit-happy")
+    token = api.admin_token(subject="sub-audit-happy")
 
     response = api.get("/audit/events", token=token, params={"entity_type": entity_type})
 
@@ -83,7 +82,7 @@ def test_filters_narrow_the_result_set_over_http(api: ApiTestApp) -> None:
     actor = _create_active_user(api, "liam-api-audit")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type, action="test.created")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type, action="test.updated")
-    token = _admin_token(api, subject="sub-audit-filter")
+    token = api.admin_token(subject="sub-audit-filter")
 
     response = api.get(
         "/audit/events",
@@ -103,7 +102,7 @@ def test_pagination_cursor_round_trips_over_http(api: ApiTestApp) -> None:
     actor = _create_active_user(api, "mia-api-audit")
     oldest = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
     newest = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-page")
+    token = api.admin_token(subject="sub-audit-page")
 
     first = api.get("/audit/events", token=token, params={"entity_type": entity_type, "limit": 1})
     assert first.status_code == 200, first.text
@@ -136,7 +135,7 @@ def test_a_closed_accounts_actor_serves_a_null_display_name_not_a_blank_row(
     event = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
     close_account(api.session, actor.id, AuditContext.system())
     api.session.flush()
-    token = _admin_token(api, subject="sub-audit-closed")
+    token = api.admin_token(subject="sub-audit-closed")
 
     response = api.get("/audit/events", token=token, params={"entity_type": entity_type})
 
@@ -151,7 +150,7 @@ def test_a_closed_accounts_actor_serves_a_null_display_name_not_a_blank_row(
 def test_a_system_events_actor_is_null_over_http(api: ApiTestApp) -> None:
     entity_type = f"test-api-system-{uuid.uuid4()}"
     event = _seed(api, actor_user_id=None, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-system")
+    token = api.admin_token(subject="sub-audit-system")
 
     response = api.get("/audit/events", token=token, params={"entity_type": entity_type})
 
@@ -174,7 +173,7 @@ def test_a_withheld_field_appears_only_under_redacted_never_by_value(api: ApiTes
         before={"status": "active", "_redacted": ["display_name"]},
         after={"status": "suspended", "_redacted": ["display_name"]},
     )
-    token = _admin_token(api, subject="sub-audit-redacted")
+    token = api.admin_token(subject="sub-audit-redacted")
 
     response = api.get("/audit/events", token=token, params={"entity_type": entity_type})
 
@@ -195,7 +194,7 @@ def test_a_withheld_field_appears_only_under_redacted_never_by_value(api: ApiTes
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_a_cursor_beyond_the_sequence_range_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-bad-cursor")
+    token = api.admin_token(subject="sub-audit-bad-cursor")
 
     response = api.get("/audit/events", token=token, params={"before": "9223372036854775808"})
 
@@ -205,7 +204,7 @@ def test_a_cursor_beyond_the_sequence_range_is_a_422(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_entity_id_without_entity_type_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-bad-entity")
+    token = api.admin_token(subject="sub-audit-bad-entity")
 
     response = api.get("/audit/events", token=token, params={"entity_id": "some-id"})
 
@@ -215,7 +214,7 @@ def test_entity_id_without_entity_type_is_a_422(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-bad-range")
+    token = api.admin_token(subject="sub-audit-bad-range")
 
     response = api.get(
         "/audit/events",
@@ -236,7 +235,7 @@ def test_occurred_from_equal_to_occurred_to_is_a_422(api: ApiTestApp) -> None:
     of the data - refused for the same reason `occurred_from` after
     `occurred_to` is, not merely returned as an empty page (PR #309
     review)."""
-    token = _admin_token(api, subject="sub-audit-equal-range")
+    token = api.admin_token(subject="sub-audit-equal-range")
     instant = "2026-01-01T00:00:00Z"
 
     response = api.get(
@@ -255,7 +254,7 @@ def test_occurred_from_without_a_utc_offset_is_a_422(api: ApiTestApp) -> None:
     (`TIMESTAMP WITH TIME ZONE`) - refused rather than silently
     interpreted by whatever timezone Postgres's own session happens to be
     set to."""
-    token = _admin_token(api, subject="sub-audit-naive-datetime")
+    token = api.admin_token(subject="sub-audit-naive-datetime")
 
     response = api.get(
         "/audit/events", token=token, params={"occurred_from": "2026-01-01T00:00:00"}
@@ -290,7 +289,7 @@ def test_authenticated_without_the_permission_is_403_with_no_challenge(api: ApiT
 @pytest.mark.req("NFR-06")
 @pytest.mark.integration
 def test_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-audit-admin-no-mfa", with_mfa=False)
 
     response = api.get("/audit/events", token=token)
 

@@ -1,7 +1,7 @@
 """Designation storage tests (issue #47, FR-04, FR-24, FR-37, FR-63, FR-85).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 
 FR-05 collision detection is out of scope here - it is issue #49's own test
 module, layered on top of the rows created here.
@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -67,11 +66,6 @@ def _load(name: str) -> Any:
 
 
 latest_audit_event = _load("audit_support").latest_audit_event
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

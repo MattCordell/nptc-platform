@@ -13,7 +13,6 @@ import uuid
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -49,11 +48,6 @@ from nptc.registry.definitions import (
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 
 _REASON = "Created for the #55 property deprecation test suite."
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 @pytest.fixture

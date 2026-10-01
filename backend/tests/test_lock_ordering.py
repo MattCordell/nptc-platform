@@ -82,9 +82,10 @@ import threading
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
@@ -730,58 +731,33 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
 # --- Rejected input takes no lock ------------------------------
 
 
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
-
-
-def _captured_lock_statements(connection: Connection, action: Callable[[], object]) -> list[str]:
-    """Runs `action` and returns the audit append lock statements it issued.
-
-    Matched on the append lock's own key, because
+def _is_append_lock(statement: str, parameters: object) -> bool:
+    """Matched on the append lock's own key, because
     `assert_no_error_collisions` takes a second `pg_advisory_xact_lock`
     keyed per term."""
-    statements: list[str] = []
-
-    def _record(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        if (
-            "pg_advisory_xact_lock" in statement
-            and isinstance(parameters, dict)
-            and parameters.get("key") == AUDIT_APPEND_LOCK_KEY
-        ):
-            statements.append(statement)
-
-    event.listen(connection, "before_cursor_execute", _record)
-    try:
-        action()
-    finally:
-        event.remove(connection, "before_cursor_execute", _record)
-    return statements
+    return (
+        "pg_advisory_xact_lock" in statement
+        and isinstance(parameters, dict)
+        and parameters.get("key") == AUDIT_APPEND_LOCK_KEY
+    )
 
 
 @pytest.mark.req("FR-37")
 @pytest.mark.integration
-def test_a_valid_note_takes_the_append_lock(app_session: Session, app_db: Connection) -> None:
+def test_a_valid_note_takes_the_append_lock(
+    app_session: Session, app_db: Connection, capture_statements: Any
+) -> None:
     """Control for the test below: proves the capture sees the append lock
     at all, so an empty result there cannot be a listener that never fires.
     `create_entry` also takes the collision lock, which the capture must not
     count."""
-    statements = _captured_lock_statements(
-        app_db,
-        lambda: create_entry(
+    with capture_statements(app_db, keep=_is_append_lock) as statements:
+        create_entry(
             app_session,
             AuditContext.system(),
             preferred_term=f"Lock control entry {uuid.uuid4()}",
             reason="Created to prove the lock statement is captured",
-        ),
-    )
+        )
     assert len(statements) >= 1
 
 
@@ -915,6 +891,7 @@ def test_a_rejected_changelog_note_takes_no_append_lock(
     writer: Callable[[Session, CatalogueEntry, str], object],
     app_session: Session,
     app_db: Connection,
+    capture_statements: Any,
 ) -> None:
     """A request the note check rejects must not queue on the global audit
     lock: it will never write, so holding the lock only delays writers that
@@ -927,8 +904,10 @@ def test_a_rejected_changelog_note_takes_no_append_lock(
         reason="Created for the rejected-note lock test",
     )
 
-    def _rejected() -> None:
-        with pytest.raises(ChangelogNoteError):
-            writer(app_session, entry, "")
+    with (
+        capture_statements(app_db, keep=_is_append_lock) as statements,
+        pytest.raises(ChangelogNoteError),
+    ):
+        writer(app_session, entry, "")
 
-    assert _captured_lock_statements(app_db, _rejected) == []
+    assert statements == []

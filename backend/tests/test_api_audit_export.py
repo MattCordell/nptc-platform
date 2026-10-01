@@ -42,7 +42,6 @@ build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
 _audit_support = _load("audit_api_support")
-_admin_token = _audit_support.admin_token
 _create_active_user = _audit_support.create_active_user
 _seed = _audit_support.seed_event
 
@@ -63,7 +62,7 @@ def test_export_returns_ndjson_content_type_and_attachment_header(api: ApiTestAp
     entity_type = f"test-export-shape-{uuid.uuid4()}"
     actor = _create_active_user(api, "peter-api-audit-export")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-export-shape")
+    token = api.admin_token(subject="sub-audit-export-shape")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -82,7 +81,7 @@ def test_export_streams_one_json_object_per_line_oldest_first_with_hashes(
     actor = _create_active_user(api, "quinn-api-audit-export")
     first = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
     second = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-export-order")
+    token = api.admin_token(subject="sub-audit-export-order")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -100,7 +99,7 @@ def test_export_filters_narrow_the_result_set(api: ApiTestApp) -> None:
     actor = _create_active_user(api, "rex-api-audit-export")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type, action="test.created")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type, action="test.updated")
-    token = _admin_token(api, subject="sub-audit-export-filter")
+    token = api.admin_token(subject="sub-audit-export-filter")
 
     response = api.get(
         "/audit/events/export",
@@ -122,7 +121,7 @@ def test_export_closed_accounts_actor_is_not_blank(api: ApiTestApp) -> None:
     event = _seed(api, actor_user_id=actor.id, entity_type=entity_type)
     close_account(api.session, actor.id, AuditContext.system())
     api.session.flush()
-    token = _admin_token(api, subject="sub-audit-export-closed")
+    token = api.admin_token(subject="sub-audit-export-closed")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -148,7 +147,7 @@ def test_export_entry_hash_cannot_be_recomputed_from_the_exported_line_alone(
     entity_type = f"test-export-hash-scope-{uuid.uuid4()}"
     actor = _create_active_user(api, "uma-api-audit-export")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-export-hash-scope")
+    token = api.admin_token(subject="sub-audit-export-hash-scope")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -173,7 +172,7 @@ def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
     entity_type = f"test-export-hash-match-{uuid.uuid4()}"
     actor = _create_active_user(api, "vera-api-audit-export")
     _seed(api, actor_user_id=actor.id, entity_type=entity_type)
-    token = _admin_token(api, subject="sub-audit-export-hash-match")
+    token = api.admin_token(subject="sub-audit-export-hash-match")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -199,7 +198,7 @@ def test_export_serves_a_withheld_field_only_under_redacted(api: ApiTestApp) -> 
         before={"status": "active", "_redacted": ["display_name"]},
         after={"status": "suspended", "_redacted": ["display_name"]},
     )
-    token = _admin_token(api, subject="sub-audit-export-redacted")
+    token = api.admin_token(subject="sub-audit-export-redacted")
 
     response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
 
@@ -214,7 +213,7 @@ def test_export_serves_a_withheld_field_only_under_redacted(api: ApiTestApp) -> 
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_export_entity_id_without_entity_type_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-export-bad-entity")
+    token = api.admin_token(subject="sub-audit-export-bad-entity")
 
     response = api.get("/audit/events/export", token=token, params={"entity_id": "some-id"})
 
@@ -224,7 +223,7 @@ def test_export_entity_id_without_entity_type_is_a_422(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_export_occurred_from_after_occurred_to_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-export-bad-range")
+    token = api.admin_token(subject="sub-audit-export-bad-range")
 
     response = api.get(
         "/audit/events/export",
@@ -244,7 +243,7 @@ def test_export_occurred_from_equal_to_occurred_to_is_a_422(api: ApiTestApp) -> 
     """A zero-width `[from, to)` window can never match a row regardless
     of the data - refused for the same reason the backwards case above is
     (PR #309 review)."""
-    token = _admin_token(api, subject="sub-audit-export-equal-range")
+    token = api.admin_token(subject="sub-audit-export-equal-range")
     instant = "2026-01-01T00:00:00Z"
 
     response = api.get(
@@ -259,7 +258,7 @@ def test_export_occurred_from_equal_to_occurred_to_is_a_422(api: ApiTestApp) -> 
 @pytest.mark.req("NFR-12")
 @pytest.mark.integration
 def test_export_occurred_from_without_a_utc_offset_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-export-naive-datetime")
+    token = api.admin_token(subject="sub-audit-export-naive-datetime")
 
     response = api.get(
         "/audit/events/export", token=token, params={"occurred_from": "2026-01-01T00:00:00"}
@@ -296,7 +295,7 @@ def test_export_authenticated_without_the_permission_is_403_with_no_challenge(
 @pytest.mark.req("NFR-06")
 @pytest.mark.integration
 def test_export_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-audit-export-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-audit-export-admin-no-mfa", with_mfa=False)
 
     response = api.get("/audit/events/export", token=token)
 

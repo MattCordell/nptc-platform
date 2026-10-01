@@ -20,16 +20,12 @@ import pytest
 from sqlalchemy import select
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import PropertyValueInput, save_property_values
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc_shared.terminology.models import Edition, ValidationResult
@@ -60,26 +56,6 @@ _SPECIMEN_SYSTEM = "http://example.org/specimen-test"
 @pytest.fixture
 def api(app_db: Any) -> Any:
     yield from build_api_test_app(app_db)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
 
 
 def _new_entry(
@@ -150,7 +126,7 @@ def _record_specimen_value(api: ApiTestApp, entry: CatalogueEntry) -> None:
 def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-patch-specimen-set")
+    token = api.admin_token(subject="sub-patch-specimen-set")
     entry = _new_entry(api)
     starting_row_version = entry.row_version
 
@@ -184,7 +160,7 @@ def test_patch_entry_clears_specimen_unconstrained(api: ApiTestApp) -> None:
     as_dict()` keeps it and the route applies it like any other value -
     PATCH semantics ("absent means unchanged") must not be confused with
     "falsy means unchanged"."""
-    token = _admin_token(api, subject="sub-patch-specimen-clear")
+    token = api.admin_token(subject="sub-patch-specimen-clear")
     entry = _new_entry(api)
     set_response = _patch_entry(
         api,
@@ -218,7 +194,7 @@ def test_patch_entry_sets_status_to_every_recognised_value(api: ApiTestApp, stat
     the_current_status_is_a_no_op` for that case asserted on its own
     terms. The other three are real transitions and get the NFR-08
     audit-event assertion the no-op case cannot give."""
-    token = _admin_token(api, subject=f"sub-patch-status-{status}")
+    token = api.admin_token(subject=f"sub-patch-status-{status}")
     entry = _new_entry(api, preferred_term=f"FR-36 status entry {status}")
     starting_row_version = entry.row_version
     events_before = api.session.execute(select(AuditEvent)).all()
@@ -257,7 +233,7 @@ def test_patch_entry_resubmitting_the_current_status_is_a_no_op(api: ApiTestApp)
     refused `422` (`test_patch_entry_with_neither_field_is_422`) because
     that case is ambiguous between "no-op" and "caller forgot the
     field"."""
-    token = _admin_token(api, subject="sub-patch-status-no-op")
+    token = api.admin_token(subject="sub-patch-status-no-op")
     entry = _new_entry(api)
     events_before = api.session.execute(select(AuditEvent)).all()
 
@@ -279,7 +255,7 @@ def test_patch_entry_resubmitting_the_current_status_is_a_no_op(api: ApiTestApp)
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
 def test_patch_entry_with_an_unrecognised_status_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-bad-status")
+    token = api.admin_token(subject="sub-patch-bad-status")
     entry = _new_entry(api)
 
     response = api.request(
@@ -305,7 +281,7 @@ def test_patch_entry_sets_specimen_unconstrained_after_clearing_specimen_values(
     refuses the flag (proven by the dedicated conflict test below); once
     that value is cleared through the property route, the same PATCH that
     was refused now succeeds and bumps `row_version`."""
-    token = _admin_token(api, subject="sub-patch-specimen-recovery")
+    token = api.admin_token(subject="sub-patch-specimen-recovery")
     entry = _new_entry(api)
     _record_specimen_value(api, entry)
 
@@ -351,7 +327,7 @@ def test_patch_entry_sets_specimen_unconstrained_after_clearing_specimen_values(
 def test_patch_entry_refuses_specimen_unconstrained_when_specimen_values_exist(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-patch-specimen-conflict")
+    token = api.admin_token(subject="sub-patch-specimen-conflict")
     entry = _new_entry(api)
     _record_specimen_value(api, entry)
     events_before = api.session.execute(select(AuditEvent)).all()
@@ -383,7 +359,7 @@ def test_patch_entry_refuses_specimen_unconstrained_when_specimen_values_exist(
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_patch_entry_with_a_stale_row_version_is_409_with_conflict_body(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-stale")
+    token = api.admin_token(subject="sub-patch-stale")
     entry = _new_entry(api)
 
     response = _patch_entry(
@@ -406,7 +382,7 @@ def test_patch_entry_with_a_stale_row_version_is_409_with_conflict_body(api: Api
 @pytest.mark.req("FR-37")
 @pytest.mark.integration
 def test_patch_entry_with_no_reason_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-no-reason")
+    token = api.admin_token(subject="sub-patch-no-reason")
     entry = _new_entry(api)
 
     response = _patch_entry(
@@ -432,7 +408,7 @@ def test_patch_entry_with_no_reason_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
 def test_patch_entry_with_neither_field_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-empty-body")
+    token = api.admin_token(subject="sub-patch-empty-body")
     entry = _new_entry(api)
 
     response = api.request(
@@ -451,7 +427,7 @@ def test_patch_entry_with_neither_field_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
 def test_patch_entry_unknown_business_key_is_404(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-404")
+    token = api.admin_token(subject="sub-patch-404")
 
     response = _patch_entry(
         api,
@@ -503,7 +479,7 @@ def test_patch_entry_authenticated_without_permission_is_403(api: ApiTestApp) ->
 @pytest.mark.req("NFR-06")
 @pytest.mark.integration
 def test_patch_entry_administrator_without_mfa_gets_step_up_challenge(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-patch-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-patch-no-mfa", with_mfa=False)
     entry = _new_entry(api)
 
     response = _patch_entry(

@@ -26,15 +26,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 
-from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.catalogue import facets as facets_module
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -352,32 +346,6 @@ def _bucket(facet: dict[str, Any], value: str) -> dict[str, Any]:
     return next(bucket for bucket in facet["buckets"] if bucket["value"] == value)
 
 
-def _admin_token(api: ApiTestApp, *, subject: str) -> str:
-    """An Administrator token, resolved through the real auth chain.
-
-    Copied in shape from `test_api_registry_properties.py`'s own helper
-    rather than imported: these two modules load their support modules by
-    path (no `__init__.py` in this tree), and importing a private helper
-    across test modules would couple this file's fixture to that one's.
-    """
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    return api.token(subject=subject, extra_claims={"acr": "2"})
-
-
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
 def test_the_facet_list_comes_from_the_registry_and_not_from_a_static_list(
@@ -602,7 +570,7 @@ def test_flipping_filterable_makes_a_property_a_facet_with_no_restart(
     assert refused.status_code == 422, refused.text
 
     # --- the flip, through the real route -----------------------------
-    token = _admin_token(api, subject="sub-fr16-flip")
+    token = api.admin_token(subject="sub-fr16-flip")
     current = api.get(f"/registry/properties/{key}", token=token)
     assert current.status_code == 200, current.text
     patched = api.request(
@@ -634,6 +602,7 @@ def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
     api: ApiTestApp,
     seeded: SeededCatalogue,
     app_db: Connection,
+    capture_statements: Any,
     extra_filterable_properties: int,
 ) -> None:
     """Issue #275's own acceptance criterion, asserted at the statement
@@ -650,7 +619,7 @@ def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
     parametrising over 0 and 2 extra: the assertion below must hold
     identically either way.
     """
-    admin_token = _admin_token(api, subject="sub-fr16-stmt-count")
+    admin_token = api.admin_token(subject="sub-fr16-stmt-count")
     for key in (seeded.volume_property_key, seeded.flippable_property_key)[
         :extra_filterable_properties
     ]:
@@ -668,23 +637,8 @@ def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
         )
         assert patched.status_code == 200, patched.text
 
-    statements: list[str] = []
-
-    def _record(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(app_db, "before_cursor_execute", _record)
-    try:
+    with capture_statements(app_db) as statements:
         response = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM})
-    finally:
-        event.remove(app_db, "before_cursor_execute", _record)
     assert response.status_code == 200, response.text
 
     # Every statement embedding the scoring scan carries its inner CTE's own

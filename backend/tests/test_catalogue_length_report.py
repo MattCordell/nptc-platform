@@ -15,10 +15,10 @@ container is shared with every other test in the run.
 from __future__ import annotations
 
 from collections import Counter
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from sqlalchemy import Table, event, func, insert, literal, select
+from sqlalchemy import Table, func, insert, literal, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -34,11 +34,6 @@ from nptc.catalogue.length_report import (
 )
 from nptc.catalogue.term_hygiene import exceeds_maximum_length, preferred_term_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _new_entry(session: Session, preferred_term: str) -> CatalogueEntry:
@@ -312,27 +307,14 @@ def test_a_row_that_skips_the_orm_is_where_char_length_and_the_published_length_
 
 @pytest.mark.req("FR-87")
 @pytest.mark.integration
-def test_the_report_issues_exactly_one_statement(app_db: Connection, app_session: Session) -> None:
+def test_the_report_issues_exactly_one_statement(
+    app_db: Connection, app_session: Session, capture_statements: Any
+) -> None:
     """FR-87's own acceptance criterion: the report runs in one statement,
     not one per candidate threshold - asserted at the statement level,
     matching `test_api_public_search.py`'s own #275 regression test."""
-    statements: list[str] = []
-
-    def _record(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(app_db, "before_cursor_execute", _record)
-    try:
+    with capture_statements(app_db) as statements:
         compute_length_distribution(app_session)
-    finally:
-        event.remove(app_db, "before_cursor_execute", _record)
 
     # `SAVEPOINT` statements come from the `app_session` fixture's own
     # nested-transaction join, not from the report - filtered out so this

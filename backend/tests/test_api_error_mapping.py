@@ -129,24 +129,8 @@ def test_denial_body_names_neither_a_role_nor_an_internal_id(api: ApiTestApp) ->
 def test_mfa_suppressed_role_yields_an_rfc_9470_step_up_challenge(api: ApiTestApp) -> None:
     """An Administrator without MFA is not merely denied - they are told
     how to proceed, per docs/architecture/permissions.md."""
-    from nptc.auth.grants import grant_role_unchecked
-    from nptc.db.models.user import User
-
-    # Sign in once so the account exists, then make it an Administrator.
-    token = api.token(subject="sub-admin-no-mfa")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=_audit_context(),
-    )
-    api.session.flush()
-
-    # Same token: no `acr`, so ADMINISTRATOR is suppressed.
+    # No `acr`, so ADMINISTRATOR is suppressed.
+    token = api.admin_token(subject="sub-admin-no-mfa", with_mfa=False)
     response = _post_gated(api, token)
 
     assert response.status_code == 403, response.text
@@ -160,22 +144,7 @@ def test_mfa_suppressed_role_yields_an_rfc_9470_step_up_challenge(api: ApiTestAp
 def test_administrator_with_mfa_is_allowed_through(api: ApiTestApp) -> None:
     """The positive half of the pair above: the same principal, with an
     `acr` the realm maps to LoA-2, is permitted."""
-    from nptc.auth.grants import grant_role_unchecked
-    from nptc.db.models.user import User
-
-    api.get("/auth/me", token=api.token(subject="sub-admin-mfa"))
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=_audit_context(),
-    )
-    api.session.flush()
-
-    response = _post_gated(api, api.token(subject="sub-admin-mfa", extra_claims={"acr": "2"}))
+    response = _post_gated(api, api.admin_token(subject="sub-admin-mfa"))
 
     assert response.status_code == 200, response.text
 
@@ -195,28 +164,13 @@ def test_step_up_challenge_acr_values_come_from_settings_not_a_literal(
     `test_mfa_acr_values_setting_is_actually_consulted`
     (`test_api_auth_session.py`) applies to `mfa_satisfied` itself.
     """
-    from nptc.auth.grants import grant_role_unchecked
-    from nptc.db.models.user import User
-
     for harness in build_api_test_app(app_db, mfa_acr_values=frozenset({"3"})):
 
         @harness.app.post(f"{API_PREFIX}/_test/gated")
         def _gated(_p: Principal = Depends(permission_dep(_ADMIN_PERMISSION))) -> dict[str, bool]:  # noqa: B008
             return {"ok": True}
 
-        token = harness.token(subject="sub-admin-loa3")
-        harness.get("/auth/me", token=token)
-        user = harness.session.query(User).order_by(User.created_at.desc()).first()
-        assert user is not None
-        grant_role_unchecked(
-            harness.session,
-            target_user_id=user.id,
-            role=Role.ADMINISTRATOR,
-            granted_by_user_id=None,
-            audit=_audit_context(),
-        )
-        harness.session.flush()
-
+        token = harness.admin_token(subject="sub-admin-loa3", with_mfa=False)
         response = _post_gated(harness, token)
 
         assert response.status_code == 403, response.text
@@ -256,12 +210,6 @@ def test_http_status_comes_from_the_classvar_not_a_handwritten_ladder(
     response = api.client.get(f"{API_PREFIX}/_test/raises/{error}")
 
     assert response.status_code == expected_status, response.text
-
-
-def _audit_context() -> object:
-    from nptc.audit.writer import AuditContext
-
-    return AuditContext.system()
 
 
 @pytest.mark.req("FR-20")

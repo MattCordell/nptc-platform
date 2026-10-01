@@ -23,18 +23,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import literal, select
+from sqlalchemy import literal
 from sqlalchemy.engine import Connection
 
 import nptc.catalogue.length_report as length_report
 from nptc.api.routers.catalogue_admin import LengthDistributionBucket, LengthDistributionReport
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.catalogue.length_report import build_length_histogram_statement
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -58,30 +55,6 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
 
 
-def _token_with_role(api: ApiTestApp, *, subject: str, role: Role, with_mfa: bool = True) -> str:
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    return _token_with_role(api, subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
-
-
 def _report(api: ApiTestApp, token: str | None) -> Any:
     return api.get(_PATH, token=token)
 
@@ -102,7 +75,7 @@ def _new_entry(api: ApiTestApp, preferred_term: str) -> None:
 @pytest.mark.req("FR-87")
 @pytest.mark.integration
 def test_the_report_reflects_entries_this_test_created(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-length-report-happy")
+    token = api.admin_token(subject="sub-length-report-happy")
     before = _report(api, token).json()
     before_buckets = {b["length"]: b for b in before["buckets"]}
 
@@ -134,7 +107,7 @@ def test_the_report_reflects_entries_this_test_created(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-87")
 @pytest.mark.integration
 def test_the_longest_bucket_never_exceeds_itself(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-length-report-boundary")
+    token = api.admin_token(subject="sub-length-report-boundary")
     longest = "Adenosine deaminase, cerebrospinal fluid, quantitative, extended panel edition"
     _new_entry(api, longest)
 
@@ -153,7 +126,7 @@ def test_an_empty_catalogue_serialises_no_maximum_as_null(
     """The shared container is never empty across a full run, so the
     histogram statement is narrowed to match nothing - what a truly empty
     catalogue returns - and the real route and serialiser run against it."""
-    token = _admin_token(api, subject="sub-length-report-empty")
+    token = api.admin_token(subject="sub-length-report-empty")
     monkeypatch.setattr(
         length_report,
         "build_length_histogram_statement",
@@ -204,7 +177,7 @@ def test_no_credential_is_401_not_403(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_authenticated_observer_is_403_with_no_challenge(api: ApiTestApp) -> None:
-    token = _token_with_role(api, subject="sub-length-report-observer", role=Role.OBSERVER)
+    token = api.token_for_role(subject="sub-length-report-observer", role=Role.OBSERVER)
 
     response = _report(api, token)
 
@@ -219,7 +192,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp) -> None:
     `catalogue.edit_published` - proving the gate is this specific
     permission, not "any elevated role", matching every other admin route's
     own test of the same shape."""
-    token = _token_with_role(api, subject="sub-length-report-reviewer", role=Role.REVIEWER)
+    token = api.token_for_role(subject="sub-length-report-reviewer", role=Role.REVIEWER)
 
     response = _report(api, token)
 
@@ -229,7 +202,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-06")
 @pytest.mark.integration
 def test_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-length-report-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-length-report-no-mfa", with_mfa=False)
 
     response = _report(api, token)
 

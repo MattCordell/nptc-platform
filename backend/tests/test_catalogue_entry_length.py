@@ -10,7 +10,6 @@ from typing import cast
 
 import pytest
 from sqlalchemy import Table, update
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 import nptc.db.models.catalogue_entry as catalogue_entry_module
@@ -76,27 +75,26 @@ def test_a_term_replaced_without_the_validator_never_serves_a_stale_length() -> 
 @pytest.mark.req("FR-85")
 @pytest.mark.integration
 def test_a_refresh_after_an_out_of_band_update_never_serves_a_stale_length(
-    app_db: Connection,
+    app_session: Session,
 ) -> None:
     """The real mechanism behind the test above: `session.refresh` reloads
     the column without running `@validates`."""
-    session = Session(bind=app_db, join_transaction_mode="create_savepoint")
     entry = create_entry(
-        session,
+        app_session,
         AuditContext.system(),
         preferred_term="Iron",
         reason="Created for FR-85 refresh test",
     )
-    session.flush()
+    app_session.flush()
     assert entry.length == 4
     table = cast(Table, CatalogueEntry.__table__)
 
-    session.execute(
+    app_session.execute(
         update(table)
         .where(table.c.business_key == entry.business_key)
         .values(preferred_term="Full blood count")
     )
-    session.refresh(entry)
+    app_session.refresh(entry)
 
     assert entry.preferred_term == "Full blood count"
     assert entry.length == len("Full blood count")
