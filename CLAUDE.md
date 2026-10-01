@@ -78,9 +78,9 @@ counts separately):
 
 | Tree | Collected | `integration` | Unmarked |
 |---|---:|---:|---:|
-| `backend/tests` | 1,979 | 1,143 | 836 |
+| `backend/tests` | 1,980 | 1,143 | 837 |
 | `transform/tests`, `shared/tests`, `scripts/tests` | 927 | 0 | 927 |
-| Whole suite | 2,906 | 1,143 | 1,763 |
+| Whole suite | 2,907 | 1,143 | 1,764 |
 
 To re-measure, run `uv run pytest --collect-only -q -m integration` (or
 `-m "not integration"`, optionally with a tree path); the last line gives the count.
