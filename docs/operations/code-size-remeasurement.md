@@ -1,9 +1,10 @@
 # Code size: re-measurement after the prose sweep
 
 This note compares prose density and function length with the milestone-one review
-(`MILESTONE-1-REVIEW.md`, finding 16; the file is kept outside version control), and records which long functions to split. Read it
-before you open a "this function is too long" issue, so you do not repeat the work. The
-re-measurement is issue #366, under epic #349.
+(`MILESTONE-1-REVIEW.md`, finding 16; the file is kept outside version control). It also
+records which long functions to split. Read it before you open a "this function is too
+long" issue, so you do not repeat the work. The re-measurement is issue #366, under
+epic #349.
 
 ## Short answer
 
@@ -39,7 +40,8 @@ baseline run used today's script copied into a checkout of `5d15523`.
 uv run python scripts/comment_density.py --summary
 git worktree add --detach ../nptc-baseline 5d15523
 Copy-Item scripts/comment_density.py ../nptc-baseline/scripts/comment_density.py
-python ../nptc-baseline/scripts/comment_density.py --summary
+uv run python ../nptc-baseline/scripts/comment_density.py --summary
+git worktree remove --force ../nptc-baseline
 ```
 
 The function counts need a short script that walks each file with `ast.walk` and prints
@@ -67,8 +69,8 @@ Prose fell by 4,692 lines, or 32%. Code moved by 7 lines, so the drop is prose a
 deleted code.
 
 Supplementary figures, not part of the review's headline: the frontend source tree holds
-6,593 code lines and 3,436 comment lines (0.52 : 1) at both commits. The frontend figures
-are an approximation, and they are identical at both commits.
+6,593 code lines and 3,436 comment lines (0.52 : 1), identical at both commits. The script
+approximates these figures with a line scan that does not parse regex literals or JSX text.
 
 ## Function length
 
@@ -88,17 +90,17 @@ comparison. The three over-100 functions in `transform/` also existed at the bas
 
 | Function | Review | Now | Code lines now |
 |---|---:|---:|---:|
-| `api/errors.py::register_exception_handlers` | 725 | 151 | 114 |
-| `catalogue/property_values.py::save_property_values_for_entries` | 233 | 190 | 120 |
-| `catalogue/property_values.py::save_property_values` | 168 | 137 | 87 |
-| `catalogue/collisions.py::acknowledge_collision` | 143 | 104 | 56 |
-| `catalogue/entries.py::save_entry` | 137 | 115 | 65 |
-| `db/property_reconciler.py::_reconcile_locked` | 129 | 100 | 77 |
-| `catalogue/history.py::load_history` | 116 | 109 | 84 |
-| `catalogue/bindings.py::create_binding` | 112 | 93 | 72 |
-| `catalogue/entries.py::entry_child_write` | 102 | 76 | 30 |
-| `api/app.py::create_app` | 102 | 73 | 32 |
-| `catalogue/collisions.py::assert_no_error_collisions` | 101 | 84 | 50 |
+| `backend/src/nptc/api/errors.py::register_exception_handlers` | 725 | 151 | 114 |
+| `backend/src/nptc/catalogue/property_values.py::save_property_values_for_entries` | 233 | 190 | 120 |
+| `backend/src/nptc/catalogue/property_values.py::save_property_values` | 168 | 137 | 87 |
+| `backend/src/nptc/catalogue/collisions.py::acknowledge_collision` | 143 | 104 | 56 |
+| `backend/src/nptc/catalogue/entries.py::save_entry` | 137 | 115 | 65 |
+| `backend/src/nptc/db/property_reconciler.py::_reconcile_locked` | 129 | 100 | 77 |
+| `backend/src/nptc/catalogue/history.py::load_history` | 116 | 109 | 84 |
+| `backend/src/nptc/catalogue/bindings.py::create_binding` | 112 | 93 | 72 |
+| `backend/src/nptc/catalogue/entries.py::entry_child_write` | 102 | 76 | 30 |
+| `backend/src/nptc/api/app.py::create_app` | 102 | 73 | 32 |
+| `backend/src/nptc/catalogue/collisions.py::assert_no_error_collisions` | 101 | 84 | 50 |
 
 `_reconcile_locked` is exactly 100 lines, so it is not over the threshold. The last four
 functions in the table are now clearly under it.
@@ -118,15 +120,15 @@ is "leave".
 
 | Function | Span | Code | Decision | Reason |
 |---|---:|---:|---|---|
-| `catalogue/property_values.py::save_property_values_for_entries` | 190 | 120 | **Split** (#410) | Builds `BulkPropertyOutcome` seven times, in two identical pairs, and nests a recovery path inside the loop. A per-target helper removes both. |
-| `transform/semantic_drift.py::check_semantic_drift` | 187 | 155 | **Split** (#411) | Five labelled phases share local counters in one scope. Each phase can stand alone. |
-| `transform/cli.py::run` | 165 | 128 | Leave | Passes test 1 but not test 2. About 50 lines are Typer option declarations. The rest maps each failure to an exit code, which reads better in one place. |
-| `api/errors.py::register_exception_handlers` | 151 | 114 | Leave | Passes test 1 but not test 2. The repetition left with the table collapse. What remains is a flat run of independent handlers with no shared control flow. |
-| `catalogue/property_values.py::save_property_values` | 137 | 87 | Leave | Under 100 lines of code. A straight sequence of guards. 50 of its 137 lines are docstring, comments and blank lines. |
-| `catalogue/entries.py::save_entry` | 115 | 65 | Leave | Under 100 lines of code. Linear, with one `try` block. 50 of its 115 lines are docstring, comments and blank lines. |
-| `catalogue/history.py::load_history` | 109 | 84 | Leave | Under 100 lines of code. Linear query building. |
-| `catalogue/collisions.py::acknowledge_collision` | 104 | 56 | Leave | Under 100 lines of code. 48 of its 104 lines are docstring, comments and blank lines. |
-| `transform/designation_check.py::check_designations` | 101 | 82 | Leave | Under 100 lines of code and one line over the threshold. It has two clear phases. |
+| `backend/src/nptc/catalogue/property_values.py::save_property_values_for_entries` | 190 | 120 | **Split** (#410) | Builds `BulkPropertyOutcome` seven times, in two identical pairs, and nests a recovery path inside the loop. A per-target helper removes both. |
+| `transform/src/nptc_transform/semantic_drift.py::check_semantic_drift` | 187 | 155 | **Split** (#411) | Five labelled phases share local counters in one scope. Each phase can stand alone. |
+| `transform/src/nptc_transform/cli.py::run` | 165 | 128 | Leave | Passes test 1 but not test 2. About 50 lines are Typer option declarations. The rest maps each failure to an exit code, which reads better in one place. |
+| `backend/src/nptc/api/errors.py::register_exception_handlers` | 151 | 114 | Leave | Passes test 1 but not test 2. The repetition left with the table collapse. What remains is a flat run of independent handlers with no shared control flow. |
+| `backend/src/nptc/catalogue/property_values.py::save_property_values` | 137 | 87 | Leave | Under 100 lines of code. A straight sequence of guards. 50 of its 137 lines are docstring, comments and blank lines. |
+| `backend/src/nptc/catalogue/entries.py::save_entry` | 115 | 65 | Leave | Under 100 lines of code. Linear, with one `try` block. 50 of its 115 lines are docstring, comments and blank lines. |
+| `backend/src/nptc/catalogue/history.py::load_history` | 109 | 84 | Leave | Under 100 lines of code. Linear query building. |
+| `backend/src/nptc/catalogue/collisions.py::acknowledge_collision` | 104 | 56 | Leave | Under 100 lines of code. 48 of its 104 lines are docstring, comments and blank lines. |
+| `transform/src/nptc_transform/designation_check.py::check_designations` | 101 | 82 | Leave | Under 100 lines of code and one line over the threshold. It has two clear phases. |
 
 Both splits are pure refactors. Each issue lists the constraints the refactor must keep:
 lock-first audit ordering and the savepoint scope for `save_property_values_for_entries`
