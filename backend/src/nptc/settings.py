@@ -282,7 +282,8 @@ class IndexerSettings(BaseSettings):
     `NPTC_MIGRATION_DATABASE_URL` or `NPTC_DATABASE_URL`.** The migration
     role can `CREATE ROLE`/`DROP TABLE`, far more than one expression-index
     DDL operation needs, and the app role cannot do DDL at all
-    (ADR-0012, `docs/operations/configuration.md`)."""
+    (ADR-0012, `docs/operations/configuration.md`), so a fallback to it would
+    only turn a clear refusal into a permission error mid-run."""
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 

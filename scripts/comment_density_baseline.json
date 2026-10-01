@@ -1,7 +1,7 @@
 {
   "backend/src/nptc/__init__.py": {"code": 1, "prose": 20, "ratio": 20.0},
   "backend/src/nptc/api/__init__.py": {"code": 0, "prose": 7, "ratio": null},
-  "backend/src/nptc/api/app.py": {"code": 53, "prose": 41, "ratio": 0.774},
+  "backend/src/nptc/api/app.py": {"code": 53, "prose": 43, "ratio": 0.811},
   "backend/src/nptc/api/dependencies.py": {"code": 130, "prose": 134, "ratio": 1.031},
   "backend/src/nptc/api/errors.py": {"code": 603, "prose": 217, "ratio": 0.36},
   "backend/src/nptc/api/labels.py": {"code": 43, "prose": 51, "ratio": 1.186},
@@ -100,7 +100,7 @@
   "backend/src/nptc/registry/handlers.py": {"code": 128, "prose": 99, "ratio": 0.773},
   "backend/src/nptc/registry/schema.py": {"code": 98, "prose": 57, "ratio": 0.582},
   "backend/src/nptc/releases/__init__.py": {"code": 0, "prose": 1, "ratio": null},
-  "backend/src/nptc/settings.py": {"code": 121, "prose": 125, "ratio": 1.033},
+  "backend/src/nptc/settings.py": {"code": 121, "prose": 126, "ratio": 1.041},
   "backend/src/nptc/submissions/__init__.py": {"code": 0, "prose": 1, "ratio": null},
   "backend/src/nptc/terminology/__init__.py": {"code": 0, "prose": 8, "ratio": null},
   "backend/src/nptc/terminology/concepts.py": {"code": 75, "prose": 49, "ratio": 0.653},

@@ -81,6 +81,7 @@ def create_app(
     app.include_router(catalogue.router, prefix=API_PREFIX)
     # The catalogue write routers are separate modules from `catalogue.py`; each
     # module docstring says why.
+    #
     # Code binding create, retire and replace.
     app.include_router(catalogue_bindings.router, prefix=API_PREFIX)
     # Designation add, amend and retire, and collision acknowledgement (FR-04, FR-05).
@@ -91,6 +92,7 @@ def create_app(
     # FR-89). Shares its path with catalogue.py's public GET; see its docstring.
     app.include_router(catalogue_entries.router, prefix=API_PREFIX)
     # Admin read of an entry in any status, gated on catalogue.edit_published.
+    # Kept apart from catalogue.py on purpose; see its docstring.
     app.include_router(catalogue_admin.router, prefix=API_PREFIX)
     # PropertyDefinition admin, including the always-refusing DELETE (FR-11, FR-12).
     app.include_router(registry.router, prefix=API_PREFIX)
