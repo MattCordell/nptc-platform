@@ -159,7 +159,8 @@ def test_cli_failure_prints_the_error_type_but_not_the_dsn_or_password(
 ) -> None:
     secret = "dsn-secret-test-only-not-a-real-secret"
     monkeypatch.setenv(
-        "NPTC_MIGRATION_DATABASE_URL", f"postgresql+psycopg://owner:{secret}@127.0.0.1:1/none"
+        "NPTC_MIGRATION_DATABASE_URL",
+        f"postgresql+psycopg://owner:{secret}@127.0.0.1:1/none?connect_timeout=3",
     )
     monkeypatch.setenv("NPTC_APP_DB_PASSWORD", _HOSTILE_URL_SAFE_PASSWORD)
 
