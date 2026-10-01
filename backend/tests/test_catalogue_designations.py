@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -67,11 +66,6 @@ def _load(name: str) -> Any:
 
 
 latest_audit_event = _load("audit_support").latest_audit_event
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

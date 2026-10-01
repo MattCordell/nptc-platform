@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -65,11 +64,6 @@ from nptc_shared.terminology import (
 #: literal, not derived, so this test file follows the same precedent
 #: rather than importing that private module constant.
 _SPECIMEN_ECL = "<123038009"
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _seed(session: Session) -> None:

@@ -16,7 +16,7 @@ import uuid
 
 import pytest
 from sqlalchemy import func, select, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -43,11 +43,6 @@ from nptc_shared.similarity import collision_key
 
 _NBSP = chr(0x00A0)
 _NNBSP = chr(0x202F)
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

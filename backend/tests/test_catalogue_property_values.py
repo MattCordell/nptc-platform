@@ -15,7 +15,6 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -54,11 +53,6 @@ from nptc_shared.terminology.stub import StubTerminologyClient
 _SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
 _SPECIMEN_EDITION = Edition(module_id="au", label="au")
 _SPECIMEN_SYSTEM = "http://example.org/specimen-test"
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _inputs(*values: object) -> list[PropertyValueInput]:

@@ -26,11 +26,6 @@ from nptc.catalogue.entries import (
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 
 
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
-
-
 def test_format_business_key_is_nptc_plus_six_zero_padded_digits() -> None:
     assert format_business_key(1) == "NPTC-000001"
     assert format_business_key(247) == "NPTC-000247"
@@ -127,7 +122,9 @@ def test_advance_sequence_past_never_moves_the_sequence_backwards(
 
 @pytest.mark.req("FR-03")
 @pytest.mark.integration
-def test_advance_sequence_past_reconciles_a_never_called_sequence(db: Connection) -> None:
+def test_advance_sequence_past_reconciles_a_never_called_sequence(
+    db: Connection, owner_session: Session
+) -> None:
     """Regression test for the off-by-one this function once had: Postgres
     reports `last_value = 1` for a freshly created sequence even though
     nothing has ever been dispensed from it (`is_called = false`) -
@@ -144,7 +141,6 @@ def test_advance_sequence_past_reconciles_a_never_called_sequence(db: Connection
     owner and app-role sessions run the identical code path here."""
     db.execute(text("DROP SEQUENCE catalogue_entry_business_key_seq"))
     db.execute(text("CREATE SEQUENCE catalogue_entry_business_key_seq AS BIGINT START 1"))
-    owner_session = Session(bind=db, join_transaction_mode="create_savepoint")
 
     advance_sequence_past(owner_session, "NPTC-000001")
     next_minted = allocate_business_key(owner_session)

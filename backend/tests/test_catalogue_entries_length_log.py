@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -24,28 +23,23 @@ _LOGGER = "nptc.catalogue.entries"
 _REASON = "Created for the FR-86 write-path test"
 
 
-@pytest.fixture
-def session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
-
-
 def _records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == _LOGGER]
 
 
-def _new_entry(session: Session, term: str, **kwargs: int | None) -> CatalogueEntry:
+def _new_entry(app_session: Session, term: str, **kwargs: int | None) -> CatalogueEntry:
     entry = create_entry(
-        session, AuditContext.system(), preferred_term=term, reason=_REASON, **kwargs
+        app_session, AuditContext.system(), preferred_term=term, reason=_REASON, **kwargs
     )
-    session.flush()
+    app_session.flush()
     return entry
 
 
 def _save(
-    session: Session, entry: CatalogueEntry, changes: EntryChanges, maximum: int | None
+    app_session: Session, entry: CatalogueEntry, changes: EntryChanges, maximum: int | None
 ) -> CatalogueEntry:
     saved = save_entry(
-        session,
+        app_session,
         AuditContext.system(),
         business_key=entry.business_key,
         expected_row_version=entry.row_version,
@@ -53,19 +47,19 @@ def _save(
         reason=_REASON,
         max_preferred_term_length=maximum,
     )
-    session.flush()
+    app_session.flush()
     return saved
 
 
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_creating_an_over_length_entry_logs_once_and_still_saves(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     term = "Adenosine deaminase, cerebrospinal fluid"
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        entry = _new_entry(session, term, max_preferred_term_length=len(term) - 1)
+        entry = _new_entry(app_session, term, max_preferred_term_length=len(term) - 1)
 
     records = _records(caplog)
     assert len(records) == 1
@@ -74,19 +68,19 @@ def test_creating_an_over_length_entry_logs_once_and_still_saves(
     assert str(len(term)) in message
     assert term not in message
     assert entry.preferred_term == term
-    assert entry in session
+    assert entry in app_session
 
 
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 @pytest.mark.parametrize("offset", [0, 1], ids=["exactly-at-maximum", "under-maximum"])
 def test_creating_an_entry_within_the_maximum_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture, offset: int
+    app_session: Session, caplog: pytest.LogCaptureFixture, offset: int
 ) -> None:
     term = "Full blood count"
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        _new_entry(session, term, max_preferred_term_length=len(term) + offset)
+        _new_entry(app_session, term, max_preferred_term_length=len(term) + offset)
 
     assert _records(caplog) == []
 
@@ -94,10 +88,10 @@ def test_creating_an_entry_within_the_maximum_logs_nothing(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_creating_an_entry_with_no_maximum_logs_nothing_however_long_the_term(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        entry = _new_entry(session, "A" * 500)
+        entry = _new_entry(app_session, "A" * 500)
 
     assert _records(caplog) == []
     assert len(entry.preferred_term) == 500
@@ -107,13 +101,13 @@ def test_creating_an_entry_with_no_maximum_logs_nothing_however_long_the_term(
 @pytest.mark.req("FR-85")
 @pytest.mark.integration
 def test_the_logged_length_is_the_cleaned_length_not_the_raw_length(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     nbsp = chr(0x00A0)
     cleaned = "Full blood count"
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        _new_entry(session, f"{cleaned}{nbsp}", max_preferred_term_length=len(cleaned))
+        _new_entry(app_session, f"{cleaned}{nbsp}", max_preferred_term_length=len(cleaned))
 
     assert _records(caplog) == []
 
@@ -121,13 +115,13 @@ def test_the_logged_length_is_the_cleaned_length_not_the_raw_length(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_saving_a_longer_term_logs_once_and_still_saves(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
-    entry = _new_entry(session, "Iron")
+    entry = _new_entry(app_session, "Iron")
     longer = "Full blood count, automated"
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        saved = _save(session, entry, EntryChanges(preferred_term=longer), maximum=10)
+        saved = _save(app_session, entry, EntryChanges(preferred_term=longer), maximum=10)
 
     records = _records(caplog)
     assert len(records) == 1
@@ -139,13 +133,13 @@ def test_saving_a_longer_term_logs_once_and_still_saves(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_saving_a_term_exactly_at_the_maximum_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
-    entry = _new_entry(session, "Iron")
+    entry = _new_entry(app_session, "Iron")
     term = "Full blood count"
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        _save(session, entry, EntryChanges(preferred_term=term), maximum=len(term))
+        _save(app_session, entry, EntryChanges(preferred_term=term), maximum=len(term))
 
     assert _records(caplog) == []
 
@@ -153,12 +147,12 @@ def test_saving_a_term_exactly_at_the_maximum_logs_nothing(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_saving_with_no_maximum_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
-    entry = _new_entry(session, "Iron")
+    entry = _new_entry(app_session, "Iron")
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        saved = _save(session, entry, EntryChanges(preferred_term="A" * 500), maximum=None)
+        saved = _save(app_session, entry, EntryChanges(preferred_term="A" * 500), maximum=None)
 
     assert _records(caplog) == []
     assert len(saved.preferred_term) == 500
@@ -167,14 +161,14 @@ def test_saving_with_no_maximum_logs_nothing(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_resubmitting_an_unchanged_over_length_term_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A no-op save writes nothing, so there is no write to warn about."""
     term = "Full blood count, automated"
-    entry = _new_entry(session, term)
+    entry = _new_entry(app_session, term)
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        _save(session, entry, EntryChanges(preferred_term=term), maximum=10)
+        _save(app_session, entry, EntryChanges(preferred_term=term), maximum=10)
 
     assert _records(caplog) == []
 
@@ -182,14 +176,14 @@ def test_resubmitting_an_unchanged_over_length_term_logs_nothing(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_a_status_only_save_of_an_over_length_entry_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The entry stays editable for its other columns: only a write of the
     preferred term is a write FR-86 is about."""
-    entry = _new_entry(session, "Full blood count, automated")
+    entry = _new_entry(app_session, "Full blood count, automated")
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
-        saved = _save(session, entry, EntryChanges(status="active"), maximum=10)
+        saved = _save(app_session, entry, EntryChanges(status="active"), maximum=10)
 
     assert _records(caplog) == []
     assert saved.status == "active"
@@ -198,10 +192,10 @@ def test_a_status_only_save_of_an_over_length_entry_logs_nothing(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_a_batch_save_logs_one_record_per_over_length_term(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
-    short_entry = _new_entry(session, "Iron")
-    long_entry = _new_entry(session, "Zinc")
+    short_entry = _new_entry(app_session, "Iron")
+    long_entry = _new_entry(app_session, "Zinc")
     updates = [
         (short_entry.business_key, short_entry.row_version, EntryChanges(preferred_term="Copper")),
         (
@@ -213,7 +207,7 @@ def test_a_batch_save_logs_one_record_per_over_length_term(
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         saved = save_entries(
-            session,
+            app_session,
             AuditContext.system(),
             updates=updates,
             reason=_REASON,
@@ -230,9 +224,9 @@ def test_a_batch_save_logs_one_record_per_over_length_term(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_a_large_batch_logs_one_summary_record_naming_a_bounded_number_of_keys(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
-    entries = [_new_entry(session, f"Batch cap probe {n:02d}") for n in range(12)]
+    entries = [_new_entry(app_session, f"Batch cap probe {n:02d}") for n in range(12)]
     updates = [
         (
             entry.business_key,
@@ -244,7 +238,7 @@ def test_a_large_batch_logs_one_summary_record_naming_a_bounded_number_of_keys(
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         save_entries(
-            session,
+            app_session,
             AuditContext.system(),
             updates=updates,
             reason=_REASON,
@@ -263,12 +257,12 @@ def test_a_large_batch_logs_one_summary_record_naming_a_bounded_number_of_keys(
 @pytest.mark.req("FR-86")
 @pytest.mark.integration
 def test_a_batch_that_fails_part_way_logs_nothing(
-    session: Session, caplog: pytest.LogCaptureFixture
+    app_session: Session, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The record is emitted once every save has succeeded, so a batch that
     a later stale version refuses does not claim terms it will not keep."""
-    first = _new_entry(session, "Iron")
-    second = _new_entry(session, "Zinc")
+    first = _new_entry(app_session, "Iron")
+    second = _new_entry(app_session, "Zinc")
     updates = [
         (first.business_key, first.row_version, EntryChanges(preferred_term="Full blood count")),
         (second.business_key, second.row_version + 1, EntryChanges(preferred_term="Copper")),
@@ -276,7 +270,7 @@ def test_a_batch_that_fails_part_way_logs_nothing(
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER), pytest.raises(EntryVersionConflictError):
         save_entries(
-            session,
+            app_session,
             AuditContext.system(),
             updates=updates,
             reason=_REASON,

@@ -36,11 +36,6 @@ from nptc.catalogue.term_hygiene import exceeds_maximum_length, preferred_term_l
 from nptc.db.models.catalogue_entry import CatalogueEntry
 
 
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
-
-
 def _new_entry(session: Session, preferred_term: str) -> CatalogueEntry:
     return create_entry(
         session,

@@ -1,17 +1,14 @@
 """`nptc.db.bootstrap.seed_system_properties` tests (issue #51).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_optimistic_locking.py`'s own `app_session` fixture for why
-`join_transaction_mode="create_savepoint"` is needed: it lets the ORM's
-own `commit()` calls nest inside the outer test transaction that
-`app_db`'s connection fixture rolls back at teardown.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 """
 
 from __future__ import annotations
 
 import pytest
 from sqlalchemy import select, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,11 +16,6 @@ import nptc.db.bootstrap as bootstrap
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin
 from nptc.registry import BUILTIN_DATATYPES
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 @pytest.mark.req("FR-09")

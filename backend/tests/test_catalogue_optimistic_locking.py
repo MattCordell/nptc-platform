@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import event, func, select, text
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from nptc.audit.recording import AuditNoOpError
@@ -64,11 +64,6 @@ def _seeded_specimen_registry(session: Session) -> DatatypeRegistry:
             )
         )
     )
-
-
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
 
 
 def _audit_event_count(session: Session) -> int:

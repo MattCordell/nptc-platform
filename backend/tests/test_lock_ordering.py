@@ -730,11 +730,6 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
 # --- Rejected input takes no lock ------------------------------
 
 
-@pytest.fixture
-def app_session(app_db: Connection) -> Session:
-    return Session(bind=app_db, join_transaction_mode="create_savepoint")
-
-
 def _captured_lock_statements(connection: Connection, action: Callable[[], object]) -> list[str]:
     """Runs `action` and returns the audit append lock statements it issued.
 
