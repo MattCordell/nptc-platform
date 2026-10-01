@@ -759,7 +759,7 @@ def build_facet_counts_statement(
     The cast lives in this wrapper so the grouping expression, and the plan that
     `test_db_property_index_plan.py` checks for it, stay untouched.
     """
-    branches: list[Select[str, str, Any, Any, int]] = []
+    branches: list[Select[str, str, str | None, int, int]] = []
     for descriptor in descriptors:
         inner = build_facet_count_statement(descriptor, base_for(descriptor))
         if inner is None:

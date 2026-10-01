@@ -522,7 +522,7 @@ def build_search_statement(
     after_key: str | None = None,
     limit: int,
     statuses: Sequence[str] = PUBLIC_STATUSES,
-) -> Select[str, str, str, bool, datetime, int, Any]:
+) -> Select[str, str, str, bool, datetime, int, float]:
     """The composed result statement `search_entries` runs.
 
     Public because `test_db_search_index.py` `EXPLAIN`s the statement the module
