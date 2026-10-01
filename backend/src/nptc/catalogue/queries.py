@@ -1,57 +1,47 @@
-"""The public catalogue's read layer (issue #142, FR-20).
+"""The public catalogue's read layer (FR-20).
 
-Everything the FR-20 API serves is read through this module. It is
-deliberately separate from `entries.py`/`designations.py`/`bindings.py`,
-which are write paths with domain rules attached: a read has exactly two
-rules of its own, and both belong in one place.
+Everything the FR-20 API serves is read through this module. It is separate
+from `entries.py`/`designations.py`/`bindings.py`, which are write paths with
+domain rules attached. A read has exactly two rules of its own.
 
 **Rule one: `PUBLIC_STATUSES` is the only status filter, and it is one
-tuple.** `active` and nothing else - not `draft` (unpublished), not
-`withdrawn`, and not `deprecated` either. A deprecated entry is deliberately
-absent rather than served-with-a-flag: the FR-20 surface is what a vendor
-builds a request form from, and an entry that has been deprecated is
-precisely one they must stop offering. Every query here imports the same
-constant, so adding a query without the filter is a visible omission rather
-than a plausible-looking `where` clause; `backend/tests/
-test_api_public_status_filter.py` asserts the absence over every endpoint at
-once.
+tuple.** `active` and nothing else - not `draft`, `withdrawn` or
+`deprecated`. A deprecated entry is absent rather than served with a flag:
+the surface is what a vendor builds a request form from, and a deprecated
+entry is one they must stop offering. Every query imports the same constant,
+so a query without the filter is a visible omission, and
+`backend/tests/test_api_public_status_filter.py` asserts the absence over
+every endpoint.
 
-**Rule two: an internal UUID never leaves this module.** `catalogue_entry.
-id` is used here to batch the child loads and for nothing else, and
-`code_binding.replaced_by_binding_id` is resolved to the *successor's code*
-by a self-join (`load_bindings`) so the router never holds a UUID it could
-serialise by accident. PRD SS6.2 makes `business_key` the only public
-identifier; `nptc.auth.identity.UserRef` is the same boundary pattern
-applied to `app_user`.
+**Rule two: an internal UUID never leaves this module.** `catalogue_entry.id`
+batches the child loads and does nothing else, and
+`code_binding.replaced_by_binding_id` is resolved to the successor's *code*
+by a self-join (`load_bindings`). PRD SS6.2 makes `business_key` the only
+public identifier; `nptc.auth.identity.UserRef` is the same boundary for
+`app_user`.
 
-**No `relationship()`, anywhere.** There is none in `nptc.db.models`, and
-this module does not introduce one: every association is an explicit
-`select()`. Each loader takes a *collection* of entry ids and filters
-`.in_(...)`, so the list endpoint issues a fixed number of queries no matter
-the page size - a per-entry loader (lazy-loaded or otherwise) would make
-page size and query count the same number, which is how a browse endpoint
-becomes the slowest thing in a deployment.
+**No `relationship()`.** None exists in `nptc.db.models`; every association
+is an explicit `select()`. Each loader takes a collection of entry ids and
+filters `.in_(...)`, so a list endpoint issues a fixed number of queries
+whatever the page size.
 
-Keyset pagination, never `OFFSET`: see `docs/adr/
-0024-catalogue-search-and-pagination.md`. `list_entries` asks for one row
-more than the caller wanted, and that extra row is what decides whether
-there is a next page - so no endpoint here ever runs a `COUNT(*)` over the
-catalogue to answer a question the client asked about one page.
+Keyset pagination, never `OFFSET` (ADR-0024). `list_entries` asks for one row
+more than the caller wanted, and that row decides whether a next page exists,
+so no endpoint here runs a page-total `COUNT(*)`.
 
-**The one exception to that `COUNT` ban, and why it is not one** (issue
-#139, FR-16). `nptc.catalogue.facets.compute_facets` does count, and this
-paragraph exists so that reads as a considered exception rather than an
-oversight. The ban above is on a *page total*: a number the client did not
-ask for, that costs a scan of everything the page did not serve, and that
-ADR-0024 deliberately does without because keyset paging has no use for it.
-A facet count is the opposite on every point. It is the answer to the
-question - a facet with no count is a list of words, not a filter, and
-FR-16 asks for counts by name. It is bounded, to `FACET_BUCKET_CAP` buckets
-per facet. And it is served from issue #54's per-property partial index
-rather than a scan of `catalogue_entry`, which is what
-`test_db_property_index_plan.py` `EXPLAIN`s. `list_entries` below still
-runs no count of any kind: it accepts filters, and returns no facets at all
-(ADR-0032).
+**The one exception to that `COUNT` ban, and why it is not one** (FR-16,
+ADR-0032). `nptc.catalogue.facets.compute_facets` does count, and this
+paragraph exists so that reads as a considered exception, not an oversight.
+The ban is on a *page total*: a number the client did not ask for, that costs
+a scan of everything the page did not serve, and that ADR-0024 does without
+because keyset paging has no use for it. A facet count is the opposite on
+every point. It is the answer to the question: a facet with no count is a list
+of words, not a filter, and FR-16 asks for counts by name. It is bounded, to
+`FACET_BUCKET_CAP` buckets per facet. And it reads one property's rows through
+that property's index rather than the whole table; `test_db_property_index_plan.py`
+`EXPLAIN`s the plan, and ADR-0032 records which parts of the query the index
+serves. `list_entries` below runs no count of any kind: it accepts filters and
+returns no facets.
 """
 
 from __future__ import annotations
@@ -91,10 +81,8 @@ __all__ = [
     "open_finding_business_keys",
 ]
 
-#: The one status filter every public read applies - see the module
-#: docstring. A tuple rather than a set so the SQL parameter order is
-#: stable, and referenced by `backend/tests/test_api_public_status_filter.py`
-#: rather than re-listed there.
+#: The one status filter every public read applies (module docstring). A tuple
+#: rather than a set, so the SQL parameter order is stable.
 PUBLIC_STATUSES: Final[tuple[str, ...]] = (CatalogueEntryStatus.ACTIVE.value,)
 
 
@@ -112,18 +100,15 @@ class EntryPage:
 
 @dataclass(frozen=True, slots=True)
 class DesignationRow:
-    """A catalogue-authored synonym or non-en-AU preferred variant (ADR-0022
-    - the catalogue's own en-AU preferred term is never a `designation` row,
-    it is `catalogue_entry.preferred_term`).
+    """A catalogue-authored synonym or non-en-AU preferred variant (ADR-0022:
+    the catalogue's own en-AU preferred term is never a `designation` row, it
+    is `catalogue_entry.preferred_term`).
 
-    `id` is this row's own primary key - an internal detail, never put on
-    the public `Designation` response model. It exists on this row type
-    only so a write route can re-read the exact row it just wrote
-    (issue #224, matching `BindingRow.id`'s own rationale):
+    `id` is this row's own primary key, never put on the public `Designation`
+    response model. It lets a write route re-read the exact row it wrote:
     `(entry_id, term_key, language)` is unique only among *active*
-    designations, so a term added, retired, and re-added leaves two
-    retired rows sharing a `term_key`, and only `id` still tells them
-    apart."""
+    designations, so a term added, retired and re-added leaves two retired
+    rows sharing a `term_key`, and only `id` tells them apart."""
 
     id: uuid.UUID
     entry_id: uuid.UUID
@@ -138,19 +123,15 @@ class DesignationRow:
 class BindingRow:
     """A code binding, with `replaced_by_code` already resolved.
 
-    `code` is a `str` and stays one end to end (FR-06). `replaced_by_code`
-    is the successor binding's *code*, resolved by a self-join in
-    `load_bindings` - the module docstring's rule two: the UUID
-    `code_binding.replaced_by_binding_id` actually holds never reaches a
-    caller of this module at all.
+    `code` is a `str` end to end (FR-06). `replaced_by_code` is the successor
+    binding's *code*, resolved by a self-join in `load_bindings` (module
+    docstring, rule two).
 
-    `id` is this row's own primary key - an internal detail, never put on
-    the public `Binding` response model (see `catalogue_shared.py`'s own
-    rule). It exists on this row type only so a write route can re-read the
-    exact row it just wrote: `(entry_id, code)` is unique only among
-    *active* bindings, so a code bound, retired, and bound again leaves two
-    retired rows sharing a code, and only `id` still tells them apart
-    (issue #219 review).
+    `id` is this row's own primary key, never put on the public `Binding`
+    response model (see `catalogue_shared.py`). It lets a write route re-read
+    the exact row it wrote: `(entry_id, code)` is unique only among *active*
+    bindings, so a code bound, retired and bound again leaves two retired
+    rows sharing a code, and only `id` tells them apart.
     """
 
     id: uuid.UUID
@@ -169,16 +150,14 @@ class BindingRow:
 class PropertyValueRow:
     """One property value, joined to its definition.
 
-    `value` is the raw JSONB as stored; rendering it is the datatype
-    handler's job, not this module's (FR-77/ADR-0013), so `datatype` is
-    carried through for the caller to resolve a handler with. There is
-    deliberately no `switch` on it here.
+    `value` is the raw JSONB as stored. Rendering it is the datatype
+    handler's job (FR-77, ADR-0013), so `datatype` is carried through for the
+    caller to resolve a handler with; there is no `switch` on it here.
 
-    `status` is the *definition's* status (issue #248), not the value's own
-    - `property_value` has no status column of its own. A client cannot
-    otherwise tell a deprecated property's recorded values apart from an
-    active one's without a second, cross-referencing call to `GET
-    /registry/properties?include_deprecated=true`.
+    `status` is the *definition's* status, not the value's: `property_value`
+    has no status column. Without it a client cannot tell a deprecated
+    property's values from an active one's except through a second call to
+    `GET /registry/properties?include_deprecated=true`.
     """
 
     entry_id: uuid.UUID
@@ -202,33 +181,27 @@ def list_entries(
     """One keyset page of active entries, ordered by `business_key`.
 
     `after` is the last `business_key` of the previous page (exclusive).
-    Because `business_key` is `UNIQUE` and the sort is on it alone, the
-    ordering is total: no two rows can tie, so no row can be skipped or
-    served twice across a page boundary - which is the failure `OFFSET`
-    exhibits the moment a concurrent insert lands mid-scan.
+    `business_key` is `UNIQUE` and the only sort column, so the order is
+    total: no row is skipped or served twice across a page boundary, which is
+    what `OFFSET` gets wrong when a concurrent insert lands mid-scan.
 
-    `filters` are FR-16's facet selections, composed by
-    `nptc.catalogue.facets` from the same descriptors `/catalogue/search`
-    uses - the same builder over `catalogue_entry` directly, since a browse
-    has no scored CTE to hang them off.
+    `filters` are FR-16's facet selections, built by `nptc.catalogue.facets`
+    from the descriptors `/catalogue/search` uses and applied directly to
+    `catalogue_entry`, since a browse has no scored CTE.
 
-    **The cursor is unaffected by the filter set, unlike the search one.**
-    A search cursor carries a relevance score and has to be refused under a
-    changed filter set, because the score means nothing there. This cursor
-    is a `business_key`: the ordering is on that column alone and is total
-    whatever the filters are, so a cursor replayed under a different filter
-    set still names an unambiguous position. The client gets a differently
-    filtered page from the same point in the ordering, which is precisely
-    what they asked for and not a silently meaningless window.
+    **The cursor is unaffected by the filter set, unlike the search one.** A
+    search cursor carries a relevance score, which means nothing under a
+    changed filter set. This cursor is a `business_key` in a total order
+    whatever the filters, so replaying it under another filter set names an
+    unambiguous position and returns the differently filtered page the
+    client asked for.
     """
     statement = (
         select(CatalogueEntry)
         .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
         .where(*filter_predicates(filters))
         .order_by(CatalogueEntry.business_key)
-        # One more row than asked for: its existence *is* the answer to
-        # "is there a next page", at the cost of one extra row rather than
-        # a second query.
+        # One extra row decides whether a next page exists.
         .limit(limit + 1)
     )
     if after is not None:
@@ -244,12 +217,10 @@ def list_entries(
 def get_entry(session: Session, business_key: str) -> CatalogueEntry:
     """One active entry, or `EntryNotFoundError`.
 
-    A non-`active` entry raises exactly the same error as a `business_key`
-    that was never minted, and that is deliberate: a distinguishable
-    response (a 403, or a 404 with a different detail) would confirm the key
-    exists, which is a disclosure about unpublished editorial work
-    (`draft`) that the public surface has no business making. The caller
-    cannot tell the two apart, and neither can anyone enumerating keys.
+    A non-`active` entry raises the same error as a `business_key` that was
+    never minted. A distinguishable response would confirm the key exists,
+    which discloses unpublished editorial work (`draft`) to anyone
+    enumerating keys.
     """
     entry = session.execute(
         select(CatalogueEntry)
@@ -265,14 +236,10 @@ def get_entry(session: Session, business_key: str) -> CatalogueEntry:
 
 def _get_entry_by_code_statement(system: str, code: str) -> Select[CatalogueEntry]:
     """The statement `get_entry_by_code` runs, factored out so
-    `test_db_code_binding_index_plan.py` can `EXPLAIN` the exact query
-    rather than a hand-copied approximation of it (matching
-    `nptc.catalogue.search.build_search_statement`'s own precedent).
+    `test_db_code_binding_index_plan.py` can `EXPLAIN` the exact query.
 
-    `system`/`code` are bound parameters even though this helper takes them
-    as plain strings: SQLAlchemy Core binds every `==` comparison built this
-    way, so nothing here concatenates caller-supplied text into SQL
-    (NFR-22).
+    `system` and `code` are bound parameters: SQLAlchemy Core binds every
+    `==` comparison, so no caller text is concatenated into SQL (NFR-22).
     """
     return (
         select(CatalogueEntry)
@@ -290,36 +257,25 @@ def _get_entry_by_code_statement(system: str, code: str) -> Select[CatalogueEntr
 
 
 def get_entry_by_code(session: Session, system: str, code: str) -> CatalogueEntry:
-    """One entry resolved by an exact code, active binding preferred
-    (issue #140, FR-17).
+    """One entry resolved by an exact code, active binding preferred (FR-17).
 
-    Ambiguity across *active* bindings is impossible -
-    `ix_code_binding_one_active_entry_per_code` is a database invariant, not
-    merely an application check - so when an active binding matches
-    `(system, code)`, it is the only one and this returns its entry
-    outright. Only when no active binding matches does a retired one get a
-    look-in: FR-08 requires a retired binding stay resolvable (a client
-    holding an inactivated code learns that rather than getting a bare
-    404), and more than one entry *can* hold the same code as a retired
-    binding (a code is retired and replaced, never rebound in place, so
-    each retirement is a new row). `ORDER BY ... LIMIT 1` picks the winner
-    in one statement rather than two queries: active-first, then the most
-    recently retired (`retired_at DESC`), then `business_key ASC` to make
-    the ordering total so two identical requests never disagree. See
-    `docs/adr/0033-exact-code-lookup-routes.md`.
+    At most one *active* binding matches `(system, code)`
+    (`ix_code_binding_one_active_entry_per_code` is a database invariant), so
+    when one does, its entry is returned. Otherwise a retired binding may
+    match: FR-08 keeps a retired binding resolvable, and more than one entry
+    can hold the same code as a retired binding. `ORDER BY ... LIMIT 1` picks
+    the winner in one statement: active first, then the most recently retired
+    (`retired_at DESC`), then `business_key ASC` for a total order
+    (ADR-0033).
 
-    `PUBLIC_STATUSES`-filtered like every other query in this module - a
-    code bound only to a hidden entry raises the same
-    `CodeLookupNotFoundError` as a code nobody has ever bound, on purpose
-    (this module's rule one: the caller cannot tell "hidden" from "never
-    existed" apart).
+    `PUBLIC_STATUSES` applies as in every query here, so a code bound only to
+    a hidden entry raises the same `CodeLookupNotFoundError` as a code nobody
+    has bound (rule one).
 
-    `ix_code_binding_system_code` (non-partial, unlike every other index on
-    this table) is what makes this an index scan rather than a sequential
-    one: the `WHERE` clause above carries no `status` predicate (it must
-    see retired rows too), so none of `code_binding`'s other, partial
-    `(system, code)`/`code` indexes - every one scoped `WHERE status =
-    'active'` - can be proven applicable by the planner.
+    `ix_code_binding_system_code` is non-partial, unlike every other index on
+    this table. The `WHERE` clause has no `status` predicate, because it must
+    see retired rows, so the planner cannot prove any of the partial
+    `WHERE status = 'active'` indexes applicable.
     `test_db_code_binding_index_plan.py` `EXPLAIN`s this exact statement.
     """
     statement = _get_entry_by_code_statement(system, code)
@@ -337,22 +293,16 @@ def load_designations(
 ) -> tuple[DesignationRow, ...]:
     """Every *active* designation for the given entries, in a stable order.
 
-    Retired designations are omitted: unlike a retired code binding (which
-    FR-08 requires be published, so an implementer can follow the
-    supersession chain), a retired synonym carries no forward pointer and no
-    obligation - it is editorial history, and `/catalogue/entries/{key}/
-    designations` is a list of the terms an entry *is* known by.
+    Retired designations are omitted. A retired code binding is published
+    because FR-08 requires an implementer to be able to follow the
+    supersession chain; a retired synonym carries no forward pointer and no
+    obligation, so it is editorial history. That reasoning is about the
+    *public* surface. The admin read calls `load_designations_any_status`,
+    for an editor to whom that history matters.
 
-    That reasoning is about the *public* surface. The admin read
-    (`catalogue_admin.read_entry_any_status`, issue #239) calls
-    `load_designations_any_status` instead, precisely because its reader is
-    an editor for whom editorial history is the thing being decided about,
-    not implementation noise to hide.
-
-    `(use, language, term)` rather than insertion order or `id`: an
-    `ORDER BY` on a UUID primary key is a stable-looking accident, and an
-    unordered response makes every whole-body comparison in a client's own
-    test suite flap.
+    `(use, language, term)` order, not insertion order or the UUID `id`,
+    which is stable only by accident: an unordered response makes a client's
+    whole-body comparisons flap.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -380,44 +330,28 @@ def load_designations(
 def load_designations_any_status(
     session: Session, entry_ids: Iterable[uuid.UUID]
 ) -> tuple[DesignationRow, ...]:
-    """Every designation for the given entries, active *and* retired -
-    unlike `load_designations` above, which is the FR-20 public read
-    surface and omits retired rows on purpose (see its own docstring).
-    Matches the `read_entry_any_status`/`list_entries_any_status` naming
-    convention this module already uses for the entry-level equivalent.
+    """Every designation for the given entries, active *and* retired - unlike
+    `load_designations`, the public FR-20 read, which omits retired rows.
 
-    Three callers, all wanting the unfiltered set for a different reason:
+    Three callers want the unfiltered set:
 
-    - `catalogue_admin.read_entry_any_status` (issue #239) puts these rows
-      on the wire for an editor, who is deciding *against* editorial
-      history rather than needing it hidden - the admin/public split
-      `load_designations`'s own docstring describes.
-    - `nptc.api.routers.catalogue_designations`'s write routes (issue #224)
-      re-read the exact row a retirement or amendment just wrote (by `id`,
-      matching `nptc.catalogue.bindings`'s own `_row_to_binding`
-      precedent), which has to find it whether it ended up active or
-      retired.
-    - `nptc.catalogue.history.load_history` (issue #141, FR-19) consumes
-      only `.id`, to resolve which `audit_event` rows belong to this
-      entry's designations - a retired designation's history belongs in
-      the entry's history too.
+    - the admin entry read, which puts these rows on the wire for an editor
+      for whom that history is what is being decided;
+    - `nptc.api.routers.catalogue_designations`'s write routes, which re-read
+      the exact row a retirement or amendment wrote (by `id`), whether it
+      ended up active or retired;
+    - `nptc.catalogue.history.load_history`, which consumes only `.id`, to
+      resolve which `audit_event` rows belong to the entry's designations
+      (FR-19): a retired designation's history belongs in the entry's too.
 
-    `(status, use, language, term, id)` order - not `load_designations`'s
-    `(use, language, term)` alone, which relies on that triple being unique
-    *among active* rows (`ix_designation_no_duplicate_active_term`) for a
-    total order. Retired rows break that uniqueness: a term added, retired,
-    re-added and retired again leaves two rows with an identical `(use,
-    language, term)`, so without a further tiebreaker Postgres could return
-    them in either order between calls - the exact flapping `load_
-    designations`'s own docstring cites as the reason for an explicit
-    `ORDER BY` in the first place. `status` first, matching `load_bindings`'s
-    own `(status, code)` convention (`"active" < "retired"` sorts active
-    rows first, matching `sortedTermRows` in `designations-panel.tsx` so the
-    client-side sort is a safeguard rather than the only thing enforcing the
-    order), then `id` last as the tiebreaker nothing else can supply -
-    `load_bindings` carries the same latent gap (two retired bindings can
-    share a `code`) and is not fixed here, being outside this change's own
-    blast radius (issue #239 review) - tracked as issue #314.
+    `(status, use, language, term, id)` order. `load_designations`'s
+    `(use, language, term)` is total only among *active* rows
+    (`ix_designation_no_duplicate_active_term`); a term added, retired,
+    re-added and retired again leaves two rows with an identical triple,
+    which Postgres could return in either order between calls. `status`
+    comes first, as in `load_bindings`, so `active` precedes `retired` and
+    matches `sortedTermRows` in `designations-panel.tsx`. `id` is the final
+    tie-break. `load_bindings` has the same gap and is not fixed here.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -449,11 +383,9 @@ def load_designations_any_status(
 
 def load_designation_by_id(session: Session, designation_id: uuid.UUID) -> DesignationRow | None:
     """The one designation with this primary key, active or retired, or
-    `None` - a point lookup for a write route re-reading the exact row it
-    just amended or retired (issue #224 review finding 3), rather than
-    `load_designations_any_status` reloading and filtering *every*
-    designation on the entry (unbounded for an entry with a long retired
-    history) to find the one row by `id`."""
+    `None`: a point lookup for a write route re-reading the row it just
+    amended or retired. `load_designations_any_status` would load and filter
+    every designation on the entry, unbounded for a long retired history."""
     row = session.get(Designation, designation_id)
     if row is None:
         return None
@@ -472,28 +404,24 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     """Every binding for the given entries - active *and* retired (FR-08).
 
     A retired binding is published on purpose: an implementer holding a code
-    that has since been inactivated needs to learn that from this API, along
-    with `retirement_reason` and, where PRD FR-08's replacement case
-    applies, the code that superseded it. Omitting retired bindings would
-    leave them silently discovering the change as a lookup that stopped
-    matching.
+    that has since been inactivated learns that from this API, with
+    `retirement_reason` and, in FR-08's replacement case, the code that
+    superseded it. Omitting it would leave them to discover the change as a
+    lookup that stopped matching.
 
     The successor is reached by an `OUTER JOIN` back onto `code_binding` and
-    projected as its `code`, never its id - see the module docstring's rule
-    two. `LEFT`, not inner: `replaced_by_binding_id` is `NULL` for both
-    every active binding and every retirement with no successor, and an
-    inner join would silently drop exactly those rows.
+    projected as its `code`, never its id (module docstring, rule two).
+    `LEFT`, not inner: `replaced_by_binding_id` is `NULL` for every active
+    binding and every retirement without a successor, and an inner join would
+    drop those rows.
 
-    `(status, code)` order puts `active` before `retired` (alphabetically,
-    which happens to be the order a reader wants), and is total among an
-    entry's *active* bindings, since at most one is active per entry. It is
-    **not** total among retired ones: nothing stops the same code being
-    bound, retired, bound again and retired again (`designations-panel.tsx`'s
-    `getRowKey` comment names the identical case for `Binding`), so two
-    retired rows can share `code` and this query does not order between
-    them - the same latent gap `load_designations_any_status` closes with an
-    `id` tiebreaker (issue #239 review). Left open here as out of that
-    change's blast radius; tracked as issue #314.
+    `(status, code)` order puts `active` before `retired` and is total among
+    an entry's *active* bindings, since at most one is active. It is **not**
+    total among retired ones: the same code can be bound, retired, bound
+    again and retired again (`getRowKey` in `designations-panel.tsx` names
+    the same case for `Binding`), so two retired rows can share a `code` and
+    this query does not order between them. `load_designations_any_status`
+    closes the same gap with an `id` tiebreaker; it is left open here.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -541,33 +469,24 @@ def load_property_values(
 ) -> tuple[PropertyValueRow, ...]:
     """Every property value for the given entries, joined to its definition.
 
-    One statement, not "load the values, then load the definitions they
-    reference": `property_value.property_key` is a foreign key onto
-    `property_definition.key` (ADR-0012 chose the natural key precisely so a
-    join like this needs no surrogate lookup), so the definition's `label`,
-    `datatype` and `cardinality` come back on the same row. A separate
-    definition load would be a second query answering a question this join
-    has already answered.
+    One statement: `property_value.property_key` is a foreign key onto
+    `property_definition.key` (ADR-0012 chose the natural key so a join like
+    this needs no surrogate lookup), so `label`, `datatype` and `cardinality`
+    arrive on the same row.
 
     A value whose definition is `deprecated` is still served. FR-11/FR-12
-    make a definition undeletable and its key immutable, so a deprecated
-    definition still describes stored values accurately - suppressing them
-    would silently drop published data from an entry the moment an
-    administrator deprecated a property, which is a bigger surprise than
-    serving a value whose definition is no longer offered for new entries.
+    make a definition undeletable and its key immutable, so it still
+    describes the stored values accurately. Suppressing them would drop
+    published data the moment an administrator deprecated a property.
 
-    `(property_key, ordinal)` order: `ordinal` is meaningful within a
-    multi-valued property (`nptc.db.models.property_value`: zero-based, and
-    the order the values are in), so sorting by it is not cosmetic.
+    `(property_key, ordinal)` order: `ordinal` is the zero-based position
+    within a multi-valued property (`nptc.db.models.property_value`), so
+    sorting by it is not cosmetic.
 
-    `property_keys`, when given, narrows the result to those properties only
-    - `EntryDetail`'s assembly (issue #228, `catalogue.py`/`catalogue_admin.py`)
-    wants every property on the entry and leaves it `None`; issue #248's
-    write route re-reads only the one property it just wrote, and passing
-    every other property on the entry over the wire (and building a
-    `PropertyValueRow`/`PropertyValue` for each) just to discard them in
-    Python would scale with how many properties the entry carries, not with
-    the one write the caller actually asked about.
+    `property_keys`, when given, narrows the result to those properties. The
+    entry-detail assembly leaves it `None`; the single-property write route
+    passes its one key, so the work scales with that write, not with how many
+    properties the entry carries.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -612,14 +531,9 @@ def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -
     `open` `ValidationFinding` (FR-18) - one batch lookup per collection or
     detail response, not a per-row subquery.
 
-    Keyed on `business_key`, not `entry_id`, unlike every `load_*` loader
-    above: `nptc.catalogue.search.SearchHit` deliberately carries no entry
-    id at all (see that module's own docstring - rule two of this
-    module's applies there too), so a lookup keyed on the internal id
-    could not be reused for search results. `list_entries`/`get_entry`
-    callers already have `business_key` sitting on the same
-    `CatalogueEntry` row they would otherwise read `id` from, so nothing
-    is lost by joining on it everywhere instead.
+    Keyed on `business_key`, not `entry_id` as the `load_*` loaders are:
+    `nptc.catalogue.search.SearchHit` carries no entry id (rule two), so an
+    id-keyed lookup could not serve search results.
     """
     keys = tuple(business_keys)
     if not keys:
@@ -639,9 +553,7 @@ def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -
 
 
 def has_open_finding(session: Session, business_key: str) -> bool:
-    """The single-entry case of `open_finding_business_keys` (PR #278
-    review): `catalogue_shared.build_entry_detail` and `catalogue_admin.
-    read_entry_any_status` both only ever want one entry's own answer, and
-    had each spelled `business_key in open_finding_business_keys(session,
-    (business_key,))` independently rather than share a name for it."""
+    """The single-entry case of `open_finding_business_keys`, shared by
+    `catalogue_shared.build_entry_detail` and
+    `catalogue_admin.read_entry_any_status`."""
     return business_key in open_finding_business_keys(session, (business_key,))

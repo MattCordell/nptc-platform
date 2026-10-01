@@ -1,40 +1,35 @@
 """The `local_code_system`/`local_code`/`local_code_snomed_map` service
-layer (issue #56, FR-90, FR-91, FR-92). See PRD SS6.6 and
-`nptc.db.models.local_code_system`/`local_code`/`local_code_snomed_map`
-for the full per-table reasoning.
+layer (FR-90, FR-91, FR-92). See PRD SS6.6 and the models
+`nptc.db.models.local_code_system`/`local_code`/`local_code_snomed_map` for
+the per-table reasoning.
 
-**Administrator-only management (FR-90's fourth bullet).** Every write
-here requires `Permission.REGISTRY_MANAGE` - checked against a permission,
-never a role name (FR-44) - matching `nptc.catalogue.collisions.
-acknowledge_collision`'s own `Principal.has(...)` gating precedent.
+**Administrator-only management (FR-90).** Every write requires
+`Permission.REGISTRY_MANAGE`, checked against a permission, never a role name
+(FR-44), as `nptc.catalogue.collisions.acknowledge_collision` does.
 `PermissionDeniedError` is raised before anything is added to the session.
 
-**Every write goes through the same audit and changelog discipline as
-every other content change**, exactly as FR-90 requires: a changelog note
-is validated first (`nptc.catalogue.changelog.validate_changelog_note`,
-FR-37), and exactly one audit event is recorded per successful write
-(NFR-08), action strings `local_code_system.<verb>`, `local_code.<verb>`,
+**Every write carries a changelog note and one audit event.** The note is
+validated first (`nptc.catalogue.changelog.validate_changelog_note`, FR-37),
+and one audit event is recorded per successful write (NFR-08), with actions
+`local_code_system.<verb>`, `local_code.<verb>` and
 `local_code_snomed_map.<verb>`.
 
-**No `create_map_row` uniqueness check.** Unlike `nptc.catalogue.bindings.
-create_binding`'s pre-insert check for `ix_code_binding_one_active_per_
-entry`, `local_code_snomed_map` has no uniqueness constraint on
-`local_code_id` at all - PRD SS6.6 verifies `Microbiology` as genuinely
-ambiguous between two SNOMED candidates, so a local code may validly
-carry more than one map row (see that model's own docstring).
+**No `create_snomed_map_row` uniqueness check.** `local_code_snomed_map` has
+no uniqueness constraint on `local_code_id`, unlike the pre-insert check in
+`nptc.catalogue.bindings.create_binding`. PRD SS6.6 verifies `Microbiology`
+as genuinely ambiguous between two SNOMED candidates, so a local code may
+carry more than one map row.
 
-**Lives in `nptc.catalogue`, not `nptc.registry`, despite the FR-90/91/92
-requirement IDs living in the property-registry area of the PRD.** #197
-(issue #53) landed `nptc.registry` as a leaf package - "may import
-`nptc_shared`, SQLAlchemy, `jsonschema` and the stdlib, and nothing else
-from `nptc`" (ADR-0013 SS2, `registry/__init__.py`'s own docstring) - and
-this module needs `nptc.audit`, `nptc.auth`, `nptc.catalogue.changelog`
-and the ORM models, same as every other file in this package. Only
-`nptc.registry.handlers.LocalCodeLookup`/`ResolvedLocalCode` - the
-dependency-free read contract `CodeHandler` actually consumes - live on
-the leaf side; `DatabaseLocalCodeLookup` below, which needs a `Session`,
-lives here alongside the write path it is built on, matching every other
-service module in this package."""
+**Lives in `nptc.catalogue`, not `nptc.registry`**, though FR-90/91/92 sit
+in the property-registry part of the PRD. `nptc.registry` is a leaf package:
+it may import `nptc_shared`, SQLAlchemy, `jsonschema` and the stdlib, and
+nothing else from `nptc` (ADR-0013 SS2). This module needs `nptc.audit`,
+`nptc.auth`, `nptc.catalogue.changelog` and the ORM models. Only
+`LocalCodeLookup` and `ResolvedLocalCode`, the dependency-free read contract
+`CodeHandler` consumes, live in `nptc.registry.handlers`.
+`DatabaseLocalCodeLookup`, which needs a `Session`, lives here beside the
+write path it is built on.
+"""
 
 from __future__ import annotations
 
@@ -96,20 +91,17 @@ class LocalCodeAlreadyDeprecatedError(ValueError):
 
 class InvalidLocalCodeSystemKeyError(ValueError):
     """Raised by `create_local_code_system` when `key` does not match
-    `KEY_PATTERN` - `ck_local_code_system_key` is the actual database
-    invariant; this is the fail-loud Python-level layer, checked before
-    anything is added to the session, matching `create_snomed_map_row`'s
-    own pre-insert treatment of `code`."""
+    `KEY_PATTERN`: the Python-level layer over `ck_local_code_system_key`,
+    checked before anything is added to the session."""
 
     http_status: ClassVar[int] = 422
 
 
 class InvalidMatchStrengthError(ValueError):
-    """Raised by `create_snomed_map_row` when `match_strength` is not one
-    of `SnomedMapMatchStrength`'s values - `ck_local_code_snomed_map_
-    match_strength` is the actual database invariant; this is the
-    fail-loud Python-level layer, checked before anything is added to the
-    session."""
+    """Raised by `create_snomed_map_row` when `match_strength` is not one of
+    `SnomedMapMatchStrength`'s values: the Python-level layer over
+    `ck_local_code_snomed_map_match_strength`, checked before anything is
+    added to the session."""
 
     http_status: ClassVar[int] = 422
 
@@ -231,13 +223,12 @@ def deprecate_local_code(
 ) -> LocalCode:
     """Deprecates `code` via a `status` transition - never a `DELETE`
     (`nptc.db.roles.REVOKE_LOCAL_CODE_DELETE_SQL` makes this a
-    privilege-level guarantee). This is also what the FR-45 validation
-    sweep's `local_code_retired` warning (PRD line 689) keys off. Sets
-    `deprecated_at` (`ck_local_code_deprecated_at` requires it exactly
-    when `status = 'deprecated'` - the deferred-version-history argument
-    in this table's own docstring depends on this timestamp actually being
-    set, not merely permitted), matching `AppUser.closed_at`'s own
-    `datetime.now(UTC)` precedent for a manually-set timestamp. Requires
+    privilege-level guarantee). The FR-45 validation sweep's
+    `local_code_retired` warning keys off it. Sets `deprecated_at`, which
+    `ck_local_code_deprecated_at` requires exactly when
+    `status = 'deprecated'` and which the deferred version-history argument
+    in the `local_code` model docstring depends on; it uses
+    `datetime.now(UTC)`, as `AppUser.closed_at` does. Requires
     `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
     if code.status == str(LocalCodeStatus.DEPRECATED):
@@ -271,16 +262,13 @@ def create_snomed_map_row(
     system: str = SNOMED_CT_SYSTEM,
     reason: str,
 ) -> LocalCodeSnomedMap:
-    """Adds one advisory SNOMED map row for `local_code` (FR-91). No
-    uniqueness check against existing rows for `local_code` - see the
-    module docstring for why a local code may validly carry more than one
-    row (PRD SS6.6's `Microbiology` ambiguity). `code` is validated via
-    `SCTID` before the row is constructed - `ck_local_code_snomed_map_code`
-    (`nptc_sctid_is_valid`) is the actual database invariant; this is the
-    fail-loud Python-level layer, matching `nptc.catalogue.bindings.
-    create_binding`'s own treatment of `code` (and giving it a real
-    `InvalidSCTIDError` instead of a raw `IntegrityError` at flush).
-    Requires `Permission.REGISTRY_MANAGE`."""
+    """Adds one advisory SNOMED map row for `local_code` (FR-91), with no
+    uniqueness check against existing rows (module docstring). `code` is
+    validated via `SCTID` before the row is constructed:
+    `ck_local_code_snomed_map_code` (`nptc_sctid_is_valid`) is the database
+    invariant, and this gives the caller an `InvalidSCTIDError` instead of a
+    raw `IntegrityError` at flush, as in `bindings.create_binding`. Requires
+    `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
     validated_reason = validate_changelog_note(reason)
     validated_code = SCTID(code).value
@@ -315,11 +303,9 @@ def create_snomed_map_row(
 
 def find_local_code(session: Session, *, system_key: str, code: str) -> LocalCode | None:
     """Looks up a `local_code` by its owning system's `key` and its own
-    `code`. Does not surface the owning system's own `status` - see
-    `find_local_code_with_system_status` for the read path that does; this
-    function's callers (`create_snomed_map_row`'s admin flows, this
-    module's own tests) already hold the `LocalCodeSystem` they created
-    the code under, so they have no need of it."""
+    `code`, without the owning system's `status` (see
+    `find_local_code_with_system_status`). Its callers already hold the
+    `LocalCodeSystem` they created the code under."""
     return session.execute(
         select(LocalCode)
         .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
@@ -330,14 +316,11 @@ def find_local_code(session: Session, *, system_key: str, code: str) -> LocalCod
 def find_local_code_with_system_status(
     session: Session, *, system_key: str, code: str
 ) -> tuple[LocalCode, str] | None:
-    """`DatabaseLocalCodeLookup`'s read path (below). Unlike
-    `find_local_code` above, also returns the owning `LocalCodeSystem`'s
-    own `status` - `deprecate_local_code_system` deprecates the system
-    without touching its member codes' own `status` (deprecating every
-    code individually is a separate, per-code editorial decision), so a
-    caller resolving a code through a since-deprecated system needs both
-    facts to tell "this code is fine but its system is retired" apart from
-    "this code itself is retired"."""
+    """`DatabaseLocalCodeLookup`'s read path. Unlike `find_local_code`, also
+    returns the owning system's `status`: `deprecate_local_code_system` does
+    not touch member codes' own `status` (deprecating each code is a separate
+    editorial decision), so a caller needs both facts to tell "this code is
+    fine but its system is retired" from "this code itself is retired"."""
     row = session.execute(
         select(LocalCode, LocalCodeSystem.status)
         .join(LocalCodeSystem, LocalCode.system_id == LocalCodeSystem.id)
@@ -349,22 +332,18 @@ def find_local_code_with_system_status(
 def find_local_codes(
     session: Session, *, system_key: str, codes: Sequence[str]
 ) -> Sequence[LocalCode]:
-    """Batch sibling of `find_local_code_with_system_status` above (issue
-    #306, review round 2, PR #307): the identical `local_code`/
-    `local_code_system` join, one `SELECT ... code IN (...)` for a whole
-    set of codes rather than a round trip per code -
+    """Batch sibling of `find_local_code_with_system_status`: the same
+    `local_code`/`local_code_system` join, with one `SELECT ... code IN (...)`
+    for a set of codes instead of a round trip per code.
     `nptc.catalogue.property_value_sources._resolve_local_code_system_values`
-    is the caller this exists for. No `status` filter on either side,
-    matching `find_local_code_with_system_status`'s own unconditional read:
-    a deprecated code, or one in a deprecated system, still resolves.
+    is the caller it exists for (ADR-0038). No `status` filter on either
+    side, as in `find_local_code_with_system_status`: a deprecated code, or
+    one in a deprecated system, still resolves.
 
-    Returns whatever rows matched, in whatever order Postgres returns
-    them - not necessarily `codes`' own order, and not one row per element
-    of `codes` (a code with no match contributes nothing). A caller that
-    needs `codes`' own order, or to know which of `codes` went unmatched,
-    builds a `{row.code: row}` map from the result and looks each one up
-    itself, the same way `find_local_code_with_system_status`'s own callers
-    already handle a `None` miss.
+    Returns whatever rows matched, in no particular order, and not one row
+    per element of `codes`: a code with no match contributes nothing. A
+    caller that needs `codes`' order, or the unmatched codes, builds a
+    `{row.code: row}` map from the result.
     """
     return (
         session.execute(
@@ -378,10 +357,9 @@ def find_local_codes(
 
 
 def _escape_like(text: str) -> str:
-    """Escapes `%`, `_` and the escape character itself, so a caller's own
-    literal `%`/`_` in a filter is matched as text, never treated as a
-    wildcard - `list_local_codes` always pairs this with `ILIKE ... ESCAPE
-    '\\'`."""
+    """Escapes `%`, `_` and the escape character itself, so a literal `%` or
+    `_` in a filter matches as text, not as a wildcard. `list_local_codes`
+    pairs it with `ILIKE ... ESCAPE '\\'`."""
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
@@ -393,35 +371,29 @@ def list_local_codes(
     offset: int = 0,
     limit: int | None = None,
 ) -> tuple[Sequence[LocalCode], int]:
-    """Every active code in the local code system named `system_key` - the
-    FR-90 read path issue #247's coded-property values route serves a
-    `binding_target = 'local_code_system'` property from.
+    """Every active code in the local code system named `system_key`: the
+    FR-90 read path behind a `binding_target = 'local_code_system'`
+    property's values route.
 
-    Active-only on both the code and its owning system: a deprecated code is
-    excluded (mirroring `TerminologyClient.expand(active_only=True)` on the
-    SNOMED side of that same route), and so is every code belonging to a
-    deprecated system - `deprecate_local_code_system` deliberately does not
-    cascade to member codes (see `find_local_code_with_system_status`'s own
-    docstring), but a retired vocabulary must not keep offering its codes
-    for new entry, which is exactly the "not offered for entry" posture
-    this function's active-only filtering exists for. Either way, a value
-    already recorded against a since-deprecated code or system stays
-    resolvable through `DatabaseLocalCodeLookup.resolve` unchanged (FR-11
-    posture) - this function is additive, not a replacement for that read
-    path. Ordered by `display_order` then `code`, matching how a governed
-    vocabulary is curated to read.
+    Active-only on both the code and its owning system. A deprecated code is
+    excluded, mirroring `TerminologyClient.expand(active_only=True)` on the
+    SNOMED side. So is every code of a deprecated system:
+    `deprecate_local_code_system` does not cascade to member codes, but a
+    retired vocabulary must not keep offering its codes for new entry. A value
+    already recorded against such a code or system stays resolvable through
+    `DatabaseLocalCodeLookup.resolve` (FR-11 posture); this function adds a
+    read path and does not replace that one. Ordered by `display_order`, then
+    `code`, as a governed vocabulary is curated to read.
 
     `filter`, when given, is a case-insensitive substring match against
-    `display` - proportionate to a governed vocabulary's size (a handful of
-    codes for `discipline`/`subgroup`), unlike `nptc.catalogue.search`'s
-    trigram/full-text ranking machinery built for catalogue-wide search
-    (ADR-0024, ADR-0029).
+    `display`. That is proportionate to a governed vocabulary's size (a
+    handful of codes for `discipline` or `subgroup`), unlike the trigram and
+    full-text ranking built for catalogue-wide search (ADR-0024, ADR-0029).
 
-    Returns `(page, total)`: `total` counts every active, filter-matching
-    code, not just this page - the caller's `next_cursor` paging needs it to
-    know when to stop. An unknown `system_key` is not a special case: it
-    simply has no matching codes, mirroring an empty `Expansion` being a
-    valid, non-error result rather than a failure.
+    Returns `(page, total)`; `total` counts every active, filter-matching
+    code, not just this page, so a paging caller knows when to stop. An
+    unknown `system_key` is not a special case: it has no matching codes, as
+    an empty `Expansion` is a valid result, not a failure.
     """
     where_clauses = [
         LocalCodeSystem.key == system_key,
@@ -453,20 +425,17 @@ def list_local_codes(
 
 
 class DatabaseLocalCodeLookup:
-    """The database-backed implementation of `nptc.registry.handlers.
-    LocalCodeLookup`, built on `find_local_code_with_system_status`
-    above. Not itself declared to subclass that `Protocol` - structural
-    typing is the point (mirrors `nptc.terminology`'s own stub-client
-    treatment, ADR-0003) - but satisfies it, which `backend/tests/
-    test_catalogue_local_codes.py` pins with an explicit assignment mypy
-    would flag if the shapes ever drifted apart.
+    """The database-backed implementation of
+    `nptc.registry.handlers.LocalCodeLookup`, built on
+    `find_local_code_with_system_status`. It does not subclass that
+    `Protocol`; structural typing is the point (ADR-0003 treats
+    `nptc.terminology`'s stub client the same way).
+    `backend/tests/test_catalogue_local_codes.py` pins that it satisfies the
+    protocol, with an assignment mypy would flag if the shapes drifted.
 
-    Holds a `Session` for the lifetime of one request/job, matching every
-    other service-layer caller's own session-per-call-site convention
-    (`nptc.catalogue.bindings.create_binding` and siblings) - this is not
-    a singleton, so `HandlerDeps` construction (ADR-0013) stays
-    per-request, matching `TerminologyClient`'s own non-singleton
-    treatment (NFR-37)."""
+    Holds a `Session` for one request or job, as every service-layer caller
+    does. It is not a singleton, so `HandlerDeps` construction (ADR-0013)
+    stays per-request, as `TerminologyClient`'s does (NFR-37)."""
 
     def __init__(self, session: Session) -> None:
         self._session = session

@@ -1,36 +1,31 @@
 """The `system_token` alias registry for FR-17's exact-code lookup routes
-(issue #140).
+(ADR-0033).
 
-`GET /catalogue/code/{system_token}/{code}` needs a short, URL-friendly
-alias for a code system's full URI - `sct` for `http://snomed.info/sct` -
-because the URI itself (with its `:` and `/`) is not a legal single path
-segment. This module is the one place that alias lives.
+`GET /catalogue/code/{system_token}/{code}` needs a short alias for a code
+system's URI - `sct` for `http://snomed.info/sct` - because the URI, with its
+`:` and `/`, is not a legal single path segment. This module is the one place
+that alias lives.
 
 **Code, never a database table.** ADR-0019 rejected a database-backed
-permission registry as unreviewable and untypecheckable in favour of a
-frozen Python mapping reviewed row-by-row against the PRD; the same
-argument applies here. A second registered system is a deployment adding
-support for a code system the catalogue does not yet bind against - a
-considered, reviewed change to this module, not a seed row an
-administrator could add by accident through a future admin screen. Ships
-with `sct` alone; see `docs/adr/0033-exact-code-lookup-routes.md`.
+permission registry as unreviewable and untypecheckable, in favour of a
+frozen Python mapping reviewed row by row against the PRD; the same argument
+applies here. A second registered system means supporting a code system the
+catalogue does not yet bind against: a reviewed change to this module, not a
+seed row an administrator could add by accident through a future admin
+screen. It ships with `sct` alone.
 
-**One 404, shared by two different causes.** A `system_token` (or, on
+**One 404, shared by two causes.** A `system_token` (or, on
 `/catalogue/lookup`, a raw system URI) that is not registered, and one that
 *is* registered but matches no published entry's code, both raise
-`CodeLookupNotFoundError` with the identical fixed detail text
-`REGISTERED_TOKENS_DETAIL` - a caller cannot use response text to tell "your
-token is wrong" from "that code does not exist", matching the
-non-disclosure precedent `nptc.catalogue.queries.get_entry` already sets
-for a hidden-status `business_key`. `docs/adr/0033-...md` records the open
-question this settles and why.
+`CodeLookupNotFoundError` with the identical `REGISTERED_TOKENS_DETAIL`. A
+caller cannot tell "your token is wrong" from "that code does not exist", as
+`nptc.catalogue.queries.get_entry` withholds a hidden-status `business_key`.
+ADR-0033 records the open question this settles.
 
-Never imports FastAPI: `SYSTEM_TOKEN_PATTERN` is consumed by
-`nptc.api.routers.catalogue_shared`'s `SystemTokenPath` to build a `Path`
-annotation, and the raising functions below are called from
-`nptc.api.routers.catalogue`, but this module itself stays a plain,
-HTTP-framework-free registry - matching `nptc.catalogue.queries`' own
-posture.
+Never imports FastAPI: `nptc.api.routers.catalogue_shared` builds a `Path`
+annotation from `SYSTEM_TOKEN_PATTERN` and `nptc.api.routers.catalogue` calls
+the raising functions, but this module stays a plain registry, as
+`nptc.catalogue.queries` does.
 """
 
 from __future__ import annotations
@@ -62,13 +57,10 @@ SYSTEM_TOKENS: Final[dict[str, str]] = {
 #: "well-formed but unregistered" 404 below.
 SYSTEM_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
-#: The one shared 404 sentence - see the module docstring's "one 404,
-#: shared by two different causes". Names each registered system as both
-#: its token and its URI, since a `/catalogue/lookup` caller supplied a URI
-#: and never saw the token at all - naming only the token would leave that
-#: caller told about a parameter they didn't use (issue #140 review). Built
-#: from `SYSTEM_TOKENS` rather than hand-listed, so a second registered
-#: alias updates this message for free.
+#: The one shared 404 sentence (module docstring). It names each registered
+#: system as both its token and its URI, since a `/catalogue/lookup` caller
+#: supplied a URI and never saw the token. Built from `SYSTEM_TOKENS`, so a
+#: second alias updates it.
 REGISTERED_TOKENS_DETAIL: Final[str] = (
     "No published catalogue entry matches this system and code. Registered code "
     "systems: "
