@@ -299,12 +299,18 @@ address failed in 2.1 s. The same wait reproduced when two of the tests ran alon
 measured on Windows only. A Linux runner may refuse the connection at once, which would fit
 CI's roughly 8-minute runs against 16 minutes on the measured machine.
 
-The `test_missing_dbapi_driver_exits_3_not_1` docstring says `psycopg2` is not installed.
-`importlib` finds no `psycopg2` in the test environment, yet the test waits 131 s, so it appears to reach a
-connection attempt rather than fail at the driver import. This was not investigated further.
+`test_missing_dbapi_driver_exits_3_not_1` used a bare `postgresql://` URL and claimed to test a
+missing `psycopg2`. SQLAlchemy resolves a bare URL to `psycopg`, which is installed, so the
+test reached a real connection attempt and waited. It now names `postgresql+psycopg2://`, which
+fails at once with `ModuleNotFoundError` and so tests what its name says.
 
-Of the fast subset's 194 s, 130 s is the one unmarked test. The rest takes about 64 s. Moving
-the two Tier A CLI tests into the fast subset would add about 260 s on the measured machine.
+The other two tests now carry `?connect_timeout=3` in their DSN and take about 3 s each. After
+that change, the fast subset of `backend/tests` took about 55 to 66 s on the measured machine,
+against 194 s before. The same run on unchanged code took 181 s.
+
+Before the fix, 130 s of the fast subset's 194 s was the one unmarked test. Moving the two Tier A
+CLI tests into the fast subset would then have added about 260 s. With the timeout it adds
+about 6 s.
 
 ### What the container costs
 
@@ -339,8 +345,8 @@ Move no tests now.
   are weaker or partial moves (tiers C, D and E).
 - **Saving:** about 74 s of 978 s on the measured machine, from 185 candidates. The two CLI
   tests save nothing until their connect wait is fixed. The full run's wall time barely moves.
-- **Larger lever:** give the three refused-connection tests a `connect_timeout`. That removes
-  about 380 s from the full run and 127 s from the fast subset on Windows. It changes no
+- **Larger lever (done in #399):** the three refused-connection tests now fail fast. That removes
+  about 380 s from the full run and about 130 s from the fast subset on Windows. It changes no
   assertion.
 
 ## Follow-up levers (not built)
@@ -349,7 +355,7 @@ None is part of issue #363. Sizes are estimates.
 
 | Lever | Effect | Size |
 |---|---|---|
-| Add `connect_timeout` to the three refused-connection tests | Removes about 380 s from a full Windows run, and makes the Tier A move safe | S |
+| Add `connect_timeout` to the three refused-connection tests | Done in #399. Removes about 380 s from a full Windows run, and makes the Tier A move safe | S |
 | Extract pure validators for Tier B | Moves 42 items out of the container set and makes the guards testable alone. Saves about 2 s | M |
 | No-database app builder for HTTP candidates | Moves up to 115 items for at most about 70 s. 46 need no principal override | M |
 | Postgres template database | Not justified: container start was 4.8 s | M |

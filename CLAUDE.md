@@ -87,9 +87,7 @@ To re-measure, run `uv run pytest --collect-only -q -m integration` (or
 
 So `-m "not integration"` runs about three fifths of the whole suite but under half of
 `backend/tests`, and starts no container. For backend work it is a quick check, not a
-stand-in for the container tests. On Windows it currently takes about 3 minutes, because one
-unmarked test waits 130 s for a refused connection (see
-[`docs/operations/backend-test-container-split.md`](docs/operations/backend-test-container-split.md)).
+stand-in for the container tests.
 
 Run the fast subset while iterating, and the full suite (optionally parallelised via
 `pytest-xdist`) once before pushing:
