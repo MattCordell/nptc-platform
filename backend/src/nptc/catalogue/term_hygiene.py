@@ -1,34 +1,26 @@
 """Pure term hygiene shared by `CatalogueEntry.preferred_term` and
-`Designation.term` (FR-24, FR-63, FR-85, issue #47) - no SQLAlchemy, no
-audit imports, nothing beyond `nptc_shared.text`/`nptc_shared.language`.
+`Designation.term` (FR-24, FR-63, FR-85; ADR-0022): no SQLAlchemy, no audit
+imports, nothing beyond `nptc_shared.text` and `nptc_shared.language`.
 
 **Why this applies to both fields.** FR-85's computed length is defined
-against the *catalogue's* preferred term (PRD §6.5: "it is simply the
-character count of the RCPA preferred term"), which lives on
-`CatalogueEntry.preferred_term`, not on any `Designation` row - ADR-0022
-is explicit that the catalogue's own en-AU preferred term is never
-duplicated into `designation` at all. The PRD §6.5 migration case (a
-trailing non-breaking space shifting the published length) is therefore
-a defect that must be cleaned on `preferred_term` itself, not merely on
-synonym rows - FR-63's "normalisation on ingestion and prohibition at
-entry" makes no field-shaped exception for the one field FR-85 actually
-publishes.
+against the *catalogue's* preferred term (PRD SS6.5: "the character count of
+the RCPA preferred term"), which lives on `CatalogueEntry.preferred_term`,
+not on a `Designation` row. The PRD SS6.5 migration case, a trailing
+non-breaking space shifting the published length, is therefore a defect to
+clean on `preferred_term` itself. FR-63's "normalisation on ingestion and
+prohibition at entry" makes no exception for the one field FR-85 publishes.
 
-**Why this is its own module rather than living in
-`nptc.catalogue.designations`.** `nptc.db.models.catalogue_entry.
-CatalogueEntry` and `nptc.db.models.designation.Designation` both need
-`clean_term`/`preferred_term_length` for their own `@validates`/`length`
-hooks. `nptc.catalogue.designations` (the audit-aware service layer)
-imports `nptc.audit.recording`, which imports `nptc.audit.writer`, which
-imports `nptc.db.models.audit`, which imports the `nptc.db.models`
-package - and that package imports both model modules to register their
-tables with `Base.metadata`. If a model imported `nptc.catalogue.
-designations` directly, that chain would try to re-enter
-`nptc.audit.writer` while it is still mid-import, which fails as
-`ImportError: cannot import name 'AuditContext' from partially
-initialized module`. Splitting the audit-free pieces out here breaks the
-cycle: both models import only this module, which imports nothing from
-`nptc.audit` or `nptc.db` at all.
+**Why this is its own module rather than part of
+`nptc.catalogue.designations`.** The two models need `clean_term` and
+`preferred_term_length` for their `@validates` and `length` hooks.
+`designations`, the audit-aware service layer, imports `nptc.audit.recording`,
+which imports `nptc.audit.writer`, which imports `nptc.db.models.audit`,
+which imports the `nptc.db.models` package, and that package imports both
+model modules to register their tables. A model importing `designations`
+would re-enter `nptc.audit.writer` mid-import and fail with `ImportError:
+cannot import name 'AuditContext' from partially initialized module`. This
+module imports nothing from `nptc.audit` or `nptc.db`, which breaks the
+cycle.
 """
 
 from __future__ import annotations
@@ -40,45 +32,41 @@ from nptc_shared.text import escape_invisible, find_invisible_characters, normal
 
 
 class TermCleaningError(ValueError):
-    """Raised by `clean_term` when a term is empty after cleaning, or
-    still carries an invisible character with no single deterministic
-    repair (FR-63). Carries the same `http_status: ClassVar[int]`
-    convention as `nptc.catalogue.errors` and
-    `nptc.catalogue.changelog.ChangelogNoteError`."""
+    """Raised by `clean_term` when a term is empty after cleaning, or still
+    carries an invisible character with no single deterministic repair
+    (FR-63)."""
 
     http_status: ClassVar[int] = 422
 
 
 class DesignationLanguageError(ValueError):
-    """Raised by `Designation`'s `@validates("language")` hook when a
-    language tag is not a well-formed BCP-47 tag - the Python-level
-    counterpart to `designation.py`'s `_LANGUAGE_CHECK_SQL`, which is the
-    actual database invariant. This is what makes `nptc_shared.language.
-    is_well_formed_language_tag` load-bearing rather than dead code: it is
-    the single implementation both the model's own validation and (via
-    `test_designation_language_check_matches_the_shared_pattern`) the
-    database `CHECK` constraint are proven to agree with."""
+    """Raised by `Designation`'s `@validates("language")` hook when a language
+    tag is not a well-formed BCP-47 tag: the Python-level counterpart to
+    `designation.py`'s `_LANGUAGE_CHECK_SQL`, which is the database invariant.
+    `nptc_shared.language.is_well_formed_language_tag` is the single
+    implementation that both the hook and, through
+    `test_designation_language_check_agrees_with_the_shared_pattern` in
+    `backend/tests/test_db_designation.py`, the database `CHECK` are proven to
+    agree with."""
 
     http_status: ClassVar[int] = 422
 
 
 def clean_term(term: str) -> str:
-    """FR-63's "normalisation on ingestion and prohibition at entry",
-    applied at write time rather than only at seed-import time.
+    """FR-63's "normalisation on ingestion and prohibition at entry", applied
+    at write time (ADR-0022).
 
     Collapses every normalisable space (a non-breaking space, a narrow
-    no-break space - PRD Appendix A.1) to an ordinary space and strips the
-    edges via the same `nptc_shared.text.normalise_for_comparison` the P0
-    transform and FR-05 collision detection already share (ADR-0001) -
-    this is FR-71's own doctrine that a normalisable space has exactly one
-    correct repair, applied here for storage rather than comparison.
+    no-break space; PRD Appendix A.1) to an ordinary space and strips the
+    edges, via the `nptc_shared.text.normalise_for_comparison` that the P0
+    transform and FR-05 collision detection share (ADR-0001). A normalisable
+    space has exactly one correct repair (FR-71).
 
-    Anything that survives that pass - a zero-width space, a bidi
-    override, a genuine control character - has no single correct repair,
-    so it is rejected rather than silently dropped. The message quotes the
-    offending character via `escape_invisible`, never the raw character
-    itself (NFR-38 test 2 prohibits an invisible character appearing
-    verbatim in any generated output).
+    Anything that survives that pass, such as a zero-width space, a bidi
+    override or a control character, has no single correct repair, so it is
+    rejected rather than silently dropped. The message quotes the character
+    through `escape_invisible`, never raw: NFR-38 test 2 prohibits an
+    invisible character appearing verbatim in generated output.
     """
     cleaned = normalise_for_comparison(term)
     if not cleaned:
@@ -94,37 +82,36 @@ def clean_term(term: str) -> str:
 
 
 def validate_language_tag(language: str) -> str:
-    """Raises `DesignationLanguageError` unless `language` is a
-    well-formed BCP-47 tag (`nptc_shared.language.
-    is_well_formed_language_tag`); otherwise returns it *canonicalised*
-    (`nptc_shared.language.canonicalize_language_tag`) - `en-au` and
-    `en-AU` must resolve to the one stored/compared form, or every
-    string-equality check downstream (`DEFAULT_LANGUAGE`, the two
-    designation partial unique indexes, `ck_designation_no_en_au_preferred`)
-    silently treats them as different languages (issue #224 review finding
-    2). This is the one function `Designation`'s own `@validates("language")`
-    hook calls, so every write path that constructs a `Designation` gets
-    this for free; a caller acting on a caller-supplied `language` before
-    a `Designation` is ever constructed (`nptc.catalogue.designations.
-    load_active_designation`, `nptc.catalogue.collisions.
-    acknowledge_collision`) must call this itself first."""
+    """Raises `DesignationLanguageError` unless `language` is a well-formed
+    BCP-47 tag (`is_well_formed_language_tag`); otherwise returns it
+    *canonicalised* (`canonicalize_language_tag`). `en-au` and `en-AU` must
+    resolve to the one stored and compared form, or every string-equality
+    check downstream (`DEFAULT_LANGUAGE`, the two designation partial unique
+    indexes, `ck_designation_no_en_au_preferred`) treats them as different
+    languages.
+
+    `Designation`'s own `@validates("language")` hook calls this, so every
+    write path that constructs a `Designation` gets it for free. A caller
+    acting on a caller-supplied `language` before a `Designation` exists
+    (`nptc.catalogue.designations.load_active_designation`,
+    `nptc.catalogue.collisions.acknowledge_collision`) must call it itself
+    first."""
     if not is_well_formed_language_tag(language):
         raise DesignationLanguageError(f"{language!r} is not a well-formed BCP-47 language tag")
     return canonicalize_language_tag(language)
 
 
 def preferred_term_length(term: str) -> int:
-    """FR-85: the character count of `term` after the same whitespace
-    cleaning applied at entry (`clean_term`) - computed here, never
-    stored. This is the one function `CatalogueEntry.length`,
-    `Designation.length`, and the future export/presentation layer
-    (FR-85's "continues to be published, for continuity") must all call,
-    so the published number can never drift from a second implementation.
+    """FR-85: the character count of `term` after the whitespace cleaning
+    applied at entry (`clean_term`), computed here and never stored.
+    `CatalogueEntry.length`, `Designation.length` and the future export layer
+    (FR-85's "continues to be published, for continuity") must all call this,
+    so the published number cannot drift from a second implementation.
 
-    Deliberately takes the *stored* term, already cleaned by `clean_term`
-    - PRD §6.5's migration note is exactly this: a term with a trailing
-    non-breaking space publishes a *shorter* length once that space
-    collapses to nothing after `.strip()`, for roughly one entry in five.
+    Takes the *stored* term, already cleaned by `clean_term`. PRD SS6.5's
+    migration note is this case: a term with a trailing non-breaking space
+    publishes a *shorter* length once the space collapses, for roughly one
+    entry in five.
     """
     return len(normalise_for_comparison(term))
 
