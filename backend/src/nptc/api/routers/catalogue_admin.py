@@ -177,12 +177,12 @@ class AdminEntrySummary(EntrySummary):
 
 
 class AdminEntryPage(BaseModel):
-    """The admin counterpart to `catalogue_shared.EntryPage` -
-    same shape, rows that additionally carry `row_version`. A standalone
-    model rather than a subclass of `EntryPage`: overriding `items`' element
-    type in a subclass is the field-covariance trap `mypy --strict` (and
-    Liskov substitution generally) flags on a model a caller might still
-    pass around as the parent type."""
+    """The admin counterpart to `catalogue_shared.EntryPage` - same shape,
+    rows that additionally carry `row_version`. A standalone model rather
+    than a subclass of `EntryPage`: overriding `items`' element type in a
+    subclass is the field-covariance trap `mypy --strict` (and Liskov
+    substitution generally) flags on a model a caller might still pass
+    around as the parent type."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -200,8 +200,8 @@ class AdminSearchHit(AdminEntrySummary):
 
 
 class AdminSearchPage(BaseModel):
-    """The admin counterpart to `catalogue_shared.SearchPage` -
-    see `AdminEntryPage`'s own docstring for why this is a standalone model
+    """The admin counterpart to `catalogue_shared.SearchPage` - see
+    `AdminEntryPage`'s own docstring for why this is a standalone model
     rather than a subclass."""
 
     model_config = ConfigDict(frozen=True)
@@ -310,15 +310,15 @@ def list_entries_any_status(
     on each row so a caller can tell a draft from an active entry.
 
     `filter.*` parameters behave as they do on the public surface, except
-    `?filter.status=` now accepts any `CatalogueEntryStatus` value rather
+    `?filter.status=` accepts any `CatalogueEntryStatus` value rather
     than only `active` - `AdminFiltersDep` builds its facet context from
     `maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the
     same reason they are not on `/catalogue/entries`: `GET
     /catalogue/admin/search` is where the facet list with counts lives.
 
-    Rows carry `row_version` - `AdminEntryPage`, not the public
-    `EntryPage` - so the maintenance list screen's selection surface can
-    carry FR-38's optimistic-locking token per row without a second read.
+    Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage`
+    - so the maintenance list screen's selection surface can carry FR-38's
+    optimistic-locking token per row without a second read.
     """
     page = maintenance.list_entries_any_status(
         session, sort=sort, limit=limit, after=after, filters=filters.selections
@@ -369,8 +369,8 @@ def search_any_status(
     is non-degenerate here (every status an administrator might filter by),
     unlike the public surface's single-bucket `active` facet.
 
-    Hits carry `row_version` - `nptc.catalogue.search.SearchHit`
-    reads it straight off `scored`'s own join to `catalogue_entry`, see that
+    Hits carry `row_version` - `nptc.catalogue.search.SearchHit` reads it
+    straight off `scored`'s own join to `catalogue_entry`, see that
     module's docstring - so `AdminSearchHit`, not the public `SearchHit`,
     carries it onto the wire here.
     """

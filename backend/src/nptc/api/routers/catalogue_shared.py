@@ -333,9 +333,9 @@ class EntryPage(BaseModel):
 
     Served by both `catalogue.py`'s public `GET /catalogue/entries`
     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/entries` (any status) - one shape, the
-    same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
-    is `null` on the last page - which is the *only* reliable signal that
+    `GET /catalogue/admin/entries` (any status) - one shape, the same
+    reason `EntryDetail` is shared rather than duplicated. `next_cursor` is
+    `null` on the last page - which is the *only* reliable signal that
     paging is finished. A client must not infer the end from a short page: a
     page can be short and still have a successor.
     """
@@ -425,8 +425,8 @@ class Facet(BaseModel):
 class SearchPage(BaseModel):
     """Served by both `catalogue.py`'s public `GET /catalogue/search`
     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/search` (any status) - see
-    `EntryPage`'s own docstring for why one shape rather than two."""
+    `GET /catalogue/admin/search` (any status) - see `EntryPage`'s own
+    docstring for why one shape rather than two."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -450,11 +450,11 @@ class PropertyValue(BaseModel):
     changing. `ordinal` is meaningful for a multi-valued property: it is the
     position of this value among that property's values, zero-based.
 
-    `status` is the *definition's* status - `active` or
-    `deprecated` - not a fact about this value. FR-11 makes a deprecated
-    definition retain its recorded values, so without this field a client
-    reading an entry could not tell such a value apart from one recorded
-    against a property still open for new writes, short of a second call to
+    `status` is the *definition's* status - `active` or `deprecated` - not
+    a fact about this value. FR-11 makes a deprecated definition retain its
+    recorded values, so without this field a client reading an entry could
+    not tell such a value apart from one recorded against a property still
+    open for new writes, short of a second call to
     `GET /registry/properties?include_deprecated=true`.
     """
 
@@ -480,14 +480,14 @@ class EntryDetail(EntrySummary):
     every consumer.
 
     Served by both `catalogue.py`'s public detail route (`active` only) and
-    `catalogue_admin.py`'s admin detail route (any status) -
-    one shape, so an edit screen consuming the admin route today gets the
-    exact same fields a public consumer of the same entry, once published,
-    would see. One exception: `designations` also carries
-    retired rows on the admin route, because its reader is an editor
-    deciding against editorial history rather than an implementer who has
-    no use for it - see `queries.load_designations`'s own docstring.
-    `bindings` and `properties` are identical on both routes.
+    `catalogue_admin.py`'s admin detail route (any status) - one shape, so
+    an edit screen consuming the admin route today gets the exact same
+    fields a public consumer of the same entry, once published, would see.
+    One exception: `designations` also carries retired rows on the admin
+    route, because its reader is an editor deciding against editorial
+    history rather than an implementer who has no use for it - see
+    `queries.load_designations`'s own docstring. `bindings` and
+    `properties` are identical on both routes.
     """
 
     model_config = ConfigDict(frozen=True)

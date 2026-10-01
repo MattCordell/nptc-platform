@@ -273,11 +273,10 @@ def _collision_warning(collision: Collision) -> CollisionWarning:
 
 
 class LengthWarning(BaseModel):
-    """FR-86: the catalogue's own preferred term now exceeds
-    the configured maximum length. Non-blocking, the same "warn, never
-    raise" shape as `CollisionWarning` - a hard block would make an
-    existing over-length entry uneditable, the specific failure FR-86
-    exists to prevent.
+    """FR-86: the catalogue's own preferred term exceeds the configured
+    maximum length. Non-blocking, the same "warn, never raise" shape as
+    `CollisionWarning` - a hard block would make an existing over-length
+    entry uneditable, the specific failure FR-86 exists to prevent.
 
     A separate field from `CollisionWarning`/`warnings`, not a member of
     that list: `warning_collisions` only ever looks for another live
@@ -386,9 +385,8 @@ class AddDesignationsRequest(_WithLanguage):
 
 class DesignationWriteResult(BaseModel):
     """`add_designations`'s response: the created row(s), any warning-severity
-    collisions, and the entry's new `row_version` (FR-38) - so a
-    client never has to re-fetch the entry just to learn its next lock
-    token."""
+    collisions, and the entry's new `row_version` (FR-38) - so a client
+    never has to re-fetch the entry just to learn its next lock token."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -436,15 +434,15 @@ class AmendDesignationResult(BaseModel):
     `row_version` is the entry's, on both branches, and is what a client
     sends back as `expected_row_version` on its next write - so a save
     never has to be followed by a re-fetch just to learn the new token. It
-    advances on both branches (FR-38): a `designation` row
-    has no version of its own, but amending one bumps the entry's counter
-    via `nptc.catalogue.entries.entry_child_write`, the same way the
+    advances on both branches (FR-38): a `designation` row has no version
+    of its own, but amending one bumps the entry's counter via
+    `nptc.catalogue.entries.entry_child_write`, the same way the
     preferred-term branch's `save_entry` always has.
 
-    `length_warning` (FR-86) is set only on the preferred-term
-    branch, and only when a maximum is configured and exceeded - see
-    `LengthWarning`'s own docstring for why it is a separate field rather
-    than a member of `warnings`.
+    `length_warning` (FR-86) is set only on the preferred-term branch, and
+    only when a maximum is configured and exceeded - see `LengthWarning`'s
+    own docstring for why it is a separate field rather than a member of
+    `warnings`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -499,10 +497,10 @@ class ReinstateDesignationResult(BaseModel):
     warning-severity collisions, and the entry's new `row_version` (FR-38).
 
     A new model, not a reuse of `DesignationWriteResult`: this route always
-    acts on exactly one row, and
-    `DesignationWriteResult.designations` being a list would misdescribe
-    that. Shaped like `AmendDesignationResult` instead, which reinstatement
-    otherwise matches exactly: one designation, warnings, row_version."""
+    acts on exactly one row, and `DesignationWriteResult.designations`
+    being a list would misdescribe that. Shaped like
+    `AmendDesignationResult` instead, which reinstatement otherwise matches
+    exactly: one designation, warnings, row_version."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -816,9 +814,9 @@ def reinstate_designation_route(
     business_key: BusinessKeyPath,
     body: Annotated[ReinstateDesignationRequest, Body()],
 ) -> ReinstateDesignationResult:
-    """Reinstate a retired designation. Both lookups run inside the lock, after
-    `entry_child_write`'s own version check, matching every other route
-    here (FR-38).
+    """Reinstate a retired designation. Both lookups run inside the lock,
+    after `entry_child_write`'s own version check, matching every other
+    route here (FR-38).
 
     The already-active check runs first, and outside `load_retired_
     designation` itself: a term that already has an active designation

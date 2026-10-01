@@ -1041,7 +1041,7 @@
           "catalogue"
         ],
         "summary": "An entry's change history, most recent first (FR-19)",
-        "description": "Every audit event against this entry or one of its designations,\ncode bindings or property values (FR-19) - what changed, when, who by\n(a display name, never an internal id), and the changelog note. Never\nempty-errors: an entry never edited since seeding returns `200` with\nan empty `items` list.\n\n`changed_by` is populated only for an authenticated caller\n(NFR-26): the endpoint itself stays fully public\n(`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous\nrequest gets `null` on every event regardless of who actually made the\nchange - naming an identifiable RCPA-QAP staff member to anyone on the\ninternet was never a considered part of ADR-0034's \"history is public\"\nargument. `principal` is captured here (rather than left in\n`dependencies=`, this route's own previous shape) specifically to read\n`principal.user_id`; every other route in this module has no use for\nthe resolved principal itself.\n\n`release` is always `null` on every item in P1 - FR-19 asks for\n\"every published release in which it appeared\" too, and releases do\nnot exist until P4. This is the defined slot P4 fills; it is not\ndropped from the shape in the meantime.",
+        "description": "Every audit event against this entry or one of its designations,\ncode bindings or property values (FR-19) - what changed, when, who by\n(a display name, never an internal id), and the changelog note. Never\nempty-errors: an entry never edited since seeding returns `200` with\nan empty `items` list.\n\n`changed_by` is populated only for an authenticated caller (NFR-26):\nthe endpoint itself stays fully public (`Permission.CATALOGUE_BROWSE`,\nheld by `Role.ANON`), but an anonymous request gets `null` on every\nevent regardless of who actually made the change - naming an\nidentifiable RCPA-QAP staff member to anyone on the internet was never\na considered part of ADR-0034's \"history is public\" argument.\n`principal` is captured here (rather than left in `dependencies=`)\nspecifically to read `principal.user_id`; every other route in this\nmodule has no use for the resolved principal itself.\n\n`release` is always `null` on every item in P1 - FR-19 asks for\n\"every published release in which it appeared\" too, and releases do\nnot exist until P4. This is the defined slot P4 fills; it is not\ndropped from the shape in the meantime.",
         "operationId": "read_history_api_v1_catalogue_entries__business_key__history_get",
         "parameters": [
           {
@@ -1625,7 +1625,7 @@
           "catalogue-admin"
         ],
         "summary": "Reinstate an entry's most-recently-retired designation",
-        "description": "Reinstate a retired designation. Both lookups run inside the lock, after\n`entry_child_write`'s own version check, matching every other route\nhere (FR-38).\n\nThe already-active check runs first, and outside `load_retired_\ndesignation` itself: a term that already has an active designation\n(the exact scenario re-adding a retired term creates today) must\nrefuse with a 409 naming that conflict, not the 404 a term that was\nsimply never retired gets - `load_retired_designation` only ever\ninspects retired rows, so it cannot tell the two cases apart on its\nown (see its own docstring).",
+        "description": "Reinstate a retired designation. Both lookups run inside the lock,\nafter `entry_child_write`'s own version check, matching every other\nroute here (FR-38).\n\nThe already-active check runs first, and outside `load_retired_\ndesignation` itself: a term that already has an active designation\n(the exact scenario re-adding a retired term creates today) must\nrefuse with a 409 naming that conflict, not the 404 a term that was\nsimply never retired gets - `load_retired_designation` only ever\ninspects retired rows, so it cannot tell the two cases apart on its\nown (see its own docstring).",
         "operationId": "reinstate_designation_route_api_v1_catalogue_entries__business_key__designations_reinstatement_post",
         "parameters": [
           {
@@ -2086,7 +2086,7 @@
           "catalogue-admin"
         ],
         "summary": "One page of catalogue entries, any status",
-        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `list_entries`: keyset paging on `sort` then `business_key`,\nevery status in scope rather than `PUBLIC_STATUSES` alone, and `status`\non each row so a caller can tell a draft from an active entry.\n\n`filter.*` parameters behave as they do on the public surface, except\n`?filter.status=` now accepts any `CatalogueEntryStatus` value rather\nthan only `active` - `AdminFiltersDep` builds its facet context from\n`maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the\nsame reason they are not on `/catalogue/entries`: `GET\n/catalogue/admin/search` is where the facet list with counts lives.\n\nRows carry `row_version` - `AdminEntryPage`, not the public\n`EntryPage` - so the maintenance list screen's selection surface can\ncarry FR-38's optimistic-locking token per row without a second read.",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `list_entries`: keyset paging on `sort` then `business_key`,\nevery status in scope rather than `PUBLIC_STATUSES` alone, and `status`\non each row so a caller can tell a draft from an active entry.\n\n`filter.*` parameters behave as they do on the public surface, except\n`?filter.status=` accepts any `CatalogueEntryStatus` value rather\nthan only `active` - `AdminFiltersDep` builds its facet context from\n`maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the\nsame reason they are not on `/catalogue/entries`: `GET\n/catalogue/admin/search` is where the facet list with counts lives.\n\nRows carry `row_version` - `AdminEntryPage`, not the public `EntryPage`\n- so the maintenance list screen's selection surface can carry FR-38's\noptimistic-locking token per row without a second read.",
         "operationId": "list_entries_any_status_api_v1_catalogue_admin_entries_get",
         "parameters": [
           {
@@ -2204,7 +2204,7 @@
           "catalogue-admin"
         ],
         "summary": "Search catalogue entries by term, any status",
-        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `search`: identical ranking, threshold and keyset paging\n(`nptc.catalogue.search`, called with `statuses=maintenance.\nMAINTENANCE_STATUSES` instead of the default `PUBLIC_STATUSES`), so a\ndraft, deprecated or withdrawn entry is findable by an administrator the\nsame way an active one is findable by anyone.\n\n`facets` is derived the same way `GET /catalogue/search`'s own is, over\nthe same `?filter.*` parameters - including `status`, whose bucket list\nis non-degenerate here (every status an administrator might filter by),\nunlike the public surface's single-bucket `active` facet.\n\nHits carry `row_version` - `nptc.catalogue.search.SearchHit`\nreads it straight off `scored`'s own join to `catalogue_entry`, see that\nmodule's docstring - so `AdminSearchHit`, not the public `SearchHit`,\ncarries it onto the wire here.",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s\npublic `search`: identical ranking, threshold and keyset paging\n(`nptc.catalogue.search`, called with `statuses=maintenance.\nMAINTENANCE_STATUSES` instead of the default `PUBLIC_STATUSES`), so a\ndraft, deprecated or withdrawn entry is findable by an administrator the\nsame way an active one is findable by anyone.\n\n`facets` is derived the same way `GET /catalogue/search`'s own is, over\nthe same `?filter.*` parameters - including `status`, whose bucket list\nis non-degenerate here (every status an administrator might filter by),\nunlike the public surface's single-bucket `active` facet.\n\nHits carry `row_version` - `nptc.catalogue.search.SearchHit` reads it\nstraight off `scored`'s own join to `catalogue_entry`, see that\nmodule's docstring - so `AdminSearchHit`, not the public `SearchHit`,\ncarries it onto the wire here.",
         "operationId": "search_any_status_api_v1_catalogue_admin_search_get",
         "parameters": [
           {
@@ -2437,7 +2437,7 @@
           "registry"
         ],
         "summary": "List property definitions",
-        "description": "`scope` is inclusive of `PropertyScope.BOTH`: `?scope=submission` returns `submission` and\n`both` properties, `?scope=maintenance` returns `maintenance` and\n`both`, and omitting it returns everything - a submission form should\nnot have to also ask for `both` to see a property meant for both\nscreens.",
+        "description": "`scope` is inclusive of `PropertyScope.BOTH`: `?scope=submission`\nreturns `submission` and `both` properties, `?scope=maintenance`\nreturns `maintenance` and `both`, and omitting it returns everything -\na submission form should not have to also ask for `both` to see a\nproperty meant for both screens.",
         "operationId": "list_properties_api_v1_registry_properties_get",
         "parameters": [
           {
@@ -2972,7 +2972,7 @@
           "registry"
         ],
         "summary": "List a coded property's offerable values",
-        "description": "FR-10's concept-picker data source, plus a\nresolve-by-code lookup for a value beyond the picker page's own\n`DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers\nfrom Ontoserver or the `LocalCode` table - see\n`nptc.catalogue.property_value_sources.list_property_values`/\n`resolve_property_values` for the only places that branch on\n`binding_target`; this route and `PropertyValuePage` never see it.\n\n`code` is a second, mutually exclusive selection mode, never combined\nwith `filter`/`offset`/`count` - `offset`/`count`\ndefault to values a caller resolving by `code` would not need to\nchange, so a genuine attempt to combine them is what this refuses,\nnot every request that happens to also carry those defaults.",
+        "description": "FR-10's concept-picker data source, plus a resolve-by-code lookup\nfor a value beyond the picker page's own `DEFAULT_PAGE_SIZE` ceiling.\nResolves `key`'s own binding and answers from Ontoserver or the\n`LocalCode` table - see\n`nptc.catalogue.property_value_sources.list_property_values`/\n`resolve_property_values` for the only places that branch on\n`binding_target`; this route and `PropertyValuePage` never see it.\n\n`code` is a second, mutually exclusive selection mode, never combined\nwith `filter`/`offset`/`count` - `offset`/`count` default to values a\ncaller resolving by `code` would not need to change, so a genuine\nattempt to combine them is what this refuses, not every request that\nhappens to also carry those defaults.",
         "operationId": "list_property_value_options_api_v1_registry_properties__key__values_get",
         "parameters": [
           {
@@ -3700,7 +3700,7 @@
           "next_cursor"
         ],
         "title": "AdminEntryPage",
-        "description": "The admin counterpart to `catalogue_shared.EntryPage` -\nsame shape, rows that additionally carry `row_version`. A standalone\nmodel rather than a subclass of `EntryPage`: overriding `items`' element\ntype in a subclass is the field-covariance trap `mypy --strict` (and\nLiskov substitution generally) flags on a model a caller might still\npass around as the parent type."
+        "description": "The admin counterpart to `catalogue_shared.EntryPage` - same shape,\nrows that additionally carry `row_version`. A standalone model rather\nthan a subclass of `EntryPage`: overriding `items`' element type in a\nsubclass is the field-covariance trap `mypy --strict` (and Liskov\nsubstitution generally) flags on a model a caller might still pass\naround as the parent type."
       },
       "AdminEntrySummary": {
         "properties": {
@@ -3860,7 +3860,7 @@
           "facets"
         ],
         "title": "AdminSearchPage",
-        "description": "The admin counterpart to `catalogue_shared.SearchPage` -\nsee `AdminEntryPage`'s own docstring for why this is a standalone model\nrather than a subclass."
+        "description": "The admin counterpart to `catalogue_shared.SearchPage` - see\n`AdminEntryPage`'s own docstring for why this is a standalone model\nrather than a subclass."
       },
       "AmendDesignationRequest": {
         "properties": {
@@ -3943,7 +3943,7 @@
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row\nhas no version of its own, but amending one bumps the entry's counter\nvia `nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`length_warning` (FR-86) is set only on the preferred-term\nbranch, and only when a maximum is configured and exceeded - see\n`LengthWarning`'s own docstring for why it is a separate field rather\nthan a member of `warnings`."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row has no version\nof its own, but amending one bumps the entry's counter via\n`nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`length_warning` (FR-86) is set only on the preferred-term branch, and\nonly when a maximum is configured and exceeded - see `LengthWarning`'s\nown docstring for why it is a separate field rather than a member of\n`warnings`."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -4030,7 +4030,7 @@
           "reason"
         ],
         "title": "AmendPropertyDefinitionRequest",
-        "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`.\n\n**An explicit `null` on a known field is refused, not a silent no-op.**\nNone of these fields is a nullable\ndomain value, so a client sending `{\"label\": null, ...}` almost\ncertainly meant to omit the field, not clear it - `_reject_explicit_null`\nbelow distinguishes \"omitted\" from \"provided as null\" via\n`model_fields_set`, which `changes()` cannot do once every field has\ncollapsed to `None`."
+        "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`.\n\n**An explicit `null` on a known field is refused, not a silent no-op.**\nNone of these fields is a nullable domain value, so a client sending\n`{\"label\": null, ...}` almost certainly meant to omit the field, not\nclear it - `_reject_explicit_null` below distinguishes \"omitted\" from\n\"provided as null\" via `model_fields_set`, which `changes()` cannot do\nonce every field has collapsed to `None`."
       },
       "AuditActor": {
         "properties": {
@@ -4472,7 +4472,7 @@
           "entries"
         ],
         "title": "BulkSavePropertyValuesRequest",
-        "description": "The body of `POST /catalogue/entries/bulk/properties/{key}`\n(FR-39). `values` is the one set every named entry ends up\nholding - a whole-set replace, identical to the singular route's own\nsemantics, applied across `entries` rather than one."
+        "description": "The body of `POST /catalogue/entries/bulk/properties/{key}`\n(FR-39). `values` is the one set every named entry ends up holding - a\nwhole-set replace, identical to the singular route's own semantics,\napplied across `entries` rather than one."
       },
       "BulkSavePropertyValuesResult": {
         "properties": {
@@ -4823,7 +4823,7 @@
           "reason"
         ],
         "title": "CreatePropertyDefinitionRequest",
-        "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API.\n\n`cardinality`/`scope`/`strength`/`binding_target` are typed against the\nexact `StrEnum`s `property_definition`'s own database `CHECK`\nconstraints close over - an invalid value\nis a pydantic 422 before the request ever reaches the ORM, rather\nthan a `23514` `IntegrityError` that `create_definition`'s `except\nIntegrityError` used to re-raise unchanged, surfacing as an unhandled\n500. `datatype` stays a bare `str` deliberately - FR-77's own extension\npoint, so admitting a new datatype never touches this router - and is\ninstead validated by `create_definition` itself, against the live\n`DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422\nrather than a broken row that only misbehaves at the first value\nwrite."
+        "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API.\n\n`cardinality`/`scope`/`strength`/`binding_target` are typed against the\nexact `StrEnum`s `property_definition`'s own database `CHECK`\nconstraints close over - an invalid value is a pydantic 422 before the\nrequest reaches the ORM, not a database `CHECK` violation surfacing as\na 500. `datatype` stays a bare `str` deliberately - FR-77's own\nextension point, so admitting a new datatype never touches this router\n- and is instead validated by `create_definition` itself, against the\nlive `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed\n422 rather than a broken row that only misbehaves at the first value\nwrite."
       },
       "DeprecatePropertyDefinitionRequest": {
         "properties": {
@@ -4966,7 +4966,7 @@
           "row_version"
         ],
         "title": "DesignationWriteResult",
-        "description": "`add_designations`'s response: the created row(s), any warning-severity\ncollisions, and the entry's new `row_version` (FR-38) - so a\nclient never has to re-fetch the entry just to learn its next lock\ntoken."
+        "description": "`add_designations`'s response: the created row(s), any warning-severity\ncollisions, and the entry's new `row_version` (FR-38) - so a client\nnever has to re-fetch the entry just to learn its next lock token."
       },
       "EntryCoreWriteResult": {
         "properties": {
@@ -5071,7 +5071,7 @@
           "properties"
         ],
         "title": "EntryDetail",
-        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status) -\none shape, so an edit screen consuming the admin route today gets the\nexact same fields a public consumer of the same entry, once published,\nwould see. One exception: `designations` also carries\nretired rows on the admin route, because its reader is an editor\ndeciding against editorial history rather than an implementer who has\nno use for it - see `queries.load_designations`'s own docstring.\n`bindings` and `properties` are identical on both routes."
+        "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status) - one shape, so\nan edit screen consuming the admin route today gets the exact same\nfields a public consumer of the same entry, once published, would see.\nOne exception: `designations` also carries retired rows on the admin\nroute, because its reader is an editor deciding against editorial\nhistory rather than an implementer who has no use for it - see\n`queries.load_designations`'s own docstring. `bindings` and\n`properties` are identical on both routes."
       },
       "EntryPage": {
         "properties": {
@@ -5100,7 +5100,7 @@
           "next_cursor"
         ],
         "title": "EntryPage",
-        "description": "One page of `EntrySummary` rows, keyset-paginated on `business_key`.\n\nServed by both `catalogue.py`'s public `GET /catalogue/entries`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/entries` (any status) - one shape, the\nsame reason `EntryDetail` is shared rather than duplicated. `next_cursor`\nis `null` on the last page - which is the *only* reliable signal that\npaging is finished. A client must not infer the end from a short page: a\npage can be short and still have a successor."
+        "description": "One page of `EntrySummary` rows, keyset-paginated on `business_key`.\n\nServed by both `catalogue.py`'s public `GET /catalogue/entries`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/entries` (any status) - one shape, the same\nreason `EntryDetail` is shared rather than duplicated. `next_cursor` is\n`null` on the last page - which is the *only* reliable signal that\npaging is finished. A client must not infer the end from a short page: a\npage can be short and still have a successor."
       },
       "EntrySummary": {
         "properties": {
@@ -5276,7 +5276,7 @@
           "params"
         ],
         "title": "FormControl",
-        "description": "`registry.handlers.FormControlDescriptor`, on the wire (ADR-0013 SS3,\nFR-77). `control` is typed against `ControlKind` - a\nclosed enum ADR-0013 sanctions precisely because it does not grow when\na datatype is added - so OpenAPI emits a union a generated client\ncan switch over exhaustively, rather than the bare `datatype` string\nFR-77 forbids branching a form on."
+        "description": "`registry.handlers.FormControlDescriptor`, on the wire (ADR-0013 SS3,\nFR-77). `control` is typed against `ControlKind` - a closed enum\nADR-0013 sanctions precisely because it does not grow when a datatype\nis added - so OpenAPI emits a union a generated client can switch over\nexhaustively, rather than the bare `datatype` string FR-77 forbids\nbranching a form on."
       },
       "HTTPValidationError": {
         "properties": {
@@ -5468,7 +5468,7 @@
           "max_length"
         ],
         "title": "LengthWarning",
-        "description": "FR-86: the catalogue's own preferred term now exceeds\nthe configured maximum length. Non-blocking, the same \"warn, never\nraise\" shape as `CollisionWarning` - a hard block would make an\nexisting over-length entry uneditable, the specific failure FR-86\nexists to prevent.\n\nA separate field from `CollisionWarning`/`warnings`, not a member of\nthat list: `warning_collisions` only ever looks for another live\nentry's active synonym, which has nothing to do with this entry's own\nlength, and `CollisionWarning`'s shape (a colliding entry's business\nkey, term, provenance) has no field this could honestly populate.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
+        "description": "FR-86: the catalogue's own preferred term exceeds the configured\nmaximum length. Non-blocking, the same \"warn, never raise\" shape as\n`CollisionWarning` - a hard block would make an existing over-length\nentry uneditable, the specific failure FR-86 exists to prevent.\n\nA separate field from `CollisionWarning`/`warnings`, not a member of\nthat list: `warning_collisions` only ever looks for another live\nentry's active synonym, which has nothing to do with this entry's own\nlength, and `CollisionWarning`'s shape (a colliding entry's business\nkey, term, provenance) has no field this could honestly populate.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
       },
       "PatchEntryRequest": {
         "properties": {
@@ -5816,7 +5816,7 @@
           "justification"
         ],
         "title": "PropertyValue",
-        "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based.\n\n`status` is the *definition's* status - `active` or\n`deprecated` - not a fact about this value. FR-11 makes a deprecated\ndefinition retain its recorded values, so without this field a client\nreading an entry could not tell such a value apart from one recorded\nagainst a property still open for new writes, short of a second call to\n`GET /registry/properties?include_deprecated=true`."
+        "description": "One property value, rendered by its datatype's own handler.\n\n`value` is whatever that handler's `serialise(..., JSON)` returns, so a\nnew datatype (FR-77) appears here correctly without this module\nchanging. `ordinal` is meaningful for a multi-valued property: it is the\nposition of this value among that property's values, zero-based.\n\n`status` is the *definition's* status - `active` or `deprecated` - not\na fact about this value. FR-11 makes a deprecated definition retain its\nrecorded values, so without this field a client reading an entry could\nnot tell such a value apart from one recorded against a property still\nopen for new writes, short of a second call to\n`GET /registry/properties?include_deprecated=true`."
       },
       "PropertyValueItem": {
         "properties": {
@@ -5842,7 +5842,7 @@
           "display"
         ],
         "title": "PropertyValueItem",
-        "description": "One offerable value for a coded property - identical in\nshape whether it came from a SNOMED value set or a local code system;\nnothing here names `binding_target`."
+        "description": "One offerable value for a coded property - identical in shape whether\nit came from a SNOMED value set or a local code system; nothing here\nnames `binding_target`."
       },
       "PropertyValueItemRequest": {
         "properties": {
@@ -5965,7 +5965,7 @@
           "row_version"
         ],
         "title": "ReinstateDesignationResult",
-        "description": "`reinstate_designation_route`'s response: the reinstated row, any\nwarning-severity collisions, and the entry's new `row_version` (FR-38).\n\nA new model, not a reuse of `DesignationWriteResult`: this route always\nacts on exactly one row, and\n`DesignationWriteResult.designations` being a list would misdescribe\nthat. Shaped like `AmendDesignationResult` instead, which reinstatement\notherwise matches exactly: one designation, warnings, row_version."
+        "description": "`reinstate_designation_route`'s response: the reinstated row, any\nwarning-severity collisions, and the entry's new `row_version` (FR-38).\n\nA new model, not a reuse of `DesignationWriteResult`: this route always\nacts on exactly one row, and `DesignationWriteResult.designations`\nbeing a list would misdescribe that. Shaped like\n`AmendDesignationResult` instead, which reinstatement otherwise matches\nexactly: one designation, warnings, row_version."
       },
       "ReplaceBindingRequest": {
         "properties": {
@@ -6214,7 +6214,7 @@
           "facets"
         ],
         "title": "SearchPage",
-        "description": "Served by both `catalogue.py`'s public `GET /catalogue/search`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/search` (any status) - see\n`EntryPage`'s own docstring for why one shape rather than two."
+        "description": "Served by both `catalogue.py`'s public `GET /catalogue/search`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/search` (any status) - see `EntryPage`'s own\ndocstring for why one shape rather than two."
       },
       "SemanticTagState": {
         "type": "string",

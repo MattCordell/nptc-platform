@@ -269,9 +269,9 @@ class BulkPropertyEntryTarget(BaseModel):
 
 class BulkSavePropertyValuesRequest(BaseModel):
     """The body of `POST /catalogue/entries/bulk/properties/{key}`
-    (FR-39). `values` is the one set every named entry ends up
-    holding - a whole-set replace, identical to the singular route's own
-    semantics, applied across `entries` rather than one."""
+    (FR-39). `values` is the one set every named entry ends up holding - a
+    whole-set replace, identical to the singular route's own semantics,
+    applied across `entries` rather than one."""
 
     model_config = ConfigDict(frozen=True)
 
