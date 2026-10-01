@@ -1,32 +1,24 @@
-"""`GET /audit/events` and `GET /audit/events/export` (issue #286,
-NFR-12): the administrator search/filter surface over `audit_event`, and
-its NDJSON export sibling.
+"""`GET /audit/events` and `GET /audit/events/export` (NFR-12): the administrator search and
+filter surface over `audit_event`, and its NDJSON export. ADR-0039 records the decisions
+below.
 
-**Gated on `Permission.AUDIT_READ`**, Administrator-only and in
-`MFA_REQUIRED_PERMISSIONS` (NFR-06), matching `catalogue_bindings.py`'s
-own write routes - so the RFC 9470 step-up challenge comes free, with no
-extra code in this module.
+**Gated on `Permission.AUDIT_READ`**, Administrator-only and in `MFA_REQUIRED_PERMISSIONS`
+(NFR-06), so the RFC 9470 step-up challenge needs no code here.
 
-**Serves `nptc.audit.queries`' row shape close to verbatim.** `before`/
-`after` are the stored JSONB as-is, and `actor` resolves by internal id,
-`null` display name and all - see that module's own docstring for why
-both are safe here, on an Administrator-plus-MFA surface, in a way they
-are not on `nptc.catalogue.history`'s public FR-19 one.
+**Rows are served close to verbatim.** `before` and `after` are the stored JSONB, and `actor`
+resolves by internal id, with a `null` display name for a closed account. That is safe on an
+Administrator-plus-MFA surface and not on the public FR-19 history (see
+`nptc.audit.queries`).
 
-**The export streams, and validates before it starts streaming.**
-`export_audit_events` calls `nptc.audit.queries.stream_audit_events`
-(which validates `filters` eagerly - see its own docstring) before ever
-constructing the `StreamingResponse` - a `StreamingResponse` sends its
-`200` and headers as soon as its body iterator is first pulled from, so a
-validation error raised lazily inside that iterator could not become a
-clean `422` any more. No `audit.exported` audit event: this route holds
-no write privilege at all (NFR-09), and NFR-08 scopes audit events to
-state-changing operations - a deliberate decision, not an oversight (see
-`docs/adr/0039-*.md`).
+**The export validates before it streams.** `export_audit_events` calls
+`stream_audit_events`, which validates `filters` eagerly, before it builds the
+`StreamingResponse`. That response sends its `200` and headers on the first pull from its
+iterator, so a validation error raised lazily could no longer become a 422. The route emits
+no `audit.exported` event: it holds no write privilege (NFR-09), and NFR-08 scopes audit
+events to state-changing operations.
 
-**`prev_hash`/`entry_hash` are for cross-reference, not standalone
-recomputation** - see `nptc.audit.queries.AuditEventRow`'s own docstring
-for why, and ADR-0039 for the full reasoning (PR #309 review).
+**`prev_hash` and `entry_hash` are for cross-reference, not standalone recomputation** (see
+`nptc.audit.queries.AuditEventRow`).
 """
 
 from __future__ import annotations
@@ -61,11 +53,8 @@ _RESPONSE_403: Final[dict[str, Any]] = {
         "response then also carries a `WWW-Authenticate` step-up challenge)."
     ),
 }
-#: The read route's own 422 causes - a cursor, a `limit`, or a filter
-#: combination. `_EXPORT_RESPONSE_422` below is a separate constant, not
-#: this one reused, because the export route accepts neither `before` nor
-#: `limit` and a shared description naming both was misleading on that
-#: route (PR #309 review).
+#: The read route's own 422 causes. `_EXPORT_RESPONSE_422` is separate because the
+#: export accepts neither `before` nor `limit`.
 _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -89,13 +78,10 @@ _RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     403: _RESPONSE_403,
     422: _RESPONSE_422,
 }
-#: The export's own response map: the 401/403 causes are identical to the
-#: read route's, the 422 is export-specific (above), and the 200 is
-#: declared explicitly - FastAPI cannot infer a `StreamingResponse`'s
-#: content type from its return annotation, so without this override the
-#: generated document (and #147's client) would see `application/json`
-#: with an empty schema for a body that is actually NDJSON (PR #309
-#: review).
+#: The export's response map. The 200 is declared explicitly because FastAPI
+#: cannot infer a `StreamingResponse`'s content type from its return annotation,
+#: so the document would show `application/json` with an empty schema for an
+#: NDJSON body.
 _EXPORT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     200: {
         "description": "The filtered audit log, one JSON object per line.",
@@ -109,23 +95,18 @@ _EXPORT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 SessionDep = Annotated[Session, Depends(get_session)]
 _READ = Depends(permission_dep(Permission.AUDIT_READ))
 
-#: Not `catalogue_shared.LimitQuery` reused: that type's own fixed
-#: description reads "Maximum entries in this page", and "entries" is
-#: catalogue vocabulary elsewhere in this API - an audit event is not an
-#: entry (PR #309 review). Same numeric bounds, audit-appropriate wording;
-#: not worth generalising `LimitQuery` itself to take a configurable noun
-#: for its one other caller.
+#: Not `catalogue_shared.LimitQuery`: its description says "entries", and an audit
+#: event is not an entry. Same bounds.
 AuditLimitQuery = Annotated[
     int,
     Query(ge=1, le=200, description="Maximum events in this page."),
 ]
 
-#: Matches `nptc.catalogue.history.HistoryCursorQuery` exactly - the same
-#: cursor shape (a digit string bounded by `AuditEvent.sequence`'s own
-#: `BigInteger` range), for the identical reason: bounding the digit count
-#: here is what stops a pathologically long cursor from ever reaching
-#: `int(before)` below, and `nptc.audit.queries.MalformedAuditCursorError`
-#: catches the remainder (a well-formed but out-of-range digit string).
+#: The same cursor shape as `catalogue.py`'s `HistoryCursorQuery`: a digit string
+#: bounded by `AuditEvent.sequence`'s `BigInteger` range. Bounding the digit count
+#: stops an arbitrarily long cursor reaching `int(before)` below, and
+#: `nptc.audit.queries.MalformedAuditCursorError` catches a well-formed but
+#: out-of-range string.
 AuditCursorQuery = Annotated[
     str | None,
     Query(
@@ -138,12 +119,9 @@ AuditCursorQuery = Annotated[
     ),
 ]
 
-#: Not derived from a column width, unlike `AuditCursorQuery.max_length`
-#: above: `entity_type`/`entity_id`/`action` are `Text` in the database,
-#: genuinely unbounded. 200 is a generous cap against a pathological query
-#: string, not a business rule - every value this platform itself writes
-#: (an entity type token, an internal id, an action name) is far short of
-#: it (PR #309 review).
+#: Not derived from a column width: `entity_type`, `entity_id` and `action` are
+#: unbounded `Text`. 200 caps a pathological query string and is not a business
+#: rule; every value this platform writes is far shorter.
 _FILTER_VALUE_MAX_LENGTH: Final = 200
 
 ActorFilterQuery = Annotated[
@@ -175,13 +153,9 @@ ActionFilterQuery = Annotated[
         description="Filter to one action name, e.g. `catalogue_entry.updated`.",
     ),
 ]
-#: `AwareDatetime`, not plain `datetime`: a naive value has no defined
-#: meaning against `occurred_at` (`TIMESTAMP WITH TIME ZONE`) - accepting
-#: one would leave Postgres to guess a timezone from its own session
-#: setting, silently, per deployment. Refused as a 422 instead, so a
-#: caller who forgot an offset learns that rather than getting a filter
-#: that happens to work today and drifts wrong the day the server's
-#: timezone setting ever changes.
+#: `AwareDatetime`, not `datetime`: a naive value has no meaning against
+#: `occurred_at` (`TIMESTAMP WITH TIME ZONE`), and Postgres would silently guess a
+#: timezone from its session setting. A 422 tells the caller instead.
 OccurredFromQuery = Annotated[
     AwareDatetime | None,
     Query(
@@ -303,9 +277,8 @@ def read_audit_events(
     )
 
 
-#: Fixed, not derived from the filter or the current time - a filter value
-#: reflected into a response header is exactly the kind of caller-supplied-
-#: text-in-a-header surface this platform avoids elsewhere (NFR-26/NFR-35).
+#: Fixed, not derived from the filter or the clock: this platform avoids reflecting
+#: caller-supplied text into a header (NFR-26/NFR-35).
 _EXPORT_FILENAME = "audit-events.ndjson"
 
 
@@ -334,13 +307,9 @@ def _ndjson_lines(rows: Iterator[audit_queries.AuditEventRow]) -> Iterator[str]:
 @router.get(
     "/events/export",
     summary="Export the filtered audit log as NDJSON (NFR-12)",
-    # `response_class=StreamingResponse`, not just the return annotation:
-    # FastAPI cannot infer a streamed body's content type from a
-    # `StreamingResponse` return annotation alone, and without this the
-    # generated document declared this route's `200` as `application/json`
-    # with an empty schema - `_EXPORT_RESPONSES`' own explicit `200` entry
-    # is what actually fixes the schema; this tells FastAPI not to also
-    # guess a JSON one alongside it (PR #309 review).
+    # `response_class=StreamingResponse`, not just the annotation: FastAPI cannot
+    # infer a streamed body's content type, and would also guess a JSON `200`.
+    # `_EXPORT_RESPONSES` declares the real schema.
     response_class=StreamingResponse,
     responses=_EXPORT_RESPONSES,
     dependencies=[_READ],
