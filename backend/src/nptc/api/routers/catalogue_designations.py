@@ -651,7 +651,8 @@ def _targets_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest
     The comparison uses the stored `preferred_term_key`, not a key recomputed from
     `entry.preferred_term`: `CatalogueEntry`'s `@validates("preferred_term")` hook
     writes it with the same `collision_key(clean_term(...))` composition, and
-    `nptc.catalogue.collisions` compares stored keys and never recomputes them.
+    `nptc.catalogue.collisions` compares stored keys and never recomputes them. A case
+    or punctuation variant of the term therefore resolves, as it does for a designation.
     `body.language` is already canonical (`_WithLanguage`), so `en-au` matches too.
     """
     if body.language != DEFAULT_LANGUAGE:

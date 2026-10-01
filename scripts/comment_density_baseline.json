@@ -13,7 +13,7 @@
   "backend/src/nptc/api/routers/catalogue.py": {"code": 375, "prose": 160, "ratio": 0.427},
   "backend/src/nptc/api/routers/catalogue_admin.py": {"code": 337, "prose": 155, "ratio": 0.46},
   "backend/src/nptc/api/routers/catalogue_bindings.py": {"code": 242, "prose": 108, "ratio": 0.446},
-  "backend/src/nptc/api/routers/catalogue_designations.py": {"code": 496, "prose": 311, "ratio": 0.627},
+  "backend/src/nptc/api/routers/catalogue_designations.py": {"code": 496, "prose": 312, "ratio": 0.629},
   "backend/src/nptc/api/routers/catalogue_entries.py": {"code": 108, "prose": 65, "ratio": 0.602},
   "backend/src/nptc/api/routers/catalogue_properties.py": {"code": 249, "prose": 93, "ratio": 0.373},
   "backend/src/nptc/api/routers/catalogue_shared.py": {"code": 363, "prose": 213, "ratio": 0.587},
