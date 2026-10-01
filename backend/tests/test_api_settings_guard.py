@@ -5,9 +5,10 @@ A direct `get_api_settings()` call or `ApiSettings(...)` construction in a
 route or helper bypasses `app.dependency_overrides`, so the request would
 read an env-read instance instead of the one `create_app` was given - the
 two-object hazard this guard keeps closed. Each form has an allow-list:
-`app.py` is the factory that installs the override, `dependencies.py` is
-where `get_api_settings` builds the process-wide instance, and
-`openapi_document.py` builds settings to hand to `create_app`.
+`app.py` is the factory that installs the override, and `dependencies.py` is
+where `get_api_settings` builds the process-wide instance. The environment-free
+forms `ApiSettings.model_construct()` and `.model_validate()` are flagged too, with
+`openapi_document.py` as their one allowed caller.
 
 Pure ``ast`` over ``backend/src/nptc/api``, modelled on
 ``test_token_verification_guard.py``, with a positive control over an inline
@@ -26,11 +27,15 @@ API_DIR = REPO_ROOT / "backend" / "src" / "nptc" / "api"
 
 _ALLOWED_PATHS = {
     "get_api_settings": {"backend/src/nptc/api/app.py"},
-    "ApiSettings": {
-        "backend/src/nptc/api/dependencies.py",
-        "backend/src/nptc/api/openapi_document.py",
-    },
+    "ApiSettings": {"backend/src/nptc/api/dependencies.py"},
 }
+
+#: `ApiSettings.model_construct(...)` and `.model_validate(...)` build an instance
+#: without reading the environment, so `_called_name` sees only the attribute name
+#: and the `ApiSettings(...)` check never fires. They bypass `dependency_overrides`
+#: just as a bare construction does, so they get their own allow-list.
+_ENV_FREE_BUILDERS = {"model_construct", "model_validate"}
+_ENV_FREE_BUILD_ALLOWED_PATHS = {"backend/src/nptc/api/openapi_document.py"}
 
 
 def _display(path: Path) -> str:
@@ -46,6 +51,19 @@ def _called_name(node: ast.Call) -> str | None:
     return None
 
 
+def _env_free_build(node: ast.Call) -> str | None:
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr in _ENV_FREE_BUILDERS):
+        return None
+    receiver = func.value
+    receiver_name = receiver.id if isinstance(receiver, ast.Name) else _attribute_name(receiver)
+    return func.attr if receiver_name == "ApiSettings" else None
+
+
+def _attribute_name(node: ast.expr) -> str | None:
+    return node.attr if isinstance(node, ast.Attribute) else None
+
+
 def _direct_uses(source: str, display_path: str) -> list[str]:
     violations = []
     for node in ast.walk(ast.parse(source)):
@@ -54,6 +72,9 @@ def _direct_uses(source: str, display_path: str) -> list[str]:
         name = _called_name(node)
         if name in _ALLOWED_PATHS and display_path not in _ALLOWED_PATHS[name]:
             violations.append(f"{display_path}:{node.lineno}: direct {name}() call")
+        builder = _env_free_build(node)
+        if builder and display_path not in _ENV_FREE_BUILD_ALLOWED_PATHS:
+            violations.append(f"{display_path}:{node.lineno}: direct ApiSettings.{builder}() call")
     return violations
 
 
@@ -85,9 +106,22 @@ def qualified():
 def constructed():
     return ApiSettings(frontend_base_url="http://localhost:5173")
 
+def constructed_without_env():
+    return ApiSettings.model_construct(frontend_base_url="http://localhost:5173")
+
+def validated_without_env():
+    return ApiSettings.model_validate({"frontend_base_url": "http://localhost:5173"})
+
+def qualified_without_env():
+    return settings.ApiSettings.model_construct(frontend_base_url="http://localhost:5173")
+
+def other_model(settings=Depends(get_api_settings)):
+    return AuthSettings.model_construct()
+
 def injected(settings=Depends(get_api_settings)):
     return settings
 """
-    assert len(_direct_uses(source, "backend/src/nptc/api/routers/x.py")) == 3
-    assert len(_direct_uses(source, "backend/src/nptc/api/app.py")) == 1
-    assert len(_direct_uses(source, "backend/src/nptc/api/dependencies.py")) == 2
+    assert len(_direct_uses(source, "backend/src/nptc/api/routers/x.py")) == 6
+    assert len(_direct_uses(source, "backend/src/nptc/api/app.py")) == 4
+    assert len(_direct_uses(source, "backend/src/nptc/api/dependencies.py")) == 5
+    assert len(_direct_uses(source, "backend/src/nptc/api/openapi_document.py")) == 3

@@ -5,7 +5,10 @@ fixes the two things that would otherwise make "the document" ambiguous between 
 
   * which `ApiSettings` produced it - `frontend_base_url` only affects the CORS
     middleware, never a field in the document, so a fixed placeholder keeps generation
-    independent of the machine it runs on; and
+    independent of the machine it runs on. The settings come from `model_construct`, which
+    reads no `NPTC_*` variable and runs no validator, so no `ApiSettings` variable can
+    break generation. `create_app` still reads `AuthSettings` and the `NPTC_TX_*`
+    terminology settings from the environment; and
   * the exact committed bytes of `docs/api/openapi.json` - `indent=2, ensure_ascii=False`
     plus a single trailing newline, so `scripts/generate_openapi.py`, the drift test in
     `backend/tests/test_openapi_document.py` and the frontend's `generate:api` all read
@@ -23,13 +26,15 @@ from nptc.settings import ApiSettings
 #: Not a real deployment target: `create_app` requires some origin for CORS, and it
 #: never appears in the document. Public so that
 #: `test_served_document_matches_the_committed_document` builds its own app from this
-#: constant rather than a second copy of the literal.
+#: constant rather than a second copy of the literal. `model_construct` skips
+#: `ApiSettings`' origin validator, so this must already be a bare origin; a test pins it.
 GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
 
 
 def build_document() -> dict[str, Any]:
     """The OpenAPI document `create_app()` serves, as a plain JSON-able dict."""
-    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    settings = ApiSettings.model_construct(frontend_base_url=GENERATION_FRONTEND_BASE_URL)
+    app = create_app(settings=settings)
     return dict(app.openapi())
 
 

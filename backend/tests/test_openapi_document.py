@@ -62,6 +62,34 @@ def test_committed_openapi_document_matches_the_app() -> None:
     )
 
 
+@pytest.mark.req("FR-20")
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("NPTC_FSN_SEMANTIC_TAG", "stripped"),
+        ("NPTC_MAX_PREFERRED_TERM_LENGTH", "0"),
+    ],
+)
+def test_document_build_ignores_api_settings_variables(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    """Each value is one `ApiSettings` refuses, so a build that read `NPTC_*`
+    into `ApiSettings` would raise here instead of producing the document."""
+    committed = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setenv(variable, value)
+
+    assert build_document() == committed
+
+
+@pytest.mark.req("FR-20")
+def test_generation_origin_is_already_a_bare_origin() -> None:
+    """`build_document` skips `ApiSettings`' origin validator, so the validator
+    must leave the constant unchanged."""
+    validated = _hermetic.hermetic_api_settings(frontend_base_url=GENERATION_FRONTEND_BASE_URL)
+
+    assert validated.frontend_base_url == GENERATION_FRONTEND_BASE_URL
+
+
 @pytest.mark.req("NFR-04")
 def test_the_session_response_never_exposes_an_internal_id() -> None:
     """The schema, not just one response body: a field added to `UserRef`
