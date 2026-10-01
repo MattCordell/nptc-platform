@@ -1,80 +1,43 @@
-"""Write routes over `code_binding` (issue #219, FR-06, FR-08, FR-36, NFR-08).
+"""Write routes over `code_binding` (FR-06, FR-08, FR-36, NFR-08).
 
-The first state-changing HTTP surface in this repository. Everything it
-calls already exists and is already tested as a library -
-`nptc.catalogue.bindings` (issue #48) - so nothing here re-implements a
-domain rule; this module is purely the HTTP adapter, following
-`routers/catalogue.py`'s own house style: response models declared here,
-`ConfigDict(frozen=True)`, the return-type annotation drives the response
-model (never `response_model=`), module-level `Final` error-response dicts
-naming only the statuses a route can actually produce, and no try/except in
-a route body - a domain exception carries `http_status` and is mapped
-centrally by `nptc.api.errors`.
+The HTTP adapter over `nptc.catalogue.bindings`; it re-implements no domain rule. A domain
+exception carries `http_status` and `nptc.api.errors` maps it, so no route body has a
+try/except. `docs/architecture/catalogue-write-api.md` ("Code bindings") records the
+reasoning behind the points below.
 
-**A separate router from `catalogue.py`, on purpose.** That module's own
-docstring declares itself the public *read* surface (FR-20) and
-`test_api_public_response_hygiene.py` derives its endpoint list from its
-route table - folding a POST into it would silently widen what that test
-covers, or worse, silently not. Same `/catalogue` path space, its own tag.
+**A separate router from `catalogue.py`.** That module is the public read surface (FR-20),
+and `test_api_public_response_hygiene.py` derives its endpoint list from its route table.
+Adding a POST there would change what that test covers without anyone noticing.
 
-**Addressing a binding: by `code`, never an id.** The public `Binding`
-model deliberately carries no `id`/`entry_id` (see `catalogue.py`), so a
-client retiring or replacing one addresses it by the SNOMED CT code it was
-bound with - `ix_code_binding_one_active_entry_per_code` guarantees at most
-one *active* binding matches, and `nptc.catalogue.bindings.
-load_active_binding` is what resolves that. `system` is not on the wire at
-all; every route here defaults to `SNOMED_CT_SYSTEM`, the only system in
-use today - additive to expose later if a second system is ever needed.
+**A binding is addressed by `code`, never an id.** The public `Binding` carries no `id` or
+`entry_id`. `ix_code_binding_one_active_per_entry` guarantees at most one active binding
+matches an `(entry, code)` pair, and `nptc.catalogue.bindings.load_active_binding` resolves
+it. `system` is not on the wire: every route uses `SNOMED_CT_SYSTEM`, the only system in
+use, and exposing a second one later is additive.
 
-**Replacement is one route, not three.** `nptc.catalogue.bindings`' module
-docstring explains why replacing a binding is a three-step sequence
-(retire, create, link) rather than one function:
-`ix_code_binding_one_active_per_entry` forbids a successor existing active
-while its predecessor still is. Exposing that as three HTTP calls would let
-a client's failed second request strand an entry with no active binding
-and no successor - so `replace_binding` below runs all three inside the
-one request's `session_scope` transaction (committed together by
-`get_session`, issue #41), and all three audit events land or none do.
+**Replacement is one route, not three.** Retire, create and link must run in that order,
+because `ix_code_binding_one_active_per_entry` forbids a successor existing active while its
+predecessor still is. As three HTTP calls, a failed second request would strand an entry
+with no active binding and no successor. `replace_binding` runs all three in the one
+request transaction (committed by `get_session`), so all three audit events land or none do.
 
-**Authorisation:** every route requires `Permission.CATALOGUE_EDIT_PUBLISHED`
-(FR-44) - held only by `Role.ADMINISTRATOR` and in `MFA_REQUIRED_PERMISSIONS`
-(NFR-06), so an administrator who has not completed a step-up gets the
-RFC 9470 challenge for free, the same as any other MFA-gated permission.
+**Authorisation:** every route requires `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44), held
+only by `Role.ADMINISTRATOR` and in `MFA_REQUIRED_PERMISSIONS` (NFR-06). An administrator
+without a completed step-up gets the RFC 9470 challenge.
 
-**FR-38 (issue #60): every write here requires `expected_row_version`.**
-None of `code_binding`'s own columns carry a version counter, so all three
-routes share `catalogue_entry.row_version` as their lock - the same
-argument `nptc.catalogue.property_values.save_property_values` already
-makes for `property_value`, applied here via `nptc.catalogue.entries.
-entry_child_write`. Required, not optional: this is the field's very first
-release, so there is no back-compat client to break, unlike #227's
-designation route. `replace_binding` takes the lock once, before any of
-its three writes - see that route's own body - so a stale version leaves
-no partial replacement and no audit event, not merely a refused final
-step. Every route's response echoes the entry's new `row_version`
-(`BindingWriteResult`/`BindingReplacementResult`, mirroring
-`catalogue_properties.PropertyValuesWriteResult`), so a client never has
-to re-fetch the entry just to learn its next lock token.
+**Every write requires `expected_row_version` (FR-38).** `code_binding` has no version
+column, so all three routes lock on `catalogue_entry.row_version` through
+`nptc.catalogue.entries.entry_child_write`, as `save_property_values` does for
+`property_value`. `replace_binding` takes the lock once, before its three writes, so a stale
+version leaves no partial replacement and no audit event. Each response echoes the entry's
+new `row_version` (`BindingWriteResult`, `BindingReplacementResult`).
 
-**Concurrency note.** `load_entry_for_update` takes no row lock (see its
-own docstring), so before this change two concurrent binding writes on one
-entry raced straight to the database's own partial unique indexes and the
-loser saw a translated `IntegrityError`-derived domain error. `entry_child_
-write` now covers two distinct races, not one, and they resolve
-differently. Two writers who do not collide on an index - different codes,
-or a bind racing a retire - now serialise on the audit *advisory* lock
-first (`pg_advisory_xact_lock`, `entry_child_write`'s first statement, not
-a `catalogue_entry` row lock), and the loser's own version bump then finds
-`catalogue_entry.row_version` has moved when `entry_child_write` flushes -
-translated into a 409 version conflict rather than an uncaught
-`StaleDataError` (issue #60 review; see `entry_child_write`'s own
-docstring for the two-layer shape this relies on). Two writers who target
-the *same* code are unchanged by this issue: `create_binding`'s own
-`append_audit_event` flushes that `INSERT` before `entry_child_write` ever
-bumps or re-flushes, so that race still hits the partial unique index
-first and still surfaces as the pre-existing `IntegrityError`-derived
-domain error. See `catalogue-write-api.md`'s own note on this for the full
-before/after.
+**Concurrent writes on one entry.** `entry_child_write` takes the audit advisory lock first.
+Writers that do not collide on an index (different codes, or a bind racing a retire)
+serialise on it, and the loser's version bump finds `row_version` moved and becomes a 409.
+Writers targeting the same code hit the partial unique index first, because
+`create_binding`'s audit append flushes its `INSERT` before the bump, and surface the
+index's domain error. `entry_child_write`'s docstring describes the two layers.
 """
 
 from __future__ import annotations
@@ -130,13 +93,9 @@ _RESPONSE_404: Final[dict[str, Any]] = {
     "description": "No catalogue entry, or no active code binding, matches the given identifier.",
 }
 
-#: Two genuinely different 409 causes reach a caller of these routes: a
-#: domain conflict (`ErrorResponse` - a second active binding, a successor
-#: code already bound elsewhere, self-supersession) and a stale
-#: `expected_row_version` (`VersionConflictResponse`, FR-38) - `model`
-#: takes the union so both actually land in `components/schemas`, matching
-#: `catalogue_properties.py`'s own `_RESPONSE_409` precedent for the
-#: identical `EntryVersionConflictError`/`ConflictReport` pair.
+#: Two 409 causes reach a caller: a domain conflict (`ErrorResponse`) and a stale
+#: `expected_row_version` (`VersionConflictResponse`, FR-38). `model` takes the
+#: union so both land in `components/schemas`, as in `catalogue_properties.py`.
 _RESPONSE_409: Final[dict[str, Any]] = {
     "model": ErrorResponse | VersionConflictResponse,
     "description": (
@@ -183,12 +142,9 @@ BINDING_WRITE_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     500: _RESPONSE_500,
 }
 
-#: `bind_code` alone: its 201 carries a `Location` header pointing at the
-#: entry the new binding was added to (there is no route for a binding on
-#: its own - see `bind_code`'s own body). Declared here, not left implicit,
-#: so a caller reading `docs/api/openapi.json` learns about it without
-#: reading the route body (issue #219 review: an earlier, undeclared
-#: version of this header pointed at a path with no `GET`).
+#: `bind_code` alone: its 201 carries a `Location` header naming the entry the
+#: binding was added to, because no route serves a binding on its own. Declared so
+#: a reader of `docs/api/openapi.json` learns of it without reading the route body.
 _BIND_CODE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     **BINDING_WRITE_ERROR_RESPONSES,
     201: {
@@ -203,13 +159,11 @@ _BIND_CODE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 
 
 def _reject_blank(value: str | None) -> str | None:
-    """Shared by every `fsn`/`au_preferred_term` field below. `min_length=1`
-    alone lets a whitespace-only string through (`" "` has length 1) and
-    `ck_code_binding_fsn_not_blank`/`ck_code_binding_au_preferred_term_not_blank`
-    check `btrim(...)`, not raw length - so a caller sending one would 500
-    on an unmapped `IntegrityError` rather than a 422 (issue #219 review).
-    Rejects, never strips: FR-82 forbids cleaning these values, so a value
-    that would need stripping is refused, not silently trimmed."""
+    """Shared by every `fsn`/`au_preferred_term` field below. `min_length=1` lets a
+    whitespace-only string through, and `ck_code_binding_fsn_not_blank` and
+    `ck_code_binding_au_preferred_term_not_blank` check `btrim(...)`, so such a value
+    would 500 on an unmapped `IntegrityError` instead of a 422. Rejects, never strips:
+    FR-82 forbids cleaning these values."""
     if value is not None and not value.strip():
         raise ValueError("must not be blank")
     return value
@@ -330,12 +284,8 @@ def bind_code(
             edition_hint=body.edition_hint,
             reason=body.reason,
         )
-    # Not `.../bindings/{code}`: nothing serves a `GET` there (the two
-    # routes below `bindings/{code}` are both `POST`s), so that path is one
-    # a client could not follow. The entry detail route does exist, does
-    # show the new binding, and is the resource a caller who just bound a
-    # code to it would actually want back (issue #219 review - an earlier
-    # version of this header pointed at the unfollowable, unprefixed path).
+    # Not `.../bindings/{code}`: nothing serves a `GET` there, so a client could not
+    # follow it. The entry detail route exists and shows the new binding.
     response.headers["Location"] = f"{API_PREFIX}{router.prefix}/entries/{business_key}"
     return BindingWriteResult(
         binding=_row_to_binding(session, settings, entry_id=entry.id, binding_id=binding.id),
@@ -358,11 +308,9 @@ def retire_binding(
     body: Annotated[RetireBindingRequest, Body()],
 ) -> BindingWriteResult:
     entry = load_entry_for_update(session, business_key)
-    # `load_active_binding` (a 404 for a missing/retired code) runs inside
-    # the lock, after `entry_child_write`'s own version check - a stale
-    # caller sees the version conflict, not an unrelated 404, matching
-    # `save_entry`'s own precedent for checking the version before a
-    # collision it would otherwise report instead.
+    # `load_active_binding` (a 404 for a missing or retired code) runs inside the
+    # lock, after the version check, so a stale caller sees the conflict, not a 404,
+    # as `save_entry` does.
     with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
         binding = load_active_binding(session, entry_id=entry.id, code=code)
         _retire_binding(session, ctx, binding=binding, reason=body.reason)
@@ -399,14 +347,11 @@ def replace_binding(
     stale caller can never strand this entry mid-replacement (FR-38, issue
     #60)."""
     if body.successor.code == code:
-        # `link_replacement`'s own self-supersession check compares row
-        # *identity* (`successor is superseded`), which a same-code
-        # replacement never trips: `create_binding` would insert a second,
-        # distinct row with the same code, retire and active would end up
-        # sharing one code, and both `_row_to_binding` lookups below would
-        # then resolve to the active row - reporting the successor twice
-        # and never surfacing the retirement the caller just asked for
-        # (issue #219 review). Refused before either write runs.
+        # `link_replacement`'s self-supersession check compares row *identity*,
+        # which a same-code replacement never trips: `create_binding` would insert a
+        # second row with the same code, and both `_row_to_binding` lookups below
+        # would resolve to the active row, reporting the successor twice and never
+        # the retirement.
         raise CodeBindingSelfSupersessionError(f"code {code!r} cannot be replaced by itself")
     entry = load_entry_for_update(session, business_key)
     with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
@@ -437,18 +382,15 @@ def replace_binding(
 def _row_to_binding(
     session: Session, settings: ApiSettings, *, entry_id: uuid.UUID, binding_id: uuid.UUID
 ) -> Binding:
-    """Re-reads the just-written row through `nptc.catalogue.queries.
-    load_bindings` rather than building a `Binding` from the ORM instance
-    directly - that is what resolves `replaced_by_binding_id` to the
-    successor's *code* (`catalogue_shared.py`'s own rule: no internal id
-    ever reaches a response model) and attaches `label_provenance` via
-    `binding_from_row`, the same function the read routes use, so a bound
-    code renders identically whether it was just written or freshly read.
+    """Re-reads the just-written row through `nptc.catalogue.queries.load_bindings`,
+    not from the ORM instance. That resolves `replaced_by_binding_id` to the
+    successor's *code* (no internal id reaches a response model) and attaches
+    `label_provenance` through `binding_from_row`, so a bound code renders the same
+    whether just written or freshly read.
 
-    Keyed on `binding_id`, not `code`: `(entry_id, code)` is unique only
-    among *active* bindings (the partial indexes exempt retired ones), so a
-    code bound, retired, and bound again would make a code-keyed lookup
-    ambiguous between two retired rows (issue #219 review)."""
+    Keyed on `binding_id`, not `code`: `(entry_id, code)` is unique only among
+    *active* bindings, so a code bound, retired and bound again leaves two retired
+    rows a code-keyed lookup cannot tell apart."""
     for row in queries.load_bindings(session, (entry_id,)):
         if row.id == binding_id:
             return binding_from_row(row, settings)
