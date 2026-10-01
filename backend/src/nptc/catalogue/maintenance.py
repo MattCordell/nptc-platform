@@ -84,8 +84,8 @@ MAINTENANCE_STATUSES: Final[tuple[str, ...]] = tuple(
 SortName = Literal["business_key", "preferred_term", "updated_at", "status"]
 
 #: Each `SortName`'s comparison column. `preferred_term` sorts by
-#: `preferred_term_key`, the column `nptc.catalogue.collisions` already
-#: indexes. `status` is a `CASE` giving lifecycle order.
+#: `preferred_term_key`, the indexed column `nptc.catalogue.collisions`
+#: compares on. `status` is a `CASE` giving lifecycle order.
 _SORT_COLUMNS: Final[dict[SortName, ColumnElement[Any]]] = {
     "business_key": type_cast("ColumnElement[Any]", CatalogueEntry.business_key),
     "preferred_term": type_cast("ColumnElement[Any]", CatalogueEntry.preferred_term_key),

@@ -336,7 +336,7 @@ def load_designations_any_status(
     Three callers want the unfiltered set:
 
     - the admin entry read, which puts these rows on the wire for an editor
-      deciding *against* editorial history;
+      for whom that history is what is being decided;
     - `nptc.api.routers.catalogue_designations`'s write routes, which re-read
       the exact row a retirement or amendment wrote (by `id`), whether it
       ended up active or retired;

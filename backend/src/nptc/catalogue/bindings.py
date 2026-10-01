@@ -7,8 +7,8 @@ second active binding on one entry is checked before insert too, so every
 rejection is a domain error the caller can act on, never an opaque
 `IntegrityError` at flush. The database constraints (`nptc_sctid_is_valid`,
 `ix_code_binding_one_active_per_entry`; ADR-0023) remain the actual
-invariants, as `CatalogueEntry._validate_business_key_immutable` does for
-the entry.
+invariants; this module is the Python-level layer over them, as
+`CatalogueEntry._validate_business_key_immutable` is for the entry.
 
 **Replacing a binding is a three-step sequence, not one call.**
 `ix_code_binding_one_active_per_entry` forbids inserting a successor active
