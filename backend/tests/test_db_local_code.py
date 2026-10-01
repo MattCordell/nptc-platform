@@ -24,6 +24,7 @@ from nptc.db.models.local_code_snomed_map import (
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
 _INSUFFICIENT_PRIVILEGE = "42501"
+_MATCH_STRENGTH_CONSTRAINT = "ck_local_code_snomed_map_match_strength"
 
 _INSERT_SYSTEM = text(
     "INSERT INTO local_code_system (key, uri, title, description, owner) "
@@ -361,7 +362,13 @@ def test_the_migrated_database_accepts_every_match_strength(
 
     try:
         _insert_map_row(db, local_code_id=code_id, match_strength=strength.value)
-    except IntegrityError:
+    except IntegrityError as exc:
+        orig = exc.orig
+        if (
+            orig.sqlstate != _CHECK_VIOLATION  # type: ignore[union-attr]
+            or orig.diag.constraint_name != _MATCH_STRENGTH_CONSTRAINT  # type: ignore[union-attr]
+        ):
+            raise
         pytest.fail(
             f"the migrated database rejects match_strength {strength.value!r}; a new "
             "SnomedMapMatchStrength value needs a migration that replaces the CHECK constraint, "
