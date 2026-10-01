@@ -1,29 +1,23 @@
-"""FR-98's label-provenance vocabulary (issue #144).
+"""FR-98's label-provenance vocabulary.
 
-Every SNOMED/catalogue label field on the API states, in the payload
-itself, which designation it is and - for an FSN - whether its semantic
-tag is intact or stripped. This module is the one place that vocabulary is
-defined; response models (`nptc.api.routers.catalogue_shared`,
-`nptc.api.routers.terminology`) attach it to their own fields rather than
-each restating what a "designation type" or a "semantic tag state" is.
+Every SNOMED/catalogue label field on the API states, in the payload, which
+designation it is and, for an FSN, whether its semantic tag is intact or
+stripped. This module defines that vocabulary once; response models
+(`nptc.api.routers.catalogue_shared`, `nptc.api.routers.terminology`) attach
+it to their own fields.
 
 **`PREFERRED_VARIANT`, not "rcpa_preferred_term", for a `designation` row
-with `use == "preferred"`.** `docs/adr/0022-designation-storage.md` makes
-the catalogue's own en-AU preferred term live only on
-`catalogue_entry.preferred_term` - never on a `designation` row, enforced
-by `ck_designation_no_en_au_preferred`. So a `designation` row that is
-`preferred` is necessarily a preferred term in some language other than
-en-AU (e.g. `use='preferred', language='mi-NZ'`), not the catalogue's own
-preferred term - "preferred variant" names that correctly, where
-"RCPA preferred term" would not.
+with `use == "preferred"`.** ADR-0022 keeps the catalogue's en-AU preferred
+term only on `catalogue_entry.preferred_term`, enforced by
+`ck_designation_no_en_au_preferred`. A preferred `designation` row is
+therefore a preferred term in another language (e.g. `mi-NZ`), which
+"preferred variant" names correctly.
 
 **The read path contains no tag-stripping code**, so `SemanticTagState` is
-config-driven rather than computed: `fsn_provenance` reads
-`ApiSettings.fsn_semantic_tag` (FR-66's placeholder until that
-configuration surface exists) and reports whatever it says, never
-inspecting the FSN string itself. This is deliberately the only place that
-reads the setting - `binding_from_row`/`ConceptLookup`'s assembly both call
-`fsn_provenance`, so a caller can't observe two different opinions about
+config-driven, not computed: `fsn_provenance` reports
+`ApiSettings.fsn_semantic_tag` (FR-66's placeholder) and never inspects the
+FSN string. It is the only reader of that setting. `binding_from_row` and
+`ConceptLookup` both call it, so no caller can observe two opinions about
 whether an FSN's tag is intact.
 """
 
@@ -90,9 +84,8 @@ AU_PREFERRED_TERM_PROVENANCE = LabelProvenance(
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
 )
 
-#: A catalogue-authored synonym (`Designation.use == "synonym"`) - never an
-#: FSN, so `NOT_APPLICABLE` for the same reason `AU_PREFERRED_TERM_PROVENANCE`
-#: is fixed rather than read from configuration.
+#: A catalogue-authored synonym (`Designation.use == "synonym"`). Not an FSN, so
+#: `NOT_APPLICABLE`.
 SYNONYM_PROVENANCE = LabelProvenance(
     designation=DesignationType.SYNONYM,
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
@@ -110,16 +103,11 @@ def fsn_provenance(settings: ApiSettings) -> LabelProvenance:
     """The `LabelProvenance` for an `fsn` field, given the running
     process's configuration.
 
-    Reads `settings.fsn_semantic_tag` rather than inspecting the FSN
-    string: the whole point of FR-98 on this read path is that nothing
-    here re-derives a fact about the label from the label itself - see
-    this module's own docstring. `ApiSettings` already refuses
-    `fsn_semantic_tag="stripped"` at construction time (there being no
-    stripper on the read path to make that value true), so the only value
-    ever reachable here is `"intact"` - this still reads the setting
-    rather than hardcoding `SemanticTagState.INTACT`, so a future FR-66
-    configuration surface that legitimately varies this needs no change
-    here.
+    Reads `settings.fsn_semantic_tag` rather than inspecting the FSN string
+    (see the module docstring). `ApiSettings` refuses `"stripped"`, so only
+    `"intact"` is reachable today. Reading the setting rather than hardcoding
+    `SemanticTagState.INTACT` means FR-66's export configuration needs no
+    change here.
     """
     return LabelProvenance(
         designation=DesignationType.FSN,

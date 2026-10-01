@@ -1,20 +1,20 @@
-"""The FastAPI dependencies joining #43's verifier and #44's `Principal`
-to an actual HTTP request (issue #41).
+"""The FastAPI dependencies joining token verification and the `Principal`
+to an HTTP request.
 
 This module is the adapter ADR-0016 and ADR-0019 deferred. Everything it
-calls already exists and is already tested as a library; nothing here
-re-implements a check.
+calls already exists and is tested as a library; nothing here re-implements
+a check.
 
-The chain, in order, is exactly:
+The chain, in order:
 
     Authorization: Bearer <token>
       -> TokenVerifier.verify        (NFR-07: signature, iss, aud, exp)
-      -> resolve_user_for_claims     (#42: internal app_user, NFR-04)
-      -> principal_for               (#44: roles, permissions, MFA)
+      -> resolve_user_for_claims     (internal app_user, NFR-04)
+      -> principal_for               (roles, permissions, MFA)
 
-Nothing here decodes a token itself - `backend/tests/
-test_token_verification_guard.py` is an AST check that would fail the
-build if it did.
+Nothing here decodes a token itself:
+`backend/tests/test_token_verification_guard.py` is an AST check that fails
+the build if it does.
 """
 
 from __future__ import annotations
@@ -70,26 +70,14 @@ def get_token_verifier() -> TokenVerifier:
 def get_terminology_client() -> TerminologyClient:
     """The `OntoserverClient`, built once per process.
 
-    Built once, not per request: it owns an HTTP connection pool that is
-    only useful if it outlives a single request. Construction itself opens
-    no socket and performs no discovery.
+    It owns an HTTP connection pool that is only useful if it outlives a
+    request. Construction opens no socket and performs no discovery.
 
-    **Called once by `nptc.api.app.create_app`, deliberately.** Not to warm
-    the cache - construction is cheap - but because
-    `TerminologyConfig.from_env` raises `TerminologyConfigError` on a
-    malformed `NPTC_TX_*` value, and `lru_cache` does not cache a raised
-    exception. Left to the first request, a deployment typo would surface
-    as a 500 on a public read endpoint, per request, indefinitely; called
-    at app construction it is a start-up failure instead. `nptc.api.errors`
-    still maps `TerminologyConfigError` to a 500 for the paths that bypass
-    the factory (a test app, a dependency override).
-
-    Split out of what was previously `get_datatype_registry` itself
-    (issue #52): once `DatabaseLocalCodeLookup` (below) needs a `Session`,
-    the registry that wraps it can no longer be a single `lru_cache`d
-    instance for the process's lifetime - a `Session` is request-scoped.
-    The terminology client has no such constraint and keeps the original
-    once-per-process treatment.
+    **Called once by `nptc.api.app.create_app`, deliberately**, so a
+    malformed `NPTC_TX_*` value fails at start-up; the comment there gives
+    the reason. `nptc.api.errors` still maps `TerminologyConfigError` to a
+    500 for paths that bypass the factory (a test app, a dependency
+    override).
     """
     return OntoserverClient(TerminologyConfig.from_env())
 
@@ -104,22 +92,16 @@ def get_datatype_registry(
 ) -> DatatypeRegistry:
     """The FR-77 datatype handler registry, built fresh per request.
 
-    Request-scoped, not `lru_cache`d like `get_terminology_client` above:
-    `CodeHandler`'s `local_code_system` binding check (FR-10, #56) needs a
-    `DatabaseLocalCodeLookup`, which holds a `Session` - and a `Session` is
-    itself request-scoped (`get_session`), so a process-lifetime registry
-    would either pin one request's `Session` for the life of the process
-    (wrong) or need its own invalidation machinery to swap it out (needless
-    complexity for something this cheap to rebuild). Construction here
-    opens no socket and performs no discovery - only `OntoserverClient`
-    construction did that, and it stays behind `get_terminology_client`'s
-    own `lru_cache`.
+    Request-scoped, not `lru_cache`d like `get_terminology_client`:
+    `CodeHandler`'s `local_code_system` binding check (FR-10) needs a
+    `DatabaseLocalCodeLookup`, which holds the request's `Session`
+    (`get_session`). A process-lifetime registry would pin one request's
+    `Session`. Rebuilding is cheap: construction opens no socket, because
+    `OntoserverClient` construction stays behind `get_terminology_client`'s
+    `lru_cache`.
 
-    The registry is what keeps the property-serialisation path free of any
-    datatype `switch` (ADR-0013, `backend/tests/test_datatype_dispatch.py`):
-    a caller resolves a handler by datatype and calls it, and the only code
-    that knows what the datatypes *are* is the handler package's own
-    manifest.
+    The registry keeps the property-serialisation path free of any datatype
+    `switch` (ADR-0013, `backend/tests/test_datatype_dispatch.py`).
     """
     return DatatypeRegistry(
         build_builtin_handlers(
@@ -134,16 +116,15 @@ def get_datatype_registry(
 def bearer_token(request: Request) -> str | None:
     """The raw credential, or `None` when none was presented.
 
-    `None` is deliberately not an error here: a public endpoint served to
-    an anonymous visitor is a normal case (PRD Section 4.1). Turning
-    "no credential" into a 401 is the *endpoint's* decision, made by
-    requiring a permission `ANONYMOUS` lacks - not this function's.
+    `None` is not an error here: a public endpoint served to an anonymous
+    visitor is a normal case (PRD Section 4.1). Turning "no credential" into
+    a 401 is the endpoint's decision, made by requiring a permission
+    `ANONYMOUS` lacks.
 
-    A present-but-unparseable header is a different thing from an absent
-    one and is not silently downgraded to anonymous: `_MalformedAuthorizationError`
-    surfaces as a 401, so a client sending `Authorization: Basic ...` or a
-    bare token learns its credential was rejected rather than quietly
-    receiving the public view.
+    A present-but-unparseable header is not downgraded to anonymous:
+    `MalformedAuthorizationError` surfaces as a 401, so a client sending
+    `Authorization: Basic ...` or a bare token learns its credential was
+    rejected rather than quietly receiving the public view.
     """
     header = request.headers.get("Authorization")
     if header is None:
@@ -168,30 +149,29 @@ class CredentialRequiredError(Exception):
     """A permission was required, the caller had no credential at all, and
     `ANONYMOUS` does not hold that permission.
 
-    This exists to keep 401 and 403 apart - the pair
-    `authz_support.assert_http_forbidden` singles out as the one endpoints
-    most reliably get backwards. Without it, `require_permission` sees an
-    anonymous `Principal`, finds the permission missing, and raises
-    `PermissionDeniedError` -> 403 "you may not do this", when the honest
-    answer is 401 "sign in and I will tell you". A 403 also gives a
-    signed-out client no way to know that signing in would help.
+    This keeps 401 and 403 apart, the pair
+    `authz_app_support.assert_http_forbidden` singles out as the one
+    endpoints most reliably get backwards. Without it, `require_permission`
+    sees an anonymous `Principal`, finds the permission missing and raises
+    `PermissionDeniedError` -> 403, when the honest answer is 401 "sign in".
+    A 403 gives a signed-out client no way to know that signing in would
+    help.
     """
 
 
 def _client_ip(request: Request) -> str | None:
     """The caller's IP, or `None` when it is absent or not an IP address.
 
-    `request.client.host` is not guaranteed to be an IP: Starlette's own
+    `request.client.host` is not guaranteed to be an IP: Starlette's
     `TestClient` reports the literal `"testclient"`, and an ASGI server
     behind a unix socket reports the socket path. `AuditContext.actor_ip`
-    feeds `nptc.audit.hashing.canonicalise_actor_ip`, which parses it as
-    an `inet` and raises `ValueError` on anything else - so passing the
-    raw value through would turn an unremarkable deployment topology into
-    a 500 on every audited write.
+    feeds `nptc.audit.hashing.canonicalise_actor_ip`, which parses it as an
+    `inet` and raises `ValueError` on anything else, so passing the raw
+    value through would 500 every audited write on such a deployment.
 
-    Recording `None` (an unknown address) is the honest answer here, and
-    the one `AuditContext` already models; recording a placeholder string
-    would be a fabricated fact in an append-only log.
+    `None` (an unknown address) is the honest answer and the one
+    `AuditContext` models; a placeholder string would be a fabricated fact
+    in an append-only log.
     """
     if request.client is None:
         return None
@@ -207,10 +187,9 @@ def _correlation_id(request: Request) -> uuid.UUID:
 
     A fresh `uuid4()` per call would give the identity-resolution events
     (`user_identity.created` on a first login) a different correlation id
-    from every later write in the *same* request - which defeats the one
-    thing a correlation id is for. Stashed on `request.state` rather than
-    threaded through, because the two call sites are separate FastAPI
-    dependencies with no shared scope of their own.
+    from every later write in the same request. Stashed on `request.state`
+    because the two call sites are separate FastAPI dependencies with no
+    shared scope.
     """
     existing: uuid.UUID | None = getattr(request.state, "correlation_id", None)
     if existing is not None:
@@ -239,16 +218,14 @@ def request_audit_context(request: Request) -> AuditContext:
 def bootstrap_audit_context(request: Request) -> AuditContext:
     """The context used *during* identity resolution.
 
-    `actor_user_id` is unavoidably `None` here, and that is correct rather
-    than a gap: `resolve_user_for_claims` emits `user_identity.created`
-    (and, on first login, `user_role.granted`) for a user whose internal
-    id does not exist until those very inserts run. There is no ordering
-    in which a first login can attribute its own account-creation event to
-    the account being created. `grant_role_unchecked(granted_by_user_id=
-    None)` inside `_create_user` already encodes the same fact.
+    `actor_user_id` is `None` here by necessity: `resolve_user_for_claims`
+    emits `user_identity.created` (and, on first login, `user_role.granted`)
+    for a user whose internal id does not exist until those inserts run.
+    `grant_role_unchecked(granted_by_user_id=None)` inside `_create_user`
+    encodes the same fact.
 
-    The IP and user agent *are* carried, so the event is still attributable
-    to a request even when it cannot be attributed to a prior user.
+    The IP and user agent are carried, so the event is still attributable to
+    a request.
     """
     return request_audit_context(request)
 
@@ -304,9 +281,7 @@ def audit_context(
     return base.model_copy(update={"actor_user_id": principal.user_id})
 
 
-#: The alias a state-changing route injects (issue #219 is the first
-#: caller). `audit_context` itself predates any route that uses it - see
-#: its own docstring - so this is the missing last step, not new plumbing.
+#: The alias a state-changing route injects.
 AuditContextDep = Annotated[AuditContext, Depends(audit_context)]
 
 
@@ -322,11 +297,10 @@ def permission_dep(permission: Permission) -> Callable[[Principal], Principal]:
         try:
             return require_permission(permission)(principal)
         except PermissionDeniedError:
-            # Only for a caller who presented no credential at all. An
-            # authenticated user missing the permission still gets 403 -
-            # and note `MfaRequiredError` is a PermissionDeniedError
-            # subclass, but is never raised for ANONYMOUS (which holds no
-            # suppressed roles), so it cannot be swallowed here.
+            # Only for a caller with no credential at all; an authenticated user
+            # missing the permission still gets 403. `MfaRequiredError` is a
+            # `PermissionDeniedError` subclass but is never raised for ANONYMOUS
+            # (no suppressed roles), so it cannot be swallowed here.
             if principal.user_id is None:
                 raise CredentialRequiredError(
                     f"{permission.value} requires an authenticated user"

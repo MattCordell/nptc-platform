@@ -1,20 +1,14 @@
-"""Backend runtime configuration (issue #33).
+"""Backend runtime configuration.
 
-``pydantic-settings``, not the explicit ``os.environ`` reads
-``nptc_shared.terminology.config`` uses (ADR-0003): ``pydantic-settings`` is
-declared as a backend-only dependency and this is its first consumer, so
-there is no cross-package reason to match that module's approach here.
+``pydantic-settings``, not the ``os.environ`` reads of
+``nptc_shared.terminology.config`` (ADR-0003): it is a backend-only
+dependency, so nothing cross-package requires matching that module.
 
-Two separate settings classes, not one combined ``Settings`` with both
-DSNs required: ``backend/migrations/env.py`` only ever needs
-``MigrationSettings``, and an operator running `alembic upgrade head`
-should not be forced to also set ``NPTC_DATABASE_URL``, a variable Alembic
-has no use for. Each DSN is a required field with no default, mirroring
-``nptc_shared.terminology.config``'s "raise naming the variable, never
-silently default" convention: a missing, empty, or whitespace-only value
-fails loudly, naming the field, rather than falling back to a placeholder a
-misconfigured deployment could run against for a while before anyone
-notices.
+Each DSN has its own settings class. ``backend/migrations/env.py`` needs
+``MigrationSettings`` alone, so an operator running ``alembic upgrade head``
+need not set ``NPTC_DATABASE_URL``. A required DSN has no default: a missing,
+empty or whitespace-only value fails naming the field, so a misconfigured
+deployment never runs against a placeholder.
 """
 
 from __future__ import annotations
@@ -49,18 +43,15 @@ class DatabaseSettings(BaseSettings):
 
 
 class AuditVerifySettings(BaseSettings):
-    """The DSN `scripts/verify_audit_chain.py` (issue #38) falls back to when
-    ``--database-url`` is not passed on the command line - see
-    ``nptc.audit.verification.verify_chain``, which only ever issues
-    `SELECT`s, so this can name a read-only replica or a restored backup
-    rather than the app runtime's own DSN.
+    """The DSN `scripts/verify_audit_chain.py` falls back to when
+    ``--database-url`` is not passed. ``nptc.audit.verification.verify_chain``
+    only issues `SELECT`s, so this can name a read-only replica or a restored
+    backup.
 
-    Empty default, not required, unlike ``DatabaseSettings``: the CLI falls
-    further back to ``NPTC_DATABASE_URL`` when this is unset (see the
-    runbook), so an empty value here is a valid, common configuration -
-    "no separate verification DSN is configured" - not a misconfiguration to
-    reject at settings-construction time. The CLI itself is what raises,
-    naming all three sources, if no DSN can be resolved at all.
+    Empty default, unlike ``DatabaseSettings``: the CLI falls back further to
+    ``NPTC_DATABASE_URL`` (see the runbook), so empty is a valid
+    configuration. The CLI raises, naming all three sources, if no DSN
+    resolves.
     """
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
@@ -69,27 +60,21 @@ class AuditVerifySettings(BaseSettings):
 
 
 class AuthSettings(BaseSettings):
-    """The NFR-05 trusted-issuer allowlist controlling auto-linking (issue
-    #42) - see ``nptc.auth.linking.may_auto_link`` - plus the NFR-07
-    server-side JWT verification configuration (issue #43) - see
-    ``nptc.auth.tokens.TokenVerifier.from_settings``.
+    """The NFR-05 trusted-issuer allowlist for auto-linking
+    (``nptc.auth.linking.may_auto_link``) and the NFR-07 JWT verification
+    configuration (``nptc.auth.tokens.TokenVerifier.from_settings``).
 
-    Empty default, not a required field: unlike the DSNs above, "no issuer
-    is trusted yet" is itself a valid, safe configuration (fail closed,
-    matching NFR-02's federation-off posture), not a misconfiguration to
-    reject. ``oidc_issuer`` follows the same posture for the same reason:
-    an empty issuer cannot construct a ``TokenVerifier`` at all (see
-    ``nptc.auth.errors``), so a missing configuration refuses every token
-    rather than accepting one unverified.
+    Empty defaults, unlike the DSNs above: "no issuer is trusted yet" is a
+    valid fail-closed configuration (NFR-02, federation off). An empty
+    ``oidc_issuer`` cannot construct a ``TokenVerifier`` (see
+    ``nptc.auth.errors``), so an unconfigured deployment refuses every token.
     """
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
-    # NoDecode: frozenset[str] is a "complex" type to pydantic-settings, so
-    # without this it tries to JSON-decode the raw environment string
-    # before any validator below ever runs - the comma-separated format
-    # configuration.md documents would raise a SettingsError on every
-    # non-JSON value, never reaching `_split_comma_separated`.
+    # NoDecode: pydantic-settings JSON-decodes a frozenset[str] before any
+    # validator runs, so the comma-separated format in configuration.md would
+    # raise a SettingsError and never reach `_split_comma_separated`.
     trusted_issuers: Annotated[frozenset[str], NoDecode] = frozenset()
 
     @field_validator("trusted_issuers", mode="before")
@@ -99,36 +84,27 @@ class AuthSettings(BaseSettings):
             return frozenset(item.strip() for item in value.split(",") if item.strip())
         return value
 
-    #: Empty, not required: matches the fail-closed posture above. A
-    #: ``TokenVerifier`` cannot be constructed from a blank issuer, so an
-    #: unconfigured deployment refuses every token instead of accepting one
-    #: whose issuer was never actually checked.
     oidc_issuer: str = ""
 
-    #: Fixed by the committed realm (deploy/keycloak/realm/nptc-realm.json's
-    #: `nptc-api-audience` mapper), not by a deployment - see ADR-0014.
+    #: Fixed by the committed realm (`nptc-api-audience` mapper in
+    #: deploy/keycloak/realm/nptc-realm.json), not by a deployment: ADR-0014.
     oidc_audience: str = "nptc-api"
 
     #: Empty means "resolve via OIDC discovery" (`nptc.auth.discovery`).
-    #: Setting this explicitly skips discovery entirely - for air-gapped
-    #: deployments, and so the offline test suite only ever needs to stand
-    #: up one local HTTP endpoint.
+    #: Setting it skips discovery, for air-gapped deployments and so the
+    #: offline tests need only one local HTTP endpoint.
     jwks_url: str = ""
 
     jwks_cache_seconds: float = 300.0
 
-    #: An unknown `kid` within this many seconds of the last refresh
-    #: attempt is refused without an HTTP request - see
-    #: ``nptc.auth.jwks.SigningKeys``.
+    #: An unknown `kid` within this many seconds of the last refresh attempt
+    #: is refused without an HTTP request (``nptc.auth.jwks.SigningKeys``).
     jwks_refresh_cooldown_seconds: float = 30.0
 
-    #: NFR-06 (issue #44): the set of `acr` claim values that satisfy the
-    #: mandatory-MFA-for-administrators requirement - see
-    #: ``nptc.auth.principal.principal_for``. Matches the committed
-    #: realm's ``acr.loa.map`` (``deploy/keycloak/realm/nptc-realm.json``),
-    #: which maps the LoA-2 authentication flow to ``"2"``. Same
-    #: ``NoDecode`` treatment as ``trusted_issuers`` above, for the same
-    #: reason: a comma-separated string, not JSON.
+    #: NFR-06: the `acr` claim values that satisfy mandatory MFA for
+    #: administrators (``nptc.auth.principal.principal_for``). Matches the
+    #: committed realm's ``acr.loa.map``, which maps the LoA-2 flow to
+    #: ``"2"``. Comma-separated, so ``NoDecode`` as for ``trusted_issuers``.
     mfa_acr_values: Annotated[frozenset[str], NoDecode] = frozenset({"2"})
 
     @field_validator("mfa_acr_values", mode="before")
@@ -141,18 +117,14 @@ class AuthSettings(BaseSettings):
     @field_validator("mfa_acr_values", mode="after")
     @classmethod
     def _mfa_acr_values_are_usable(cls, value: frozenset[str]) -> frozenset[str]:
-        """Issue #184 review: `nptc.api.errors._step_up_challenge` now builds
-        the RFC 9470 challenge header from this set instead of a literal
-        `"2"`, which turns a bad value here into a live production failure
-        rather than a typo nobody could reach. An empty set makes
-        `principal_for`'s `mfa_satisfied` permanently `False` for every
-        user (`claims.acr in mfa_acr_values` can never be true against an
-        empty set) while `parseStepUpChallenge` on the SPA refuses an
-        `acr_values=""` challenge as unrecognisable - locking every
-        administrator out with literally no path to step up. A value
-        containing a quote or line break would be interpolated straight
-        into the header value, which is refused here rather than by
-        whatever HTTP layer first chokes on a malformed header.
+        """`nptc.api.errors._step_up_challenge` builds the RFC 9470 challenge
+        header from this set (ADR-0036), so a bad value is a live failure.
+
+        An empty set makes `principal_for`'s `mfa_satisfied` permanently
+        `False`, while the SPA's `parseStepUpChallenge` refuses an
+        `acr_values=""` challenge: every administrator is locked out with no
+        way to step up. A quote or line break would be interpolated straight
+        into the header value.
         """
         if not value:
             raise ValueError(
@@ -171,54 +143,44 @@ class AuthSettings(BaseSettings):
 
 
 class ApiSettings(BaseSettings):
-    """HTTP-layer configuration for the FastAPI app (issue #41).
+    """HTTP-layer configuration for the FastAPI app.
 
     ``frontend_base_url`` is the single browser origin allowed to call the
-    API cross-origin. It is load-bearing, not cosmetic: ADR-0021's SPA
-    performs the PKCE code exchange in the browser and then calls this API
-    with a Bearer token, so without an accurate allowed origin every
-    authenticated request fails CORS preflight.
+    API cross-origin. ADR-0021's SPA exchanges the PKCE code in the browser
+    and calls this API with a Bearer token, so a wrong origin fails every
+    authenticated request at CORS preflight.
 
-    It reuses the ``NPTC_FRONTEND_BASE_URL`` variable the Keycloak realm
-    import already substitutes into ``nptc-frontend``'s ``redirectUris``/
-    ``webOrigins`` - one value, so the origin Keycloak will redirect to and
-    the origin the API will accept cannot drift apart.
+    It reuses ``NPTC_FRONTEND_BASE_URL``, which the Keycloak realm import
+    substitutes into ``nptc-frontend``'s ``redirectUris``/``webOrigins``, so
+    the origin Keycloak redirects to and the origin the API accepts cannot
+    drift apart.
 
-    The default matches the Vite dev server, and is the one setting here
-    that may legitimately be a plain-http localhost value; any other
-    deployment must set it to the frontend's real origin.
+    The default matches the Vite dev server and is the only setting here
+    that may be a plain-http localhost value; any other deployment must set
+    the frontend's real origin.
     """
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
     frontend_base_url: str = "http://localhost:5173"
 
-    #: FR-98's label-provenance declaration for every served `fsn` field
-    #: (`nptc.api.labels.fsn_provenance`) - a placeholder for FR-66's own
-    #: export configuration (P4, not built yet: no `export_config`
-    #: model/table exists). `"intact"` is the only value the read path can
-    #: honestly serve: `nptc.api.routers.catalogue_shared`/`terminology`
-    #: build `fsn` straight from the stored/served value with no strip
-    #: anywhere between the column and the response (FR-83's one sanctioned
-    #: renderer, `nptc.exports.semantic_tag.render_display_term`, is
-    #: reached only from the export surface, never from here). See
-    #: `_fsn_semantic_tag_is_intact` below for why `"stripped"` is refused
-    #: rather than accepted and silently ignored.
+    #: FR-98's label-provenance declaration for every served `fsn`
+    #: (`nptc.api.labels.fsn_provenance`), a placeholder for FR-66's export
+    #: configuration (P4, not built). `"intact"` is the only value the read
+    #: path can honestly serve: nothing strips an `fsn` between the column
+    #: and the response (FR-83's renderer, `render_display_term`, is reached
+    #: only from the export surface). `_fsn_semantic_tag_is_intact` refuses
+    #: `"stripped"`.
     fsn_semantic_tag: Literal["intact", "stripped"] = "intact"
 
     @field_validator("fsn_semantic_tag")
     @classmethod
     def _fsn_semantic_tag_is_intact(cls, value: str) -> str:
-        """`"stripped"` would make the served payload lie about what it
-        actually serves (FR-83, FR-66): there is no stripper anywhere on
-        this read path, so configuring `"stripped"` could never make an
-        FSN's tag actually stripped - it would only make
-        `LabelProvenance.semantic_tag` claim a strip that never happened,
-        which is worse than not declaring provenance at all. Refusing this
-        at settings-construction time turns a config typo (or a premature
-        attempt to wire FR-66's not-yet-built export configuration through
-        this field) into a start-up failure naming both requirements,
-        rather than a silently wrong payload discovered downstream.
+        """`"stripped"` could never strip anything: the read path has no
+        stripper, so it would only make `LabelProvenance.semantic_tag` claim
+        a strip that never happened (FR-83, FR-66). Refusing it here turns a
+        typo, or an early attempt to wire FR-66's export configuration
+        through this field, into a start-up failure.
         """
         if value == "stripped":
             raise ValueError(
@@ -230,16 +192,12 @@ class ApiSettings(BaseSettings):
             )
         return value
 
-    #: FR-86 (issue #152): unset by default - RCPA-QAP has never had a
-    #: maximum to enforce, and PRD open item OI-1 records that the platform
-    #: owes them the length-distribution data (FR-87) before they can
-    #: nominate one. Every existing configuration knob in this codebase is
-    #: `pydantic-settings`-backed (`fsn_semantic_tag` above is the closest
-    #: analogue: an optional, validated, documented setting with a safe
-    #: default) - there is no settings table and no admin-config UI to add
-    #: this to instead. `nptc.catalogue.term_hygiene.preferred_term_length`
-    #: remains the one place `length` is computed; this only adds a ceiling
-    #: to compare it against, never a second implementation of it.
+    #: FR-86: unset by default. RCPA-QAP has no maximum to enforce, and PRD
+    #: open item OI-1 records that the platform owes them the FR-87 length
+    #: data before they can nominate one. An environment variable, not a
+    #: database setting: ADR-0041. `nptc.catalogue.term_hygiene.
+    #: preferred_term_length` remains the only place length is computed;
+    #: this is only the ceiling to compare it against.
     max_preferred_term_length: int | None = Field(default=None, ge=1)
 
     @field_validator("max_preferred_term_length", mode="before")
@@ -257,11 +215,9 @@ class ApiSettings(BaseSettings):
         """Scheme, host and optional port - nothing else.
 
         A browser sends `Origin: https://app.example` with no path, so a
-        configured value carrying one (`https://app.example/nptc`) can
-        never match, and CORS would fail every authenticated request with
-        nothing in the logs pointing here. Rejecting it at
-        settings-construction time turns a silent runtime failure into a
-        startup error naming the field.
+        value carrying one (`https://app.example/nptc`) never matches, and
+        CORS would fail every authenticated request with nothing in the logs
+        pointing here.
         """
         value = _require_non_blank(value, "frontend_base_url").rstrip("/")
         parts = urlsplit(value)
@@ -277,9 +233,7 @@ class ApiSettings(BaseSettings):
 
 class MigrationSettings(BaseSettings):
     """The owning role's DSN Alembic runs migrations as - see
-    ``backend/migrations/env.py``. Deliberately separate from
-    ``DatabaseSettings``: nothing about running a migration should depend
-    on ``NPTC_DATABASE_URL`` being set."""
+    ``backend/migrations/env.py``."""
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
@@ -316,29 +270,20 @@ class AppLoginSettings(BaseSettings):
 
 
 class IndexerSettings(BaseSettings):
-    """The DSN `nptc.db.property_reconciler` runs its DDL as (issue #54,
-    FR-13) - see that module and `scripts/reconcile_property_indexes.py`.
+    """The DSN `nptc.db.property_reconciler` runs its DDL as (FR-13) - see
+    that module and `scripts/reconcile_property_indexes.py`.
 
-    Empty default, not required, unlike `MigrationSettings` - "runtime
-    index reconciliation is not configured" is a valid, safe posture
-    (fail-closed: `reconcile_property_indexes()` refuses to run rather than
-    falling back to a different credential), not a misconfiguration to
-    reject at settings-construction time, matching `AuditVerifySettings`'s
-    own empty-default posture for the same reason.
+    Empty default, unlike `MigrationSettings`: "runtime index reconciliation
+    is not configured" is a valid fail-closed posture, because
+    `reconcile_property_indexes()` refuses to run rather than use another
+    credential.
 
     **Deliberately its own variable, never a fallback to
-    `NPTC_MIGRATION_DATABASE_URL`.** The migration role can `CREATE ROLE`/
-    `CREATE EXTENSION`/`DROP TABLE`; handing that credential to a
-    long-lived, request-serving API process for one narrow DDL operation
-    (building/dropping a `property_value` expression index) would widen
-    the API's blast radius permanently. A deployment that wants runtime
-    reconciliation points this at a role scoped to exactly that - see
-    `docs/operations/configuration.md`. Equally no fallback to
-    `NPTC_DATABASE_URL`: the app role provably cannot do DDL at all
-    (ADR-0012's rejected-alternatives table), so falling back to it would
-    only replace one failure (refuses to run) with a less legible one
-    (`CREATE INDEX` fails with a permission error deep inside a
-    reconciliation run)."""
+    `NPTC_MIGRATION_DATABASE_URL` or `NPTC_DATABASE_URL`.** The migration
+    role can `CREATE ROLE`/`DROP TABLE`, far more than one expression-index
+    DDL operation needs, and the app role cannot do DDL at all
+    (ADR-0012, `docs/operations/configuration.md`), so a fallback to it would
+    only turn a clear refusal into a permission error mid-run."""
 
     model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
 
@@ -347,9 +292,8 @@ class IndexerSettings(BaseSettings):
     @field_validator("indexer_database_url")
     @classmethod
     def _strip(cls, value: str) -> str:
-        """Normalises a whitespace-only value (`"   "`) to `""` (issue #54
-        review) - without this, `get_indexer_engine()`'s `if not settings.
-        indexer_database_url` guard reads a whitespace string as truthy,
-        skips `IndexerNotConfiguredError`, and fails much later inside
-        `create_engine` with a far less legible error naming nothing."""
+        """Normalises a whitespace-only value to `""`. Otherwise
+        `get_indexer_engine()`'s `if not settings.indexer_database_url` guard
+        reads it as truthy, skips `IndexerNotConfiguredError` and fails later
+        inside `create_engine`."""
         return value.strip()
