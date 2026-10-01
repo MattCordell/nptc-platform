@@ -1,12 +1,8 @@
-"""The FastAPI application factory (issue #41).
+"""The FastAPI application factory.
 
-Until now `nptc.api` was a docstring stub and the only FastAPI app in the
-repo was a throwaway one in `backend/tests/authz_app_support.py`. This is
-the real one that harness was standing in for.
-
-A factory rather than a module-level `app = FastAPI()`: tests need to
-build an app with overridden dependencies without importing a global that
-has already read settings and opened a connection pool at import time.
+A factory rather than a module-level `app = FastAPI()`: tests build an app
+with overridden dependencies without importing a global that has already
+read settings and opened a connection pool at import time.
 """
 
 from __future__ import annotations
@@ -45,41 +41,26 @@ def create_app(
     )
     api_settings = settings or get_api_settings()
     app.dependency_overrides[get_api_settings] = lambda: api_settings
-    # Not resolved via `Depends(get_auth_settings)`: `register_exception_handlers`
-    # runs at app-construction time, before any request exists for FastAPI's DI
-    # to resolve against. `get_auth_settings()` is the same process-wide
-    # `AuthSettings` `current_principal` reads for the *positive* MFA check
-    # (`nptc.api.dependencies`) - passing an explicit `auth_settings` here is
-    # what lets a test build both from one object instead of two independently
-    # configured settings silently drifting apart.
+    # Not `Depends(get_auth_settings)`: `register_exception_handlers` runs at
+    # construction time, before any request exists. `get_auth_settings()` is the
+    # `AuthSettings` `current_principal` reads for the positive MFA check, so an
+    # explicit `auth_settings` lets a test build both from one object.
     step_up_auth_settings = auth_settings or get_auth_settings()
 
-    # Built here, not on the first request that needs it. The construction
-    # itself is cheap and opens no socket, so this is not about warming a
-    # cache - it is about *where the failure lands*.
-    # `TerminologyConfig.from_env` raises `TerminologyConfigError` on a
-    # malformed `NPTC_TX_*` value, and `get_terminology_client`'s
-    # `lru_cache` does not cache a raised exception, so leaving it lazy
-    # turns one deployment typo into a 500 on every request to a public
-    # read endpoint (FR-20) for as long as nobody notices. Calling it
-    # during app construction makes the same typo a start-up failure
-    # instead: loud, once, and before the process ever takes traffic. The
-    # `lru_cache` then hands every request the instance built here.
-    #
-    # Issue #52 moved this from `get_datatype_registry` itself: that
-    # function is now request-scoped (it wires a `DatabaseLocalCodeLookup`
-    # against the request's own `Session`, per FR-10/#56), so it can no
-    # longer be called with no arguments here - `get_terminology_client`
-    # is the one piece of that construction that both fails on a
-    # deployment typo and is still safe to build with no request in hand.
+    # Built here for where the failure lands, not to warm a cache.
+    # `TerminologyConfig.from_env` raises `TerminologyConfigError` on a malformed
+    # `NPTC_TX_*` value, and `get_terminology_client`'s `lru_cache` does not cache
+    # a raised exception, so a lazy build turns one deployment typo into a 500 on
+    # every request to a public read endpoint (FR-20). Built here, it is a
+    # start-up failure, and the `lru_cache` then hands every request this
+    # instance. `get_datatype_registry` cannot be called here: it is
+    # request-scoped (FR-10).
     get_terminology_client()
 
-    # Exactly one origin, never "*": ADR-0021 has the browser hold the
-    # access token and send it here, so a permissive CORS policy would let
-    # any origin drive an authenticated request with it. `allow_credentials`
-    # stays False - the SPA authenticates with an Authorization header, not
-    # a cookie, and there is no cookie for a browser to be tricked into
-    # attaching.
+    # Exactly one origin, never "*": ADR-0021 has the browser hold the access
+    # token and send it here, so a permissive policy would let any origin drive
+    # an authenticated request. `allow_credentials` stays False: the SPA sends an
+    # Authorization header, not a cookie.
     app.add_middleware(
         CORSMiddleware,
         # Already normalised to a bare origin by ApiSettings' validator.
@@ -87,53 +68,36 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
-        # NFR-06/issue #184: the browser's `fetch`/XHR API hides every
-        # response header not on this allowlist, `WWW-Authenticate` included,
-        # even same-origin-looking-but-actually-cross-origin `vite dev`
-        # traffic. Without this the SPA's step-up challenge handler reads
-        # `null` for the header on every response and silently never fires -
-        # no error, no failing test, just a feature that does nothing outside
-        # of same-origin deployments.
+        # NFR-06: a browser hides every cross-origin response header not listed
+        # here, `WWW-Authenticate` included (`vite dev` is cross-origin). Without
+        # it the SPA's step-up handler reads `null` and silently never fires.
         expose_headers=["WWW-Authenticate"],
     )
 
     register_exception_handlers(app, step_up_auth_settings)
     app.include_router(auth.router, prefix=API_PREFIX)
-    # FR-20 (issue #142): the public read API. Under the same `/api/v1`
-    # prefix as everything else - it is one versioned API with a public
-    # subset, not a second API with its own version line.
+    # FR-20's public read API: one versioned API with a public subset, not a
+    # second API with its own version line.
     app.include_router(catalogue.router, prefix=API_PREFIX)
-    # issue #219: the first state-changing catalogue routes - code binding
-    # create/retire/replace. A separate router from `catalogue.py` on
-    # purpose; see `catalogue_bindings`'s own module docstring.
+    # The catalogue write routers are separate modules from `catalogue.py`; each
+    # module docstring says why.
+    # Code binding create, retire and replace.
     app.include_router(catalogue_bindings.router, prefix=API_PREFIX)
-    # issue #224: designation add/amend/retire, plus collision
-    # acknowledgement (FR-04, FR-05). A separate router from `catalogue.py`
-    # for the same reason as `catalogue_bindings` above.
+    # Designation add, amend and retire, and collision acknowledgement (FR-04, FR-05).
     app.include_router(catalogue_designations.router, prefix=API_PREFIX)
-    # issue #248: whole-property-value replace on a catalogue entry (FR-09,
-    # FR-10, FR-11, FR-37, FR-38, FR-88, FR-89). A separate router for the
-    # same reason as the two write routers above.
+    # Whole-property-value replace (FR-09, FR-10, FR-11, FR-37, FR-38, FR-88, FR-89).
     app.include_router(catalogue_properties.router, prefix=API_PREFIX)
-    # issue #249: the entry's own core-column write route - status and
-    # specimen_unconstrained (FR-36, FR-37, FR-38, FR-89). Shares its path
-    # with catalogue.py's public GET; see that module's own docstring for
-    # why that is legal and deliberate.
+    # Core-column writes: status and specimen_unconstrained (FR-36, FR-37, FR-38,
+    # FR-89). Shares its path with catalogue.py's public GET; see its docstring.
     app.include_router(catalogue_entries.router, prefix=API_PREFIX)
-    # issue #228: the admin read counterpart to catalogue.py's public detail
-    # route - any status, gated on catalogue.edit_published, so an edit
-    # screen (#149) can load a draft entry before the write routes above
-    # save changes to it. A separate router for the same reason as the two
-    # write routers above.
+    # Admin read of an entry in any status, gated on catalogue.edit_published.
     app.include_router(catalogue_admin.router, prefix=API_PREFIX)
-    # issue #55: PropertyDefinition admin - create/amend/deprecate, plus the
-    # always-refusing DELETE (FR-11, FR-12).
+    # PropertyDefinition admin, including the always-refusing DELETE (FR-11, FR-12).
     app.include_router(registry.router, prefix=API_PREFIX)
-    # issue #240, FR-26: live SCTID resolution during form completion - its
-    # own prefix and tag, not under /catalogue (see the router's own module
-    # docstring for why).
+    # Live SCTID resolution during form completion (FR-26). Its own prefix and
+    # tag, not under /catalogue; see its docstring.
     app.include_router(terminology.router, prefix=API_PREFIX)
-    # issue #286, NFR-12: administrator search/filter/export over the audit
-    # log - its own prefix and tag, gated on Permission.AUDIT_READ.
+    # Administrator search, filter and export over the audit log (NFR-12), gated
+    # on Permission.AUDIT_READ. Its own prefix and tag.
     app.include_router(audit.router, prefix=API_PREFIX)
     return app
