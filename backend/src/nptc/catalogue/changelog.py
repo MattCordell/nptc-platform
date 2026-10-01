@@ -1,28 +1,26 @@
 """FR-37 changelog note validation: the server-side authority every save must
-pass through (issue #47). Issue #62's client-side gate is the affordance that
-stops the round trip before it happens - this module is what actually enforces
-it, since NFR-20 requires the server never trust a client-only gate.
+pass through. The client-side gate stops the round trip before it happens;
+this module enforces the rule, since NFR-20 requires that the server never
+trust a client-only gate.
 
-The note becomes the permanently published ``History`` text (PRD §9.1's
-FR-37 rationale), so a lazy note today is a permanently unhelpful public
-record - which is why this validates *meaningfulness*, not merely presence.
+The note becomes the permanently published `History` text (PRD SS9.1), so a
+lazy note is a permanently unhelpful public record. That is why this
+validates *meaningfulness*, not merely presence.
 
-**Why normalise before measuring length.** ``nptc_shared.text.
-normalise_for_comparison`` collapses every non-ASCII ``Zs`` character (a
-non-breaking space, PRD Appendix A.1's own defect) to an ordinary space and
-strips the edges. Measuring a raw, un-normalised note's length would let a
-caller pad a low-information note past the minimum with invisible
-characters - exactly the defect class this platform exists to eliminate,
-now on a new field. The *normalised* note is also what should be persisted:
-a published History entry padded with invisible characters is exactly as
-undesirable as a preferred term padded with them.
+**Normalise before measuring length.** `normalise_for_comparison`
+(`nptc_shared.text`) collapses every non-ASCII `Zs` character (a
+non-breaking space, PRD Appendix A.1's defect) to an ordinary space and
+strips the edges. Measuring a raw note would let a caller pad a
+low-information note past the minimum with invisible characters. The
+*normalised* note is also what gets persisted, since a published History
+entry padded with invisible characters is as undesirable as a padded
+preferred term.
 
-**Why the low-information check runs before the length check.** ``"fix"``
-is both too short *and* low-information; reporting
-``LowInformationChangelogNoteError`` rather than ``ChangelogNoteTooShortError``
-gives the caller (and #62's client gate) the more specific, more actionable
-message - "this phrase is never a useful changelog note" beats "type more
-characters", which a caller could satisfy by padding the same useless phrase.
+**The low-information check runs before the length check.** `"fix"` is both
+too short and low-information. Reporting `LowInformationChangelogNoteError`
+gives the caller, and the client gate, the more actionable message ("this
+phrase is never a useful note"), where "type more characters" could be
+satisfied by padding the same useless phrase.
 """
 
 from __future__ import annotations
@@ -33,11 +31,9 @@ from typing import ClassVar, Final
 from nptc_shared.text import normalise_for_comparison
 
 #: PRD FR-37: "minimum length, rejected if it matches a list of
-#: low-information strings such as 'update', 'fix', '.'". Ten characters is
-#: long enough to force a short phrase rather than a single word - "typo
-#: fixed" (10) still passes only because it isn't on the list below, but
-#: "corrected specimen" and similar short, real descriptions comfortably clear
-#: it.
+#: low-information strings such as 'update', 'fix', '.'". Ten characters
+#: forces a short phrase rather than a single word; "typo fixed" (10) passes
+#: only because it is not on the list below.
 MINIMUM_NOTE_LENGTH: Final[int] = 10
 
 #: Casefolded, punctuation-stripped low-information phrases (PRD FR-37's own
@@ -84,22 +80,19 @@ SEED_IMPORT_NOTE: Final[str] = "Seeded from the RCPA-QAP baseline catalogue impo
 #: ``LOW_INFORMATION_NOTES``, so "Fix." and "fix" compare equal without the
 #: list needing a punctuated variant of every phrase.
 _STRIP_PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)
-#: True if the note contains no letter at all - catches "." , "---", "2026",
-#: which would otherwise slip past the length check with no informative
-#: content whatsoever. Mirrored in
-#: ``frontend/src/catalogue/changelog-note.ts`` as ``HAS_LETTER_RE`` (see
-#: ``docs/adr/0030-domain-logic-at-the-browser-boundary.md``). Verified by
-#: ``backend/tests/test_changelog_note.py``'s
-#: ``test_has_letter_re_matches_exactly_letter_and_numeric_categories`` to
-#: match exactly ``GC ∈ {Lu, Ll, Lt, Lm, Lo, Nl, No}`` (issue #262).
+#: Matches a letter. A note such as `"."`, `"---"` or `"2026"` would otherwise
+#: slip past the length check with no informative content. Mirrored in
+#: `frontend/src/catalogue/changelog-note.ts` as `HAS_LETTER_RE` (ADR-0030).
+#: `test_has_letter_re_matches_exactly_letter_and_numeric_categories` in
+#: `backend/tests/test_changelog_note.py` pins it to exactly the general
+#: categories Lu, Ll, Lt, Lm, Lo, Nl and No.
 _HAS_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 
 
 class ChangelogNoteError(ValueError):
     """Base class for every way a changelog note can fail FR-37 validation.
-    Carries the same ``http_status: ClassVar[int]`` convention as
-    `nptc.catalogue.errors` so `nptc.api.errors` can register one handler
-    for the base class rather than one per subclass."""
+    Carries the `http_status` `ClassVar` of `nptc.catalogue.errors`, so
+    `nptc.api.errors` registers one handler for the base class."""
 
     http_status: ClassVar[int] = 422
 
@@ -122,11 +115,9 @@ class LowInformationChangelogNoteError(ChangelogNoteError):
 
 class ChangelogNoteMissingLetterError(ChangelogNoteError):
     """Raised when the normalised note contains no letter at all (e.g.
-    `"---"`, `"2026"`) - a distinct failure from `ChangelogNoteTooShortError`
-    even though both would previously report the same "too short" message
-    regardless of which was actually true: a 13-character note of digits
-    and punctuation is not short, it has no informative content, and the
-    two deserve different guidance."""
+    `"---"`, `"2026"`). Distinct from `ChangelogNoteTooShortError`: a
+    13-character note of digits and punctuation is not short, it has no
+    informative content, and deserves different guidance."""
 
 
 def _fold(note: str) -> str:
