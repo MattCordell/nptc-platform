@@ -53,14 +53,15 @@ def _called_name(node: ast.Call) -> str | None:
 
 def _env_free_build(node: ast.Call) -> str | None:
     func = node.func
-    if (
-        isinstance(func, ast.Attribute)
-        and func.attr in _ENV_FREE_BUILDERS
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "ApiSettings"
-    ):
-        return func.attr
-    return None
+    if not (isinstance(func, ast.Attribute) and func.attr in _ENV_FREE_BUILDERS):
+        return None
+    receiver = func.value
+    receiver_name = receiver.id if isinstance(receiver, ast.Name) else _attribute_name(receiver)
+    return func.attr if receiver_name == "ApiSettings" else None
+
+
+def _attribute_name(node: ast.expr) -> str | None:
+    return node.attr if isinstance(node, ast.Attribute) else None
 
 
 def _direct_uses(source: str, display_path: str) -> list[str]:
@@ -111,13 +112,16 @@ def constructed_without_env():
 def validated_without_env():
     return ApiSettings.model_validate({"frontend_base_url": "http://localhost:5173"})
 
+def qualified_without_env():
+    return settings.ApiSettings.model_construct(frontend_base_url="http://localhost:5173")
+
 def other_model(settings=Depends(get_api_settings)):
     return AuthSettings.model_construct()
 
 def injected(settings=Depends(get_api_settings)):
     return settings
 """
-    assert len(_direct_uses(source, "backend/src/nptc/api/routers/x.py")) == 5
-    assert len(_direct_uses(source, "backend/src/nptc/api/app.py")) == 3
-    assert len(_direct_uses(source, "backend/src/nptc/api/dependencies.py")) == 4
+    assert len(_direct_uses(source, "backend/src/nptc/api/routers/x.py")) == 6
+    assert len(_direct_uses(source, "backend/src/nptc/api/app.py")) == 4
+    assert len(_direct_uses(source, "backend/src/nptc/api/dependencies.py")) == 5
     assert len(_direct_uses(source, "backend/src/nptc/api/openapi_document.py")) == 3
