@@ -344,8 +344,7 @@ def replace_binding(
     three writes it guards against. Those three then share **one**
     `entry_child_write`, taken once before any of them: a stale
     `expected_row_version` refuses before `retire_binding` ever runs, so a
-    stale caller can never strand this entry mid-replacement (FR-38, issue
-    #60)."""
+    stale caller can never strand this entry mid-replacement (FR-38)."""
     if body.successor.code == code:
         # `link_replacement`'s self-supersession check compares row *identity*,
         # which a same-code replacement never trips: `create_binding` would insert a

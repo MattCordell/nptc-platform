@@ -333,7 +333,7 @@ class EntryPage(BaseModel):
 
     Served by both `catalogue.py`'s public `GET /catalogue/entries`
     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/entries` (any status, issue #266) - one shape, the
+    `GET /catalogue/admin/entries` (any status) - one shape, the
     same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
     is `null` on the last page - which is the *only* reliable signal that
     paging is finished. A client must not infer the end from a short page: a
@@ -425,7 +425,7 @@ class Facet(BaseModel):
 class SearchPage(BaseModel):
     """Served by both `catalogue.py`'s public `GET /catalogue/search`
     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/search` (any status, issue #266) - see
+    `GET /catalogue/admin/search` (any status) - see
     `EntryPage`'s own docstring for why one shape rather than two."""
 
     model_config = ConfigDict(frozen=True)
@@ -450,7 +450,7 @@ class PropertyValue(BaseModel):
     changing. `ordinal` is meaningful for a multi-valued property: it is the
     position of this value among that property's values, zero-based.
 
-    `status` is the *definition's* status (issue #248) - `active` or
+    `status` is the *definition's* status - `active` or
     `deprecated` - not a fact about this value. FR-11 makes a deprecated
     definition retain its recorded values, so without this field a client
     reading an entry could not tell such a value apart from one recorded
@@ -480,15 +480,14 @@ class EntryDetail(EntrySummary):
     every consumer.
 
     Served by both `catalogue.py`'s public detail route (`active` only) and
-    `catalogue_admin.py`'s admin detail route (any status, issue #228) -
+    `catalogue_admin.py`'s admin detail route (any status) -
     one shape, so an edit screen consuming the admin route today gets the
     exact same fields a public consumer of the same entry, once published,
-    would see. One exception (issue #239): `designations` also carries
+    would see. One exception: `designations` also carries
     retired rows on the admin route, because its reader is an editor
     deciding against editorial history rather than an implementer who has
     no use for it - see `queries.load_designations`'s own docstring.
-    `bindings` and `properties` were already identical on both routes
-    before this issue and stay that way.
+    `bindings` and `properties` are identical on both routes.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -610,7 +609,7 @@ class Designation(BaseModel):
     `designation` a database invariant rather than a convention. A client
     building a term list needs both: `preferred_term`, plus these.
 
-    No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's
+    No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): the designation
     write router addresses a designation by term in the request body, not
     an internal identifier - see that router's own module docstring.
     """

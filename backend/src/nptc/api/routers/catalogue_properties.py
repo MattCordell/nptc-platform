@@ -269,7 +269,7 @@ class BulkPropertyEntryTarget(BaseModel):
 
 class BulkSavePropertyValuesRequest(BaseModel):
     """The body of `POST /catalogue/entries/bulk/properties/{key}`
-    (issue #265, FR-39). `values` is the one set every named entry ends up
+    (FR-39). `values` is the one set every named entry ends up
     holding - a whole-set replace, identical to the singular route's own
     semantics, applied across `entries` rather than one."""
 
@@ -309,9 +309,8 @@ class BulkSavePropertyValuesResult(BaseModel):
     """The per-entry outcome list, plus its own tallies. Always a 200: the
     request was authorised, well-formed, and fully processed, and the
     outcomes *are* the representation - including a batch where every
-    entry conflicted (issue #265's plan: a whole-request 409 would have to
-    discard the applied entries' new `row_version`s, the one thing a
-    retrying client needs)."""
+    entry conflicted (a whole-request 409 would have to discard the applied
+    entries' new `row_version`s, the one thing a retrying client needs)."""
 
     model_config = ConfigDict(frozen=True)
 

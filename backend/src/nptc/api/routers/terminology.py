@@ -132,7 +132,7 @@ class ConceptLookup(BaseModel):
     one here would risk a permanent 500 on a later read of whatever this
     value feeds.
 
-    `label_provenance` (FR-98, issue #144) covers both label fields even
+    `label_provenance` (FR-98) covers both label fields even
     though `fsn` is nullable: a `None` value still has a designation and a
     semantic-tag state it *would* carry if the server returned one, so the
     descriptor is unconditional, never itself nullable.

@@ -240,8 +240,8 @@ export interface paths {
          *     empty-errors: an entry never edited since seeding returns `200` with
          *     an empty `items` list.
          *
-         *     `changed_by` is populated only for an authenticated caller (PR #278
-         *     review, NFR-26): the endpoint itself stays fully public
+         *     `changed_by` is populated only for an authenticated caller
+         *     (NFR-26): the endpoint itself stays fully public
          *     (`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous
          *     request gets `null` on every event regardless of who actually made the
          *     change - naming an identifiable RCPA-QAP staff member to anyone on the
@@ -303,8 +303,7 @@ export interface paths {
          *     three writes it guards against. Those three then share **one**
          *     `entry_child_write`, taken once before any of them: a stale
          *     `expected_row_version` refuses before `retire_binding` ever runs, so a
-         *     stale caller can never strand this entry mid-replacement (FR-38, issue
-         *     #60).
+         *     stale caller can never strand this entry mid-replacement (FR-38).
          */
         post: operations["replace_binding_api_v1_catalogue_entries__business_key__bindings__code__replacement_post"];
         delete?: never;
@@ -324,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Edit an entry's active designation, or its own preferred term, in place
-         * @description One route, two storage homes (issue #227).
+         * @description One route, two storage homes.
          *
          *     `use="preferred"` with the default `en-AU` addresses the entry's own
          *     preferred term outright. Otherwise `term` resolves against an active
@@ -367,9 +366,9 @@ export interface paths {
         put?: never;
         /**
          * Reinstate an entry's most-recently-retired designation
-         * @description Issue #313. Both lookups run inside the lock, after
+         * @description Reinstate a retired designation. Both lookups run inside the lock, after
          *     `entry_child_write`'s own version check, matching every other route
-         *     here (FR-38, issue #300).
+         *     here (FR-38).
          *
          *     The already-active check runs first, and outside `load_retired_
          *     designation` itself: a term that already has an active designation
@@ -445,12 +444,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One page of catalogue entries, any status (issue #266)
+         * One page of catalogue entries, any status
          * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
-         *     public `list_entries`: keyset paging on `sort` then `business_key`
-         *     (issue #287; `business_key` alone before it), every status in scope
-         *     rather than `PUBLIC_STATUSES` alone, and `status` on each row so a
-         *     caller can tell a draft from an active entry.
+         *     public `list_entries`: keyset paging on `sort` then `business_key`,
+         *     every status in scope rather than `PUBLIC_STATUSES` alone, and `status`
+         *     on each row so a caller can tell a draft from an active entry.
          *
          *     `filter.*` parameters behave as they do on the public surface, except
          *     `?filter.status=` now accepts any `CatalogueEntryStatus` value rather
@@ -459,7 +457,7 @@ export interface paths {
          *     same reason they are not on `/catalogue/entries`: `GET
          *     /catalogue/admin/search` is where the facet list with counts lives.
          *
-         *     Rows carry `row_version` (issue #267) - `AdminEntryPage`, not the public
+         *     Rows carry `row_version` - `AdminEntryPage`, not the public
          *     `EntryPage` - so the maintenance list screen's selection surface can
          *     carry FR-38's optimistic-locking token per row without a second read.
          */
@@ -480,7 +478,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Search catalogue entries by term, any status (issue #266)
+         * Search catalogue entries by term, any status
          * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
          *     public `search`: identical ranking, threshold and keyset paging
          *     (`nptc.catalogue.search`, called with `statuses=maintenance.
@@ -493,7 +491,7 @@ export interface paths {
          *     is non-degenerate here (every status an administrator might filter by),
          *     unlike the public surface's single-bucket `active` facet.
          *
-         *     Hits carry `row_version` (issue #267) - `nptc.catalogue.search.SearchHit`
+         *     Hits carry `row_version` - `nptc.catalogue.search.SearchHit`
          *     reads it straight off `scored`'s own join to `catalogue_entry`, see that
          *     module's docstring - so `AdminSearchHit`, not the public `SearchHit`,
          *     carries it onto the wire here.
@@ -518,12 +516,11 @@ export interface paths {
          * One catalogue entry, any status, with everything attached to it
          * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
          *     public `read_entry`: no status filter on the entry itself, and - unlike
-         *     the public route - `designations` includes retired rows too (issue
-         *     #239). The other two sub-resources were already unfiltered here before
-         *     this issue: `bindings` publishes retired rows on both routes (FR-08),
-         *     and `properties` has no per-row status of its own. An edit screen (#149)
-         *     calls this to load a `draft` entry's current state before the #224
-         *     write routes save changes to it.
+         *     the public route - `designations` includes retired rows too. The other
+         *     two sub-resources are unfiltered on both routes: `bindings` publishes
+         *     retired rows on both (FR-08), and `properties` has no per-row status of
+         *     its own. An edit screen calls this to load a `draft` entry's current
+         *     state before the write routes save changes to it.
          */
         get: operations["read_entry_any_status_api_v1_catalogue_admin_entries__business_key__get"];
         put?: never;
@@ -543,19 +540,17 @@ export interface paths {
         };
         /**
          * The distribution of preferred-term lengths across the catalogue
-         * @description FR-87. Reachable by an administrator with no query to write by hand -
-         *     the acceptance criterion this route exists to satisfy.
+         * @description FR-87. Reachable by an administrator with no query to write by hand.
          *
          *     Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every
          *     other route in this module uses, rather than a new read-only permission -
          *     see the module docstring for why: `ROLE_PERMISSIONS` is asserted
          *     cell-by-cell against the PRD's own table, so minting one would need a PRD
-         *     change this issue does not ask for.
+         *     change.
          *
-         *     One statement (`nptc.catalogue.length_report.compute_length_distribution`,
-         *     issue #275's precedent) regardless of the catalogue's size - FR-87's own
-         *     acceptance criterion that this runs against the 20,000-entry design
-         *     ceiling without timing out.
+         *     One statement (`nptc.catalogue.length_report.compute_length_distribution`)
+         *     regardless of the catalogue's size - FR-87's own acceptance criterion that
+         *     this runs against the 20,000-entry design ceiling without timing out.
          */
         get: operations["preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get"];
         put?: never;
@@ -575,8 +570,7 @@ export interface paths {
         };
         /**
          * List property definitions
-         * @description `scope` is inclusive of `PropertyScope.BOTH` (issue #248, decided
-         *     with the maintainer): `?scope=submission` returns `submission` and
+         * @description `scope` is inclusive of `PropertyScope.BOTH`: `?scope=submission` returns `submission` and
          *     `both` properties, `?scope=maintenance` returns `maintenance` and
          *     `both`, and omitting it returns everything - a submission form should
          *     not have to also ask for `both` to see a property meant for both
@@ -606,7 +600,7 @@ export interface paths {
         /**
          * Delete a property definition (always refused)
          * @description Always refuses (FR-11) - `property_definition` has no `DELETE` grant
-         *     at the database layer at all (issue #51). `key` is accepted (and, for a
+         *     at the database layer at all. `key` is accepted (and, for a
          *     genuinely unknown key, still refused the same way, not 404'd) so the
          *     response is uniform regardless of whether the key exists - the caller's
          *     mistake either way is asking to delete at all, not naming the wrong
@@ -645,7 +639,7 @@ export interface paths {
         };
         /**
          * List a coded property's offerable values
-         * @description FR-10's concept-picker data source (issue #247), plus issue #306's
+         * @description FR-10's concept-picker data source, plus a
          *     resolve-by-code lookup for a value beyond the picker page's own
          *     `DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers
          *     from Ontoserver or the `LocalCode` table - see
@@ -654,7 +648,7 @@ export interface paths {
          *     `binding_target`; this route and `PropertyValuePage` never see it.
          *
          *     `code` is a second, mutually exclusive selection mode, never combined
-         *     with `filter`/`offset`/`count` (issue #306 plan) - `offset`/`count`
+         *     with `filter`/`offset`/`count` - `offset`/`count`
          *     default to values a caller resolving by `code` would not need to
          *     change, so a genuine attempt to combine them is what this refuses,
          *     not every request that happens to also carry those defaults.
@@ -771,8 +765,7 @@ export interface components {
          *     active per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each
          *     term holds a `pg_advisory_xact_lock` until commit and costs its own
          *     collision-check flush (`add_synonyms`'s own docstring), so an unbounded
-         *     batch is an unbounded amount of lock contention for one request (issue
-         *     #224 review finding 4).
+         *     batch is an unbounded amount of lock contention for one request.
          */
         AddDesignationsRequest: {
             /**
@@ -791,7 +784,7 @@ export interface components {
         };
         /**
          * AdminEntryPage
-         * @description The admin counterpart to `catalogue_shared.EntryPage` (issue #267) -
+         * @description The admin counterpart to `catalogue_shared.EntryPage` -
          *     same shape, rows that additionally carry `row_version`. A standalone
          *     model rather than a subclass of `EntryPage`: overriding `items`' element
          *     type in a subclass is the field-covariance trap `mypy --strict` (and
@@ -806,7 +799,7 @@ export interface components {
         };
         /**
          * AdminEntrySummary
-         * @description `EntrySummary` plus FR-38's optimistic-locking token (issue #267).
+         * @description `EntrySummary` plus FR-38's optimistic-locking token.
          *
          *     Defined here, not in `catalogue_shared.py`: that module is imported by
          *     the public router, and a field the public surface must never carry
@@ -815,10 +808,9 @@ export interface components {
          *     construction, not merely by convention. `test_api_public_response_
          *     hygiene.py` asserts the public listing/search routes still omit it.
          *
-         *     The bulk reclassify route (FR-39, #63) locks on `(business_key,
-         *     expected_row_version)`; this is what lets its selection surface (this
-         *     issue) read a `row_version` per row instead of re-reading the entry
-         *     once selected.
+         *     The bulk reclassify route (FR-39) locks on `(business_key,
+         *     expected_row_version)`; this is what lets its selection surface read a
+         *     `row_version` per row instead of re-reading the entry once selected.
          */
         AdminEntrySummary: {
             /** Business Key */
@@ -848,8 +840,7 @@ export interface components {
         /**
          * AdminSearchHit
          * @description `AdminEntrySummary` plus a relevance score - the admin counterpart to
-         *     `catalogue_shared.SearchHit`, matching that model's own field for field
-         *     (issue #267).
+         *     `catalogue_shared.SearchHit`, matching that model's own field for field.
          */
         AdminSearchHit: {
             /** Business Key */
@@ -883,7 +874,7 @@ export interface components {
         };
         /**
          * AdminSearchPage
-         * @description The admin counterpart to `catalogue_shared.SearchPage` (issue #267) -
+         * @description The admin counterpart to `catalogue_shared.SearchPage` -
          *     see `AdminEntryPage`'s own docstring for why this is a standalone model
          *     rather than a subclass.
          */
@@ -935,17 +926,17 @@ export interface components {
          *     `use="preferred", language="en-AU"`. That is this API's whole premise -
          *     every term the catalogue holds is a designation, and ADR-0022's split
          *     between two storage homes is not something a client should have to
-         *     model (issue #224's own module docstring).
+         *     model (see the module docstring).
          *
          *     `row_version` is the entry's, on both branches, and is what a client
          *     sends back as `expected_row_version` on its next write - so a save
          *     never has to be followed by a re-fetch just to learn the new token. It
-         *     now advances on both branches (FR-38, issue #300): a `designation` row
+         *     advances on both branches (FR-38): a `designation` row
          *     has no version of its own, but amending one bumps the entry's counter
          *     via `nptc.catalogue.entries.entry_child_write`, the same way the
          *     preferred-term branch's `save_entry` always has.
          *
-         *     `length_warning` (FR-86, issue #152) is set only on the preferred-term
+         *     `length_warning` (FR-86) is set only on the preferred-term
          *     branch, and only when a maximum is configured and exceeded - see
          *     `LengthWarning`'s own docstring for why it is a separate field rather
          *     than a member of `warnings`.
@@ -966,8 +957,8 @@ export interface components {
          *     pydantic 422 before this ever reaches `nptc.db.definitions.
          *     amend_definition`.
          *
-         *     **An explicit `null` on a known field is refused, not a silent no-op**
-         *     (issue #223 review finding 9). None of these fields is a nullable
+         *     **An explicit `null` on a known field is refused, not a silent no-op.**
+         *     None of these fields is a nullable
          *     domain value, so a client sending `{"label": null, ...}` almost
          *     certainly meant to omit the field, not clear it - `_reject_explicit_null`
          *     below distinguishes "omitted" from "provided as null" via
@@ -1208,7 +1199,7 @@ export interface components {
         /**
          * BulkSavePropertyValuesRequest
          * @description The body of `POST /catalogue/entries/bulk/properties/{key}`
-         *     (issue #265, FR-39). `values` is the one set every named entry ends up
+         *     (FR-39). `values` is the one set every named entry ends up
          *     holding - a whole-set replace, identical to the singular route's own
          *     semantics, applied across `entries` rather than one.
          */
@@ -1225,9 +1216,8 @@ export interface components {
          * @description The per-entry outcome list, plus its own tallies. Always a 200: the
          *     request was authorised, well-formed, and fully processed, and the
          *     outcomes *are* the representation - including a batch where every
-         *     entry conflicted (issue #265's plan: a whole-request 409 would have to
-         *     discard the applied entries' new `row_version`s, the one thing a
-         *     retrying client needs).
+         *     entry conflicted (a whole-request 409 would have to discard the applied
+         *     entries' new `row_version`s, the one thing a retrying client needs).
          */
         BulkSavePropertyValuesResult: {
             /** Outcomes */
@@ -1263,7 +1253,7 @@ export interface components {
          *     call" (`False`) - `acknowledge_collision` is idempotent (see its own
          *     docstring), and without this flag a caller cannot tell those two cases
          *     apart, nor notice that `reason` below is the *original* note rather
-         *     than the one this call just submitted (issue #224 review finding 5).
+         *     than the one this call just submitted.
          */
         CollisionAcknowledgementResponse: {
             /** Language */
@@ -1280,7 +1270,7 @@ export interface components {
          *     id (NFR-04/NFR-26).
          *
          *     `label_provenance["preferred_term"]` is always `AU_PREFERRED_TERM_
-         *     PROVENANCE` (FR-98, issue #144): `preferred_term` here is the
+         *     PROVENANCE` (FR-98): `preferred_term` here is the
          *     *colliding* entry's own catalogue preferred term, the identical field
          *     and designation type as `EntrySummary.preferred_term` - matching
          *     `CollisionWarning`'s own reasoning for its own `preferred_term` field
@@ -1306,8 +1296,8 @@ export interface components {
          *     term, never its internal id (NFR-04/NFR-26) - the same shape the 409
          *     handler for the *error*-severity case already returns.
          *
-         *     `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98, issue
-         *     #144), never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
+         *     `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98),
+         *     never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
          *     own comments (`add_designations_route`/`amend_designation_route`) prove
          *     the preferred branch never produces a `CollisionWarning` at all -
          *     `warning_collisions` only ever looks for another live entry's active
@@ -1349,7 +1339,7 @@ export interface components {
          *     one here would risk a permanent 500 on a later read of whatever this
          *     value feeds.
          *
-         *     `label_provenance` (FR-98, issue #144) covers both label fields even
+         *     `label_provenance` (FR-98) covers both label fields even
          *     though `fsn` is nullable: a `None` value still has a designation and a
          *     semantic-tag state it *would* carry if the server returned one, so the
          *     descriptor is unconditional, never itself nullable.
@@ -1389,8 +1379,8 @@ export interface components {
          *
          *     `cardinality`/`scope`/`strength`/`binding_target` are typed against the
          *     exact `StrEnum`s `property_definition`'s own database `CHECK`
-         *     constraints close over (issue #223 review finding 3) - an invalid value
-         *     is now a pydantic 422 before the request ever reaches the ORM, rather
+         *     constraints close over - an invalid value
+         *     is a pydantic 422 before the request ever reaches the ORM, rather
          *     than a `23514` `IntegrityError` that `create_definition`'s `except
          *     IntegrityError` used to re-raise unchanged, surfacing as an unhandled
          *     500. `datatype` stays a bare `str` deliberately - FR-77's own extension
@@ -1461,7 +1451,7 @@ export interface components {
          *     `designation` a database invariant rather than a convention. A client
          *     building a term list needs both: `preferred_term`, plus these.
          *
-         *     No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): issue #224's
+         *     No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): the designation
          *     write router addresses a designation by term in the request body, not
          *     an internal identifier - see that router's own module docstring.
          */
@@ -1511,7 +1501,7 @@ export interface components {
         /**
          * DesignationWriteResult
          * @description `add_designations`'s response: the created row(s), any warning-severity
-         *     collisions, and the entry's new `row_version` (FR-38, issue #300) - so a
+         *     collisions, and the entry's new `row_version` (FR-38) - so a
          *     client never has to re-fetch the entry just to learn its next lock
          *     token.
          */
@@ -1553,15 +1543,14 @@ export interface components {
          *     every consumer.
          *
          *     Served by both `catalogue.py`'s public detail route (`active` only) and
-         *     `catalogue_admin.py`'s admin detail route (any status, issue #228) -
+         *     `catalogue_admin.py`'s admin detail route (any status) -
          *     one shape, so an edit screen consuming the admin route today gets the
          *     exact same fields a public consumer of the same entry, once published,
-         *     would see. One exception (issue #239): `designations` also carries
+         *     would see. One exception: `designations` also carries
          *     retired rows on the admin route, because its reader is an editor
          *     deciding against editorial history rather than an implementer who has
          *     no use for it - see `queries.load_designations`'s own docstring.
-         *     `bindings` and `properties` were already identical on both routes
-         *     before this issue and stay that way.
+         *     `bindings` and `properties` are identical on both routes.
          */
         EntryDetail: {
             /** Business Key */
@@ -1600,7 +1589,7 @@ export interface components {
          *
          *     Served by both `catalogue.py`'s public `GET /catalogue/entries`
          *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-         *     `GET /catalogue/admin/entries` (any status, issue #266) - one shape, the
+         *     `GET /catalogue/admin/entries` (any status) - one shape, the
          *     same reason `EntryDetail` is shared rather than duplicated. `next_cursor`
          *     is `null` on the last page - which is the *only* reliable signal that
          *     paging is finished. A client must not infer the end from a short page: a
@@ -1724,10 +1713,10 @@ export interface components {
         };
         /**
          * FormControl
-         * @description `registry.handlers.FormControlDescriptor`, on the wire (issue #248,
-         *     ADR-0013 SS3, FR-77). `control` is typed against `ControlKind` - a
+         * @description `registry.handlers.FormControlDescriptor`, on the wire (ADR-0013 SS3,
+         *     FR-77). `control` is typed against `ControlKind` - a
          *     closed enum ADR-0013 sanctions precisely because it does not grow when
-         *     a datatype is added - so OpenAPI emits a union #151's generated client
+         *     a datatype is added - so OpenAPI emits a union a generated client
          *     can switch over exhaustively, rather than the bare `datatype` string
          *     FR-77 forbids branching a form on.
          */
@@ -1766,7 +1755,7 @@ export interface components {
             action: string;
             /**
              * Changed By
-             * @description The administrator's display name, or `null` for a system-initiated change, an account since pseudonymised on closure, or an anonymous caller (PR #278 review, NFR-26) - sign in to see who made a change.
+             * @description The administrator's display name, or `null` for a system-initiated change, an account since pseudonymised on closure, or an anonymous caller (NFR-26) - sign in to see who made a change.
              */
             changed_by: string | null;
             /**
@@ -1843,7 +1832,7 @@ export interface components {
         };
         /**
          * LengthWarning
-         * @description FR-86 (issue #152): the catalogue's own preferred term now exceeds
+         * @description FR-86: the catalogue's own preferred term now exceeds
          *     the configured maximum length. Non-blocking, the same "warn, never
          *     raise" shape as `CollisionWarning` - a hard block would make an
          *     existing over-length entry uneditable, the specific failure FR-86
@@ -1875,8 +1864,7 @@ export interface components {
          *     `status`/`specimen_unconstrained` are both optional so a caller can set
          *     either or both in one save - `None` means "leave this field alone",
          *     matching `EntryChanges`' own contract - but a body naming neither is
-         *     refused rather than silently treated as a no-op write (issue #249's own
-         *     acceptance criterion).
+         *     refused rather than silently treated as a no-op write.
          */
         PatchEntryRequest: {
             status?: components["schemas"]["CatalogueEntryStatus"] | null;
@@ -1946,9 +1934,9 @@ export interface components {
         /**
          * PropertyIssueItem
          * @description One field-level problem with an attempted property-value write - the
-         *     wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`
-         *     (issue #248). `ordinal` is `None` for a cardinality issue that applies
-         *     to the property as a whole rather than one value in it.
+         *     wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`.
+         *     `ordinal` is `None` for a cardinality issue that applies to the
+         *     property as a whole rather than one value in it.
          */
         PropertyIssueItem: {
             /** Property Key */
@@ -1975,12 +1963,11 @@ export interface components {
         /**
          * PropertyValidationResponse
          * @description FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s
-         *     `issues[]`, declared as a model (issue #248) rather than the hand-built
-         *     dict this handler used to emit - a router naming this in its
-         *     `responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,
-         *     matching `VersionConflictResponse`/`DesignationCollisionResponse`'s own
-         *     precedent, so #151's generated client types the field-level detail
-         *     instead of a bare `{detail}`.
+         *     `issues[]`, declared as a model rather than a hand-built dict - a
+         *     router naming this in its `responses=` puts the real `issues[]` shape
+         *     in `docs/api/openapi.json`, matching `VersionConflictResponse`/
+         *     `DesignationCollisionResponse`'s own precedent, so a generated client
+         *     types the field-level detail instead of a bare `{detail}`.
          */
         PropertyValidationResponse: {
             /** Detail */
@@ -1997,7 +1984,7 @@ export interface components {
          *     changing. `ordinal` is meaningful for a multi-valued property: it is the
          *     position of this value among that property's values, zero-based.
          *
-         *     `status` is the *definition's* status (issue #248) - `active` or
+         *     `status` is the *definition's* status - `active` or
          *     `deprecated` - not a fact about this value. FR-11 makes a deprecated
          *     definition retain its recorded values, so without this field a client
          *     reading an entry could not tell such a value apart from one recorded
@@ -2024,10 +2011,9 @@ export interface components {
         };
         /**
          * PropertyValueItem
-         * @description One offerable value for a coded property (issue #247) - identical in
+         * @description One offerable value for a coded property - identical in
          *     shape whether it came from a SNOMED value set or a local code system;
-         *     nothing here names `binding_target` (the acceptance criterion, on the
-         *     wire).
+         *     nothing here names `binding_target`.
          */
         PropertyValueItem: {
             /** Code */
@@ -2069,7 +2055,7 @@ export interface components {
         };
         /**
          * ReinstateDesignationRequest
-         * @description The body of `POST .../designations/reinstatement` (issue #313).
+         * @description The body of `POST .../designations/reinstatement`.
          *     `term` addresses the designation to reinstate - resolved against the
          *     most-recently-retired row matching `(entry, term, language)`
          *     (`nptc.catalogue.designations.load_retired_designation`), never a
@@ -2091,11 +2077,10 @@ export interface components {
         /**
          * ReinstateDesignationResult
          * @description `reinstate_designation_route`'s response: the reinstated row, any
-         *     warning-severity collisions, and the entry's new `row_version` (FR-38,
-         *     issue #300).
+         *     warning-severity collisions, and the entry's new `row_version` (FR-38).
          *
-         *     A new model, not a reuse of `DesignationWriteResult` (issue #313's own
-         *     open question) - this route always acts on exactly one row, and
+         *     A new model, not a reuse of `DesignationWriteResult`: this route always
+         *     acts on exactly one row, and
          *     `DesignationWriteResult.designations` being a list would misdescribe
          *     that. Shaped like `AmendDesignationResult` instead, which reinstatement
          *     otherwise matches exactly: one designation, warnings, row_version.
@@ -2157,7 +2142,7 @@ export interface components {
         /**
          * RetireDesignationResult
          * @description `retire_designation_route`'s response: the retired row, plus the
-         *     entry's new `row_version` (FR-38, issue #300).
+         *     entry's new `row_version` (FR-38).
          *
          *     Declared here rather than returning a bare `Designation`, which has
          *     nowhere to carry `row_version` - `Designation` is the shared public read
@@ -2227,7 +2212,7 @@ export interface components {
          * SearchPage
          * @description Served by both `catalogue.py`'s public `GET /catalogue/search`
          *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-         *     `GET /catalogue/admin/search` (any status, issue #266) - see
+         *     `GET /catalogue/admin/search` (any status) - see
          *     `EntryPage`'s own docstring for why one shape rather than two.
          */
         SearchPage: {
@@ -2806,7 +2791,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2815,7 +2800,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3280,7 +3265,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3289,7 +3274,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3352,7 +3337,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3361,7 +3346,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3424,7 +3409,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3433,7 +3418,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3496,7 +3481,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one (issue #313 review). */
+            /** @description No catalogue entry matches the given identifier, or no matching designation does - add/amend/retire look for an active one, reinstatement for a retired one. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3505,7 +3490,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active - issue #313), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. */
+            /** @description The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3681,7 +3666,7 @@ export interface operations {
     list_entries_any_status_api_v1_catalogue_admin_entries_get: {
         parameters: {
             query?: {
-                /** @description How to order the page: `business_key` (the default, and the pre-#287 behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. Changing `sort` invalidates any `after` cursor from a different sort - pass `after=null` (omit it) when changing sort, matching a changed filter set. */
+                /** @description How to order the page: `business_key` (the default), `preferred_term`, `updated_at`, or `status`. `status` orders by lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. Changing `sort` invalidates any `after` cursor from a different sort - pass `after=null` (omit it) when changing sort, matching a changed filter set. */
                 sort?: "business_key" | "preferred_term" | "updated_at" | "status";
                 /** @description Maximum entries in this page. */
                 limit?: number;
