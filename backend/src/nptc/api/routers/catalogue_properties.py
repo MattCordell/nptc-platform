@@ -255,8 +255,8 @@ class BulkPropertyEntryTarget(BaseModel):
     never do this instead, ADR-0035).
 
     `business_key`'s shape is validated here, in the request body, the same
-    pattern `BusinessKeyPath` enforces on the singular route's path segment
-    - derivable from the request alone, so it belongs on the whole-request
+    pattern `BusinessKeyPath` enforces on the singular route's path segment -
+    derivable from the request alone, so it belongs on the whole-request
     side of the split (see `BulkSavePropertyValuesRequest`'s own docstring):
     a malformed key is a 422 for the whole batch, not a `not-found` outcome
     indistinguishable from a well-formed key that simply does not exist."""
