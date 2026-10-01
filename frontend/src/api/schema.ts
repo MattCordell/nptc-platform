@@ -456,8 +456,8 @@ export interface paths {
          *     same reason they are not on `/catalogue/entries`: `GET
          *     /catalogue/admin/search` is where the facet list with counts lives.
          *
-         *     Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage`
-         *     - so the maintenance list screen's selection surface can carry FR-38's
+         *     Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage` -
+         *     so the maintenance list screen's selection surface can carry FR-38's
          *     optimistic-locking token per row without a second read.
          */
         get: operations["list_entries_any_status_api_v1_catalogue_admin_entries_get"];
@@ -1380,11 +1380,10 @@ export interface components {
          *     constraints close over - an invalid value is a pydantic 422 before the
          *     request reaches the ORM, not a database `CHECK` violation surfacing as
          *     a 500. `datatype` stays a bare `str` deliberately - FR-77's own
-         *     extension point, so admitting a new datatype never touches this router
-         *     - and is instead validated by `create_definition` itself, against the
-         *     live `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed
-         *     422 rather than a broken row that only misbehaves at the first value
-         *     write.
+         *     extension point, so admitting a new datatype never touches this router -
+         *     and is instead validated by `create_definition` itself, against the live
+         *     `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
+         *     rather than a broken row that only misbehaves at the first value write.
          */
         CreatePropertyDefinitionRequest: {
             /** Key */

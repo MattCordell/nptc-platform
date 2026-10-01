@@ -295,11 +295,10 @@ class CreatePropertyDefinitionRequest(BaseModel):
     constraints close over - an invalid value is a pydantic 422 before the
     request reaches the ORM, not a database `CHECK` violation surfacing as
     a 500. `datatype` stays a bare `str` deliberately - FR-77's own
-    extension point, so admitting a new datatype never touches this router
-    - and is instead validated by `create_definition` itself, against the
-    live `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed
-    422 rather than a broken row that only misbehaves at the first value
-    write."""
+    extension point, so admitting a new datatype never touches this router -
+    and is instead validated by `create_definition` itself, against the live
+    `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
+    rather than a broken row that only misbehaves at the first value write."""
 
     model_config = ConfigDict(frozen=True)
 

@@ -316,8 +316,8 @@ def list_entries_any_status(
     same reason they are not on `/catalogue/entries`: `GET
     /catalogue/admin/search` is where the facet list with counts lives.
 
-    Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage`
-    - so the maintenance list screen's selection surface can carry FR-38's
+    Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage` -
+    so the maintenance list screen's selection surface can carry FR-38's
     optimistic-locking token per row without a second read.
     """
     page = maintenance.list_entries_any_status(
