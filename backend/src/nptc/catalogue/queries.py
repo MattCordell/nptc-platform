@@ -27,9 +27,21 @@ whatever the page size.
 
 Keyset pagination, never `OFFSET` (ADR-0024). `list_entries` asks for one row
 more than the caller wanted, and that row decides whether a next page exists,
-so no endpoint here runs a page-total `COUNT(*)`. The one count in the read
-layer, `nptc.catalogue.facets.compute_facets`, is the asked-for, bounded
-exception argued in ADR-0032; `list_entries` returns no facets.
+so no endpoint here runs a page-total `COUNT(*)`.
+
+**The one exception to that `COUNT` ban, and why it is not one** (FR-16,
+ADR-0032). `nptc.catalogue.facets.compute_facets` does count, and this
+paragraph exists so that reads as a considered exception, not an oversight.
+The ban is on a *page total*: a number the client did not ask for, that costs
+a scan of everything the page did not serve, and that ADR-0024 does without
+because keyset paging has no use for it. A facet count is the opposite on
+every point. It is the answer to the question: a facet with no count is a list
+of words, not a filter, and FR-16 asks for counts by name. It is bounded, to
+`FACET_BUCKET_CAP` buckets per facet. And it reads one property's rows through
+that property's index rather than the whole table; `test_db_property_index_plan.py`
+`EXPLAIN`s the plan, and ADR-0032 records which parts of the query the index
+serves. `list_entries` below runs no count of any kind: it accepts filters and
+returns no facets.
 """
 
 from __future__ import annotations
