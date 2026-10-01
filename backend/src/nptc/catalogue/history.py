@@ -133,7 +133,7 @@ def _changed_field_names(
     the names it lists (module docstring).
 
     Raises rather than silently dropping names if `REDACTED_KEY`'s value is
-    not the `list` that `nptc.audit.diffing._payload` writes. A redacted field
+    not the `list` that `FieldDiff._payload` in `nptc.audit.diffing` writes. A redacted field
     name is what proves a withheld value changed at all, so an unrecognised
     shape must fail loudly, not vanish from an otherwise complete-looking
     public response.

@@ -101,7 +101,7 @@ class PropertyValueSourceMisconfiguredError(Exception):
 
     A data-integrity fault in the stored definition, never a caller mistake.
     A well-formed row always resolves, so this is defence in depth, with the
-    posture of `nptc.terminology.errors.TerminologyConfigError`: the service
+    posture of `nptc_shared.terminology.TerminologyConfigError`: the service
     is misconfigured.
     """
 
