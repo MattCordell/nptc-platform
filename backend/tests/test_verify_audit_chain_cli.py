@@ -188,8 +188,11 @@ def test_missing_dbapi_driver_exits_3_not_1(capsys: pytest.CaptureFixture[str]) 
     this workspace) raises ModuleNotFoundError before any connection is
     attempted: a failure to run, not a chain break. A bare `postgresql://` no
     longer exercises this: SQLAlchemy resolves it to psycopg, which is installed."""
-    missing_driver_url = "postgresql+psycopg2://nobody:nothing@127.0.0.1:1/does-not-exist"
+    missing_driver_url = (
+        "postgresql+psycopg2://nobody:nothing@127.0.0.1:1/does-not-exist?connect_timeout=3"
+    )
 
     exit_code = verify.main(["--database-url", missing_driver_url])
 
     assert exit_code == verify.EXIT_COULD_NOT_COMPLETE
+    assert "ModuleNotFoundError" in capsys.readouterr().err

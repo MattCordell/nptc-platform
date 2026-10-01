@@ -18,9 +18,9 @@ Few tests are worth moving, and moving them saves little time.
   write path. They stay.
 
 The recommendation is to move nothing now. Moving 185 of the 187 candidates would save an
-estimated 74 seconds of a 978-second serial run. The other two are CLI tests that save nothing
-until their connect wait is fixed. Three tests that wait for a refused connection cost 391
-seconds on the measured machine, so fixing them is the larger lever. The
+estimated 74 seconds of a 978-second serial run. The other two are CLI tests whose move adds about 6 s
+to the fast subset, now that their connect wait is bounded. Three tests that waited for a refused connection cost 391
+seconds on the measured machine, so fixing them was the larger lever (done in #399). The
 [Timings](#timings) section has the evidence.
 
 ## How the counts were taken
@@ -334,7 +334,7 @@ per item, except that `test_db_property_indexes.py` averages 0.14 s.
 | Total | 185 | 74 s (8% of 978 s) |
 
 The HTTP figures are upper bounds, because a no-database app still pays to build the app.
-The two CLI tests are not counted. Moving them saves nothing until the connect wait is fixed.
+The two CLI tests are not counted. Moving them adds about 6 s to the fast subset, now that the connect wait is bounded.
 
 ## Recommendation
 
@@ -344,7 +344,7 @@ Move no tests now.
   need a validator or session change, and 115 need a no-database HTTP builder. The other 27
   are weaker or partial moves (tiers C, D and E).
 - **Saving:** about 74 s of 978 s on the measured machine, from 185 candidates. The two CLI
-  tests save nothing until their connect wait is fixed. The full run's wall time barely moves.
+  tests are counted separately: moving them adds about 6 s to the fast subset. The full run's wall time barely moves.
 - **Larger lever (done in #399):** the three refused-connection tests now fail fast. That removes
   about 380 s from the full run and about 130 s from the fast subset on Windows. It changes no
   assertion.
