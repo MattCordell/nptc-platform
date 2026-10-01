@@ -1,60 +1,22 @@
-"""Response models and helpers shared between the public read router
-(`routers/catalogue.py`, FR-20), the authenticated admin read router
-(`routers/catalogue_admin.py`, issue #228), and the authenticated write
-routers (`routers/catalogue_bindings.py`, issue #219;
-`routers/catalogue_designations.py`, issue #224).
+"""Response models and helpers shared by the public read router (`catalogue.py`, FR-20),
+the admin read router (`catalogue_admin.py`) and the write routers
+(`catalogue_bindings.py`, `catalogue_designations.py`).
 
-Every write router deliberately stays a separate module -
-`catalogue.py`'s own docstring explains why a POST cannot fold into the
-public surface, and `catalogue_admin.py`'s own docstring explains the same
-for its status-unfiltered GET - but a row written or read by one has to
-come back out looking exactly like the same row read by another, so the
-response models and their row-to-model assemblers live here rather than
-being duplicated or imported private-to-private between routers.
+Each router stays a separate module (see their docstrings), but a row written or read by
+one must come back out looking exactly like the same row read by another. The response
+models, query-parameter types and row-to-model assemblers therefore live here, so no
+router imports another's private helpers and the shapes cannot drift. Moving a model
+between modules leaves its OpenAPI component name unchanged.
 
-`EntrySummary`/`PropertyValue`/`EntryDetail` and their assembly helpers
-moved here from `catalogue.py` when `catalogue_admin.py` was added (issue
-#228): `catalogue_admin.py`'s detail route serves the identical shape
-`catalogue.py`'s own detail route does, and reaching into another router's
-private helpers is exactly what this module exists to avoid.
+`binding_from_row`, `designation_from_row`, `entry_summary_fields` and
+`property_value_from_row` have no leading underscore because they are this module's
+cross-router contract, listed in `__all__`. An underscore would mark them private and
+invite a future reader to inline them.
 
-`EntryPage`/`SearchHit`/`SearchPage`/`Facet`/`FacetBucket` moved here for
-the identical reason when `catalogue_admin.py` grew its own all-status
-listing and search (issue #266): `GET /catalogue/admin/entries` and
-`GET /catalogue/admin/search` serve the same page/hit/facet shapes their
-public counterparts do, just over a different status scope, so one set of
-models rather than two that could drift. Model *class names* are unchanged
-by the move, so the generated `docs/api/openapi.json` component names are
-unaffected - only their import path changed.
-
-`LimitQuery`/`EntryCursorQuery`/`CursorQuery`/`FilterRequest`/
-`filter_parameter` moved here in the same PR's review pass, for the same
-reason and not a different one: `catalogue_admin.py` had started importing
-these five names directly from `catalogue.py` (and re-declaring
-`_summary`/its own filter-openapi constant byte-for-byte) to serve its two
-new collection routes, which is exactly the router-to-router coupling this
-module's own paragraph above says the shared response models exist to
-avoid - a query-parameter type is no different from a response model in
-that respect. `summary_from_entry` is the same move for the one assembly
-helper (`EntrySummary` from a `CatalogueEntry` row) both routers' listing
-routes need and neither had a shared name for.
-
-**`binding_from_row`/`designation_from_row`/`entry_summary_fields`/
-`property_value_from_row` carry no leading underscore, unlike every other
-free function in this module.** They are this module's actual
-cross-router contract - imported by all three of `catalogue.py`,
-`catalogue_admin.py` and (the designation one) `catalogue_designations.py`
-- so a leading underscore on them would misrepresent an intentional,
-`__all__`-listed API as a private implementation detail a future reader
-might "clean up" by inlining.
-
-**No `display_term`, and no strip anywhere in this module (FR-83, FR-98,
-issue #144).** `Binding.fsn` is served exactly as stored - FR-82's
-as-served guarantee - and `Binding.label_provenance` declares that fact
-instead of a second, silently-derived copy of the label. FR-83's one
-sanctioned renderer, `nptc.exports.semantic_tag.render_display_term`, is
-reached only from the export surface; this module used to be its one
-allowlisted read-path consumer and no longer is.
+**No `display_term`, and no strip anywhere in this module (FR-83, FR-98).** `Binding.fsn`
+is served as stored (FR-82), and `Binding.label_provenance` declares that fact. FR-83's
+sanctioned renderer, `nptc.exports.semantic_tag.render_display_term`, is reached only from
+the export surface.
 """
 
 from __future__ import annotations
@@ -130,11 +92,10 @@ BusinessKeyPath = Annotated[
     ),
 ]
 
-#: FR-17, issue #140: the short alias half of `GET /catalogue/code/
-#: {system_token}/{code}`. A malformed token is a 422 here, before any
-#: query runs; a well-formed but unregistered one reaches
-#: `nptc.catalogue.code_systems.system_for_token` and is a 404 instead - see
-#: that module's own docstring for why the two are different status codes.
+#: FR-17: the short alias half of `GET /catalogue/code/{system_token}/{code}`. A
+#: malformed token is a 422 here; a well-formed but unregistered one reaches
+#: `nptc.catalogue.code_systems.system_for_token` and is a 404 (that module's
+#: docstring explains why the two differ).
 SystemTokenPath = Annotated[
     str,
     Path(
@@ -149,31 +110,25 @@ SystemTokenPath = Annotated[
     ),
 ]
 
-#: FR-17, issue #140: the exact code to resolve on `GET /catalogue/code/
-#: {system_token}/{code}`. Deliberately no `pattern=` - `docs/adr/
-#: 0033-exact-code-lookup-routes.md` records why `code` is not
-#: shape-validated at the API layer; an unrecognised code and a malformed
-#: one both resolve to nothing and get the identical 404.
+#: FR-17: the exact code to resolve. No `pattern=`: ADR-0033 records why `code`
+#: is not shape-validated, so an unrecognised and a malformed code get the same
+#: 404.
 CodePath = Annotated[
     str,
     Path(description="The exact code to resolve.", examples=["49466006"]),
 ]
 
-#: 200 is the documented default and 200 is also the ceiling on what one
-#: response should carry; a caller wanting the whole catalogue pages through
-#: it with the cursor rather than asking for it in one request. Shared by
-#: every collection route, public or admin (issue #266).
+#: The page-size ceiling, shared by every collection route, public or admin. A
+#: caller wanting the whole catalogue pages through it with the cursor.
 LimitQuery = Annotated[
     int,
     Query(ge=1, le=200, description="Maximum entries in this page."),
 ]
 
-#: `/catalogue/entries` and `/catalogue/admin/entries` (issue #266) both page
-#: on `business_key`, so this cursor *is* a business key and is validated as
-#: one. Constrained rather than accepted freely so a mangled cursor is a 422
-#: here exactly as it is on the search routes - an endpoint that silently
-#: serves "the page after whatever this sorts before" gives a client no way
-#: to notice it has been corrupting its own cursor.
+#: `/catalogue/entries` pages on `business_key`, so its cursor is a business key
+#: and is validated as one. A mangled cursor is a 422, as on the search routes;
+#: otherwise the endpoint would silently serve "the page after whatever this
+#: sorts before" and the client could not notice it had corrupted its cursor.
 EntryCursorQuery = Annotated[
     str | None,
     Query(
@@ -185,12 +140,11 @@ EntryCursorQuery = Annotated[
     ),
 ]
 
-#: `/catalogue/search` and `/catalogue/admin/search` (issue #266) both page
-#: on `<score>:<request digest>:<business_key>`, which has no single pattern
-#: worth expressing here - `nptc.catalogue.search` parses it and raises
-#: `MalformedSearchCursorError` (also a 422) for anything it did not mint,
-#: including a cursor it minted for a different `q`, filter set, or status
-#: scope (see that module's own docstring).
+#: `/catalogue/search` and `/catalogue/admin/search` page on
+#: `<score>:<request digest>:<business_key>`. `nptc.catalogue.search` parses it
+#: and raises `MalformedSearchCursorError` (also a 422) for anything it did not
+#: mint, including a cursor minted for a different `q`, filter set or status
+#: scope.
 CursorQuery = Annotated[
     str | None,
     Query(
@@ -207,39 +161,24 @@ CursorQuery = Annotated[
 
 
 def filter_parameter(search_path: str) -> dict[str, Any]:
-    """The FR-16 filter query parameter, declared by hand (issue #139,
-    ADR-0032) - shared because `catalogue.py` and `catalogue_admin.py`
-    (issue #266) both accept `?filter.<key>=<value>` on their collection
-    routes.
+    """The FR-16 filter query parameter, declared by hand (ADR-0032), shared by the
+    two collection routes that accept `?filter.<key>=<value>`.
 
-    **Why by hand.** The parameter name is not fixed - it is
-    `filter.<property_key>` for whatever properties an administrator has
-    marked `filterable`, which is the whole point of FR-16 - and FastAPI
-    generates parameters from a typed signature, which by construction can
-    only name parameters known when this file is written. Reading the query
-    string directly (each router's own `_filter_request`) is the only way to
-    accept the shape; declaring it here is what stops `docs/api/openapi.json`
-    from quietly omitting a parameter the API does in fact accept. FR-20
-    makes that document the contract vendors build against, and the
-    `breaking` CI job polices every later change to it - a parameter absent
-    from the document is a parameter nobody is protecting.
+    **Why by hand.** The name is `filter.<property_key>` for whichever properties an
+    administrator has marked `filterable`, and FastAPI declares only parameters known
+    when the signature is written. Each router's `_filter_request` reads the query
+    string directly, so declaring the parameter here is what stops the OpenAPI
+    document (the FR-20 contract, policed by the breaking-change check) omitting a
+    parameter the API accepts.
 
-    `search_path` names *this collection's own* search route -
-    `/catalogue/search` for the public surface, `/catalogue/admin/search`
-    for the maintenance one - so the description below points a caller at
-    the endpoint that actually returns this facet's current bucket list with
-    counts. The two are not interchangeable: the admin one covers every
-    `CatalogueEntryStatus`, the public one `active` alone (issue #266
-    review - the two routes had shared one hard-coded sentence naming only
-    the public path).
+    `search_path` names this collection's own search route, so the description points
+    a caller at the endpoint that returns this facet's current buckets with counts.
+    The admin route covers every status, the public one `active` alone.
 
-    FastAPI merges `openapi_extra` into the generated operation with
-    `deep_dict_update`, which *concatenates* lists - so this is appended to
-    the parameters FastAPI derived from the signature rather than replacing
-    them.
-
-    `explode: true` over `style: form` is OpenAPI's own spelling of "repeat
-    the key once per value", which is exactly the wire shape.
+    FastAPI merges `openapi_extra` with `deep_dict_update`, which concatenates lists,
+    so this is appended to the signature's parameters rather than replacing them.
+    `explode: true` over `style: form` is OpenAPI's spelling of "repeat the key once
+    per value", the wire shape.
     """
     return {
         "name": f"{FILTER_PARAM_PREFIX}{{property_key}}",
@@ -286,11 +225,9 @@ class FilterRequest:
     write, validate a filter against one facet list and count buckets
     against another.
 
-    Shared between `catalogue.py` and `catalogue_admin.py` (issue #266): the
-    shape is identical on both surfaces, and only the `status_values` each
-    router's own `_filter_request` passes to `load_facet_context` differs
-    (`queries.PUBLIC_STATUSES` vs `nptc.catalogue.maintenance.
-    MAINTENANCE_STATUSES`) - see each router's own filter dependency.
+    Shared by `catalogue.py` and `catalogue_admin.py`. Only the `status_values` that
+    each router's `_filter_request` passes to `load_facet_context` differs
+    (`queries.PUBLIC_STATUSES` or `maintenance.MAINTENANCE_STATUSES`).
     """
 
     context: FacetContext
@@ -371,17 +308,13 @@ class EntrySummary(BaseModel):
     #: different statement from "no specimen property has been recorded" -
     #: the ambiguity this core column exists to destroy.
     specimen_unconstrained: bool
-    #: A real `datetime`, not a pre-formatted string: that is what puts
-    #: `format: date-time` in `docs/api/openapi.json`, so #147's generated
-    #: client parses it as a date rather than handing the caller a string to
-    #: guess at.
+    #: A real `datetime`, not a formatted string, so the OpenAPI document says
+    #: `format: date-time` and a generated client parses it as a date.
     updated_at: datetime
-    #: FR-18: `true` when this entry has at least one `open`
-    #: `ValidationFinding`. Nothing else about a finding appears here or
-    #: anywhere else on the public surface - no type, no severity, no
-    #: count, no internal id - by construction: this is a bare `bool`, and
-    #: there is no other field a type or severity could ever leak through.
-    #: An `acknowledged`/`resolved`/`superseded` finding does not set it.
+    #: FR-18: `true` when the entry has at least one `open` `ValidationFinding`. A
+    #: bare `bool` by construction: no type, severity, count or internal id can
+    #: leak through it. An `acknowledged`, `resolved` or `superseded` finding does
+    #: not set it.
     has_open_finding: bool
     #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
     #: (ADR-0022), never an FSN - fixed, not configuration-driven, so this
@@ -389,9 +322,8 @@ class EntrySummary(BaseModel):
     label_provenance: dict[str, LabelProvenance]
 
 
-#: `EntrySummary.label_provenance` is one entry, fixed for every row - see
-#: the field's own docstring. A module-level constant, not rebuilt inside
-#: `entry_summary_fields` on every call.
+#: `EntrySummary.label_provenance` is the same one entry on every row, so it is a
+#: constant, not rebuilt on each call.
 _ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
     "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
 }
@@ -562,22 +494,15 @@ class EntryDetail(EntrySummary):
 
     model_config = ConfigDict(frozen=True)
 
-    #: FR-38's optimistic-locking token (issue #227), and the reason this
-    #: model carries a field `EntrySummary` does not. A write route that
-    #: touches the entry itself requires the caller's `expected_row_version`
-    #: (`nptc.catalogue.entries.save_entry`), so an editing client has to be
-    #: able to read the current one - and the *detail* is what an edit
-    #: screen loads before it can edit anything. A list or a search result
-    #: is not an editing context: putting the token on `EntrySummary` would
-    #: publish a per-row counter on every page of the public catalogue to
-    #: serve a case that does not exist yet (a bulk save straight from a
-    #: list, FR-39/#63), so it stays here until it does.
+    #: FR-38's optimistic-locking token, here and not on `EntrySummary`. A write
+    #: that touches the entry requires the caller's `expected_row_version`
+    #: (`nptc.catalogue.entries.save_entry`), and the detail is what an edit screen
+    #: loads first. A public list or search result is not an editing context, so
+    #: putting the token on `EntrySummary` would publish a per-row counter on every
+    #: public page. The admin listing carries it through `AdminEntrySummary`.
     #:
-    #: Not an internal identifier, despite the module-level ban `catalogue.py`
-    #: states: `business_key` is still the only thing that *names* an entry,
-    #: and this counter addresses nothing. It is opaque to a read-only
-    #: consumer and meaningful only as the value handed straight back on the
-    #: next write.
+    #: Not an internal identifier: `business_key` still names the entry, and this
+    #: counter addresses nothing. It is opaque to a read-only consumer.
     row_version: int
     designations: list[Designation]
     bindings: list[Binding]
@@ -614,12 +539,8 @@ def entry_summary_fields(
 
 
 def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
-    """The `EntrySummary` for one loaded `CatalogueEntry` row - the listing
-    routes' own assembler, shared between `catalogue.py`'s `list_entries`
-    and `catalogue_admin.py`'s `list_entries_any_status` (issue #266 review):
-    both were carrying a byte-for-byte copy of this three-line function
-    under a leading-underscore name, which is the identical drift risk this
-    module's own docstring gives for not duplicating a response model."""
+    """The `EntrySummary` for one loaded `CatalogueEntry` row, used by
+    `catalogue.py`'s `list_entries`."""
     return EntrySummary(
         **entry_summary_fields(
             entry.business_key,
@@ -636,11 +557,9 @@ def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySu
 def build_entry_detail(
     session: Session, registry: DatatypeRegistry, entry: CatalogueEntry, settings: ApiSettings
 ) -> EntryDetail:
-    """Assembles the one `EntryDetail` shape every FR-17 URL form serves for
-    the same entry (issue #140) - `catalogue.py`'s business-key route and
-    its two code-lookup siblings all call this, rather than reassembling
-    the same four loaders three times over with the risk that a future edit
-    updates one copy and not the others."""
+    """Assembles the `EntryDetail` that every FR-17 URL form serves for the same
+    entry. `catalogue.py`'s business-key route and its two code-lookup routes share
+    it, so one edit cannot update only some copies."""
     entry_ids = (entry.id,)
     has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
