@@ -346,8 +346,8 @@ Move no tests now.
 - **Saving:** about 74 s of 978 s on the measured machine, from 185 candidates. The two CLI
   tests are counted separately: moving them adds about 6 s to the fast subset. The full run's wall time barely moves.
 - **Larger lever (done in #399):** the three refused-connection tests now fail fast. That removes
-  about 380 s from the full run and about 130 s from the fast subset on Windows. It changes no
-  assertion.
+  about 380 s from the full run and about 130 s from the fast subset on Windows. It weakens no
+  assertion, and adds one to the missing-driver test.
 
 ## Follow-up levers (not built)
 
