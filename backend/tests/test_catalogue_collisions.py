@@ -1,7 +1,7 @@
 """FR-05/FR-08 collision detection tests (issue #49).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 
 The PRD Appendix A.5 fixtures are used verbatim as the regression cases:
 `'Adrenal Ab'` (error severity, one entry's preferred term colliding with

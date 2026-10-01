@@ -1,7 +1,7 @@
 """Designation storage tests (issue #47, FR-04, FR-24, FR-37, FR-63, FR-85).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 
 FR-05 collision detection is out of scope here - it is issue #49's own test
 module, layered on top of the rows created here.

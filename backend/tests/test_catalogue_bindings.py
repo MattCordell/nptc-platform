@@ -1,7 +1,7 @@
 """Code binding service-layer tests (issue #48, FR-06, FR-08, FR-82, FR-83).
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 
 FR-84's subsumption check is out of scope here - it is the FR-45 validation
 sweep's own concern, layered on top of the rows created here.

@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import event
 from sqlalchemy.engine import Connection
 
 from nptc.catalogue import facets as facets_module
@@ -603,6 +602,7 @@ def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
     api: ApiTestApp,
     seeded: SeededCatalogue,
     app_db: Connection,
+    capture_statements: Any,
     extra_filterable_properties: int,
 ) -> None:
     """Issue #275's own acceptance criterion, asserted at the statement
@@ -637,23 +637,8 @@ def test_facet_counts_cost_exactly_one_statement_regardless_of_facet_count(
         )
         assert patched.status_code == 200, patched.text
 
-    statements: list[str] = []
-
-    def _record(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(app_db, "before_cursor_execute", _record)
-    try:
+    with capture_statements(app_db) as statements:
         response = api.get("/catalogue/search", params={"q": _seed.CANONICAL_TERM})
-    finally:
-        event.remove(app_db, "before_cursor_execute", _record)
     assert response.status_code == 200, response.text
 
     # Every statement embedding the scoring scan carries its inner CTE's own

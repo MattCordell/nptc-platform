@@ -2,11 +2,13 @@
 `row_version` is rejected, the caller is shown the conflicting changes,
 and a rejected save never leaves an audit event behind.
 
-Uses an ORM `Session` bound to `app_db` - see
-`test_catalogue_business_key.py`'s own module docstring for why.
+Uses the shared `app_session` fixture from `conftest.py`, an ORM `Session`
+bound to `app_db`.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from sqlalchemy import event, func, select, text
@@ -489,7 +491,7 @@ def test_entry_child_write_refuses_a_stale_version_before_the_body_runs(
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
 def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_writes_own_sql(
-    app_session: Session, app_engine: Engine
+    app_session: Session, app_engine: Engine, capture_statements: Any
 ) -> None:
     """Issue #281's ordering invariant, proven against the actual SQL
     `entry_child_write` and its wrapped body issue - not merely the order
@@ -510,28 +512,12 @@ def test_entry_child_write_acquires_the_append_lock_before_the_wrapped_writes_ow
         reason="Created for entry_child_write test",
     )
 
-    statements: list[str] = []
-
-    def _record(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(app_engine, "before_cursor_execute", _record)
-    try:
-        with entry_child_write(app_session, entry, 1):
-            app_session.execute(
-                text("UPDATE catalogue_entry SET preferred_term = :term WHERE id = :id"),
-                {"term": "Bumped by the wrapped write", "id": entry.id},
-            )
-            app_session.flush()
-    finally:
-        event.remove(app_engine, "before_cursor_execute", _record)
+    with capture_statements(app_engine) as statements, entry_child_write(app_session, entry, 1):
+        app_session.execute(
+            text("UPDATE catalogue_entry SET preferred_term = :term WHERE id = :id"),
+            {"term": "Bumped by the wrapped write", "id": entry.id},
+        )
+        app_session.flush()
 
     lock_index = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s)
     write_index = next(
