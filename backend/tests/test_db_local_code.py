@@ -8,6 +8,7 @@ statement aborts the surrounding transaction, 25P02).
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -15,9 +16,15 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from nptc.db.models.local_code_snomed_map import (
+    _MATCH_STRENGTH_CHECK_SQL,
+    SnomedMapMatchStrength,
+)
+
 _UNIQUE_VIOLATION = "23505"
 _CHECK_VIOLATION = "23514"
 _INSUFFICIENT_PRIVILEGE = "42501"
+_MATCH_STRENGTH_CONSTRAINT = "ck_local_code_snomed_map_match_strength"
 
 _INSERT_SYSTEM = text(
     "INSERT INTO local_code_system (key, uri, title, description, owner) "
@@ -332,6 +339,42 @@ def test_map_row_match_strength_is_constrained(db: Connection) -> None:
         _insert_map_row(db, local_code_id=code_id, match_strength="perfect")
 
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-91")
+def test_match_strength_check_lists_exactly_the_enum_values() -> None:
+    in_check = set(re.findall(r"'([^']*)'", _MATCH_STRENGTH_CHECK_SQL))
+
+    assert in_check == {m.value for m in SnomedMapMatchStrength}, (
+        "update SnomedMapMatchStrength and _MATCH_STRENGTH_CHECK_SQL together; a new value also "
+        "needs a migration that replaces the match_strength CHECK constraint"
+    )
+
+
+@pytest.mark.req("FR-91")
+@pytest.mark.integration
+@pytest.mark.parametrize("strength", list(SnomedMapMatchStrength), ids=lambda m: m.value)
+def test_the_migrated_database_accepts_every_match_strength(
+    db: Connection, strength: SnomedMapMatchStrength
+) -> None:
+    system_id = _insert_system(db, key="map_each_strength", uri="https://nptc.example.org/mes")
+    code_id = _insert_code(db, system_id=system_id)
+
+    try:
+        _insert_map_row(db, local_code_id=code_id, match_strength=strength.value)
+    except IntegrityError as exc:
+        orig = exc.orig
+        if (
+            orig.sqlstate != _CHECK_VIOLATION  # type: ignore[union-attr]
+            or orig.diag.constraint_name != _MATCH_STRENGTH_CONSTRAINT  # type: ignore[union-attr]
+        ):
+            raise
+        pytest.fail(
+            f"the migrated database rejects match_strength {strength.value!r}; a new "
+            "SnomedMapMatchStrength value needs a migration that replaces the CHECK constraint, "
+            "because compare_metadata does not compare CHECK text",
+            pytrace=False,
+        )
 
 
 @pytest.mark.req("FR-91")
