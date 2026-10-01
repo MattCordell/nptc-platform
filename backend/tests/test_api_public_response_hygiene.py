@@ -43,11 +43,8 @@ import pytest
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.code_binding import SNOMED_CT_SYSTEM
-from nptc.db.models.user import User
 from nptc_shared.terminology import AU_LANGUAGE_TAG, StubConcept
 
 
@@ -457,19 +454,7 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
 def test_property_value_write_response_contains_no_uuid(api: ApiTestApp) -> None:
     """The property-value write analogue of the binding/designation write
     hygiene tests above (issue #248)."""
-    token = api.token(subject="sub-property-write-hygiene")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    admin_token = api.token(subject="sub-property-write-hygiene", extra_claims={"acr": "2"})
+    admin_token = api.admin_token(subject="sub-property-write-hygiene")
 
     key = f"hygiene_property_{uuid.uuid4().hex[:8]}"
     create_response = api.post(
@@ -516,19 +501,7 @@ def test_property_value_write_response_contains_no_uuid(api: ApiTestApp) -> None
 def test_entry_core_write_response_contains_no_uuid(api: ApiTestApp) -> None:
     """The entry-core-write analogue of the binding/designation/property-value
     write hygiene tests above (issue #249)."""
-    token = api.token(subject="sub-entry-core-write-hygiene")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    admin_token = api.token(subject="sub-entry-core-write-hygiene", extra_claims={"acr": "2"})
+    admin_token = api.admin_token(subject="sub-entry-core-write-hygiene")
 
     entry = create_entry(
         api.session,
@@ -569,19 +542,7 @@ def test_admin_entry_response_contains_no_uuid_and_no_unquoted_code(api: ApiTest
     #228: a replaced binding's `replaced_by_binding_id` *is* a UUID in the
     database whether the entry is published or not, and this route is the
     first place that column is ever rendered for an unpublished entry."""
-    token = api.token(subject="sub-admin-read-hygiene")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    admin_token = api.token(subject="sub-admin-read-hygiene", extra_claims={"acr": "2"})
+    admin_token = api.admin_token(subject="sub-admin-read-hygiene")
 
     entry = create_entry(
         api.session,
