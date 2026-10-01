@@ -126,8 +126,7 @@ class PatchEntryRequest(BaseModel):
     `status`/`specimen_unconstrained` are both optional so a caller can set
     either or both in one save - `None` means "leave this field alone",
     matching `EntryChanges`' own contract - but a body naming neither is
-    refused rather than silently treated as a no-op write (issue #249's own
-    acceptance criterion).
+    refused rather than silently treated as a no-op write.
     """
 
     model_config = ConfigDict(frozen=True)

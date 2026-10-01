@@ -232,7 +232,7 @@ class HistoryEvent(BaseModel):
     changed_by: str | None = Field(
         description="The administrator's display name, or `null` for a system-initiated "
         "change, an account since pseudonymised on closure, or an anonymous caller "
-        "(PR #278 review, NFR-26) - sign in to see who made a change."
+        "(NFR-26) - sign in to see who made a change."
     )
     changed_fields: list[str] = Field(description="Which fields changed at this event.")
     note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
@@ -545,16 +545,15 @@ def read_history(
     empty-errors: an entry never edited since seeding returns `200` with
     an empty `items` list.
 
-    `changed_by` is populated only for an authenticated caller (PR #278
-    review, NFR-26): the endpoint itself stays fully public
-    (`Permission.CATALOGUE_BROWSE`, held by `Role.ANON`), but an anonymous
-    request gets `null` on every event regardless of who actually made the
-    change - naming an identifiable RCPA-QAP staff member to anyone on the
-    internet was never a considered part of ADR-0034's "history is public"
-    argument. `principal` is captured here (rather than left in
-    `dependencies=`, this route's own previous shape) specifically to read
-    `principal.user_id`; every other route in this module has no use for
-    the resolved principal itself.
+    `changed_by` is populated only for an authenticated caller (NFR-26):
+    the endpoint itself stays fully public (`Permission.CATALOGUE_BROWSE`,
+    held by `Role.ANON`), but an anonymous request gets `null` on every
+    event regardless of who actually made the change - naming an
+    identifiable RCPA-QAP staff member to anyone on the internet was never
+    a considered part of ADR-0034's "history is public" argument.
+    `principal` is captured here (rather than left in `dependencies=`)
+    specifically to read `principal.user_id`; every other route in this
+    module has no use for the resolved principal itself.
 
     `release` is always `null` on every item in P1 - FR-19 asks for
     "every published release in which it appeared" too, and releases do

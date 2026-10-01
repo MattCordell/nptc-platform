@@ -238,12 +238,12 @@ _READ = Depends(permission_dep(Permission.REGISTRY_READ))
 
 
 class FormControl(BaseModel):
-    """`registry.handlers.FormControlDescriptor`, on the wire (issue #248,
-    ADR-0013 SS3, FR-77). `control` is typed against `ControlKind` - a
-    closed enum ADR-0013 sanctions precisely because it does not grow when
-    a datatype is added - so OpenAPI emits a union #151's generated client
-    can switch over exhaustively, rather than the bare `datatype` string
-    FR-77 forbids branching a form on."""
+    """`registry.handlers.FormControlDescriptor`, on the wire (ADR-0013 SS3,
+    FR-77). `control` is typed against `ControlKind` - a closed enum
+    ADR-0013 sanctions precisely because it does not grow when a datatype
+    is added - so OpenAPI emits a union a generated client can switch over
+    exhaustively, rather than the bare `datatype` string FR-77 forbids
+    branching a form on."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -292,16 +292,13 @@ class CreatePropertyDefinitionRequest(BaseModel):
 
     `cardinality`/`scope`/`strength`/`binding_target` are typed against the
     exact `StrEnum`s `property_definition`'s own database `CHECK`
-    constraints close over (issue #223 review finding 3) - an invalid value
-    is now a pydantic 422 before the request ever reaches the ORM, rather
-    than a `23514` `IntegrityError` that `create_definition`'s `except
-    IntegrityError` used to re-raise unchanged, surfacing as an unhandled
-    500. `datatype` stays a bare `str` deliberately - FR-77's own extension
-    point, so admitting a new datatype never touches this router - and is
-    instead validated by `create_definition` itself, against the live
+    constraints close over - an invalid value is a pydantic 422 before the
+    request reaches the ORM, not a database `CHECK` violation surfacing as
+    a 500. `datatype` stays a bare `str` deliberately - FR-77's own
+    extension point, so admitting a new datatype never touches this router -
+    and is instead validated by `create_definition` itself, against the live
     `DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422
-    rather than a broken row that only misbehaves at the first value
-    write."""
+    rather than a broken row that only misbehaves at the first value write."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -330,13 +327,12 @@ class AmendPropertyDefinitionRequest(BaseModel):
     pydantic 422 before this ever reaches `nptc.db.definitions.
     amend_definition`.
 
-    **An explicit `null` on a known field is refused, not a silent no-op**
-    (issue #223 review finding 9). None of these fields is a nullable
-    domain value, so a client sending `{"label": null, ...}` almost
-    certainly meant to omit the field, not clear it - `_reject_explicit_null`
-    below distinguishes "omitted" from "provided as null" via
-    `model_fields_set`, which `changes()` cannot do once every field has
-    collapsed to `None`."""
+    **An explicit `null` on a known field is refused, not a silent no-op.**
+    None of these fields is a nullable domain value, so a client sending
+    `{"label": null, ...}` almost certainly meant to omit the field, not
+    clear it - `_reject_explicit_null` below distinguishes "omitted" from
+    "provided as null" via `model_fields_set`, which `changes()` cannot do
+    once every field has collapsed to `None`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -386,10 +382,9 @@ class DeprecatePropertyDefinitionRequest(BaseModel):
 
 
 class PropertyValueItem(BaseModel):
-    """One offerable value for a coded property (issue #247) - identical in
-    shape whether it came from a SNOMED value set or a local code system;
-    nothing here names `binding_target` (the acceptance criterion, on the
-    wire)."""
+    """One offerable value for a coded property - identical in shape whether
+    it came from a SNOMED value set or a local code system; nothing here
+    names `binding_target`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -444,12 +439,11 @@ def list_properties(
     include_deprecated: bool = False,
     scope: PropertyScope | None = None,
 ) -> PropertyDefinitionList:
-    """`scope` is inclusive of `PropertyScope.BOTH` (issue #248, decided
-    with the maintainer): `?scope=submission` returns `submission` and
-    `both` properties, `?scope=maintenance` returns `maintenance` and
-    `both`, and omitting it returns everything - a submission form should
-    not have to also ask for `both` to see a property meant for both
-    screens."""
+    """`scope` is inclusive of `PropertyScope.BOTH`: `?scope=submission`
+    returns `submission` and `both` properties, `?scope=maintenance`
+    returns `maintenance` and `both`, and omitting it returns everything -
+    a submission form should not have to also ask for `both` to see a
+    property meant for both screens."""
     audience = DefinitionAudience.EXPORT if include_deprecated else DefinitionAudience.DATA_ENTRY
     definitions = list_definitions(session, audience=audience, scope=scope)
     return PropertyDefinitionList(items=[_to_response(d, registry) for d in definitions])
@@ -567,7 +561,7 @@ def deprecate_property(
 )
 def delete_property(key: str) -> None:
     """Always refuses (FR-11) - `property_definition` has no `DELETE` grant
-    at the database layer at all (issue #51). `key` is accepted (and, for a
+    at the database layer at all. `key` is accepted (and, for a
     genuinely unknown key, still refused the same way, not 404'd) so the
     response is uniform regardless of whether the key exists - the caller's
     mistake either way is asking to delete at all, not naming the wrong
@@ -592,19 +586,19 @@ def list_property_value_options(
     count: Annotated[int, Query(ge=1, le=200)] = DEFAULT_PAGE_SIZE,
     code: Annotated[list[str] | None, Query(max_length=200)] = None,
 ) -> PropertyValuePage:
-    """FR-10's concept-picker data source (issue #247), plus issue #306's
-    resolve-by-code lookup for a value beyond the picker page's own
-    `DEFAULT_PAGE_SIZE` ceiling. Resolves `key`'s own binding and answers
-    from Ontoserver or the `LocalCode` table - see
+    """FR-10's concept-picker data source, plus a resolve-by-code lookup
+    for a value beyond the picker page's own `DEFAULT_PAGE_SIZE` ceiling.
+    Resolves `key`'s own binding and answers from Ontoserver or the
+    `LocalCode` table - see
     `nptc.catalogue.property_value_sources.list_property_values`/
     `resolve_property_values` for the only places that branch on
     `binding_target`; this route and `PropertyValuePage` never see it.
 
     `code` is a second, mutually exclusive selection mode, never combined
-    with `filter`/`offset`/`count` (issue #306 plan) - `offset`/`count`
-    default to values a caller resolving by `code` would not need to
-    change, so a genuine attempt to combine them is what this refuses,
-    not every request that happens to also carry those defaults.
+    with `filter`/`offset`/`count` - `offset`/`count` default to values a
+    caller resolving by `code` would not need to change, so a genuine
+    attempt to combine them is what this refuses, not every request that
+    happens to also carry those defaults.
     """
     if code is not None:
         if filter is not None or offset != 0 or count != DEFAULT_PAGE_SIZE:

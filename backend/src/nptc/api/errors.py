@@ -207,7 +207,7 @@ class CollisionItem(BaseModel):
     id (NFR-04/NFR-26).
 
     `label_provenance["preferred_term"]` is always `AU_PREFERRED_TERM_
-    PROVENANCE` (FR-98, issue #144): `preferred_term` here is the
+    PROVENANCE` (FR-98): `preferred_term` here is the
     *colliding* entry's own catalogue preferred term, the identical field
     and designation type as `EntrySummary.preferred_term` - matching
     `CollisionWarning`'s own reasoning for its own `preferred_term` field
@@ -236,9 +236,9 @@ class DesignationCollisionResponse(BaseModel):
 
 class PropertyIssueItem(BaseModel):
     """One field-level problem with an attempted property-value write - the
-    wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`
-    (issue #248). `ordinal` is `None` for a cardinality issue that applies
-    to the property as a whole rather than one value in it."""
+    wire shape of `nptc.catalogue.property_values.PropertyWriteIssue`.
+    `ordinal` is `None` for a cardinality issue that applies to the
+    property as a whole rather than one value in it."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -251,12 +251,11 @@ class PropertyIssueItem(BaseModel):
 
 class PropertyValidationResponse(BaseModel):
     """FR-09/FR-10/FR-88/FR-89's 422 body: `PropertyValidationError`'s
-    `issues[]`, declared as a model (issue #248) rather than the hand-built
-    dict this handler used to emit - a router naming this in its
-    `responses=` puts the real `issues[]` shape in `docs/api/openapi.json`,
-    matching `VersionConflictResponse`/`DesignationCollisionResponse`'s own
-    precedent, so #151's generated client types the field-level detail
-    instead of a bare `{detail}`."""
+    `issues[]`, declared as a model rather than a hand-built dict - a
+    router naming this in its `responses=` puts the real `issues[]` shape
+    in `docs/api/openapi.json`, matching `VersionConflictResponse`/
+    `DesignationCollisionResponse`'s own precedent, so a generated client
+    types the field-level detail instead of a bare `{detail}`."""
 
     model_config = ConfigDict(frozen=True)
 

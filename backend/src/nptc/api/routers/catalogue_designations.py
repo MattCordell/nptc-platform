@@ -111,7 +111,7 @@ _RESPONSE_404: Final[dict[str, Any]] = {
     "description": (
         "No catalogue entry matches the given identifier, or no matching "
         "designation does - add/amend/retire look for an active one, "
-        "reinstatement for a retired one (issue #313 review)."
+        "reinstatement for a retired one."
     ),
 }
 _RESPONSE_409: Final[dict[str, Any]] = {
@@ -121,7 +121,7 @@ _RESPONSE_409: Final[dict[str, Any]] = {
         "system - an error-severity collision against another entry (FR-05), a "
         "duplicate active term or a second active preferred term in one language "
         "on this same entry, a designation already retired (or, for reinstatement, "
-        "already active - issue #313), or a concurrent acknowledgement of the same "
+        "already active), or a concurrent acknowledgement of the same "
         "collision. Add, amend and retire address a designation by its "
         "currently-*active* term, so a retired one is simply not addressable that "
         "way any more (404, not 409); reinstatement addresses one by its "
@@ -235,8 +235,8 @@ class CollisionWarning(BaseModel):
     term, never its internal id (NFR-04/NFR-26) - the same shape the 409
     handler for the *error*-severity case already returns.
 
-    `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98, issue
-    #144), never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
+    `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98),
+    never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
     own comments (`add_designations_route`/`amend_designation_route`) prove
     the preferred branch never produces a `CollisionWarning` at all -
     `warning_collisions` only ever looks for another live entry's active
@@ -273,11 +273,10 @@ def _collision_warning(collision: Collision) -> CollisionWarning:
 
 
 class LengthWarning(BaseModel):
-    """FR-86 (issue #152): the catalogue's own preferred term now exceeds
-    the configured maximum length. Non-blocking, the same "warn, never
-    raise" shape as `CollisionWarning` - a hard block would make an
-    existing over-length entry uneditable, the specific failure FR-86
-    exists to prevent.
+    """FR-86: the catalogue's own preferred term exceeds the configured
+    maximum length. Non-blocking, the same "warn, never raise" shape as
+    `CollisionWarning` - a hard block would make an existing over-length
+    entry uneditable, the specific failure FR-86 exists to prevent.
 
     A separate field from `CollisionWarning`/`warnings`, not a member of
     that list: `warning_collisions` only ever looks for another live
@@ -347,8 +346,7 @@ class AddDesignationsRequest(_WithLanguage):
     active per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each
     term holds a `pg_advisory_xact_lock` until commit and costs its own
     collision-check flush (`add_synonyms`'s own docstring), so an unbounded
-    batch is an unbounded amount of lock contention for one request (issue
-    #224 review finding 4).
+    batch is an unbounded amount of lock contention for one request.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -387,9 +385,8 @@ class AddDesignationsRequest(_WithLanguage):
 
 class DesignationWriteResult(BaseModel):
     """`add_designations`'s response: the created row(s), any warning-severity
-    collisions, and the entry's new `row_version` (FR-38, issue #300) - so a
-    client never has to re-fetch the entry just to learn its next lock
-    token."""
+    collisions, and the entry's new `row_version` (FR-38) - so a client
+    never has to re-fetch the entry just to learn its next lock token."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -432,20 +429,20 @@ class AmendDesignationResult(BaseModel):
     `use="preferred", language="en-AU"`. That is this API's whole premise -
     every term the catalogue holds is a designation, and ADR-0022's split
     between two storage homes is not something a client should have to
-    model (issue #224's own module docstring).
+    model (see the module docstring).
 
     `row_version` is the entry's, on both branches, and is what a client
     sends back as `expected_row_version` on its next write - so a save
     never has to be followed by a re-fetch just to learn the new token. It
-    now advances on both branches (FR-38, issue #300): a `designation` row
-    has no version of its own, but amending one bumps the entry's counter
-    via `nptc.catalogue.entries.entry_child_write`, the same way the
+    advances on both branches (FR-38): a `designation` row has no version
+    of its own, but amending one bumps the entry's counter via
+    `nptc.catalogue.entries.entry_child_write`, the same way the
     preferred-term branch's `save_entry` always has.
 
-    `length_warning` (FR-86, issue #152) is set only on the preferred-term
-    branch, and only when a maximum is configured and exceeded - see
-    `LengthWarning`'s own docstring for why it is a separate field rather
-    than a member of `warnings`.
+    `length_warning` (FR-86) is set only on the preferred-term branch, and
+    only when a maximum is configured and exceeded - see `LengthWarning`'s
+    own docstring for why it is a separate field rather than a member of
+    `warnings`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -467,7 +464,7 @@ class RetireDesignationRequest(_WithLanguage):
 
 class RetireDesignationResult(BaseModel):
     """`retire_designation_route`'s response: the retired row, plus the
-    entry's new `row_version` (FR-38, issue #300).
+    entry's new `row_version` (FR-38).
 
     Declared here rather than returning a bare `Designation`, which has
     nowhere to carry `row_version` - `Designation` is the shared public read
@@ -481,7 +478,7 @@ class RetireDesignationResult(BaseModel):
 
 
 class ReinstateDesignationRequest(_WithLanguage):
-    """The body of `POST .../designations/reinstatement` (issue #313).
+    """The body of `POST .../designations/reinstatement`.
     `term` addresses the designation to reinstate - resolved against the
     most-recently-retired row matching `(entry, term, language)`
     (`nptc.catalogue.designations.load_retired_designation`), never a
@@ -497,14 +494,13 @@ class ReinstateDesignationRequest(_WithLanguage):
 
 class ReinstateDesignationResult(BaseModel):
     """`reinstate_designation_route`'s response: the reinstated row, any
-    warning-severity collisions, and the entry's new `row_version` (FR-38,
-    issue #300).
+    warning-severity collisions, and the entry's new `row_version` (FR-38).
 
-    A new model, not a reuse of `DesignationWriteResult` (issue #313's own
-    open question) - this route always acts on exactly one row, and
-    `DesignationWriteResult.designations` being a list would misdescribe
-    that. Shaped like `AmendDesignationResult` instead, which reinstatement
-    otherwise matches exactly: one designation, warnings, row_version."""
+    A new model, not a reuse of `DesignationWriteResult`: this route always
+    acts on exactly one row, and `DesignationWriteResult.designations`
+    being a list would misdescribe that. Shaped like
+    `AmendDesignationResult` instead, which reinstatement otherwise matches
+    exactly: one designation, warnings, row_version."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -538,7 +534,7 @@ class CollisionAcknowledgementResponse(BaseModel):
     call" (`False`) - `acknowledge_collision` is idempotent (see its own
     docstring), and without this flag a caller cannot tell those two cases
     apart, nor notice that `reason` below is the *original* note rather
-    than the one this call just submitted (issue #224 review finding 5)."""
+    than the one this call just submitted."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -695,7 +691,7 @@ def amend_designation_route(
     business_key: BusinessKeyPath,
     body: Annotated[AmendDesignationRequest, Body()],
 ) -> AmendDesignationResult:
-    """One route, two storage homes (issue #227).
+    """One route, two storage homes.
 
     `use="preferred"` with the default `en-AU` addresses the entry's own
     preferred term outright. Otherwise `term` resolves against an active
@@ -818,9 +814,9 @@ def reinstate_designation_route(
     business_key: BusinessKeyPath,
     body: Annotated[ReinstateDesignationRequest, Body()],
 ) -> ReinstateDesignationResult:
-    """Issue #313. Both lookups run inside the lock, after
-    `entry_child_write`'s own version check, matching every other route
-    here (FR-38, issue #300).
+    """Reinstate a retired designation. Both lookups run inside the lock,
+    after `entry_child_write`'s own version check, matching every other
+    route here (FR-38).
 
     The already-active check runs first, and outside `load_retired_
     designation` itself: a term that already has an active designation

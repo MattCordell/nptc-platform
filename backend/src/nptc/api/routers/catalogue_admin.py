@@ -157,7 +157,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 
 
 class AdminEntrySummary(EntrySummary):
-    """`EntrySummary` plus FR-38's optimistic-locking token (issue #267).
+    """`EntrySummary` plus FR-38's optimistic-locking token.
 
     Defined here, not in `catalogue_shared.py`: that module is imported by
     the public router, and a field the public surface must never carry
@@ -166,10 +166,9 @@ class AdminEntrySummary(EntrySummary):
     construction, not merely by convention. `test_api_public_response_
     hygiene.py` asserts the public listing/search routes still omit it.
 
-    The bulk reclassify route (FR-39, #63) locks on `(business_key,
-    expected_row_version)`; this is what lets its selection surface (this
-    issue) read a `row_version` per row instead of re-reading the entry
-    once selected.
+    The bulk reclassify route (FR-39) locks on `(business_key,
+    expected_row_version)`; this is what lets its selection surface read a
+    `row_version` per row instead of re-reading the entry once selected.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -178,12 +177,12 @@ class AdminEntrySummary(EntrySummary):
 
 
 class AdminEntryPage(BaseModel):
-    """The admin counterpart to `catalogue_shared.EntryPage` (issue #267) -
-    same shape, rows that additionally carry `row_version`. A standalone
-    model rather than a subclass of `EntryPage`: overriding `items`' element
-    type in a subclass is the field-covariance trap `mypy --strict` (and
-    Liskov substitution generally) flags on a model a caller might still
-    pass around as the parent type."""
+    """The admin counterpart to `catalogue_shared.EntryPage` - same shape,
+    rows that additionally carry `row_version`. A standalone model rather
+    than a subclass of `EntryPage`: overriding `items`' element type in a
+    subclass is the field-covariance trap `mypy --strict` (and Liskov
+    substitution generally) flags on a model a caller might still pass
+    around as the parent type."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -193,8 +192,7 @@ class AdminEntryPage(BaseModel):
 
 class AdminSearchHit(AdminEntrySummary):
     """`AdminEntrySummary` plus a relevance score - the admin counterpart to
-    `catalogue_shared.SearchHit`, matching that model's own field for field
-    (issue #267)."""
+    `catalogue_shared.SearchHit`, matching that model's own field for field."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -202,8 +200,8 @@ class AdminSearchHit(AdminEntrySummary):
 
 
 class AdminSearchPage(BaseModel):
-    """The admin counterpart to `catalogue_shared.SearchPage` (issue #267) -
-    see `AdminEntryPage`'s own docstring for why this is a standalone model
+    """The admin counterpart to `catalogue_shared.SearchPage` - see
+    `AdminEntryPage`'s own docstring for why this is a standalone model
     rather than a subclass."""
 
     model_config = ConfigDict(frozen=True)
@@ -264,8 +262,8 @@ SortQuery = Annotated[
     SortName,
     Query(
         description=(
-            "How to order the page: `business_key` (the default, and the pre-#287 "
-            "behaviour), `preferred_term`, `updated_at`, or `status`. `status` orders by "
+            "How to order the page: `business_key` (the default), "
+            "`preferred_term`, `updated_at`, or `status`. `status` orders by "
             "lifecycle (`draft`, `active`, `deprecated`, `withdrawn`), not alphabetically. "
             "Changing `sort` invalidates any `after` cursor from a different sort - pass "
             "`after=null` (omit it) when changing sort, matching a changed filter set."
@@ -294,7 +292,7 @@ AdminEntryCursorQuery = Annotated[
 
 @router.get(
     "/admin/entries",
-    summary="One page of catalogue entries, any status (issue #266)",
+    summary="One page of catalogue entries, any status",
     responses=_RESPONSES_ADMIN_LISTING,
     dependencies=[_EDIT],
     openapi_extra=_ADMIN_FILTER_OPENAPI,
@@ -307,21 +305,20 @@ def list_entries_any_status(
     after: AdminEntryCursorQuery = None,
 ) -> AdminEntryPage:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
-    public `list_entries`: keyset paging on `sort` then `business_key`
-    (issue #287; `business_key` alone before it), every status in scope
-    rather than `PUBLIC_STATUSES` alone, and `status` on each row so a
-    caller can tell a draft from an active entry.
+    public `list_entries`: keyset paging on `sort` then `business_key`,
+    every status in scope rather than `PUBLIC_STATUSES` alone, and `status`
+    on each row so a caller can tell a draft from an active entry.
 
     `filter.*` parameters behave as they do on the public surface, except
-    `?filter.status=` now accepts any `CatalogueEntryStatus` value rather
+    `?filter.status=` accepts any `CatalogueEntryStatus` value rather
     than only `active` - `AdminFiltersDep` builds its facet context from
     `maintenance.MAINTENANCE_STATUSES`. Facets are not returned here for the
     same reason they are not on `/catalogue/entries`: `GET
     /catalogue/admin/search` is where the facet list with counts lives.
 
-    Rows carry `row_version` (issue #267) - `AdminEntryPage`, not the public
-    `EntryPage` - so the maintenance list screen's selection surface can
-    carry FR-38's optimistic-locking token per row without a second read.
+    Rows carry `row_version` - `AdminEntryPage`, not the public `EntryPage` -
+    so the maintenance list screen's selection surface can carry FR-38's
+    optimistic-locking token per row without a second read.
     """
     page = maintenance.list_entries_any_status(
         session, sort=sort, limit=limit, after=after, filters=filters.selections
@@ -339,7 +336,7 @@ def list_entries_any_status(
 
 @router.get(
     "/admin/search",
-    summary="Search catalogue entries by term, any status (issue #266)",
+    summary="Search catalogue entries by term, any status",
     responses=_RESPONSES_ADMIN_SEARCH,
     dependencies=[_EDIT],
     openapi_extra=_ADMIN_FILTER_OPENAPI,
@@ -372,8 +369,8 @@ def search_any_status(
     is non-degenerate here (every status an administrator might filter by),
     unlike the public surface's single-bucket `active` facet.
 
-    Hits carry `row_version` (issue #267) - `nptc.catalogue.search.SearchHit`
-    reads it straight off `scored`'s own join to `catalogue_entry`, see that
+    Hits carry `row_version` - `nptc.catalogue.search.SearchHit` reads it
+    straight off `scored`'s own join to `catalogue_entry`, see that
     module's docstring - so `AdminSearchHit`, not the public `SearchHit`,
     carries it onto the wire here.
     """
@@ -443,12 +440,11 @@ def read_entry_any_status(
 ) -> EntryDetail:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
     public `read_entry`: no status filter on the entry itself, and - unlike
-    the public route - `designations` includes retired rows too (issue
-    #239). The other two sub-resources were already unfiltered here before
-    this issue: `bindings` publishes retired rows on both routes (FR-08),
-    and `properties` has no per-row status of its own. An edit screen (#149)
-    calls this to load a `draft` entry's current state before the #224
-    write routes save changes to it."""
+    the public route - `designations` includes retired rows too. The other
+    two sub-resources are unfiltered on both routes: `bindings` publishes
+    retired rows on both (FR-08), and `properties` has no per-row status of
+    its own. An edit screen calls this to load a `draft` entry's current
+    state before the write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
     has_open_finding = queries.has_open_finding(session, entry.business_key)
@@ -516,19 +512,17 @@ class LengthDistributionReport(BaseModel):
     dependencies=[_EDIT],
 )
 def preferred_term_length_distribution(session: SessionDep) -> LengthDistributionReport:
-    """FR-87. Reachable by an administrator with no query to write by hand -
-    the acceptance criterion this route exists to satisfy.
+    """FR-87. Reachable by an administrator with no query to write by hand.
 
     Gated on `Permission.CATALOGUE_EDIT_PUBLISHED`, the same permission every
     other route in this module uses, rather than a new read-only permission -
     see the module docstring for why: `ROLE_PERMISSIONS` is asserted
     cell-by-cell against the PRD's own table, so minting one would need a PRD
-    change this issue does not ask for.
+    change.
 
-    One statement (`nptc.catalogue.length_report.compute_length_distribution`,
-    issue #275's precedent) regardless of the catalogue's size - FR-87's own
-    acceptance criterion that this runs against the 20,000-entry design
-    ceiling without timing out.
+    One statement (`nptc.catalogue.length_report.compute_length_distribution`)
+    regardless of the catalogue's size - FR-87's own acceptance criterion that
+    this runs against the 20,000-entry design ceiling without timing out.
     """
     distribution = compute_length_distribution(session)
     return LengthDistributionReport(
