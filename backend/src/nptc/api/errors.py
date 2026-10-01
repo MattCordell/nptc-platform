@@ -1,6 +1,6 @@
-"""Mapping the auth error families to HTTP responses (issue #41).
+"""Mapping the auth and domain error families to HTTP responses.
 
-Two families, deliberately kept apart upstream and kept apart here:
+Two auth families, kept apart upstream and kept apart here:
 
 - ``nptc.auth.errors.TokenError`` - every member is 401-shaped, as that
   module's docstring promises. "We could not establish who you are."
@@ -15,44 +15,18 @@ by someone adding a subclass and forgetting the ladder.
 
 **Response bodies never name a role or an internal identifier** (FR-44,
 NFR-04). `backend/tests/authz_app_support.py::assert_http_forbidden`
-asserts exactly this, and these handlers are what must satisfy it: the
-detail strings below are fixed, client-facing sentences, never
-``str(exc)`` - the exception messages are diagnostic and do mention roles
-and UUIDs, which is correct for a log and wrong for a response.
+asserts exactly this. The detail strings below are fixed, client-facing
+sentences, never ``str(exc)``: exception messages are diagnostic and do
+mention roles and UUIDs, which is correct for a log and wrong for a
+response.
 
-**Issue #224 closed the designation gap this paragraph used to describe.**
-Issue #47's remaining designation constraints - a duplicate active term,
-a second active preferred designation in one language - now have typed
-exceptions (`DuplicateActiveTermError`, `PreferredDesignationAlreadyActiveError`,
-raised by `nptc.catalogue.designations.add_designation`/`amend_designation`
-before the flush translates the `IntegrityError`, matching
-`nptc.catalogue.bindings.create_binding`'s own precedent) and handlers
-below. A malformed `use` and the en-AU-preferred exclusion
-(`ck_designation_no_en_au_preferred`) are `CHECK` constraints, not unique
-violations, so a constraint name alone cannot disambiguate what a caller
-should fix - both are refused as a pydantic 422 at the request-body layer
-instead (`nptc.api.routers.catalogue_designations`), before the ORM is
-ever touched, the same way `catalogue_bindings.BindCodeRequest`'s
-`_reject_blank` pre-empts `ck_code_binding_fsn_not_blank`. `acknowledge_
-collision`'s own race is likewise now a typed
-`DesignationCollisionAcknowledgementConflictError` (409) rather than an
-unmapped `IntegrityError`. Issue #52's
-`PropertyValidationError`/`PropertyDefinitionNotFoundError` handlers below
-are the same situation in reverse: the write path (`nptc.catalogue.
-property_values.save_property_values`) and its typed errors exist and are
-handled here already, ahead of the HTTP route that will call it (a
-follow-up issue, consumed by #151) - so that route inherits a working
-422/404 from day one rather than repeating this module's own cautionary
-tale.
-
-**Issue #219's code-binding handlers follow the same rule.** Every
-`CodeBinding*` exception in `nptc.catalogue.bindings` carries its own
-`http_status` and is mapped below exactly like the designation/property
-exceptions above - none of them is a raw `IntegrityError` fallthrough, and
-none of them was reachable before #219 gave `nptc.api.routers.
-catalogue_bindings` a route to raise them from.
+Most refusals are a row of ``_REFUSALS``. A refusal that builds its own body
+or branches on the instance is a function in ``register_exception_handlers``.
+A constraint that its name alone cannot disambiguate (a malformed
+designation ``use``, ``ck_designation_no_en_au_preferred``) is not mapped
+here: it is refused as a pydantic 422 at the request-body layer, before the
+ORM is touched (``nptc.api.routers.catalogue_designations``).
 """
-
 from __future__ import annotations
 
 import logging
@@ -151,21 +125,17 @@ from nptc_shared.terminology import TerminologyConfigError
 _logger = logging.getLogger(__name__)
 
 
-# --- the two 409 bodies that carry more than `detail` ----------------------
+# --- response bodies that carry more than `detail` ------------------------
 #
-# Most refusals this module makes are an `ErrorResponse`: one sentence, and
-# deliberately nothing else. Two are not, because a bare sentence would
-# withhold exactly what the requirement exists to give the caller - FR-38's
-# conflicting values, FR-05's colliding entry.
+# Most refusals are an `ErrorResponse`: one sentence and nothing else. FR-38's
+# conflicting values (409), FR-05's colliding entry (409) and FR-09's
+# field-level issues (422) are not, because a bare sentence would withhold
+# exactly what the requirement exists to give the caller.
 #
-# Declared as models, and *constructed* by the handlers below rather than
-# merely documented alongside them (issue #227 review): a router naming one
-# of these in its `responses=` puts the real shape in
-# `docs/api/openapi.json`, so #147's generated client can read the payload
-# instead of typing the branch as `{detail}` and dropping it. Building the
-# response through the model is what stops the declared schema and the
-# emitted body from drifting - the failure mode a hand-written `content`
-# block next to a hand-built `dict` invites.
+# Each is a model that the handler builds its body through, so a router naming
+# it in `responses=` puts the real shape in `docs/api/openapi.json`. Building
+# through the model stops the declared schema and the emitted body drifting,
+# which a hand-written `content` block next to a hand-built `dict` invites.
 
 
 class FieldConflictItem(BaseModel):
@@ -210,7 +180,7 @@ class VersionConflictResponse(BaseModel):
 def version_conflict_response(report: ConflictReport) -> VersionConflictResponse:
     """Builds FR-38's 409 body from a domain `ConflictReport` - the one
     place that shape gets built, shared by `_handle_entry_version_conflict`
-    (a single stale save, the whole request) and issue #265's bulk route
+    (a single stale save, the whole request) and the bulk property-value route
     (one outcome among many, never the whole response's status)."""
     return VersionConflictResponse(
         detail=_DETAIL_VERSION_CONFLICT,
@@ -294,13 +264,11 @@ class PropertyValidationResponse(BaseModel):
 
 
 def _step_up_challenge(mfa_acr_values: frozenset[str]) -> str:
-    """RFC 9470 step-up challenge - pre-specified in
-    docs/architecture/permissions.md. `acr_values` names the LoA(s) the
-    realm's `nptc loa-2 condition` maps to - read from
-    `AuthSettings.mfa_acr_values` rather than a literal `"2"`, so changing
-    the realm's LoA map (`NPTC_MFA_ACR_VALUES`) needs no code change here.
-    Space-joined per RFC 9470's `acr_values` syntax when more than one
-    value satisfies the requirement; sorted so the header is deterministic
+    """RFC 9470 step-up challenge, pre-specified in
+    docs/architecture/permissions.md. `acr_values` comes from
+    `AuthSettings.mfa_acr_values` (`NPTC_MFA_ACR_VALUES`) rather than a
+    literal `"2"`, so changing the realm's LoA map needs no code change here.
+    Space-joined per RFC 9470 and sorted, so the header is deterministic
     across runs of a `frozenset`.
     """
     return f'Bearer error="insufficient_user_authentication", acr_values="{" ".join(sorted(mfa_acr_values))}"'
@@ -323,11 +291,10 @@ _DETAIL_VERSION_CONFLICT = (
     "conflicting changes and try again."
 )
 _DETAIL_NOT_FOUND = "No catalogue entry was found for the given identifier."
-#: FR-17, issue #140: one shared 404 sentence for both an unregistered
-#: `system_token`/URI and a registered one with no matching published
-#: entry - see `nptc.catalogue.code_systems`'s own module docstring for why
-#: that is the considered answer, not an oversight. Sourced from the
-#: registry itself so a second registered alias updates this text for free.
+#: FR-17: one shared 404 sentence for both an unregistered `system_token`/URI
+#: and a registered one with no matching published entry (see
+#: `nptc.catalogue.code_systems`'s module docstring). Sourced from the registry
+#: so a second registered alias updates this text for free.
 _DETAIL_CODE_LOOKUP_NOT_FOUND = REGISTERED_TOKENS_DETAIL
 _DETAIL_CHANGELOG_NOTE = (
     "A changelog note is required and must describe the change. It becomes the "
@@ -339,20 +306,17 @@ _DETAIL_TERM_CLEANING = (
 )
 _DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
-#: Shared by two different addressing conventions (issue #313): add, amend
-#: and retire address a designation by its currently-*active* term, so this
-#: is their "no such active row" 404; reinstate addresses one by its
-#: currently-*retired* term instead, so this is its "no such retired row"
-#: 404 too - deliberately without the word "active", so the same sentence
-#: is not misleading on either route.
+#: Shared by two addressing conventions: add, amend and retire address a
+#: designation by its currently-*active* term, reinstate by its currently-
+#: *retired* term. The sentence omits the word "active" so it is not misleading
+#: on either route.
 _DETAIL_DESIGNATION_NOT_FOUND = "No matching designation was found for the given term."
 _DETAIL_DUPLICATE_ACTIVE_TERM = (
     "This entry already has an active designation for this term, once case, spacing "
     "and punctuation are ignored."
 )
-#: Issue #313: reinstating a term that already has an active designation -
-#: the term was never retired, or it was already reinstated, or it was
-#: retired and then re-added as a new synonym.
+#: Reinstating a term that already has an active designation: it was never
+#: retired, was already reinstated, or was retired and re-added as a synonym.
 _DETAIL_DESIGNATION_NOT_RETIRED = (
     "This term is already active on this entry, so there is nothing to reinstate."
 )
@@ -368,17 +332,14 @@ _DETAIL_SEARCH_CURSOR = (
     "search. Pass a `next_cursor` value back unmodified alongside the same query and "
     "filters, or start again from the first page."
 )
-#: Also served for `MalformedAuditCursorError` (its row in `_REFUSALS`), not a
-#: byte-identical second constant - `nptc.api.routers.audit.AuditCursorQuery`
-#: copies `nptc.catalogue.history`'s own
-#: cursor shape verbatim (see that type's own docstring), so the refusal
-#: reads the same way too (PR #309 review).
+#: Also served for `MalformedAuditCursorError` (its row in `_REFUSALS`):
+#: `nptc.api.routers.audit.AuditCursorQuery` copies `nptc.catalogue.history`'s
+#: cursor shape verbatim, so the refusal reads the same way.
 _DETAIL_HISTORY_CURSOR = (
     "This page cursor is not one this API issued. Pass a `next_cursor` value back "
     "unmodified, or start again from the first page."
 )
-#: Issue #287. Mirrors `_DETAIL_SEARCH_CURSOR`'s own wording, adapted for
-#: `sort` in place of a search query.
+#: Mirrors `_DETAIL_SEARCH_CURSOR`, with `sort` in place of a search query.
 _DETAIL_LISTING_CURSOR = (
     "This page cursor is not one this API issued, or it was issued for a different "
     "sort or filter set. Pass a `next_cursor` value back unmodified alongside the "
@@ -398,11 +359,11 @@ _DETAIL_FILTER_REFUSED = (
     "supports, a value of the right kind, and no more values in one facet's "
     "selection than that facet's own limit allows."
 )
-#: Deliberately not "an internal error occurred": FR-83's refusal is a
-#: *data* defect on one binding, and a caller who is told which kind of
-#: defect it is can report something an administrator can act on. It names
-#: no internal identifier, no served label and no stored value - the
-#: business key the caller already sent is enough to identify the entry.
+#: Deliberately not "an internal error occurred": FR-83's refusal is a data
+#: defect on one binding, and naming the kind of defect lets the caller report
+#: something an administrator can act on. It names no internal identifier,
+#: served label or stored value; the business key the caller sent identifies
+#: the entry.
 _DETAIL_DISPLAY_TERM = (
     "This entry has a code binding whose stored Fully Specified Name is not in the "
     "form the terminology server serves, so its display term cannot be rendered. "
@@ -447,13 +408,12 @@ _DETAIL_BINDING_SELF_SUPERSESSION = "A code binding cannot replace itself."
 _DETAIL_INVALID_EDITION_HINT = "This is not a recognised edition hint."
 _DETAIL_INVALID_SYSTEM = "The code system cannot be blank."
 _DETAIL_BINDING_NOT_FOUND = "No active code binding was found for the given code."
-#: NFR-04/NFR-26: names nothing about what actually happened - this is a
-#: platform invariant failure (see `CodeBindingWriteNotFoundError`'s own
-#: docstring), not a caller mistake, so there is nothing for a caller to
-#: act on differently. Deliberately does not say "try again" - unlike
-#: every routine refusal in this module, a retry will not clear this one
-#: (`_RESPONSE_500` in `catalogue_bindings.py` and `catalogue-write-api.md`
-#: both say so too; this string must not contradict them).
+#: NFR-04/NFR-26: names nothing about what happened. This is a platform
+#: invariant failure (see `CodeBindingWriteNotFoundError`), not a caller
+#: mistake. It deliberately does not say "try again", because a retry will not
+#: clear it; `_RESPONSE_500` in `catalogue_bindings.py` and
+#: `catalogue-write-api.md` say the same, and this string must not contradict
+#: them.
 _DETAIL_BINDING_WRITE_NOT_FOUND = (
     "This request could not be completed. Contact an administrator if the problem persists."
 )
@@ -477,7 +437,7 @@ _DETAIL_PROPERTY_CONSTRAINTS_INVALID = (
 )
 _DETAIL_CONCEPT_NOT_FOUND = "No concept was found for this code in the AU edition."
 #: Deliberately not `str(exc)`, and names no URL, variable or upstream host
-#: (NFR-26) - see issue #240's own error-mapping table.
+#: (NFR-26). The error-mapping table is in docs/architecture/terminology-client.md.
 _DETAIL_TERMINOLOGY_UNAVAILABLE = (
     "The terminology server could not be reached. Try again shortly; the rest of "
     "this entry is unaffected."
@@ -608,8 +568,8 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
     # different one. The class tells an unknown key from a non-filterable one
     # from a bad operator - worth having in a log, not in a response.
     FilterRefusedError: _Refusal(_DETAIL_FILTER_REFUSED, "filter refused: %s", _name),
-    # A safety net for paths that bypass `create_app`'s eager registry build
-    # (a test app, a dependency override). The bad value goes to the log,
+    # A safety net for paths that bypass `create_app`'s eager terminology-client
+    # build (a test app, a dependency override). The bad value goes to the log,
     # never the response (NFR-26).
     TerminologyConfigError: _Refusal(
         _DETAIL_SERVER_MISCONFIGURED,
@@ -816,12 +776,10 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
 
     @app.exception_handler(AuditFilterError)
     async def _handle_audit_filter_error(_request: Request, exc: AuditFilterError) -> JSONResponse:
-        # Discriminated by subclass, unlike most handlers in this module,
-        # because - unusually - it is safe here: `AuditFilterError`'s two
-        # subclasses each carry a fixed, static message with no caller
-        # input folded in (PR #309 review), so serving the specific reason
-        # carries none of the NFR-26/NFR-35 risk a cursor or search-term
-        # exception's message would.
+        # Discriminated by subclass, unlike most handlers here, because it is
+        # safe: `AuditFilterError`'s two subclasses carry a fixed message with no
+        # caller input folded in, so naming the reason carries none of the
+        # NFR-26/NFR-35 risk a cursor or search-term message would.
         _logger.info("audit filter refused: %s", type(exc).__name__)
         detail = (
             _DETAIL_ENTITY_ID_REQUIRES_ENTITY_TYPE
@@ -834,14 +792,11 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
     async def _handle_property_validation_error(
         _request: Request, exc: PropertyValidationError
     ) -> JSONResponse:
-        # issue #52: a routine, expected refusal on a normal edit, not an
-        # anomaly - INFO, not WARNING, matching every other field-level
-        # validation refusal in this module. `issue.message` may echo a
-        # submitted value back (e.g. "'Any' is not a valid value for
-        # Specimen"), which is caller-supplied content the caller already
-        # has - unlike a changelog note or search term, it is never
-        # free-text the caller typed for someone else to read, so it is
-        # safe to both log and return in full.
+        # A routine refusal on a normal edit: INFO, like every other field-level
+        # validation refusal here. `issue.message` may echo a submitted value
+        # (e.g. "'Any' is not a valid value for Specimen"), which the caller
+        # already has and is not free text typed for someone else to read, so it
+        # is safe to both log and return in full.
         _logger.info(
             "property value write refused: %s",
             [(issue.property_key, issue.code) for issue in exc.issues],
@@ -895,9 +850,7 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
     async def _handle_deprecated_property_write(
         _request: Request, exc: DeprecatedPropertyWriteError
     ) -> JSONResponse:
-        # issue #223 review finding 11: the response body carries only
-        # `detail`, matching every other handler in this module - the
-        # `property_key` stays in this log line only, which already has it.
+        # The body carries only `detail`; `property_key` stays in this log line.
         _logger.info(
             "value write refused, property deprecated: %s (property_key=%s)",
             exc,
@@ -912,19 +865,14 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
     async def _handle_terminology_unavailable(
         _request: Request, exc: TerminologyUnavailableError
     ) -> JSONResponse:
-        # WARNING, not INFO: unlike a caller mistake, this is the shared
-        # terminology server misbehaving or unreachable - worth noticing,
-        # not routine. FR-54: nothing here degrades a result, it only tells
-        # the caller the live check could not run this time.
+        # WARNING, not INFO: the shared terminology server is misbehaving or
+        # unreachable, which is worth noticing. FR-54: nothing here degrades a
+        # result; it tells the caller the live check could not run this time.
         _logger.warning("terminology lookup refused, server unavailable: %s", exc)
-        # `is not None`, not truthiness: a server-supplied `retry_after` of
-        # `0.0` is a real value ("retry immediately"), not "none given" -
-        # truthiness would silently drop the header for it. `ceil` rounds
-        # up rather than `int`'s truncate-toward-zero, so a sub-second value
-        # (e.g. `0.4`) is never rounded down to `Retry-After: 0`, and
-        # `max(1, ...)` is the floor RFC 9110 implies for a delay worth
-        # sending at all - it also guards against an ever-negative value
-        # producing an invalid header.
+        # `is not None`, not truthiness: a `retry_after` of `0.0` is a real value
+        # ("retry immediately"). `ceil` rather than truncation, so `0.4` never
+        # becomes `Retry-After: 0`; `max(1, ...)` is the floor for a delay worth
+        # sending and keeps a negative value from producing an invalid header.
         headers = (
             {"Retry-After": str(max(1, math.ceil(exc.retry_after)))}
             if exc.retry_after is not None
