@@ -94,7 +94,8 @@ CONTAINER_FIXTURES = frozenset({"postgres_container"})
 
 
 # tryfirst: pytest's own `-m` deselection is a `pytest_collection_modifyitems`
-# implementation too, and it must see the marker this hook adds.
+# implementation too, and it must see the marker this hook adds. Plugin
+# registration order happens to guarantee that already; this makes it explicit.
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
