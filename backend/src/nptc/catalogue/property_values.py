@@ -1,98 +1,52 @@
-"""Validates and writes a property's values as a whole (issue #52, FR-09,
-FR-10, FR-88, FR-89).
+"""Validates and writes a property's values as a whole (FR-09, FR-10, FR-88,
+FR-89).
 
-**Outside `nptc.registry`, deliberately.** This module imports `nptc.db`
-(the ORM models) and `nptc.audit`, both of which `nptc.registry`'s own
-leaf rule (ADR-0013 SS2) forbids that package from importing. The
-registry supplies the pure decision (`nptc.registry.schema.
-validate_values`); this module is the one write path that acts on it.
+**Outside `nptc.registry`.** This module imports `nptc.db` and `nptc.audit`,
+which that package's leaf rule forbids it to import (ADR-0013 SS2). The
+registry supplies the pure decision (`nptc.registry.schema.validate_values`);
+this module is the one write path that acts on it.
 
-**Validate everything, then mutate, then flush once.** `save_property_
-values` never adds or deletes a row until every value in the incoming set
-has been checked - a rejected write raises before `session.add`/`session.
-delete` is called at all, so it leaves no `PropertyValue` row and no
-partial state (this issue's own acceptance criterion). Compare
-`nptc.catalogue.entries.save_entry`'s row-version check, which takes the
-same "reject before touching the row" posture for a different precondition.
+**Validate everything, then mutate, then flush once.** `save_property_values`
+adds or deletes no row until every incoming value has been checked, so a
+rejected write leaves no `PropertyValue` row and no partial state.
 
-**Whole-property replace, not a diff against the existing rows.** A write
-supplies the complete list of values a property should hold afterwards;
-existing rows for `(entry, property_key)` are deleted and the supplied
-values inserted fresh at ordinals `0..n-1`. This is what
-`property_value`'s own model docstring means by "every write MUST replace
-the whole attribute" - applied one level up, at the row-set level rather
-than a single JSONB value - and it is what makes cardinality's upper
-bound (ADR-0012, enforced by `nptc.registry.schema.validate_values`)
-actually meaningful: a caller cannot bypass it by adding one row at a time
-without ever supplying the full set for validation.
+**Whole-property replace, not a diff.** A write supplies the complete list of
+values. Existing rows for `(entry, property_key)` are deleted and the supplied
+values inserted at ordinals `0..n-1`. This applies `property_value`'s "every
+write MUST replace the whole attribute" at the row-set level, and it keeps
+cardinality's upper bound (ADR-0012, `validate_values`) meaningful: a caller
+cannot bypass it by adding one row at a time. ADR-0035 records why the bulk
+seam does not diff either.
 
-**FR-89's cross-field invariant, enforced from both sides (issue #249).**
-`specimen_unconstrained = true` (PRD S6.2) asserts "this test accepts any
-specimen", which is a fact about the *entry*, not the *property* - so it
-cannot live inside `nptc.registry.schema.validate_values`, which only ever
-sees one property's own values. `_validate_specimen_cross_field` is the
-one piece of specimen-specific knowledge checked when a `specimen` value is
-saved (`property_key == "specimen"`); `assert_specimen_flag_allowed` is the
-reverse direction, called by `nptc.catalogue.entries.save_entry` when a
-caller sets the flag itself. Both raise `PropertyValidationError` with the
-same `_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE`, so a caller sees one
-wording for one invariant regardless of which write path tripped it. Every
-other property's validation is entirely generic.
+**FR-89, enforced from both sides.** `specimen_unconstrained = true` asserts
+"this test accepts any specimen". That is a fact about the entry, not the
+property, so `validate_values`, which sees one property's values, cannot hold
+it. `_validate_specimen_cross_field` checks it when a `specimen` value is
+saved. `assert_specimen_flag_allowed` is the reverse direction, called by
+`save_entry` when a caller sets the flag. Both raise `PropertyValidationError`
+with `_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE`, so one invariant has one
+wording. Every other property's validation is generic.
 
 **FR-10's binding-strength override lives here, not in `CodeHandler`.**
-`CodeHandler.validate(value, spec)` never sees a `justification` - that
-text is `property_value.justification`, a sibling column, not part of the
-JSONB `value` a handler validates - so it always reports an out-of-value-
-set code as `not-in-value-set` regardless of `strength`. This module is
-where the value and its justification are both in hand:
-`_apply_binding_strength` drops that issue for a `required` strength never
-(it always blocks), drops it for `example` unconditionally (advisory:
-FHIR's weakest strength constrains nothing), and drops it for `extensible`
-only when the matching `PropertyValueInput.justification` is non-blank -
-otherwise the issue survives, now naming the missing justification rather
-than the raw binding failure.
+`CodeHandler.validate` never sees a `justification`: that is the sibling
+column `property_value.justification`, not part of the JSONB `value` a handler
+validates. It therefore always reports an out-of-value-set code as
+`not-in-value-set`. `_apply_binding_strength` drops that issue for `example`
+(advisory) and for `extensible` when the matching
+`PropertyValueInput.justification` is non-blank. For `extensible` without one,
+it rewords the issue to name the missing justification. `required` is never
+overridden.
 
-**`save_property_values_for_entries` is the bulk seam (issue #265, FR-39),
-not `nptc.catalogue.entries.save_entries`.** Discipline and every other
-coded registry property are `property_value` rows, not `catalogue_entry`
-columns, so a bulk reclassify has to go through this module. It loops
-`save_property_values` once per target, one savepoint per entry, after
-validating `reason` and the shared `values` set exactly once up front -
-see that function's own docstring for the whole-request/per-entry split.
+**`save_property_values_for_entries` is the bulk seam (FR-39)**, not
+`nptc.catalogue.entries.save_entries`: discipline and every other coded
+property are `property_value` rows, not `catalogue_entry` columns. It checks
+`reason` and the shared `values` once before its loop (ADR-0035).
 
-**Lock ordering (issue #265 round-2 review).** This is the first HTTP
-surface that can hold row-exclusive locks on more than one `catalogue_entry`
-row within a single transaction, which makes a lock-ordering cycle against
-`nptc.audit.writer`'s own `pg_advisory_xact_lock` reachable for the first
-time: a bulk request already holding that advisory lock (from an earlier
-entry's own audit append) can block waiting for a row a concurrent
-single-entry writer holds, while that writer blocks waiting for the same
-advisory lock. `save_property_values_for_entries` acquires the lock once,
-deterministically, before its loop starts (see `nptc.audit.writer.
-acquire_append_lock`) rather than relying on whichever entry happens to
-apply first - this removed the bulk-vs-bulk case (two concurrent batches
-locking rows in different orders now both queue on the same advisory lock
-before touching a row) but did not, by itself, close the bulk-vs-a-
-concurrent-singular-write case: `save_property_values` (the singular
-writer) itself acquired the lock only via `record_snapshot_change`'s own
-`append_audit_event` call, after the row-locking flush below, not before
-it. Issue #281 closes that gap: `save_property_values` now calls
-`acquire_append_lock` itself, before any session-touching statement (round-2 review of
-that fix found that a narrower placement - after the row-version check, just
-before the row-locking flush - still left several ORM `select()` calls
-in between, each of which autoflushes any already-pending `catalogue_entry`
-mutation by default). Round-3 review found the same gap in this bulk seam
-itself: acquiring the lock after `_load_active_property_definition`'s own
-`select()` had exactly the same autoflush hazard, just one call further
-out - `save_property_values_for_entries` now also acquires it before that
-or any other query. Only session-free validation (the changelog note) runs
-ahead of the lock, so a rejected request takes no lock. Every caller of this
-module - bulk or singular - now takes the append lock before any
-`catalogue_entry` row lock, closing the cycle for good rather than
-narrowing it to the bulk-vs-bulk case alone. Postgres's own deadlock
-detector still aborts one of the two transactions in the (now closed)
-residual case (a 500, full rollback, no corruption) - not silent data
-loss, and no longer expected to occur.
+**Lock order.** Every writer here takes the audit append lock before any
+session-touching statement, so no `catalogue_entry` row lock precedes it. Only
+session-free validation (the changelog note) runs ahead of it, so a rejected
+request takes no lock. ADR-0035 records the deadlock cycles this closes, and
+`test_lock_ordering.py` pins it.
 """
 
 from __future__ import annotations
@@ -133,44 +87,30 @@ __all__ = [
     "tally_bulk_outcomes",
 ]
 
-#: `property_value.bulk_set`'s own `entity_type` (issue #265) - deliberately
-#: distinct from `property_value_set` (the per-entry `property_value.set`
-#: events `save_property_values` emits): a diff-free batch header has a
-#: different `entity_id` grammar (`property_key` alone, not
-#: `f"{entry.id}:{property_key}"`), and a history query scoped to
-#: `property_value_set` must not pick up a header row it cannot render as a
-#: value diff.
+#: `property_value.bulk_set`'s `entity_type`, distinct from `property_value_set`
+#: (the per-entry events): the diff-free header has a different `entity_id`
+#: grammar, and a history query scoped to `property_value_set` must not pick it
+#: up (ADR-0035).
 _BULK_ENTITY_TYPE: Final[str] = "property_value_bulk"
 
-#: A binding value-set failure - the one issue code eligible for a
-#: strength-based override. Every other issue code (a schema/shape
-#: failure, `forbidden-code`, `not-a-local-code`, a cardinality bound) is
-#: never eligible: `strength` governs FR-10's value-set check specifically,
-#: not "whether this value is valid" in general.
+#: The one issue code eligible for a strength override. `strength` governs
+#: FR-10's value-set check, not whether a value is valid in general.
 _NOT_IN_VALUE_SET = "not-in-value-set"
 
-#: The one property this module has specific knowledge of (FR-89) - see
-#: the module docstring's cross-field note. Every other property is
-#: handled entirely generically.
+#: The one property this module knows by name (FR-89); see the module docstring.
 _SPECIMEN_KEY = "specimen"
 
-#: FR-89's cross-field refusal, in the one wording both directions share
-#: (issue #249's own requirement: mirrored, not restated) - see
-#: `_validate_specimen_cross_field` and `assert_specimen_flag_allowed`.
+#: FR-89's refusal, in the one wording both directions share.
 _SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE: Final[str] = (
     "this entry is marked as accepting any specimen "
     "(specimen_unconstrained) - clear that flag before recording "
     "a specimen value, or remove the specimen value before setting it"
 )
 
-#: A synthetic policy for the audit snapshot this module records - not
-#: `nptc.audit.policy.policy_for(PropertyValue)`, which classifies that
-#: model's own per-row columns (`entry_id`/`property_key`/`ordinal`/...).
-#: A `save_property_values` call replaces a whole row *set* in one
-#: transaction, so the thing worth diffing is "the property's value list
-#: before" vs "...after", not any one row's attribute history. This
-#: whole-set shape is confirmed, not merely convenient, as NFR-08's
-#: field-level unit for this write path - see ADR-0040 (issue #264).
+#: A synthetic policy for the whole-set audit snapshot, not
+#: `policy_for(PropertyValue)`, which classifies per-row columns. A save replaces
+#: a row set, so the diffed unit is the property's value list before and after
+#: (ADR-0040).
 _PROPERTY_VALUES_AUDIT_POLICY = AuditFieldPolicy(
     entity_type="property_value_set",
     auditable=frozenset({"values"}),
@@ -181,19 +121,17 @@ _PROPERTY_VALUES_AUDIT_POLICY = AuditFieldPolicy(
 
 
 class PropertyDefinitionNotFoundError(LookupError):
-    """Raised when no `property_definition` matches the given key - a
-    caller error (an unknown or mistyped property), not a bad value."""
+    """Raised when no `property_definition` matches the given key: a caller
+    error (an unknown or mistyped property), not a bad value."""
 
     http_status: ClassVar[int] = 404
 
 
 @dataclass(frozen=True)
 class PropertyValueInput:
-    """One value to save, paired with its own `justification` - FR-10's
-    extensible-strength case needs both together, and `property_value`'s
-    own `value`/`justification` columns are siblings on the same row, not
-    a single JSONB document, so a caller cannot supply just `value` and
-    expect this module to find a justification anywhere else."""
+    """One value to save with its own `justification`. FR-10's
+    extensible-strength case needs both, and they are sibling columns on
+    `property_value`, not one JSONB document."""
 
     value: Any
     justification: str | None = None
@@ -201,11 +139,10 @@ class PropertyValueInput:
 
 @dataclass(frozen=True)
 class PropertyWriteIssue:
-    """One field-level problem with an attempted write, in the language
-    PRD SS17.2.5 requires: says what was wrong and, via `message`, what to
-    do about it - never a stack trace, a raw schema-validation dump, or an
-    HTTP status. `ordinal` is `None` for a cardinality issue that applies
-    to the property as a whole rather than one value in it."""
+    """One field-level problem with an attempted write, worded as PRD SS17.2.5
+    requires: what was wrong and what to do about it, with no stack trace, schema
+    dump or HTTP status. `ordinal` is `None` for a cardinality issue on the
+    property as a whole."""
 
     property_key: str
     label: str
@@ -216,47 +153,28 @@ class PropertyWriteIssue:
 
 @dataclass(eq=False)
 class PropertyValidationError(ValueError):
-    """Raised by `save_property_values` when one or more supplied values
-    fail validation. Carries every issue found in one round trip (`nptc.
-    registry.schema.validate_values` never stops at the first problem), so
-    a caller can show a field-level message per bad value rather than
-    forcing a fix-one-submit-again loop. `http_status` follows the same
-    ClassVar convention `EntryVersionConflictError`/`ChangelogNoteError`
-    already use, so `nptc.api.errors` can map this without a new pattern
-    (see that module's own note that #149/#150 must not simply inherit it
-    unchanged - this handler is the first purpose-built one for a
-    property-value write).
+    """Raised by `save_property_values` when supplied values fail validation.
+    Carries every issue found (`validate_values` never stops at the first), so a
+    caller can show one message per bad value.
 
-    **Deliberately not `frozen=True`** (issue #248 review): this is the
-    first caller to raise this exception through an HTTP route, and
-    FastAPI's sync-dependency-to-thread bridge (`contextmanager_in_
-    threadpool`, used for `get_session`) reassigns `exc.__traceback__` when
-    handing a raised exception back across the thread boundary - a plain
-    attribute set every exception has to tolerate, which a frozen
-    dataclass's generated `__setattr__` refuses, turning every 422 this
-    exception should produce into an unhandled `FrozenInstanceError` (500)
-    instead. `issues` was never frozen against anything but a caller's own
-    accidental mutation, which was never worth risking exception-machinery
-    breakage to guard against.
+    **Not `frozen=True`.** FastAPI's sync-dependency-to-thread bridge
+    (`contextmanager_in_threadpool`, used for `get_session`) reassigns
+    `exc.__traceback__` when it hands a raised exception across the thread
+    boundary. A frozen dataclass's `__setattr__` refuses that, which turned every
+    422 into an unhandled `FrozenInstanceError` (500).
 
-    **`eq=False`, not the dataclass default** (round-2 review): a bare
-    `@dataclass` without `frozen=True` still generates `__eq__` from the
-    field list, and doing so sets `__hash__` to `None` per the `dataclasses`
-    docs' own eq/hash coupling - silently making every instance unhashable,
-    and making two unrelated raises that happen to carry the same `issues`
-    compare equal. Neither is a property an `Exception` subclass should
-    lose; `eq=False` leaves `object`'s identity-based `__eq__`/`__hash__` in
-    place while still allowing the plain attribute set above.
+    **`eq=False`.** A dataclass without `frozen=True` still generates `__eq__`,
+    which sets `__hash__` to `None`: instances become unhashable, and two unrelated
+    raises with the same `issues` compare equal. `eq=False` keeps `object`'s
+    identity-based `__eq__` and `__hash__`.
     """
 
     issues: tuple[PropertyWriteIssue, ...] = field(default_factory=tuple)
     http_status: ClassVar[int] = 422
 
     def __post_init__(self) -> None:
-        # `Exception.__init__` never runs for a dataclass subclassing
-        # `ValueError`, so `self.args` stays `()` - `repr()` and a bare
-        # `logging.exception(exc)` would otherwise show nothing about which
-        # issues were raised.
+        # `Exception.__init__` does not run for this dataclass, so `args` would
+        # stay `()` and `repr()` or `logging.exception` would show no issues.
         self.args = (str(self),)
 
     def __str__(self) -> str:
@@ -268,12 +186,10 @@ class PropertyValidationError(ValueError):
 def _validate_specimen_cross_field(
     entry: CatalogueEntry, property_key: str, values: Sequence[Any]
 ) -> Sequence[PropertyWriteIssue]:
-    """FR-89: `specimen_unconstrained = true` asserts "this test accepts
-    any specimen" - an entry cannot claim that *and* carry one or more
-    specimen values at the same time; the two facts are mutually
-    exclusive, not merely redundant. See PRD S6.2 for the flag's full
-    rationale (distinguishing "accepts any specimen" from "nobody has
-    filled this in yet")."""
+    """FR-89: an entry flagged `specimen_unconstrained` ("accepts any specimen")
+    cannot also carry specimen values. The facts are mutually exclusive, not merely
+    redundant. PRD S6.2 distinguishes the flag from "nobody has filled this in
+    yet"."""
     if property_key != _SPECIMEN_KEY or not entry.specimen_unconstrained or not values:
         return ()
     return (
@@ -287,22 +203,16 @@ def _validate_specimen_cross_field(
 
 
 def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> None:
-    """FR-89's cross-field invariant, checked in the other direction (issue
-    #249): refuses setting `entry.specimen_unconstrained = True` while the
-    entry still holds one or more `specimen` property values. Does nothing
-    if it holds none - including when the flag is being *cleared*, which
-    `nptc.catalogue.entries.save_entry` never calls this for at all.
+    """FR-89's invariant in the other direction: refuses setting
+    `entry.specimen_unconstrained = True` while the entry holds `specimen` values.
+    Does nothing if it holds none, and `save_entry` never calls it when the flag is
+    being cleared.
 
-    Raises `PropertyValidationError` with one `PropertyWriteIssue` per
-    blocking value, named by its `ordinal`, so a caller can see exactly
-    which recorded specimens are in the way - mirroring
-    `_validate_specimen_cross_field`'s own issue shape for the forward
-    direction. See the module docstring's cross-field note for why both
-    directions share one message.
+    Raises `PropertyValidationError` with one `PropertyWriteIssue` per blocking
+    value, named by `ordinal`, in the shape `_validate_specimen_cross_field` uses.
+    Both share one message (see the module docstring).
     """
-    # A precondition check, not a read that needs the mapped objects - only
-    # `ordinal` is used, so this selects the column directly rather than
-    # hydrating and identity-mapping every specimen row on a path that runs
+    # Selects only `ordinal` instead of hydrating every specimen row: this runs
     # on every flag-set.
     ordinals = (
         session.execute(
@@ -337,9 +247,9 @@ def _apply_binding_strength(
     spec: PropertyDefinitionSpec,
     inputs: Sequence[PropertyValueInput],
 ) -> Sequence[ValidationIssue]:
-    """Drops or rewords a `not-in-value-set` issue per FR-10's strength
-    rule - see the module docstring's own note on why this cannot live in
-    `CodeHandler` itself. Every other issue code passes through untouched."""
+    """Drops or rewords a `not-in-value-set` issue per FR-10's strength rule; the
+    module docstring explains why this is not in `CodeHandler`. Every other issue
+    code passes through untouched."""
     strength = spec.binding.strength if spec.binding is not None else None
     if strength not in ("extensible", "example"):
         return issues  # required (or no binding at all): never overridden
@@ -375,14 +285,10 @@ def _apply_binding_strength(
 
 @dataclass(frozen=True)
 class _PropertyWritePreflight:
-    """The whole-request part of a property-value write: everything
-    derivable from the property definition and the shared `values` set
-    alone, with no dependency on any one entry's state (issue #265's
-    whole-request/per-entry split). `raw_values` is threaded back out
-    because `_validate_specimen_cross_field` - the one check that *does*
-    depend on an entry - needs the same unwrapped list this preflight
-    already built, and it would be wasteful (and a chance for the two
-    lists to diverge) to rebuild it from `values` a second time."""
+    """The whole-request part of a write: everything derivable from the property
+    definition and the shared `values` alone, with no dependency on any entry's
+    state. `raw_values` is returned so `_validate_specimen_cross_field`, the one
+    entry-dependent check, reuses the list instead of rebuilding it."""
 
     definition: PropertyDefinition
     raw_values: tuple[Any, ...]
@@ -400,10 +306,8 @@ def _load_active_property_definition(session: Session, property_key: str) -> Pro
     if definition is None:
         raise PropertyDefinitionNotFoundError(f"no property_definition with key {property_key!r}")
     if definition.status == PropertyStatus.DEPRECATED:
-        # FR-11: a deprecated property retains its recorded values but
-        # accepts no new ones - checked before any validation runs, so a
-        # write against a deprecated property never gets as far as a
-        # cardinality/binding check whose outcome would be moot anyway.
+        # FR-11: checked before validation, so a deprecated property never
+        # reaches a cardinality or binding check whose outcome would be moot.
         raise DeprecatedPropertyWriteError(property_key)
     return definition
 
@@ -414,18 +318,15 @@ def _preflight_property_write(
     registry: DatatypeRegistry,
 ) -> _PropertyWritePreflight:
     """Validates `values` against `definition`'s spec, independent of any
-    entry - schema shape, cardinality, and FR-10's binding-strength
-    override. Never raises: a bad value is a `PropertyWriteIssue`, not an
-    exception, so a caller can combine these with an entry-dependent issue
-    (FR-89's specimen cross-field check) before deciding whether to raise
-    `PropertyValidationError` at all."""
+    entry: schema shape, cardinality, and FR-10's binding-strength override. Never
+    raises: a bad value is a `PropertyWriteIssue`, not an exception, so a caller
+    can combine these with an entry-dependent issue (FR-89) before deciding whether
+    to raise `PropertyValidationError`."""
     spec = spec_for(definition)
     handler = registry.get(definition.datatype)
-    # A malformed `constraints` document is a defect in the *definition*,
-    # not something this write's caller could have avoided - checked before
-    # any value is judged against it, so a bad definition never fails open
-    # (see `CodeHandler.validate`'s own defensive fallback for the case
-    # where it does anyway).
+    # A malformed `constraints` document is a defect in the definition, not
+    # something the caller could avoid. Checked before any value, so a bad
+    # definition never fails open (see `CodeHandler.validate`'s fallback).
     validate_constraints(spec, handler)
     raw_values = tuple(item.value for item in values)
 
@@ -457,73 +358,46 @@ def save_property_values(
     registry: DatatypeRegistry,
     expected_row_version: int,
 ) -> Sequence[PropertyValue]:
-    """Replaces every `property_value` row for `(entry, property_key)`
-    with `values`, validated as a whole set before any row is touched.
+    """Replaces every `property_value` row for `(entry, property_key)` with
+    `values`, validated as a whole set before any row is touched.
 
-    Raises `PropertyDefinitionNotFoundError` for an unknown `property_key`,
+    Raises `PropertyDefinitionNotFoundError` for an unknown key,
     `nptc.catalogue.changelog.ChangelogNoteError` for a rejected `reason`,
     `EntryVersionConflictError` (FR-38) if `expected_row_version` no longer
     matches `entry.row_version`, and `PropertyValidationError` (never a bare
-    `IntegrityError`) for a value or cardinality problem - each raised
-    before `session.add`/`session.delete` is ever called, so a rejected
-    write leaves neither a partial write nor an audit event behind,
-    matching `save_entry`'s own precondition-before-mutation posture
-    (FR-37).
+    `IntegrityError`) for a value or cardinality problem. Each is raised before
+    `session.add` or `session.delete`, so a rejected write leaves neither a
+    partial write nor an audit event (FR-37).
 
-    **Why `expected_row_version` guards this write, even though it only
-    ever touches `property_value` rows.** `save_property_values` is a
-    whole-property replace with no per-row version of its own to check -
-    two editors who each load the same entry, then each save a change to
-    the *same* property, would otherwise silently clobber one another
-    (last write wins, with a plausible-looking audit trail for both),
-    which is exactly the outcome FR-38 forbids for `catalogue_entry`
-    itself. Checking `entry.row_version` and then bumping it as part of
-    this write (rather than adding a second, `property_value`-scoped
-    version column) reuses `catalogue_entry.row_version`'s existing
-    `version_id_col` machinery as the one optimistic lock a caller needs
-    to track per entry, covering both this path and `save_entry`'s.
+    `expected_row_version` guards this write although it only touches
+    `property_value` rows. With no per-row version of its own, two editors saving
+    the same property would otherwise clobber each other, which FR-38 forbids.
+    `entry.row_version` is checked and bumped as the one lock per entry; see
+    `assert_entry_row_version`.
 
     Returns the newly inserted rows, ordered by ordinal.
 
-    `reason` is validated first because that check never touches the
-    session, so a rejected note takes no lock. `acquire_append_lock` then
-    runs before any statement that does touch it - matching
-    `entry_child_write`'s own precedent (issue #281 round-2 review). A
-    narrower placement (after the no-op short-circuit below, taking the lock
-    only once a real change is confirmed) was tried first, but every one of
-    the steps between here and there - the identity flush below,
-    `_load_active_property_definition`'s own `select()`, the `existing`
-    query - is an ORM statement that autoflushes by default: any
-    `catalogue_entry` mutation already pending in this session (from
-    earlier in the same transaction) would flush, taking a row lock, before
-    a later-placed `acquire_append_lock` ever ran. Acquiring before all of
-    them, unconditionally, is what makes the guarantee hold at this
-    function's own boundary rather than depending on every caller entering
-    with a clean session - the same trade-off `save_entry` now makes, giving
-    up "a no-op resubmission takes no lock" for a guarantee that does not
-    depend on caller discipline.
+    `reason` is validated first, then `acquire_append_lock` runs before any
+    session-touching statement, unconditionally. Placing it after the no-op
+    short-circuit would leave the identity flush,
+    `_load_active_property_definition`'s `select()` and the `existing` query ahead
+    of it, and each autoflushes pending `catalogue_entry` state and so can take a
+    row lock first (ADR-0035). This gives up "a no-op takes no lock" for a
+    guarantee that does not depend on caller discipline.
     """
     validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
 
-    # `entry.id` is read into every query/insert below - a brand-new,
-    # not-yet-flushed `entry` has no identity yet, which would either match
-    # zero existing rows on a query that should have found some, or try to
-    # insert PropertyValue rows with a NULL entry_id. Flushing first, only
-    # when needed, closes that gap - mirrors `nptc.catalogue.bindings.
-    # create_binding`'s identical guard for the same "create the entry and
-    # its dependent row in one transaction" call pattern.
+    # A new, unflushed `entry` has no identity: `entry.id` would match no existing
+    # rows and insert `PropertyValue` rows with a NULL `entry_id`. `create_binding`
+    # has the same guard.
     if not sa_inspect(entry).identity:
         session.flush()
 
     if entry.row_version != expected_row_version:
-        # `changed_by`/`changed_at` are left unpopulated here, unlike
-        # `nptc.catalogue.entries.save_entry`'s own conflict report: that
-        # attribution lookup (`_latest_change_attribution`) is a private
-        # helper of that module, and duplicating it for this one field
-        # would widen this fix beyond the concurrency guard itself.
-        # `ConflictReport` already treats both as optional for exactly
-        # this case.
+        # `changed_by` and `changed_at` stay unpopulated: the attribution lookup
+        # is private to `nptc.catalogue.entries`, and `ConflictReport` treats
+        # both as optional.
         raise EntryVersionConflictError(
             ConflictReport(
                 business_key=entry.business_key,
@@ -561,12 +435,10 @@ def save_property_values(
         ]
     }
 
-    # A no-op write (the same values resubmitted) is checked *before* any
-    # row is touched: comparing payloads after the DELETE/INSERT would
-    # still leave a real (if pointless) write in the transaction, and this
-    # is also what keeps a no-op from bumping `entry.row_version` below -
-    # an editor who re-submits unchanged values should not invalidate a
-    # concurrent editor's own unrelated, still-current row_version.
+    # A no-op write is detected before any row is touched; comparing after the
+    # DELETE/INSERT would leave a pointless write in the transaction. It also
+    # keeps a no-op from bumping `entry.row_version`, which would invalidate a
+    # concurrent editor's still-current version.
     if before_payload == intended_after_payload:
         return existing
 
@@ -591,12 +463,8 @@ def save_property_values(
     for row in inserted:
         session.add(row)
 
-    # Bumps `catalogue_entry.row_version` as part of this write, so a
-    # second concurrent `save_property_values`/`save_entry` call against
-    # the same entry sees a stale `expected_row_version` rather than
-    # silently clobbering this one - see the docstring's note on reusing
-    # `row_version`'s existing `version_id_col` machinery as the one lock
-    # this entry has.
+    # Bumps the shared per-entry lock (see the docstring), so a concurrent
+    # `save_property_values` or `save_entry` sees a stale `expected_row_version`.
     entry.row_version += 1
     session.flush()
 
@@ -620,17 +488,15 @@ def save_property_values(
 
 @dataclass(frozen=True)
 class EntryPropertyTarget:
-    """One `(business_key, expected_row_version)` pair the caller selected
-    for a bulk write (issue #265, FR-39). The version is the one that entry
-    held *when selected*, not resolved server-side - a server-side filter
-    would have nothing to lock a conflict check against."""
+    """One `(business_key, expected_row_version)` pair selected for a bulk write
+    (FR-39). The version is the one the entry held when selected, not resolved
+    server-side, which would leave a conflict check nothing to lock against."""
 
     business_key: str
     expected_row_version: int
 
 
-#: `BulkPropertyOutcome.status` for one target - see that dataclass for what
-#: each value means and when `row_version`/`conflict` are populated.
+#: See `BulkPropertyOutcome` for what each value means.
 _BulkOutcomeStatus = Literal["applied", "unchanged", "conflict", "not-found"]
 
 
@@ -665,69 +531,47 @@ def save_property_values_for_entries(
     registry: DatatypeRegistry,
 ) -> tuple[BulkPropertyOutcome, ...]:
     """Sets `property_key` to `values` across every entry in `targets`, one
-    `save_property_values` call - and one savepoint - per entry, so a stale
-    or missing entry never blocks the rest of the batch (issue #265,
-    FR-39). Returns exactly `len(targets)` outcomes, in `targets` order.
+    `save_property_values` call and one savepoint per entry, so a stale or missing
+    entry never blocks the rest (FR-39, ADR-0035). Returns exactly `len(targets)`
+    outcomes, in `targets` order.
 
-    **Whole-request vs per-entry, one rule:** anything derivable from
-    `property_key`/`values`/`reason` alone, with no dependency on any one
-    entry's state, is checked once here, *before* the loop - `reason`
-    (FR-37), the property definition (404/FR-11), and the shared `values`
-    set's own schema/cardinality/binding-strength validation. Doing this
-    upfront (rather than letting the first `save_property_values` call
-    discover it) is what keeps the batch order-independent: a batch whose
-    first several targets all conflict at the row-version check below must
-    still refuse a bad `values` set or an unvalidated `reason`, rather than
-    returning 200 having never looked at either. Everything else - a stale
-    `expected_row_version`, a missing entry, FR-89's specimen cross-field
-    conflict - depends on one entry's own state and is a per-entry outcome,
-    except FR-89's check specifically: it is deliberately *not* caught
-    per-entry here (see `PropertyValidationError` below) so it aborts the
-    whole batch rather than silently skip an entry the operator explicitly
-    selected (ADR-0035).
+    **Whole-request versus per-entry.** Anything derivable from `property_key`,
+    `values` and `reason` alone is checked once before the loop: `reason` (FR-37),
+    the property definition (404, FR-11), and the shared `values` schema,
+    cardinality and binding-strength validation. That keeps the batch
+    order-independent: a batch whose first targets all conflict must still refuse a
+    bad `values` or `reason`. A stale `expected_row_version` and a missing entry
+    depend on one entry and are per-entry outcomes. FR-89's specimen conflict also
+    depends on one entry, but it is deliberately not caught per entry: it aborts the
+    whole batch rather than skip an entry the operator selected (ADR-0035).
 
     Raises `PropertyDefinitionNotFoundError`, `DeprecatedPropertyWriteError`,
-    `nptc.catalogue.changelog.ChangelogNoteError`, or `PropertyValidationError`
-    for a whole-request problem - none of these produce a per-entry outcome,
-    because none of them depend on any entry `targets` names. A raise here
-    (or an FR-89 conflict raised by one target's own `save_property_values`
-    call) leaves no per-entry write and no audit event at all: nothing has
-    been touched yet, and `nptc.db.session.session_scope` rolls back the
-    whole transaction on any exception that reaches it, discarding any
-    entry already applied earlier in the loop too.
+    `nptc.catalogue.changelog.ChangelogNoteError` or `PropertyValidationError` for
+    a whole-request problem. A raise here, or an FR-89 conflict from one target,
+    leaves no write and no audit event: `session_scope` rolls back the whole
+    transaction, discarding entries already applied.
 
-    `reason` is validated first because that check never touches the
-    session, so a rejected note takes no lock. `acquire_append_lock` then
-    runs before any statement that does touch it (issue #281 round-3
-    review): a placement after `_load_active_property_definition`'s own
-    `select()` - the shape this function used until this round - is exactly
-    the autoflush-before-lock gap that round's own fix to
-    `save_property_values` itself closed; the bulk seam had the identical
-    gap, just one call further out. Acquired once, unconditionally, before
-    any session-touching statement runs - not left to whichever entry's own
-    audit append happens to acquire it first, which would otherwise defer
-    acquisition arbitrarily for a batch whose earliest entries are all
-    `unchanged`.
+    `reason` is validated first, then `acquire_append_lock` runs before any
+    session-touching statement. Taking it once here, not leaving it to the first
+    applied entry's audit append, matters for a batch whose earliest entries are
+    all `unchanged`. A placement after `_load_active_property_definition`'s
+    `select()` would reopen the autoflush gap (ADR-0035).
 
-    An entry deleted by another transaction between the row-version
-    pre-check and this call's own flush (`ObjectDeletedError`, issue #265
-    review) becomes a `not-found` outcome, the same as a `business_key` that
-    never existed - there is no entry left to report a `conflict` against.
+    An entry deleted by another transaction between the row-version pre-check and
+    this call's flush (`ObjectDeletedError`) becomes `not-found`, as for a
+    `business_key` that never existed.
 
-    A `property_value.bulk_set` header is appended once, after the loop, but
-    only when at least one target actually applied (see `tally_bulk_
-    outcomes`) - a batch where every target is `conflict`/`not-found`
-    changed nothing, so it emits nothing, matching ADR-0018's "a no-op write
-    emits no audit event" posture and keeping a client that retries a stale
-    selection from appending one permanent audit row per attempt.
+    A `property_value.bulk_set` header is appended once after the loop, only when
+    at least one target applied (`tally_bulk_outcomes`). A batch of only
+    `conflict` or `not-found` outcomes changed nothing and emits nothing
+    (ADR-0035, ADR-0018).
     """
     validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
 
-    # Deferred to break an import cycle: `nptc.catalogue.entries` imports
-    # `assert_specimen_flag_allowed` from this module at its own top level,
-    # so a top-level import the other way here would fail with a partially
-    # initialised module rather than a clean cycle error.
+    # Deferred: `nptc.catalogue.entries` imports `assert_specimen_flag_allowed`
+    # from this module at top level, so a top-level import here would hit a
+    # partially initialised module.
     from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
 
     definition = _load_active_property_definition(session, property_key)
@@ -762,13 +606,10 @@ def save_property_values_for_entries(
             continue
 
         before_version = entry.row_version
-        # One savepoint per entry, around the write only - `save_property_
-        # values` opens none of its own. Without it, the genuine race this
-        # catches (`entry.row_version`'s own `version_id_col` colliding at
-        # flush, after the precondition check above already passed) would
-        # abort the whole batch rather than just this one target, and could
-        # leave `property_value` rows deleted-but-not-reinserted for this
-        # entry (mirrors `save_entry`'s own layer-2 pattern).
+        # One savepoint per entry, around the write only; `save_property_values`
+        # opens none. Without it, a `version_id_col` collision at flush (past the
+        # precondition check) would abort the whole batch and could leave this
+        # entry's rows deleted but not reinserted, as in `save_entry`'s layer two.
         savepoint = session.begin_nested()
         try:
             save_property_values(
@@ -788,15 +629,11 @@ def save_property_values_for_entries(
             try:
                 refreshed = load_entry_for_update(session, target.business_key)
             except EntryNotFoundError:
-                # `ObjectDeletedError` means exactly this: the row was
-                # deleted by another transaction between our precondition
-                # check and this flush (issue #265 review) - there is no
-                # entry left to report a conflict against, so this is a
-                # `not-found` outcome, not an uncaught `EntryNotFoundError`
-                # that would otherwise escape the loop and turn an
-                # otherwise-partially-successful batch into a whole-request
-                # 404 (whose documented meaning is "unknown property_key",
-                # not "an entry vanished mid-batch").
+                # Another transaction deleted the row between the precondition
+                # check and this flush. No entry is left to report a conflict
+                # against, and an escaping `EntryNotFoundError` would turn a
+                # partly successful batch into a whole-request 404, whose
+                # meaning is "unknown property_key".
                 outcomes.append(
                     BulkPropertyOutcome(
                         business_key=target.business_key, status="not-found", row_version=None
@@ -804,16 +641,10 @@ def save_property_values_for_entries(
                 )
                 continue
             try:
-                # Reuses the same conflict-building path the pre-check
-                # above already went through (issue #265 review), rather
-                # than hand-building a bare `ConflictReport` with no
-                # `changed_by`/`changed_at` - a `conflict` outcome's
-                # attribution should not depend on which of the two layers
-                # caught it. `row_version` only ever increases, and this
-                # branch is reached only because the flush above already
-                # found the stored value had moved past
-                # `target.expected_row_version`, so this is expected to
-                # always raise.
+                # Reuses the pre-check's conflict path, so attribution does not
+                # depend on which layer caught it. `row_version` only increases
+                # and the flush already found it past `target.expected_row_version`,
+                # so this is expected to raise.
                 assert_entry_row_version(session, refreshed, target.expected_row_version)
             except EntryVersionConflictError as exc:
                 outcomes.append(
@@ -825,17 +656,11 @@ def save_property_values_for_entries(
                     )
                 )
                 continue
-            # Defensive only (issue #265 round-3 review): `assert_entry_row_
-            # version` was expected to always raise here (see the comment
-            # above it) but did not. Whatever the write's own savepoint just
-            # rolled back was still discarded - reporting `unchanged` would
-            # tell the caller the entry already held the target values when
-            # it does not, which is wrong even in a case that "can't happen"
-            # (e.g. the entry was deleted and a new one recreated under the
-            # same business_key, landing back at row_version=1). `conflict`,
-            # built directly from `refreshed` rather than raised through
-            # `assert_entry_row_version`, is honest about the discarded
-            # write regardless of why the version compared equal.
+            # Defensive: the check above was expected to raise. The write's
+            # savepoint was rolled back, so `unchanged` would falsely claim the
+            # entry already holds the target values (for example after a delete
+            # and recreate under the same `business_key` landing at
+            # `row_version=1`). Report `conflict`, built from `refreshed`.
             outcomes.append(
                 BulkPropertyOutcome(
                     business_key=target.business_key,
@@ -870,13 +695,9 @@ def save_property_values_for_entries(
     result = tuple(outcomes)
     tallies = tally_bulk_outcomes(result)
 
-    # A no-effect batch (every target `conflict`/`not-found`) emits no
-    # header at all (issue #265 review) - matching ADR-0018's "a no-op
-    # write emits nothing" posture, and stopping a client that keeps
-    # retrying a stale selection from writing one permanent audit row per
-    # attempt. Shares `ctx.correlation_id` with every per-entry
-    # `property_value.set` event above for free (NFR-08) - it is minted
-    # once per request, not per audit call.
+    # A no-effect batch emits no header (ADR-0035), so a client retrying a stale
+    # selection writes no audit row per attempt. The header shares
+    # `ctx.correlation_id` with the per-entry events (NFR-08).
     if tallies["applied"] > 0:
         record_batch_summary(
             session,
@@ -892,10 +713,8 @@ def save_property_values_for_entries(
 
 
 def tally_bulk_outcomes(outcomes: Sequence[BulkPropertyOutcome]) -> dict[str, int]:
-    """Counts `outcomes` by `status` - the one place either the audit
-    header or the HTTP response counts a batch, so the two cannot
-    independently drift apart (issue #265 review: they previously each ran
-    their own `sum(1 for ... )` pass over the same outcomes)."""
+    """Counts `outcomes` by `status`. The one place the audit header and the
+    HTTP response both count a batch, so the two cannot drift apart (ADR-0035)."""
     tallies: dict[str, int] = {"applied": 0, "unchanged": 0, "conflict": 0, "not-found": 0}
     for outcome in outcomes:
         tallies[outcome.status] += 1
