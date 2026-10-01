@@ -1,48 +1,27 @@
-"""The PropertyDefinition admin router (issue #55, FR-09, FR-11, FR-12).
+"""The PropertyDefinition admin router (FR-09, FR-11, FR-12).
 
-Follows `routers/catalogue_bindings.py`'s house style exactly: the
-return-type annotation drives the response model (never `response_model=`
-on the decorator), `ConfigDict(frozen=True)` on every request/response
-model, module-level `Final` `_RESPONSES` dicts naming only the statuses a
-route can actually produce (issue #223 review finding 10: each route gets
-its own precise dict, not a shared one that advertises a status it cannot
-return), and no try/except in a route body - every domain exception
-carries `http_status` and is mapped centrally by `nptc.api.errors`.
+Domain exceptions carry `http_status` and `nptc.api.errors` maps them, so no route body has
+a try/except. Each route has its own `_RESPONSES_*` dict naming only the statuses it can
+produce.
 
-**Every mutating route (`POST`/`PATCH`/`POST .../deprecation`/`DELETE`) is
-gated on `Permission.REGISTRY_MANAGE`** (FR-44) - never a role name. **Both
-`GET` routes are gated on `Permission.REGISTRY_READ`** instead (issue #223
-review round-1 finding 6, corrected in round 2 per ADR-0028):
-`REGISTRY_MANAGE` is administrator-tier, and gating a read route on it made
-`DefinitionAudience.DATA_ENTRY` unreachable by the very audience it is
-named for - a member filling in a submission form could not call `GET
-/registry/properties` to learn which properties to offer. Gating on
-`Permission.CATALOGUE_BROWSE` instead (round 1's fix) over-corrected: that
-permission is held by `Role.ANON` too, so the registry ended up fully
-public. `Permission.REGISTRY_READ` is the member-tier permission ADR-0028
-introduces for exactly this gap - held from `Role.MEMBER` up, never by
-`Role.ANON`, `Role.OBSERVER` or `Role.PROVISIONAL`.
+**Mutating routes (`POST`, `PATCH`, `POST .../deprecation`, `DELETE`) require
+`Permission.REGISTRY_MANAGE`, and both `GET` routes require `Permission.REGISTRY_READ`**
+(FR-44). ADR-0028 records why the reads use neither `REGISTRY_MANAGE` nor
+`CATALOGUE_BROWSE`.
 
-**`DELETE` never deletes.** `delete_property_definition` always raises
-`PropertyDefinitionDeleteRefusedError` (409) - `property_definition` has no
-`DELETE` grant at the database layer at all (issue #51); this route exists
-so a client's `DELETE` gets an actionable 409 naming deprecation as the
-available action, rather than an unhandled `42501` surfacing as a 500.
+**`DELETE` never deletes.** It always raises `PropertyDefinitionDeleteRefusedError` (409),
+because `property_definition` has no `DELETE` grant at the database layer. The route exists
+so a client gets an actionable 409 naming deprecation, not an unhandled `42501` 500.
 
-**`GET /registry/properties?include_deprecated=` resolves the audience.**
-`false` (the default) is the data-entry audience - active properties only,
-what a submission/maintenance form should offer. `true` is the export
-audience - every status, including deprecated, since a historical value
-recorded against a since-deprecated property must still resolve through a
-listing that includes it (issue #55's export-resolver-only scope decision;
-see the plan comment on issue #55 for why the byte-level "re-generated
-historical export" half is out of scope here).
+**`GET /registry/properties?include_deprecated=` picks the audience.** `false` (the default)
+is `DefinitionAudience.DATA_ENTRY`: active properties only. `true` is `EXPORT`: every
+status, so a value recorded against a since-deprecated property still resolves
+(`docs/architecture/data-model.md`).
 
-**`PATCH` carries no `key` field at all** (FR-12) - `AmendPropertyDefinitionRequest`
-is `ConfigDict(frozen=True, extra="forbid")`, so a request body naming `key`
-is refused with a pydantic 422 before `nptc.db.definitions.amend_definition`
-is ever called - that function's own `PropertyKeyImmutableError` is the
-belt-and-braces layer for a caller of the service function directly.
+**`PATCH` carries no `key` field** (FR-12). `AmendPropertyDefinitionRequest` is
+`extra="forbid"`, so a body naming `key` is a pydantic 422 before
+`nptc.db.definitions.amend_definition` runs. That function's `PropertyKeyImmutableError`
+backs this up for direct callers.
 """
 
 from __future__ import annotations
@@ -113,19 +92,12 @@ _RESPONSE_409: Final[dict[str, Any]] = {
         "deprecating a system property, or (on `DELETE`) any request at all."
     ),
 }
-#: Round-2 review, minor finding 2: a route below can produce *two*
-#: genuinely different 422 body shapes, not one - a typed domain error
-#: (`ErrorResponse`, `{"detail": "<string>"}`, e.g.
-#: `PropertyDatatypeUnknownError`/`PropertyConstraintsInvalidError`) and a
-#: pydantic validation failure that never reaches the route body at all
-#: (FastAPI's own `HTTPValidationError`,
-#: `{"detail": [{"loc": ..., "msg": ...}, ...]}` - the explicit-`null` and
-#: invalid-enum-value paths both exercise this one). The previous
-#: `"model": ErrorResponse` only documented the first, silently suppressing
-#: FastAPI's automatic `HTTPValidationError` entry it would otherwise add
-#: for any route with a request body. Declared here as `anyOf` over both
-#: component schemas, referenced the same way FastAPI names them
-#: (`ErrorResponse`, `HTTPValidationError`) rather than overriding one away.
+#: A route can produce two 422 body shapes: a typed domain error (`ErrorResponse`,
+#: e.g. `PropertyDatatypeUnknownError`) and a pydantic failure that never reaches
+#: the route body (`HTTPValidationError`, e.g. an explicit `null` or an invalid
+#: enum value). Declaring only `"model": ErrorResponse` would suppress FastAPI's
+#: automatic `HTTPValidationError` entry, so this is an `anyOf` over both
+#: component schemas.
 _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
         "A field failed validation, the request body named a `key` field, or an explicit "
@@ -145,14 +117,10 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     },
 }
 
-#: Round-2 review (issue #248): `_to_response` below resolves a stored
-#: definition's own `datatype` against the live `DatatypeRegistry` for its
-#: `form_control` - every route that returns a `PropertyDefinitionResponse`
-#: newly reaches the registry doing so, where none of them touched it at
-#: all before this PR. A definition row whose `datatype` no longer matches
-#: a registered handler (a stored-data drift, not a caller mistake) is a
-#: 500 here, matching `_RESPONSE_500_VALUES`'s own wording for the
-#: identical class of fault on the `/values` route below.
+#: `_to_response` resolves a definition's `datatype` against the live
+#: `DatatypeRegistry` for its `form_control`. A row whose `datatype` no longer
+#: matches a registered handler is stored-data drift, not a caller mistake: a 500,
+#: worded as for `_RESPONSE_500_VALUES` on the `/values` route.
 _RESPONSE_500_DATATYPE: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -162,9 +130,7 @@ _RESPONSE_500_DATATYPE: Final[dict[str, Any]] = {
     ),
 }
 
-#: Issue #223 review finding 10: each route below gets its own dict naming
-#: only the statuses it can actually produce - no route reuses a shared
-#: dict that advertises a status it cannot return any more.
+#: Each route gets its own dict naming only the statuses it can produce.
 _RESPONSES_LIST: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_READ,
@@ -205,15 +171,10 @@ _RESPONSES_DELETE: Final[dict[int | str, dict[str, Any]]] = {
     409: _RESPONSE_409,
 }
 
-#: issue #247's own response family - deliberately separate from
-#: `_RESPONSES_GET_ONE` above (issue #223 review finding 10's own rule:
-#: each route's dict names only the statuses it can actually produce). 404
-#: and the query-parameter-validation half of 422 are shared with the rest
-#: of this router; the value-source-resolution statuses (422's other half,
-#: 500/502/503) are unique to this one route, matching `routers/
-#: terminology.py`'s own `_RESPONSE_502`/`_RESPONSE_503` wording almost
-#: verbatim - the same underlying `TerminologyClient` failures, reached
-#: through `$expand` here rather than `$lookup` there.
+#: The `/values` route's response family, separate from `_RESPONSES_GET_ONE`
+#: because it adds the value-source statuses (422's second cause, 500, 502, 503).
+#: The 502 and 503 wording follows `routers/terminology.py`: the same
+#: `TerminologyClient` failures, reached through `$expand` here and `$lookup` there.
 _RESPONSE_422_VALUES: Final[dict[str, Any]] = {
     "description": (
         "The property named by `key` is not a coded property (it has no bound value "

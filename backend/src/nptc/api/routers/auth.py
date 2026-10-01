@@ -1,16 +1,10 @@
-"""The session endpoint the SPA calls after completing the PKCE exchange
-(issue #41, NFR-01).
+"""The session endpoint the SPA calls after completing the PKCE exchange (NFR-01).
 
-One route, deliberately. ADR-0021 puts the authorisation-code exchange in
-the browser, so there is no callback endpoint here to receive a `code`:
-by the time the SPA calls this, it already holds an access token. What it
-does not know - and must never decide for itself (NFR-20) - is who that
-token resolves to internally and what that user may do. That is this
+One route, deliberately. ADR-0021 puts the authorisation-code exchange in the browser, so
+there is no callback endpoint here to receive a `code`: by the time the SPA calls this, it
+already holds an access token. What it does not know, and must never decide for itself
+(NFR-20), is who that token resolves to internally and what that user may do. That is this
 endpoint's whole job.
-
-It is also the first thing that makes the #43/#44 chain observable over
-HTTP: a request here exercises verification, identity resolution and
-permission derivation end to end.
 """
 
 from __future__ import annotations
@@ -34,10 +28,9 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
-#: The refusals `nptc.api.errors` can produce on any authenticated route,
-#: declared so `docs/api/openapi.json` carries the error contract and not
-#: just the happy path - #147's generated client is built from that
-#: document, and a client that models only 200 models half the API.
+#: The refusals `nptc.api.errors` can produce on any authenticated route, declared
+#: so `docs/api/openapi.json` carries the error contract and not just the happy
+#: path.
 AUTH_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: {
         "model": ErrorResponse,

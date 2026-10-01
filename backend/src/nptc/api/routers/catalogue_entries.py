@@ -1,70 +1,42 @@
-"""The entry-level core-column write route: `status` and
-`specimen_unconstrained` (issue #249, FR-36, FR-37, FR-38, FR-89).
+"""The entry-level core-column write route: `status` and `specimen_unconstrained` (FR-36,
+FR-37, FR-38, FR-89).
 
-`catalogue_entry` has four auditable core columns. `business_key` is
-immutable by design (FR-03) and `preferred_term` writes through `POST
-.../designations/amendment` (issue #227, ADR-0022's two storage homes) -
-this route is what closes the remaining gap FR-36's own note in
-`docs/requirements/requirements.yaml` named: "entry-level status/
-specimen_unconstrained writes have no route".
+`catalogue_entry` has four auditable core columns. `business_key` is immutable (FR-03) and
+`preferred_term` writes through `POST .../designations/amendment` (ADR-0022). This route
+covers the other two.
 
-Everything below HTTP already exists and is already tested as a library -
-`nptc.catalogue.entries.save_entry` (issue #46) - so nothing here
-re-implements a domain rule; this module is purely the HTTP adapter,
-following `catalogue_properties.py`'s house style exactly: response models
-declared here, `ConfigDict(frozen=True)`, the return-type annotation drives
-the response model (never `response_model=`), module-level `Final`
-error-response dicts naming only the statuses a route can actually
-produce, and no try/except in a route body - a domain exception carries
-`http_status` and is mapped centrally by `nptc.api.errors`.
+The HTTP adapter over `nptc.catalogue.entries.save_entry`; it re-implements no domain rule.
+A domain exception carries `http_status` and `nptc.api.errors` maps it, so no route body has
+a try/except. `docs/architecture/catalogue-write-api.md` ("Entry core columns") records the
+reasoning behind the points below.
 
-**One `PATCH`, not two named sub-resources.** Both fields are core columns
-of one row under one `row_version`, and `save_entry` already applies them
-in one `EntryChanges`/one audit event - splitting them into two routes
-would mean two lock tokens and two audit events for what an editor
-experiences as one save. `PATCH` semantics (an absent field means no
-change) map exactly onto `EntryChanges`' own `None`-means-unchanged
-contract, including the `specimen_unconstrained=False` case, which
-`EntryChanges.as_dict()` already keeps (`False is not None`).
+**One `PATCH`, not two sub-resources.** Both fields are core columns of one row under one
+`row_version`, and `save_entry` applies them in one `EntryChanges` and one audit event. Two
+routes would mean two lock tokens and two audit events for what an editor experiences as
+one save. `PATCH` semantics (an absent field means no change) match `EntryChanges`'
+`None`-means-unchanged contract, including `specimen_unconstrained=False`, which
+`EntryChanges.as_dict()` keeps because `False is not None`.
 
-**A new router module, not folded into `catalogue_properties.py` or
-`catalogue_designations.py`.** This one owns `CatalogueEntry`'s own core
-columns - a distinct write surface from a property's values or a
-designation row, matching the one-router-per-thing-written pattern those
-two modules (and `catalogue_bindings.py`) already establish.
+**A separate router module**, since it owns `CatalogueEntry`'s own core columns, a different
+write surface from a property's values or a designation row.
 
-**Shares its path with the public `GET`, not `catalogue_admin.py`'s
-`/admin/` prefix.** `PATCH /catalogue/entries/{business_key}` sits in the
-same write family every other write route lives in
-(`catalogue_bindings.py`, `catalogue_designations.py`,
-`catalogue_properties.py`), all under `/catalogue/entries/{business_key}`.
-The OpenAPI document then carries one path item for that route holding a
-public `get` (tag `catalogue`) and an admin `patch` (tag
-`catalogue-admin`) - legal, and what makes the read/write pair share a
-URL. `catalogue_admin.py`'s own `/admin/entries/{business_key}` `GET` is a
-different route entirely (any status, gated), not this route's read
-counterpart.
+**It shares its path with the public `GET`**, not `catalogue_admin.py`'s `/admin/` prefix, so
+it sits in the same `/catalogue/entries/{business_key}` write family as the other write
+routes. The OpenAPI path item then holds a public `get` (tag `catalogue`) and an admin
+`patch` (tag `catalogue-admin`). `catalogue_admin.py`'s `/admin/entries/{business_key}` is a
+different route, not this one's read counterpart.
 
-**No status transition rules.** `save_entry` does a bare `setattr` and the
-PRD defines no state machine for `status`; the wire type is
-`CatalogueEntryStatus`, so a value outside `draft|active|deprecated|
-withdrawn` is a 422 before the route body ever runs, and the table's own
-`CHECK` constraint remains the backstop.
+**No status transition rules.** `save_entry` does a bare `setattr` and the PRD defines no
+state machine for `status`. The wire type is `CatalogueEntryStatus`, so a value outside the
+four statuses is a 422, and the table's `CHECK` constraint is the backstop.
 
-**Authorisation:** `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44) - the same
-permission every other catalogue write route already uses. Also in
-`MFA_REQUIRED_PERMISSIONS`, so the NFR-06 step-up comes free, matching
-`catalogue_properties.py`/`catalogue_designations.py`.
+**Authorisation:** `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44), in
+`MFA_REQUIRED_PERMISSIONS` (NFR-06).
 
-**A no-op resubmission is a `200`, not a `422`.** `save_entry`'s own
-short-circuit (see its docstring) means a body that names a field but
-submits its already-current value - e.g. `{"status": "draft", ...}` against
-an entry already `draft` - returns `200` with the entry's *unchanged*
-`row_version` and writes no audit event; the submitted `reason` is silently
-discarded. This is a different case from a body naming neither field
-(rejected `422`, since that is ambiguous between "no-op" and "caller
-forgot the field") - a no-op body unambiguously names its intended change,
-`save_entry` just finds nothing to apply.
+**A no-op resubmission is a `200`, not a `422`.** `save_entry` short-circuits when a named
+field already holds the submitted value: the response is a `200` with the unchanged
+`row_version`, no audit event is written, and the `reason` is discarded. A body naming neither
+field is a `422`, because that is ambiguous between a no-op and a forgotten field.
 """
 
 from __future__ import annotations
@@ -104,9 +76,8 @@ _RESPONSE_404: Final[dict[str, Any]] = {
     "description": "No catalogue entry matches the given business_key.",
 }
 
-#: The stale-`expected_row_version` refusal is `save_entry`'s own
-#: `EntryVersionConflictError`/`ConflictReport` - matching
-#: `catalogue_properties.py`'s identical precedent for the same exception.
+#: A stale `expected_row_version` raises `save_entry`'s `EntryVersionConflictError`,
+#: as in `catalogue_properties.py`.
 _RESPONSE_409: Final[dict[str, Any]] = {
     "model": ErrorResponse | VersionConflictResponse,
     "description": (
@@ -118,15 +89,12 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     ),
 }
 
-#: Three genuinely different 422 body shapes reach a caller of this route,
-#: matching `catalogue_properties.py`'s own `_RESPONSE_422` note: a typed
-#: domain error (`ErrorResponse`, a rejected changelog note), the typed
-#: field-level validation body (`PropertyValidationResponse`, FR-89's
-#: specimen conflict - `nptc.catalogue.property_values.
-#: assert_specimen_flag_allowed` raises the same `PropertyValidationError`
-#: `save_property_values` does), or a pydantic validation failure that
-#: never reaches the route body at all (an unrecognised `status`, or a body
-#: naming neither field - FastAPI's own `HTTPValidationError`).
+#: Three 422 body shapes reach a caller, as in `catalogue_properties.py`: a typed
+#: domain error (`ErrorResponse`, a rejected changelog note), the field-level body
+#: (`PropertyValidationResponse`, FR-89's specimen conflict, which
+#: `assert_specimen_flag_allowed` raises as `save_property_values` does), or a
+#: pydantic failure that never reaches the route body (an unrecognised `status`, or
+#: a body naming neither field: `HTTPValidationError`).
 _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse | PropertyValidationResponse,
     "description": (

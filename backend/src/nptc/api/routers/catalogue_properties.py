@@ -1,36 +1,23 @@
-"""The property-value write route (issue #248, FR-09, FR-10, FR-11, FR-36,
-FR-37, FR-38, FR-77, FR-88, FR-89).
+"""The property-value write routes (FR-09, FR-10, FR-11, FR-36, FR-37, FR-38, FR-39, FR-77,
+FR-88, FR-89).
 
-Everything below HTTP already exists and is already tested as a library -
-`nptc.catalogue.property_values.save_property_values` (issue #52) - so
-nothing here re-implements a domain rule; this module is purely the HTTP
-adapter, following `catalogue_bindings.py`'s own house style exactly:
-response models declared here, `ConfigDict(frozen=True)`, the return-type
-annotation drives the response model (never `response_model=`),
-module-level `Final` error-response dicts naming only the statuses a route
-can actually produce, and no try/except in a route body - a domain
-exception carries `http_status` and is mapped centrally by `nptc.api.errors`.
+The HTTP adapter over `nptc.catalogue.property_values`; it re-implements no domain rule. A
+domain exception carries `http_status` and `nptc.api.errors` maps it, so no route body has a
+try/except. `docs/architecture/catalogue-write-api.md` ("Property values") records the
+reasoning behind the points below.
 
-**A separate router from `registry.py`, on purpose.** That module owns
-`PropertyDefinition` - what a property *is*. This one owns `PropertyValue` -
-what an entry *holds* for it - the same `catalogue`/`registry` split
-`catalogue_bindings.py` and `catalogue_designations.py` already draw between
-an entry's own sub-resources and the reference data they point at.
+**A separate router from `registry.py`.** That module owns `PropertyDefinition`, what a
+property *is*. This one owns `PropertyValue`, what an entry *holds* for it.
 
-**Whole-property replace, one route.** `save_property_values` replaces the
-entire value set for `(entry, property_key)` in one call - see that
-function's own module docstring for why this is a `PUT`, not a `POST` that
-appends. There is no route for a single value in isolation.
+**Whole-property replace.** `save_property_values` replaces the entire value set for
+`(entry, property_key)`, which is why the route is a `PUT`. No route writes a single value.
 
-**The response carries the new `row_version`**, mirroring
-`catalogue_designations.AmendDesignationResult` - so an editing client never
-has to re-fetch the entry just to learn its next lock token.
+**The response carries the new `row_version`**, so an editing client never re-fetches the
+entry to learn its next lock token.
 
-**Authorisation:** `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44) - the same
-permission every other catalogue write route already uses, not a new one
-and not `Permission.REGISTRY_MANAGE`: this writes a catalogue entry's own
-values, not a definition. Also in `MFA_REQUIRED_PERMISSIONS`, so the NFR-06
-step-up comes free, matching `catalogue_bindings.py`/`catalogue_designations.py`.
+**Authorisation:** `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44), not `REGISTRY_MANAGE`:
+the route writes an entry's values, not a definition. The permission is in
+`MFA_REQUIRED_PERMISSIONS`, so the NFR-06 step-up applies.
 """
 
 from __future__ import annotations
@@ -92,13 +79,10 @@ _RESPONSE_404: Final[dict[str, Any]] = {
     "description": "No catalogue entry, or no property definition, matches the given identifier.",
 }
 
-#: The stale-`expected_row_version` refusal is the same `EntryVersionConflictError`/
-#: `ConflictReport` `nptc.catalogue.entries.save_entry` raises (`save_property_values`
-#: reuses it rather than a second conflict type), and `nptc.api.errors._handle_entry_
-#: version_conflict` always builds the body as `VersionConflictResponse`, never a bare
-#: `ErrorResponse` - `model` takes the union so it actually lands in `components/schemas`
-#: (matching `catalogue_designations._RESPONSE_409_AMENDMENT`'s own precedent for the
-#: identical exception).
+#: A stale `expected_row_version` raises the `EntryVersionConflictError` that
+#: `save_entry` raises, and `nptc.api.errors` always builds its body as
+#: `VersionConflictResponse`. `model` takes the union so that schema lands in
+#: `components/schemas`.
 _RESPONSE_409: Final[dict[str, Any]] = {
     "model": ErrorResponse | VersionConflictResponse,
     "description": (
@@ -110,20 +94,16 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     ),
 }
 
-#: Three genuinely different 422 body shapes reach a caller of this route
-#: (matching `routers/registry.py`'s own `_RESPONSE_422` note): a typed
-#: domain error (`ErrorResponse`, e.g. a rejected changelog note or a write
-#: against a deprecated property), the typed field-level validation body
-#: (`PropertyValidationResponse`), or a pydantic validation failure that
-#: never reaches the route body at all (FastAPI's own `HTTPValidationError`).
+#: Three 422 body shapes reach a caller: a typed domain error (`ErrorResponse`,
+#: e.g. a rejected changelog note or a write against a deprecated property), the
+#: typed field-level body (`PropertyValidationResponse`), or a pydantic failure
+#: that never reaches the route body (`HTTPValidationError`).
 #:
-#: `model` takes the first two as a union so *both* are registered in
-#: `components/schemas` and FastAPI's own schema-merge concatenates their
-#: `anyOf` with the `HTTPValidationError` `$ref` already in `content` below
-#: (issue #248's plan: `PropertyValidationResponse` has no other route that
-#: references it as a `model`, so without this it would be `$ref`'d here but
-#: never actually registered anywhere in the document - the same trap
-#: `catalogue_designations._RESPONSE_409_AMENDMENT`'s own comment names).
+#: `model` takes the first two as a union so both register in
+#: `components/schemas`, and FastAPI merges their `anyOf` with the
+#: `HTTPValidationError` `$ref` in `content` below. `PropertyValidationResponse`
+#: is referenced by no other route, so without the union it would be `$ref`'d but
+#: never registered.
 _RESPONSE_422: Final[dict[str, Any]] = {
     "model": ErrorResponse | PropertyValidationResponse,
     "description": (
@@ -140,11 +120,10 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     },
 }
 
-#: Round-2 review: `save_property_values` and the re-read below both resolve
-#: `key`'s stored `datatype` against the live `DatatypeRegistry`
-#: (`registry.get`), same as `registry.py::_to_response` - a data integrity
-#: fault (a stored `datatype` no longer registered), not a caller mistake.
-#: Matching `registry.py`'s own `_RESPONSE_500_DATATYPE` wording exactly.
+#: `save_property_values` and the re-read below resolve `key`'s stored `datatype`
+#: against the live `DatatypeRegistry`, as `registry.py`'s `_to_response` does. A
+#: `datatype` that is no longer registered is a data integrity fault, not a caller
+#: mistake; the wording matches `registry.py`'s `_RESPONSE_500_DATATYPE`.
 _RESPONSE_500: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -163,11 +142,8 @@ PROPERTY_VALUES_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     500: _RESPONSE_500,
 }
 
-#: Deliberately no 409 (issue #265): a stale `expected_row_version` is a
-#: per-entry `conflict` outcome in the 200 body, never a whole-request
-#: refusal - see `BulkSavePropertyValuesResult`'s own docstring. A
-#: documented body a route can never actually emit is a branch no
-#: generated client can exercise.
+#: No 409: a stale `expected_row_version` is a per-entry `conflict` outcome in the
+#: 200 body, never a whole-request refusal (see `BulkSavePropertyValuesResult`).
 _RESPONSE_404_BULK: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -266,10 +242,8 @@ def save_property(
 
 
 #: Each entry's write holds a `pg_advisory_xact_lock` until commit
-#: (`nptc.audit.writer.append_audit_event`), so an unbounded batch is an
-#: unbounded amount of lock contention for one request - matching
-#: `catalogue_designations._MAX_TERMS_PER_BATCH`'s own cap and rationale
-#: (ADR-0017).
+#: (`nptc.audit.writer.append_audit_event`, ADR-0017), so the cap bounds lock
+#: contention for one request. ADR-0035 records the cap.
 _MAX_BULK_ENTRIES: Final[int] = 100
 
 
@@ -379,10 +353,8 @@ def save_property_bulk(
         reason=body.reason,
         registry=registry,
     )
-    # One shared count, not four independent `sum(...)` passes (issue #265
-    # review): both this response and the audit header's own tallies come
-    # from the same `tally_bulk_outcomes`, so they cannot disagree about the
-    # same batch.
+    # This response and the audit header's tallies both come from
+    # `tally_bulk_outcomes`, so they cannot disagree about one batch.
     tallies = tally_bulk_outcomes(outcomes)
     return BulkSavePropertyValuesResult(
         outcomes=[
@@ -408,19 +380,15 @@ def save_property_bulk(
 def _row_to_property_values(
     session: Session, *, entry_id: uuid.UUID, property_key: str, registry: DatatypeRegistry
 ) -> list[PropertyValue]:
-    """Re-reads the just-written rows through `nptc.catalogue.queries.
-    load_property_values` rather than building `PropertyValue` from
-    `save_property_values`' own return value directly - that is what
-    resolves the definition's `label`/`cardinality`/`status` and renders
-    `value` via the same `property_value_from_row` the read routes use
-    (`catalogue_bindings.py`'s `_row_to_binding` is the identical
-    precedent), so a value renders identically whether it was just written
-    or freshly read.
+    """Re-reads the just-written rows through `nptc.catalogue.queries.load_property_values`,
+    not from `save_property_values`' return value. That resolves the definition's
+    `label`, `cardinality` and `status` and renders `value` through
+    `property_value_from_row`, so a value renders the same whether just written or
+    freshly read (as `catalogue_bindings.py`'s `_row_to_binding` does).
 
-    Scoped to `property_keys=(property_key,)` - this route only ever writes
-    one property, so pulling every other property on the entry over the
-    wire just to filter it back out in Python would scale with how many
-    properties the entry carries, not with the one write being answered."""
+    Scoped to `property_keys=(property_key,)`: the route writes one property, so
+    fetching the entry's others only to filter them out would scale with how many
+    it carries, not with the one write."""
     return [
         property_value_from_row(row, registry)
         for row in queries.load_property_values(session, (entry_id,), property_keys=(property_key,))

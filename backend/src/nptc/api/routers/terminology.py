@@ -1,56 +1,33 @@
-"""FR-26's live concept lookup route (issue #240).
+"""FR-26's live concept lookup route.
 
 `GET /terminology/concepts/{code}` is the one HTTP surface over
-`nptc.terminology.concepts.resolve_concept` - see that module's own
-docstring for the field-derivation and error-classification rules this
-router simply serialises. Follows `routers/catalogue_bindings.py`'s house
-style: the return-type annotation drives the response model (never
-`response_model=`), `ConfigDict(frozen=True)`, module-level `Final`
-error-response dicts naming only the statuses this one route can actually
-produce, and no try/except in the route body - every domain exception
-carries `http_status` and is mapped centrally by `nptc.api.errors`.
+`nptc.terminology.concepts.resolve_concept`, whose docstring holds the field-derivation and
+error-classification rules this router serialises. A domain exception carries `http_status`
+and `nptc.api.errors` maps it, so the route body has no try/except.
+`docs/architecture/terminology-client.md` ("FR-26: the interactive lookup route") records the
+reasoning behind the points below.
 
 **Not under `/catalogue`, and not tagged `catalogue-admin`.**
-`test_api_public_response_hygiene.py::_catalogue_paths` scans every
-`{API_PREFIX}/catalogue*` GET, skipping only `catalogue-admin`-tagged
-ones, and hard-asserts every path parameter it finds is filled - a
-`/catalogue/.../{code}` route would break that scanner outright, and
-reusing the `catalogue-admin` tag to dodge it would silently enrol this
-route in `test_api_catalogue_admin_read.py`'s separate "every
-catalogue-admin GET 401s anonymously" assertion instead. This route
-resolves nothing that belongs to the platform's own catalogue - it asks
-the terminology server about a code nobody has bound to anything yet - so
-it gets its own prefix and its own tag.
+`test_api_public_response_hygiene.py::_catalogue_paths` scans every `{API_PREFIX}/catalogue*`
+GET except those tagged `catalogue-admin`, and asserts every path parameter is filled, so a
+`/catalogue/.../{code}` route would break it. Reusing the `catalogue-admin` tag would instead
+enrol the route in `test_api_catalogue_admin_read.py`'s "every catalogue-admin GET 401s
+anonymously" assertion. The route resolves nothing in the platform's own catalogue, so it
+has its own prefix and tag.
 
-**Gated on `Permission.REGISTRY_READ`, not `CATALOGUE_BROWSE` or
-`CATALOGUE_EDIT_PUBLISHED`.** ADR-0028 pre-authorises exactly this reuse:
-`REGISTRY_READ` is "roles that can submit" (Provisional and up), and an
-SCTID-resolution aid on a submission/edit form is precisely that audience.
-`CATALOGUE_BROWSE` is held by `Role.ANON`, which would make this platform
-an unauthenticated proxy amplifying traffic onto a shared public
-Ontoserver with no availability commitment (OI-8) and no rate limiting yet
-(#145) - ADR-0028 already rejected that over-correction once, for a less
-abusable route. `CATALOGUE_EDIT_PUBLISHED` would work for #150 today but
-is wrong on the requirement this route exists for: FR-26 names the
-submitter, and FR-23 makes that Provisional and up, not Administrator.
+**Gated on `Permission.REGISTRY_READ`.** ADR-0028 anticipates this reuse: the audience is
+submitters, Provisional and up (FR-23, FR-26). `CATALOGUE_BROWSE` is held by `Role.ANON` and
+would make the platform an unauthenticated proxy onto a shared public Ontoserver (OI-8).
+`CATALOGUE_EDIT_PUBLISHED` is Administrator-only.
 
 **Edition is fixed to `SNOMED_CT_AU` in code, never a query parameter.**
-`Edition.display_language` is set only on the AU edition on purpose
-(`models.py`'s own docstring): sending it on both editions would leave a
-caller unable to tell "the server does not recognise this language
-reference set and silently fell back to some other preferred term" from
-"this really is the AU preferred term" - exactly the ambiguity FR-82
-exists to prevent on `au_preferred_term`. FR-47's dual-edition diff is a
-P3 sweep concern, not this route's.
+`Edition.display_language` is set only on the AU edition (`nptc_shared.terminology.models`),
+so a caller can tell the AU preferred term from a silent fallback to another one (FR-82).
 
-**No server-side cache, no bespoke rate limiter.** A cached FSN is the
-stale-label hazard FR-82 exists to prevent, and `REGISTRY_READ` already
-bounds and attributes traffic to signed-in, submission-capable callers -
-the control #145's anonymous limiter cannot provide. `SCTID(code)` rejects
-junk before any socket opens, and `OntoserverClient` already sits behind a
-process-wide `lru_cache` with a keep-alive pool, so the marginal cost of a
-call here is one round trip. Caching belongs client-side (TanStack Query's
-`staleTime`), not here.
+**No server-side cache and no bespoke rate limiter.** A cached FSN is the stale-label hazard
+FR-82 forbids, and `REGISTRY_READ` already limits traffic to signed-in, submission-capable
+callers. `SCTID(code)` rejects junk before a socket opens, and `OntoserverClient` already
+sits behind a process-wide `lru_cache` with a keep-alive pool. Caching belongs client-side.
 """
 
 from __future__ import annotations
@@ -108,12 +85,10 @@ _RESPONSE_503: Final[dict[str, Any]] = {
         "the entry is affected (FR-54). May carry a `Retry-After` header."
     ),
 }
-#: `TerminologyConfigError` - a malformed `NPTC_TX_*` value - reaching
-#: `resolve_concept` (round-2 review, issue #240). `nptc.api.app.create_app`
-#: builds the terminology client eagerly precisely so this is a start-up
-#: failure in normal operation; this response only documents the paths that
-#: bypass that warm-up (a dependency override, a lazily-configured client),
-#: matching `nptc.api.errors`'s own `TerminologyConfigError` row.
+#: `TerminologyConfigError` (a malformed `NPTC_TX_*` value) reaching
+#: `resolve_concept`. `create_app` builds the terminology client eagerly, so in
+#: normal operation this is a start-up failure. The response documents the paths
+#: that bypass that warm-up (a dependency override, a lazily configured client).
 _RESPONSE_500: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
