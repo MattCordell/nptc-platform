@@ -1,19 +1,16 @@
-"""The conflict error surfaced by a stale `row_version` save (issue #46,
-FR-38, NFR-38 test 8).
+"""The conflict error surfaced by a stale `row_version` save (FR-38, NFR-38
+test 8).
 
 `EntryVersionConflictError` is deliberately **not** a subclass of
-`nptc.auth.errors_authorisation.AuthorisationError`: that hierarchy's own
-docstring scopes it to "we know who you are; you may not do this" -
-credential/permission refusals - and a version conflict is neither. It gets
-its own small hierarchy here, with the same `http_status: ClassVar[int]`
-convention so a future router's exception handler can follow the same
-"read the ClassVar, don't match on subclass" pattern `nptc.api.errors`
-already uses.
+`nptc.auth.errors_authorisation.AuthorisationError`: that hierarchy is scoped
+to credential and permission refusals ("we know who you are; you may not do
+this"), and a version conflict is neither. It carries the same
+`http_status: ClassVar[int]` convention as the rest of this package, which
+`nptc.api.errors` reads.
 
-FR-38's rationale is explicit that silent last-write-wins is unacceptable
-"because it produces an audit trail that records a change that was
-immediately and invisibly discarded" - so this error's `conflicts` payload
-exists to let the caller actually reconcile, not just retry blind.
+FR-38 rejects silent last-write-wins "because it produces an audit trail that
+records a change that was immediately and invisibly discarded". So the
+error's `conflicts` payload lets the caller reconcile, not just retry blind.
 """
 
 from __future__ import annotations
@@ -35,20 +32,17 @@ class FieldConflict:
 
 @dataclass(frozen=True)
 class ConflictReport:
-    """Everything a caller needs to reconcile a rejected save - the
-    acceptance criterion's "the caller is shown the conflicting changes",
-    not a bare 409.
+    """Everything a caller needs to reconcile a rejected save - the acceptance
+    criterion's "the caller is shown the conflicting changes", not a bare 409.
 
-    `conflicts` is populated only where the *submitted* value differs from
-    the *current* one for a field the caller actually tried to change - a
-    concurrent edit that touched a different field than the one being
-    saved still rejects (the version is the contract regardless), but
-    reports an empty `conflicts` tuple. `current_row_version` and
-    `changed_by`/`changed_at` are always populated even then, so the
-    caller is never left with literally nothing to show - but a UI relying
-    solely on `conflicts` to explain *what* changed will show nothing
-    actionable for a non-overlapping-field conflict. Filling that gap from
-    the audit log's own diff is left to #149/#150's edit screens."""
+    `conflicts` is populated only where the *submitted* value differs from the
+    *current* one for a field the caller tried to change. A concurrent edit
+    to a different field still rejects (the version is the contract) but
+    reports an empty `conflicts` tuple. `current_row_version`, `changed_by`
+    and `changed_at` are always populated, but a UI relying solely on
+    `conflicts` has nothing actionable to show for a non-overlapping-field
+    conflict. Filling that gap from the audit log's own diff is left to the
+    edit screens."""
 
     business_key: str
     expected_row_version: int
@@ -93,18 +87,16 @@ class EntryNotFoundError(LookupError):
 
 
 class CodeLookupNotFoundError(LookupError):
-    """Raised by `nptc.catalogue.code_systems`/`nptc.catalogue.queries.
-    get_entry_by_code` when an FR-17 exact-code lookup route (issue #140,
-    `GET /catalogue/code/{system_token}/{code}` or `GET /catalogue/lookup`)
-    has nothing to resolve.
+    """Raised by `nptc.catalogue.code_systems` and
+    `nptc.catalogue.queries.get_entry_by_code` when an FR-17 exact-code lookup
+    route (`GET /catalogue/code/{system_token}/{code}` or
+    `GET /catalogue/lookup`) has nothing to resolve.
 
-    Deliberately the **one** exception for two different causes - an
-    unregistered `system_token`/URI, and a registered one with no matching
-    published entry - so the response body cannot be used to tell them
-    apart (see `nptc.catalogue.code_systems`'s own module docstring for why
-    that is the considered answer, not an oversight). Mapped to 404 by
-    `nptc.api.errors.register_exception_handlers` via the same "read the
-    ClassVar" convention `EntryNotFoundError` uses, with a fixed detail
+    Deliberately the **one** exception for two causes - an unregistered
+    `system_token` or URI, and a registered one with no matching published
+    entry - so the response body cannot tell them apart (see
+    `nptc.catalogue.code_systems`, ADR-0033). Mapped to 404 by
+    `nptc.api.errors.register_exception_handlers`, with a fixed detail
     sentence naming the registered tokens."""
 
     http_status: ClassVar[int] = 404
