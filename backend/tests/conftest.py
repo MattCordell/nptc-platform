@@ -26,6 +26,12 @@ Fixture graph::
                                     tests whose assertion is genuinely
                                     whole-table (issue #190)
 
+The `integration` marker is derived, not only hand-written: a test whose
+fixture closure reaches `postgres_container` is marked at collection, so
+`-m "not integration"` never starts Docker. A container started inside a
+test module's own fixture (the Keycloak tests) is invisible to that rule and
+still needs the hand-written marker.
+
 No `_no_real_network` autouse guard here, unlike transform/tests and
 shared/tests: testcontainers must open a real TCP socket to the mapped
 container port to reach it at all, so that guard would break every test in
@@ -80,6 +86,20 @@ def image_from_compose(service: str = "postgres") -> str:
 
 def _alembic_config() -> Config:
     return Config(toml_file=str(PYPROJECT_FILE))
+
+
+#: Session fixtures that start a container. Register a new container-backed
+#: fixture here, not only in the tests that request it.
+CONTAINER_FIXTURES = frozenset({"postgres_container"})
+
+
+# tryfirst: pytest's own `-m` deselection is a `pytest_collection_modifyitems`
+# implementation too, and it must see the marker this hook adds.
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if isinstance(item, pytest.Function) and CONTAINER_FIXTURES.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture(scope="session")
