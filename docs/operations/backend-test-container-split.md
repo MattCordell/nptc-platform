@@ -6,19 +6,19 @@ set, so you do not repeat the work. The investigation is issue #363.
 
 ## Short answer
 
-Almost none can move without losing what they verify.
+Few tests are worth moving, and moving them saves little time.
 
 - 1,143 of 1,980 collected backend items are marked `integration` (58%).
-- 72 of the 1,143 are database-independent in substance, and each needs a code change to
-  move. Only 3 need no change beyond dropping the marker, and dropping it would make the
-  fast subset slower on Windows (see [Timings](#timings)).
+- 72 of the 1,143 are database-independent in substance. Only 3 of them need no code change
+  beyond dropping the marker, and dropping it would make the fast subset slower on Windows
+  (see [Timings](#timings)).
 - A further 115 HTTP tests are database-independent in substance. They need a no-database
   app builder that does not exist yet, and 69 of them also need a stubbed principal.
 - The other 956 items verify SQL behaviour, or read back rows written through the real
   write path. They stay.
 
-The recommendation is to move nothing now. Moving all 187 candidates would save at most
-about 75 seconds of a 978-second serial run. Three tests that wait for a refused connection
+The recommendation is to move nothing now. Moving all 187 candidates would save an
+estimated 74 seconds of a 978-second serial run. Three tests that wait for a refused connection
 cost 391 seconds on the measured machine, so fixing them is the larger lever. The
 [Timings](#timings) section has the evidence.
 
@@ -53,8 +53,8 @@ A test **needs a database** when either condition holds:
    SQL function, extension (`pg_trgm`, `unaccent`), index plan, lock or isolation
    behaviour, sequence or migration.
 2. It reads back rows written through the real write path. Every write path takes
-   `pg_advisory_xact_lock` through `nptc.audit.writer` as its first step, so a service write
-   test is not movable unless its assertion fires before that call.
+   `pg_advisory_xact_lock` through `nptc.audit.writer` as its first step. A service write
+   test is therefore not movable unless its assertion fires before that call.
 
 A test is **database-independent in substance** when the outcome is decided before any
 statement runs (a guard clause, request validation, token verification, a stub proxy) and
@@ -67,7 +67,7 @@ other substitute, so the only way to move a test is to prove it never touches th
 
 | Category | Meaning | Items | Share |
 |---|---|---:|---:|
-| (a) SQL is the subject | Constraints, grants, `pg_trgm`, `unaccent`, index plans, row versioning, locks, sequences, SQL functions, migrations, audit-chain triggers | 342 | 30% |
+| (a) SQL is the subject | Constraints, grants, `pg_trgm`, `unaccent`, index plans, row versioning, locks, sequences, SQL functions, migrations, audit-chain tamper detection | 342 | 30% |
 | (b) Persistence-bound logic | Service or auth logic that reads back stored rows, where no Postgres feature is the subject | 300 | 26% |
 | (c) HTTP routes | The real `create_app()` with real identity resolution and real rows (`api_app_support.py`) | 480 | 42% |
 | (d) Keycloak | OIDC container tests. They need Keycloak, not Postgres | 8 | 1% |
@@ -193,7 +193,7 @@ names mislead:
 - `test_db_bootstrap.py` is mostly service logic (4 of 6), not SQL behaviour.
 - `test_catalogue_property_value_sources.py` is (b) throughout, but 19 of 33 items depend
   only on a stub terminology client.
-- `test_api_terminology.py` is a stub-terminology proxy. 20 of 22 items never read a row.
+- `test_api_terminology.py` is a stub-terminology proxy. 20 of 22 items never read a catalogue row.
 - `test_keycloak_*.py` need Keycloak and no Postgres.
 
 ## Candidates that could move
@@ -259,9 +259,9 @@ These claims decide whether a test is movable. Each was checked against the code
 
 ## Timings
 
-One serial run of each command on 2026-10-01, at commit `08a3573`. The machine was a
-Windows 11 machine with Docker and 14 logical cores. Nothing was repeated,
-so treat differences of a few seconds as noise.
+One serial run of each command on 2026-10-01, at commit `08a3573`. The machine runs
+Windows 11 with Docker and 14 logical cores. Nothing was repeated, so treat differences of a
+few seconds as noise.
 
 ```powershell
 uv run pytest backend/tests -m "not integration" -q --durations=0
@@ -290,8 +290,8 @@ The three tests connect to `127.0.0.1:1` and expect a failure:
 
 Each takes about 130 s. `psycopg.connect` to that address took 130.1 s without a
 `connect_timeout` and 3.0 s with `connect_timeout=3`. A plain socket connect to the same
-address failed in 2.1 s. The same wait reproduced when each test ran alone. I measured this
-on Windows only. A Linux runner may refuse the connection at once, which would fit CI's
+address failed in 2.1 s. The same wait reproduced when two of the tests ran alone. I measured
+this on Windows only. A Linux runner may refuse the connection at once, which would fit CI's
 roughly 8-minute runs against 16 minutes here.
 
 The `test_missing_dbapi_driver_exits_3_not_1` docstring says `psycopg2` is not installed.
