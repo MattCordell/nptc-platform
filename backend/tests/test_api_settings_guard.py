@@ -5,9 +5,8 @@ A direct `get_api_settings()` call or `ApiSettings(...)` construction in a
 route or helper bypasses `app.dependency_overrides`, so the request would
 read an env-read instance instead of the one `create_app` was given - the
 two-object hazard this guard keeps closed. Each form has an allow-list:
-`app.py` is the factory that installs the override, `dependencies.py` is
-where `get_api_settings` builds the process-wide instance, and
-`openapi_document.py` builds settings to hand to `create_app`.
+`app.py` is the factory that installs the override, and `dependencies.py` is
+where `get_api_settings` builds the process-wide instance.
 
 Pure ``ast`` over ``backend/src/nptc/api``, modelled on
 ``test_token_verification_guard.py``, with a positive control over an inline
@@ -26,10 +25,7 @@ API_DIR = REPO_ROOT / "backend" / "src" / "nptc" / "api"
 
 _ALLOWED_PATHS = {
     "get_api_settings": {"backend/src/nptc/api/app.py"},
-    "ApiSettings": {
-        "backend/src/nptc/api/dependencies.py",
-        "backend/src/nptc/api/openapi_document.py",
-    },
+    "ApiSettings": {"backend/src/nptc/api/dependencies.py"},
 }
 
 

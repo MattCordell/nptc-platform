@@ -5,7 +5,9 @@ fixes the two things that would otherwise make "the document" ambiguous between 
 
   * which `ApiSettings` produced it - `frontend_base_url` only affects the CORS
     middleware, never a field in the document, so a fixed placeholder keeps generation
-    independent of the machine it runs on; and
+    independent of the machine it runs on. The settings come from `model_construct`, which
+    reads no `NPTC_*` variable and runs no validator, so an exported variable cannot
+    break generation; and
   * the exact committed bytes of `docs/api/openapi.json` - `indent=2, ensure_ascii=False`
     plus a single trailing newline, so `scripts/generate_openapi.py`, the drift test in
     `backend/tests/test_openapi_document.py` and the frontend's `generate:api` all read
@@ -29,7 +31,8 @@ GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
 
 def build_document() -> dict[str, Any]:
     """The OpenAPI document `create_app()` serves, as a plain JSON-able dict."""
-    app = create_app(settings=ApiSettings(frontend_base_url=GENERATION_FRONTEND_BASE_URL))
+    settings = ApiSettings.model_construct(frontend_base_url=GENERATION_FRONTEND_BASE_URL)
+    app = create_app(settings=settings)
     return dict(app.openapi())
 
 

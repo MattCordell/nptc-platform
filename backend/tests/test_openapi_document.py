@@ -62,6 +62,16 @@ def test_committed_openapi_document_matches_the_app() -> None:
     )
 
 
+@pytest.mark.req("FR-20")
+def test_document_build_ignores_the_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ApiSettings` refuses `fsn_semantic_tag=stripped`, so a build that read
+    `NPTC_*` would raise here instead of producing the document."""
+    committed = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
+    monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
+
+    assert build_document() == committed
+
+
 @pytest.mark.req("NFR-04")
 def test_the_session_response_never_exposes_an_internal_id() -> None:
     """The schema, not just one response body: a field added to `UserRef`
