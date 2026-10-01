@@ -1,62 +1,36 @@
-"""The public, unauthenticated read API over the approved catalogue
-(issue #142, FR-20).
+"""The public, unauthenticated read API over the approved catalogue (FR-20).
 
-FR-20's audience is LIS and PMS vendors, not this platform's own SPA, so
-this module is a *contract* first: `docs/api/openapi.json` is generated from
-the response models below and committed (`backend/tests/
-test_openapi_document.py`), and `docs/architecture/public-api.md` documents
-the paging and status rules a vendor has to build against.
+FR-20's audience is LIS and PMS vendors, so this module is a contract first.
+`docs/api/openapi.json` is generated from the response models and committed
+(`backend/tests/test_openapi_document.py`), and `docs/architecture/public-api.md`
+documents the paging and status rules a vendor builds against. Each route declares only
+the statuses it can produce, in module-level dicts: a documented status that never occurs
+is a branch a generated client can never test.
 
-Following `routers/auth.py` exactly: response models declared here in the
-router module, `ConfigDict(frozen=True)`, the return-type annotation drives
-the response model (never a `response_model=` argument that can drift from
-the annotation), and module-level error-responses dicts so the generated
-document carries the refusals as well as the happy path. Three dicts rather
-than one shared one: a route must declare the statuses it can actually
-produce and no others, because #147 generates a client from this document
-and a status that never occurs is a branch that can never be tested.
+**Every route requires `Permission.CATALOGUE_BROWSE`.** `Role.ANON` holds it, so an
+anonymous caller gets a 200, which is FR-20's point. The dependency makes the check a
+permission check (FR-44): requiring a credential later is a change to the permission
+matrix, not a new `if` in each route. A bad token still 401s, because `current_principal`
+raises rather than degrading to anonymous.
 
-**Every route requires `Permission.CATALOGUE_BROWSE`, and that is not
-theatre.** `Role.ANON` holds it, so an anonymous caller gets a 200 - which
-is FR-20's whole point. What the dependency buys is that the check is a
-permission check (FR-44), so the day a deployment decides the public API
-needs a credential, it is a change to the permission matrix rather than a
-new `if` in six route bodies. A *bad* token still 401s, because
-`current_principal` raises rather than degrading to anonymous.
+**No internal identifier in any response model**: no `id`, `entry_id` or `*_binding_id`.
+`business_key` is the only identifier a caller sees (PRD SS6.2), as
+`nptc.auth.identity.UserRef` does for `app_user.id`. `nptc.catalogue.queries` resolves
+`replaced_by_binding_id` to the successor's code before a row reaches this module.
+`backend/tests/test_api_public_response_hygiene.py` asserts the rule over the raw response
+text of every route under this prefix, so it catches a field nobody thought to assert on.
 
-**What is deliberately absent from every response model here.** No `id`, no
-`entry_id`, no `*_binding_id`. `business_key` is the only
-identifier a caller ever sees (PRD SS6.2), the same boundary
-`nptc.auth.identity.UserRef` draws around `app_user.id`.
+`EntryDetail.row_version` is the one counter that is not excluded. The ban covers
+identifiers that name a row, and FR-38's version counter names nothing. It sits on
+`EntryDetail`, not `EntrySummary`, so it appears on the detail routes and not on every row
+of every page. It stays on the shared model so the public and admin detail routes serve
+one shape.
 
-`nptc.catalogue.queries` resolves `replaced_by_binding_id` to the
-successor's code before this module ever sees a row, so there is no
-internal id in scope here to leak by accident.
-`backend/tests/test_api_public_response_hygiene.py` asserts this over the
-raw response *text* of every route under this prefix, whole-body, rather
-than field by field on a parsed model - the point being to catch a field
-nobody thought to write an assertion for.
+**Codes are strings (FR-06).** `Binding.code` is `str`, and the hygiene test asserts that no
+unquoted number of six or more digits appears in any body.
 
-The one thing this rule does *not* exclude is `EntryDetail.row_version`
-(issue #227). The ban is on internal **identifiers** - values that name a
-row, and so let a caller address or correlate one outside the public
-vocabulary. FR-38's version counter names nothing; it is opaque to a
-read-only consumer and meaningful only as the value handed straight back on
-the next write. It is on `EntryDetail` and not `EntrySummary`, so it appears
-on the two detail routes rather than on every row of every page - see that
-model's own field comment. Keeping it on the shared `EntryDetail` rather
-than an admin-only subclass preserves issue #228's invariant that the public
-and admin detail routes serve one shape.
-
-**Codes are strings (FR-06).** `Binding.code` is `str`, and so is every
-value that reaches it. This is the defect class the platform exists to
-eliminate, and the same hygiene test asserts no unquoted six-or-more-digit
-number appears anywhere in any body.
-
-**No `switch` on datatype (FR-77, ADR-0013).** A property value is rendered
-by `registry.get(row.datatype).serialise(...)` and nothing else - no
-`match`, no datatype literal, no dict keyed on datatype. The handler
-package is the only place that dispatch is allowed to exist
+**No `switch` on datatype (FR-77, ADR-0013).** A property value is rendered by
+`registry.get(row.datatype).serialise(...)` and nothing else
 (`backend/tests/test_datatype_dispatch.py`).
 """
 
@@ -141,10 +115,8 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     ),
 }
 
-#: The collection routes. Deliberately no 404: neither `/catalogue/entries`
-#: nor `/catalogue/search` can produce one - an unmatched query is an empty
-#: page, not a missing resource - and a documented status that never occurs
-#: gives #147's generated client a branch it can never exercise.
+#: The collection routes. No 404: an unmatched query is an empty page, not a
+#: missing resource.
 PUBLIC_COLLECTION_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     422: _RESPONSE_422,
@@ -157,11 +129,9 @@ PUBLIC_ENTRY_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: FR-17, issue #140: the exact-code lookup routes' own 404 - distinct
-#: from `_RESPONSE_404` above because the cause it describes is different
-#: (an unregistered system_token/URI, or a registered one matching no
-#: published entry, both on the identical fixed sentence - see
-#: `nptc.catalogue.code_systems`'s own module docstring).
+#: FR-17: the exact-code lookup routes' own 404, distinct from `_RESPONSE_404`
+#: because the cause differs (see `nptc.catalogue.code_systems`' module
+#: docstring).
 _RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
@@ -174,13 +144,8 @@ _RESPONSE_404_CODE_LOOKUP: Final[dict[str, Any]] = {
     ),
 }
 
-#: The two exact-code lookup routes. Same FR-98/issue #144 reasoning as
-#: `PUBLIC_ENTRY_ERROR_RESPONSES` above (the by-business-key routes that
-#: also serve bindings, which have no dedicated constant of their own -
-#: FR-98/issue #144 removed the read path's only `display_term` rendering
-#: call site, leaving nothing on either route that can 500 this way, so
-#: there is no longer a real difference for a second constant to name):
-#: no 500, nothing on this read path renders a `display_term` any more.
+#: The two exact-code lookup routes. No 500, as in `PUBLIC_ENTRY_ERROR_RESPONSES`:
+#: FR-98 removed the read path's only `display_term` rendering call site.
 PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     404: _RESPONSE_404_CODE_LOOKUP,
@@ -193,14 +158,11 @@ PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 #: page is every event *older* than this one (the endpoint serves most
 #: recent first).
 #:
-#: `max_length=19`: `AuditEvent.sequence` is `BigInteger` (signed 64-bit,
-#: max `9223372036854775807`, 19 digits) - bounding the digit count here is
-#: what stops a pathologically long cursor from ever reaching `int(before)`
-#: in `read_history` (PR #278 review). Not every 19-digit string is itself
-#: in range (`9999999999999999999` is not); `history.load_history` raises
-#: `MalformedHistoryCursorError` (422, matching `MalformedSearchCursorError`'s
-#: own precedent) for a value that survives this bound but is still too
-#: large - this bound only rules out the unbounded case.
+#: `max_length=19`: `AuditEvent.sequence` is a signed 64-bit `BigInteger` (max
+#: `9223372036854775807`, 19 digits), and bounding the digit count stops an
+#: arbitrarily long cursor reaching `int(before)` in `read_history`. A 19-digit
+#: string can still be out of range (`9999999999999999999`); `history.load_history`
+#: raises `MalformedHistoryCursorError` (422) for that.
 HistoryCursorQuery = Annotated[
     str | None,
     Query(
@@ -290,10 +252,8 @@ class HistoryPage(BaseModel):
 
 # --- routes ---------------------------------------------------------------
 #
-# `entry_summary_fields`, `property_value_from_row` and `summary_from_entry`
-# live in `catalogue_shared.py` (issues #228, #266) - `catalogue_admin.py`
-# needs them too, and duplicating them here would let the routers' shapes
-# drift apart by accident.
+# `entry_summary_fields`, `property_value_from_row` and `summary_from_entry` live
+# in `catalogue_shared.py`, shared with the other catalogue routers.
 
 SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
