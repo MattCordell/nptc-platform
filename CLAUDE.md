@@ -67,32 +67,33 @@ uv run pytest backend/tests/test_scaffolding.py::test_name   # a single test
 uv run pytest --req=FR-07            # tests tagged against a specific requirement (conftest.py; -m has no call syntax)
 ```
 
-Fast iteration vs. full sweep: over half of `backend/tests` is marked
+Fast iteration vs. full sweep: over half of `backend/tests` carries
 `@pytest.mark.integration` (testcontainers Postgres or Keycloak), and those tests take
-most of the wall time. No test in `transform/tests`, `shared/tests` or `scripts/tests`
-carries the marker. Counts as of 2026-09-29, as collected items (each parametrised case
+most of the wall time. `backend/tests/conftest.py` adds the marker at collection to any
+test that reaches `postgres_container`, directly or through `db`, `app_db` or
+`app_engine`. A test that starts its own container, as the Keycloak tests do, needs the
+marker written by hand. No test in `transform/tests`, `shared/tests` or `scripts/tests`
+carries the marker. Counts as of 2026-10-01, as collected items (each parametrised case
 counts separately):
 
 | Tree | Collected | `integration` | Unmarked |
 |---|---:|---:|---:|
-| `backend/tests` | 1,850 | 1,035 | 815 |
-| `transform/tests`, `shared/tests`, `scripts/tests` | 832 | 0 | 832 |
-| Whole suite | 2,682 | 1,035 | 1,647 |
+| `backend/tests` | 1,979 | 1,143 | 836 |
+| `transform/tests`, `shared/tests`, `scripts/tests` | 927 | 0 | 927 |
+| Whole suite | 2,906 | 1,143 | 1,763 |
 
 To re-measure, run `uv run pytest --collect-only -q -m integration` (or
 `-m "not integration"`, optionally with a tree path); the last line gives the count.
 
 So `-m "not integration"` runs about three fifths of the whole suite but under half of
-`backend/tests`. For backend work it is a quick check, not a stand-in for the container
-tests. It also still needs a running Docker daemon: 65 unmarked backend tests request the
-Postgres container through the `app_db` fixture, until #369 derives the marker from
-fixture use.
+`backend/tests`, and starts no container. For backend work it is a quick check, not a
+stand-in for the container tests.
 
 Run the fast subset while iterating, and the full suite (optionally parallelised via
 `pytest-xdist`) once before pushing:
 
 ```powershell
-uv run pytest -m "not integration"                       # fast subset; still starts Postgres until #369
+uv run pytest -m "not integration"                       # fast subset; starts no container
 uv run pytest -m integration -n auto --dist loadscope     # container tests, parallel
 uv run pytest -n auto --dist loadscope                    # full sweep before pushing
 ```
