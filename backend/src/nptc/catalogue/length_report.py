@@ -1,52 +1,39 @@
-"""FR-87: the preferred-term length distribution report (issue #152).
+"""FR-87: the preferred-term length distribution report.
 
-RCPA-QAP cannot nominate a maximum preferred-term length (FR-86, the setting
-`ApiSettings.max_preferred_term_length` gates) until they can see how many
-entries each candidate value would affect - this is PRD open item OI-1's
-remaining half. This module answers that with one statement, not one per
-candidate threshold, following `nptc.catalogue.facets`'s own precedent
-(issue #275, ADR-0032) for why a per-candidate loop does not belong here:
-the catalogue is scanned once regardless of how many thresholds a caller
-might consider.
+RCPA-QAP cannot nominate a maximum preferred-term length (FR-86,
+`ApiSettings.max_preferred_term_length`, ADR-0041) until they can see how many
+entries each candidate value would affect (PRD open item OI-1). One statement
+answers for every candidate threshold, so the catalogue is scanned once
+whatever the number of thresholds, as in `nptc.catalogue.facets` (ADR-0032).
 
-**One grouping dimension, so no `UNION ALL`/rank machinery is needed.**
-`facets.build_facet_counts_statement` combines several *different* grouping
-expressions (one per facetable property) into one statement. This report has
-exactly one: `char_length(preferred_term)`. A plain
-`SELECT char_length(preferred_term), count(*) ... GROUP BY 1` is the whole
-query; the maximum and the per-length "how many entries exceed this" figure
-FR-87 asks for are both derived from that histogram alone, in Python, using
-the same `exceeds_maximum_length` predicate FR-86's warning uses - no second
-statement. Each bucket rescans the histogram, which is quadratic in the number
-of distinct lengths (a few dozen), the price of sharing the predicate.
+**One grouping dimension, so no `UNION ALL`/rank machinery.** The whole query
+is `SELECT char_length(preferred_term), count(*) ... GROUP BY 1`. The maximum
+and the per-length "how many entries exceed this" figure are both derived from
+that histogram in Python, with the `exceeds_maximum_length` predicate FR-86's
+warning uses. Each bucket rescans the histogram, which is quadratic in the
+number of distinct lengths (a few dozen); that is the price of sharing the
+predicate.
 
-**`char_length` on the stored column, not a second `preferred_term_length`
-implementation.** `nptc.catalogue.term_hygiene.preferred_term_length`'s own
-docstring makes "the one function every caller must use" the rule this
-report would otherwise break by recomputing a length in SQL. The two agree
-only while every row reached the table through the ORM: `CatalogueEntry`'s
-`@validates("preferred_term")` hook runs `clean_term` before each ORM write,
-but a Core `insert()`, `COPY` or data migration skips it and can store a term
-`clean_term` would have shortened. Every loader must therefore write through
-`nptc.catalogue.entries.create_entry`.
+**`char_length` on the stored column, not a second `preferred_term_length`.**
+`nptc.catalogue.term_hygiene.preferred_term_length` is the one function that
+computes the published length. The two agree only while every row reached the
+table through the ORM, whose `@validates` hook runs `clean_term`; a Core
+`insert()`, `COPY` or data migration skips it. Every loader must therefore
+write through `nptc.catalogue.entries.create_entry`.
 `test_char_length_matches_preferred_term_length` in
 `backend/tests/test_catalogue_length_report.py` pins the agreement for
 ORM-written rows, and
 `test_a_row_that_skips_the_orm_is_where_char_length_and_the_published_length_disagree`
 pins the gap for the rest.
 
-**Every status is counted, deliberately - this is not an oversight.**
-`build_length_histogram_statement` carries no `WHERE status = ...`, so a
-`draft`, `deprecated` or `withdrawn` entry's preferred term is in the
-histogram exactly as an `active` one's is. That is the population FR-86's
-warning can actually fire against: `POST .../designations/amendment`
-resolves the entry via `nptc.catalogue.entries.load_entry_for_update`, which
-itself carries no status filter (an editing surface needs the entry
-regardless of status - a draft has to be editable before it can ever become
-`active`). Scoping this report to `active` entries alone would therefore
-*undercount* what a chosen maximum affects, not merely report a different
-population - see `docs/user/reading-the-length-distribution-report.md` for
-the caller-facing statement of this.
+**Every status is counted, deliberately.** The histogram query has no status
+filter, so a `draft`, `deprecated` or `withdrawn` entry's preferred term is
+counted as an `active` one's is. FR-86's warning can fire for an entry in any
+status, because the amendment route resolves the entry without a status
+filter: a draft has to be editable before it can become `active`. Counting
+`active` entries alone would undercount what a chosen maximum affects.
+`docs/user/reading-the-length-distribution-report.md` states this for readers
+of the report.
 """
 
 from __future__ import annotations
@@ -96,14 +83,11 @@ class LengthDistribution:
 
 def build_length_histogram_statement() -> Select[int, int]:
     """The one statement: every distinct preferred-term length, and how many
-    entries have it. Public and separate from `compute_length_distribution`,
-    matching `facets.build_facet_count_statement`'s own precedent - a test
-    can inspect this statement directly rather than the whole report.
+    entries have it. Public so a test can inspect it directly.
 
-    Labelled `bucket_count`, not `count`: `facets.build_facet_count_statement`
-    already documents why - a SQLAlchemy `Row` inherits `tuple.count`, so a
-    column literally named `count` is reachable only positionally and
-    `row.count` silently yields the bound method instead of the value.
+    Labelled `bucket_count`, not `count`, for the reason
+    `facets.build_facet_count_statement` documents: `Row` inherits
+    `tuple.count`, so `row.count` yields the bound method, not the value.
     """
     length = func.char_length(CatalogueEntry.preferred_term).label("length")
     bucket_count = func.count().label("bucket_count")
@@ -136,11 +120,7 @@ def distribution_from_buckets(histogram: Iterable[tuple[int, int]]) -> LengthDis
 
 def compute_length_distribution(session: Session) -> LengthDistribution:
     """Runs `build_length_histogram_statement` once and hands the rows to
-    `distribution_from_buckets` - no second query.
-
-    The catalogue's design ceiling (20,000 entries, PRD's planning figure)
-    bounds this to one aggregate scan of `catalogue_entry`.
-    """
+    `distribution_from_buckets` - no second query."""
     return distribution_from_buckets(
         (row.length, row.bucket_count)
         for row in session.execute(build_length_histogram_statement()).all()
