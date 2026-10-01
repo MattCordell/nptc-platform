@@ -58,7 +58,7 @@ from nptc.api.dependencies import (
     get_token_verifier,
 )
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
+from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.jwks import SigningKeys
 from nptc.auth.permissions import Role
 from nptc.auth.tokens import TokenVerifier
@@ -131,10 +131,22 @@ class ApiTestApp:
         kwargs.setdefault("audience", AUDIENCE)
         return str(mint_token(self.key, kid=KID, **kwargs))
 
-    def token_for_role(self, *, subject: str, role: Role, with_mfa: bool = True) -> str:
+    def token_for_role(
+        self,
+        *,
+        subject: str,
+        role: Role,
+        with_mfa: bool = True,
+        replace_roles: bool = False,
+    ) -> str:
         """Signs `subject` in through the real auth chain, grants `role`, and
         returns a token carrying the `acr` claim the realm maps to LoA-2
-        unless `with_mfa` is `False`."""
+        unless `with_mfa` is `False`.
+
+        `replace_roles` clears the identity's existing grants first. A brand-new
+        identity is auto-granted `Role.PROVISIONAL` on first sign-in and roles
+        are additive, so without it the token holds `role` plus Provisional's
+        permissions - which hides a missing permission on `role` itself."""
         bootstrap = self.token(subject=subject)
         self.get("/auth/me", token=bootstrap)
         # By `subject`, not "the newest `User` row": `created_at` is
@@ -145,6 +157,10 @@ class ApiTestApp:
             .join(UserIdentity, UserIdentity.user_id == User.id)
             .where(UserIdentity.subject == subject)
         ).scalar_one()
+        if replace_roles:
+            revoke_all_roles_unchecked(
+                self.session, target_user_id=user.id, audit=AuditContext.system()
+            )
         grant_role_unchecked(
             self.session,
             target_user_id=user.id,
@@ -158,6 +174,10 @@ class ApiTestApp:
 
     def admin_token(self, *, subject: str, with_mfa: bool = True) -> str:
         return self.token_for_role(subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
+
+    def exact_role_token(self, *, subject: str, role: Role) -> str:
+        """A token holding exactly `role`, with no MFA claim."""
+        return self.token_for_role(subject=subject, role=role, with_mfa=False, replace_roles=True)
 
     def request(self, method: str, path: str, *, token: str | None = None, **kwargs: Any) -> Any:
         """The general form `get`/`post` below are thin wrappers over -

@@ -324,19 +324,7 @@ def test_the_detail_response_carries_every_field_the_public_ui_needs(
 def test_binding_write_responses_contain_no_uuid_and_no_unquoted_code(
     api: ApiTestApp,
 ) -> None:
-    token = api.token(subject="sub-write-hygiene")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    admin_token = api.token(subject="sub-write-hygiene", extra_claims={"acr": "2"})
+    admin_token = api.admin_token(subject="sub-write-hygiene")
 
     entry = create_entry(
         api.session,
@@ -388,19 +376,7 @@ def test_designation_write_responses_contain_no_uuid(api: ApiTestApp) -> None:
     No `_UNQUOTED_LONG_NUMBER_RE` check here - a designation carries no
     SNOMED CT code, so that half of the binding test's assertion has
     nothing to scan for."""
-    token = api.token(subject="sub-designation-write-hygiene")
-    api.get("/auth/me", token=token)
-    user = api.session.query(User).order_by(User.created_at.desc()).first()
-    assert user is not None
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    admin_token = api.token(subject="sub-designation-write-hygiene", extra_claims={"acr": "2"})
+    admin_token = api.admin_token(subject="sub-designation-write-hygiene")
 
     entry = create_entry(
         api.session,

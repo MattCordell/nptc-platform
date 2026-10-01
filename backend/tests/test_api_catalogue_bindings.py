@@ -26,15 +26,11 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.catalogue import queries
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import CodeBinding
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -90,34 +86,6 @@ def _seed_entry(
     )
     api.session.flush()
     return entry.business_key
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    """Signs `subject` in, grants `Role.ADMINISTRATOR`, and returns a token
-    - with an `acr` claim the realm maps to LoA-2 unless `with_mfa` is
-    `False`, matching `test_api_error_mapping.py`'s own MFA pair."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    # By `subject`, not "the newest `User` row": `created_at` is
-    # server-side `now()`, so two users provisioned inside one transaction
-    # (as parallel tests under one session-scoped container can do) may tie
-    # on it, and picking the wrong one would grant ADMINISTRATOR to a
-    # different test's principal (issue #219 review).
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
 
 
 def _audit_event_count(api: ApiTestApp) -> int:
@@ -226,7 +194,7 @@ def _replace(
 @pytest.mark.integration
 def test_bind_code_returns_201_with_the_binding_as_served(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-happy")
+    token = api.admin_token(subject="sub-bind-happy")
     before = _audit_event_count(api)
 
     response = _bind(api, business_key, token)
@@ -255,7 +223,7 @@ def test_bind_code_audits_the_created_row_with_reason(api: ApiTestApp) -> None:
     carries every non-null field `CodeBinding.__audit_fields__` declares -
     and the changelog note reaches `AuditEvent.reason` verbatim (FR-37)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-audit")
+    token = api.admin_token(subject="sub-bind-audit")
     entry_id = _entry_id(api, business_key)
     reason = "Bound during onboarding of the current SPIA release - audit test."
 
@@ -290,7 +258,7 @@ def test_bind_code_location_header_points_at_a_route_that_actually_serves_it(
     follows the header to only serves `active` entries (FR-20), unlike
     every other test in this module."""
     business_key = _seed_entry(api, status="active")
-    token = _admin_token(api, subject="sub-bind-location")
+    token = api.admin_token(subject="sub-bind-location")
 
     response = _bind(api, business_key, token)
 
@@ -309,7 +277,7 @@ def test_bind_code_location_header_points_at_a_route_that_actually_serves_it(
 @pytest.mark.integration
 def test_retire_binding_requires_and_records_a_reason(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-happy")
+    token = api.admin_token(subject="sub-retire-happy")
     _bind(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -330,7 +298,7 @@ def test_retire_binding_requires_and_records_a_reason(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_retire_binding_audits_the_status_change_with_reason(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-audit")
+    token = api.admin_token(subject="sub-retire-audit")
     _bind(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     binding_id = _binding_id(api, entry_id=entry_id, code=CODE_A)
@@ -354,7 +322,7 @@ def test_binding_writes_serve_the_injected_settings_not_the_environment(
     """All three write routes re-read the row through `binding_from_row`; an
     invalid `NPTC_FSN_SEMANTIC_TAG` in the environment must not reach them."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-injected-settings")
+    token = api.admin_token(subject="sub-bind-injected-settings")
 
     bound = _bind(api, business_key, token)
     replaced = _replace(api, business_key, CODE_A, token)
@@ -370,7 +338,7 @@ def test_binding_writes_serve_the_injected_settings_not_the_environment(
 @pytest.mark.integration
 def test_replace_binding_retires_creates_and_links_in_one_request(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-happy")
+    token = api.admin_token(subject="sub-replace-happy")
     _bind(api, business_key, token)
     before = _audit_event_count(api)
 
@@ -407,7 +375,7 @@ def test_replace_binding_audits_all_three_steps_with_before_after_and_reason(
     step actually changed - the module's own "retire, create, link" claim,
     proven at the audit layer rather than only via the response body."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-audit")
+    token = api.admin_token(subject="sub-replace-audit")
     _bind(api, business_key, token)
     entry_id = _entry_id(api, business_key)
     predecessor_id = _binding_id(api, entry_id=entry_id, code=CODE_A)
@@ -477,7 +445,7 @@ def test_replace_binding_audits_all_three_steps_with_before_after_and_reason(
 @pytest.mark.integration
 def test_bind_malformed_sctid_is_422_not_500(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-malformed")
+    token = api.admin_token(subject="sub-malformed")
 
     response = _bind(api, business_key, token, code="not-a-code")
 
@@ -488,7 +456,7 @@ def test_bind_malformed_sctid_is_422_not_500(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_bind_verhoeff_failing_sctid_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-verhoeff")
+    token = api.admin_token(subject="sub-verhoeff")
 
     # One digit off CODE_A's own valid check digit.
     response = _bind(api, business_key, token, code="391483002")
@@ -500,7 +468,7 @@ def test_bind_verhoeff_failing_sctid_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_second_active_binding_on_one_entry_is_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-second-active")
+    token = api.admin_token(subject="sub-second-active")
     _bind(api, business_key, token)
 
     response = _bind(api, business_key, token, code=CODE_C, fsn=FSN_C)
@@ -511,7 +479,7 @@ def test_second_active_binding_on_one_entry_is_409(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-08")
 @pytest.mark.integration
 def test_same_code_active_on_a_different_entry_is_409(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-cross-entry")
+    token = api.admin_token(subject="sub-cross-entry")
     first_entry = _seed_entry(api, preferred_term="Full blood count")
     second_entry = _seed_entry(api, preferred_term="Urine microscopy")
     _bind(api, first_entry, token)
@@ -524,7 +492,7 @@ def test_same_code_active_on_a_different_entry_is_409(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_retire_without_a_reason_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-no-reason")
+    token = api.admin_token(subject="sub-retire-no-reason")
     _bind(api, business_key, token)
 
     response = _retire(api, business_key, CODE_A, token, reason="")
@@ -546,7 +514,7 @@ def test_retiring_an_already_retired_binding_is_404_not_409(api: ApiTestApp) -> 
     `nptc.api.errors` for whichever future write path holds an already-
     loaded `CodeBinding` rather than resolving one by code)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-double-retire")
+    token = api.admin_token(subject="sub-double-retire")
     _bind(api, business_key, token)
     _retire(api, business_key, CODE_A, token, reason="First retirement.")
 
@@ -558,7 +526,7 @@ def test_retiring_an_already_retired_binding_is_404_not_409(api: ApiTestApp) -> 
 @pytest.mark.integration
 def test_retire_a_code_with_no_active_binding_is_404(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-missing")
+    token = api.admin_token(subject="sub-retire-missing")
 
     response = _retire(api, business_key, CODE_A, token, reason="Nothing to retire.")
 
@@ -576,7 +544,7 @@ def test_bind_code_works_against_an_entry_in_any_status(api: ApiTestApp, status:
     separately excluded. Pinned explicitly per status (issue #219 review),
     not just exercised incidentally via `draft` fixtures elsewhere."""
     business_key = _seed_entry(api, status=status)
-    token = _admin_token(api, subject=f"sub-status-{status}")
+    token = api.admin_token(subject=f"sub-status-{status}")
 
     response = _bind(api, business_key, token)
 
@@ -585,7 +553,7 @@ def test_bind_code_works_against_an_entry_in_any_status(api: ApiTestApp, status:
 
 @pytest.mark.integration
 def test_bind_unknown_business_key_is_404(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-unknown-entry")
+    token = api.admin_token(subject="sub-unknown-entry")
 
     # No entry exists to read a current row_version from - overridden
     # explicitly so `_bind` never tries to resolve one.
@@ -597,7 +565,7 @@ def test_bind_unknown_business_key_is_404(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_replace_against_a_never_bound_code_is_404(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-missing")
+    token = api.admin_token(subject="sub-replace-missing")
 
     response = _replace(api, business_key, CODE_A, token)
 
@@ -607,7 +575,7 @@ def test_replace_against_a_never_bound_code_is_404(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_replace_against_an_already_retired_code_is_404(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-retired")
+    token = api.admin_token(subject="sub-replace-retired")
     _bind(api, business_key, token)
     _retire(api, business_key, CODE_A, token, reason="Retired ahead of the replacement attempt.")
 
@@ -623,7 +591,7 @@ def test_bind_blank_fsn_is_422_not_500(api: ApiTestApp) -> None:
     so a whitespace-only `fsn` would otherwise reach the flush and 500 as
     an unmapped `IntegrityError` (issue #219 review)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-blank-fsn")
+    token = api.admin_token(subject="sub-blank-fsn")
 
     response = _bind(api, business_key, token, fsn="   ")
 
@@ -634,7 +602,7 @@ def test_bind_blank_fsn_is_422_not_500(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_bind_blank_au_preferred_term_is_422_not_500(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-blank-au")
+    token = api.admin_token(subject="sub-blank-au")
 
     response = _bind(api, business_key, token, au_preferred_term=" ")
 
@@ -644,7 +612,7 @@ def test_bind_blank_au_preferred_term_is_422_not_500(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_bind_unrecognised_edition_hint_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bad-edition-hint")
+    token = api.admin_token(subject="sub-bad-edition-hint")
 
     response = _bind(api, business_key, token, edition_hint="not-a-real-edition")
 
@@ -659,7 +627,7 @@ def test_replace_with_the_same_code_as_successor_is_409(api: ApiTestApp) -> None
     entries to the one active row, reporting the successor twice and never
     surfacing the retirement the caller asked for (issue #219 review)."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-self-replace")
+    token = api.admin_token(subject="sub-self-replace")
     _bind(api, business_key, token)
 
     response = _replace(api, business_key, CODE_A, token, successor={"code": CODE_A, "fsn": FSN_A})
@@ -678,7 +646,7 @@ def test_replace_whose_successor_code_is_bound_elsewhere_rolls_back_the_whole_re
     step's own conflict (the successor code is already active on a
     different entry), so the predecessor on `first_entry` must still be
     `active` and no audit event from this request may have landed."""
-    token = _admin_token(api, subject="sub-replace-rollback")
+    token = api.admin_token(subject="sub-replace-rollback")
     first_entry = _seed_entry(api, preferred_term="Full blood count")
     second_entry = _seed_entry(api, preferred_term="Urine microscopy")
     _bind(api, first_entry, token)
@@ -715,7 +683,7 @@ def test_rebinding_a_retired_code_then_retiring_it_again_reads_back_the_right_ro
     review) must return the second retirement's own reason, not the
     first's."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-rebind-retire")
+    token = api.admin_token(subject="sub-rebind-retire")
     _bind(api, business_key, token)
     _retire(api, business_key, CODE_A, token, reason="First retirement.")
     _bind(api, business_key, token)
@@ -742,7 +710,7 @@ def test_bind_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     request that omits it is rejected outright rather than silently
     defaulting to "no lock"."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-missing-version")
+    token = api.admin_token(subject="sub-bind-missing-version")
 
     response = api.post(
         f"/catalogue/entries/{business_key}/bindings",
@@ -762,7 +730,7 @@ def test_bind_non_positive_expected_row_version_is_422(api: ApiTestApp) -> None:
     `0`/`-1` is a malformed request (422), not a well-formed one that would
     otherwise produce a nonsense `ConflictReport.expected_row_version`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-non-positive-version")
+    token = api.admin_token(subject="sub-bind-non-positive-version")
 
     response = api.post(
         f"/catalogue/entries/{business_key}/bindings",
@@ -777,7 +745,7 @@ def test_bind_non_positive_expected_row_version_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-missing-version")
+    token = api.admin_token(subject="sub-retire-missing-version")
     _bind(api, business_key, token)
 
     response = api.post(
@@ -793,7 +761,7 @@ def test_retire_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_replace_missing_expected_row_version_is_422(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-missing-version")
+    token = api.admin_token(subject="sub-replace-missing-version")
     _bind(api, business_key, token)
 
     response = api.post(
@@ -814,7 +782,7 @@ def test_stale_row_version_on_bind_is_409_with_conflict_body(api: ApiTestApp) ->
     applied on top of the first (FR-38's whole point) - and the body is the
     full `VersionConflictResponse`, not a bare `{detail}`."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-stale")
+    token = api.admin_token(subject="sub-bind-stale")
     stale_version = _row_version(api, business_key)
 
     first = _bind(api, business_key, token, expected_row_version=stale_version)
@@ -836,7 +804,7 @@ def test_stale_row_version_on_bind_is_409_with_conflict_body(api: ApiTestApp) ->
 @pytest.mark.integration
 def test_stale_row_version_on_retire_is_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-retire-stale")
+    token = api.admin_token(subject="sub-retire-stale")
     _bind(api, business_key, token)
     stale_version = _row_version(api, business_key)
     _bump_row_version(api, business_key)
@@ -853,7 +821,7 @@ def test_stale_row_version_on_retire_is_409(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_stale_row_version_on_replace_is_409(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-stale")
+    token = api.admin_token(subject="sub-replace-stale")
     _bind(api, business_key, token)
     stale_version = _row_version(api, business_key)
     _bump_row_version(api, business_key)
@@ -875,7 +843,7 @@ def test_replace_with_a_stale_version_leaves_no_partial_replacement(api: ApiTest
     `retire_binding` even runs, so the superseded binding is still active,
     no successor row exists, and no audit event lands from this request."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-stale-partial")
+    token = api.admin_token(subject="sub-replace-stale-partial")
     _bind(api, business_key, token)
     stale_version = _row_version(api, business_key)
     _bump_row_version(api, business_key)
@@ -912,7 +880,7 @@ def test_replace_self_supersession_is_checked_before_stale_version(api: ApiTestA
     self-supersession 409, not a version conflict, pinning the order the
     router body actually checks them in."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-replace-precedence")
+    token = api.admin_token(subject="sub-replace-precedence")
     _bind(api, business_key, token)
     stale_version = _row_version(api, business_key) - 1  # already stale too
 
@@ -941,7 +909,7 @@ def test_a_refused_binding_write_emits_no_audit_event(api: ApiTestApp) -> None:
     `entry_child_write` raises before its wrapped body ever runs, so a
     stale bind leaves neither a new binding row nor an audit event."""
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-bind-no-audit")
+    token = api.admin_token(subject="sub-bind-no-audit")
     stale_version = _row_version(api, business_key)
     _bind(api, business_key, token, expected_row_version=stale_version)
     before = _audit_event_count(api)
@@ -1003,7 +971,7 @@ def test_authenticated_without_the_permission_is_403_with_no_challenge(api: ApiT
 @pytest.mark.integration
 def test_administrator_without_mfa_gets_a_step_up_challenge(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = _admin_token(api, subject="sub-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-admin-no-mfa", with_mfa=False)
 
     response = _bind(api, business_key, token)
 
@@ -1020,7 +988,7 @@ def test_conflict_response_names_no_internal_identifier(api: ApiTestApp) -> None
     other entry's internal UUID (for the log); the response body must not
     (NFR-04/NFR-26) - the same convention every other handler in
     `nptc.api.errors` follows."""
-    token = _admin_token(api, subject="sub-conflict-body")
+    token = api.admin_token(subject="sub-conflict-body")
     first_entry = _seed_entry(api, preferred_term="Full blood count")
     second_entry = _seed_entry(api, preferred_term="Urine microscopy")
     _bind(api, first_entry, token)

@@ -26,16 +26,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from nptc.api.prefix import API_PREFIX
-from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
 from nptc.auth.permissions import Role
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 
 
 def _load(name: str) -> Any:
@@ -66,34 +61,6 @@ def seeded(api: ApiTestApp) -> SeededCatalogue:
     return seed_public_catalogue(api.session)
 
 
-def _token_with_role(api: ApiTestApp, *, subject: str, role: Role, with_mfa: bool = True) -> str:
-    """Matching `test_api_catalogue_designations.py`'s own helper of the
-    same name - duplicated rather than imported, following this test
-    tree's convention that a `test_*.py` module is never imported by
-    another (only the `_load`-by-path support modules are)."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    return _token_with_role(api, subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)
-
-
 def _admin_read(api: ApiTestApp, business_key: str, token: str | None) -> Any:
     return api.get(f"/catalogue/admin/entries/{business_key}", token=token)
 
@@ -119,7 +86,7 @@ def test_an_administrator_can_load_an_entry_of_any_status(
         "withdrawn": seeded.withdrawn,
         "active": seeded.canonical,
     }[status]
-    token = _admin_token(api, subject=f"sub-admin-read-{status}")
+    token = api.admin_token(subject=f"sub-admin-read-{status}")
 
     response = _admin_read(api, business_key, token)
 
@@ -137,7 +104,7 @@ def test_a_drafts_full_detail_is_populated_not_a_bare_summary(
     """The acceptance criterion in full: an edit screen loading a draft
     needs designations, bindings *and* properties, not just the entry-level
     fields every status shares."""
-    token = _admin_token(api, subject="sub-admin-draft-detail")
+    token = api.admin_token(subject="sub-admin-draft-detail")
 
     response = _admin_read(api, seeded.draft, token)
 
@@ -162,7 +129,7 @@ def test_retired_designations_are_included_unlike_the_public_route(
     test_designations_endpoint_serves_active_designations_only`, this
     route's own mirror of that test, which asserts the opposite for the
     identical fixture."""
-    token = _admin_token(api, subject="sub-admin-retired-designation")
+    token = api.admin_token(subject="sub-admin-retired-designation")
 
     response = _admin_read(api, seeded.canonical, token)
 
@@ -185,7 +152,7 @@ def test_the_detail_carries_the_row_version_a_write_will_demand(
     it from. A positive integer, not merely present: `row_version` starts at
     1, so a field that serialised as null or 0 would still satisfy a bare
     key check."""
-    token = _admin_token(api, subject="sub-admin-row-version")
+    token = api.admin_token(subject="sub-admin-row-version")
 
     response = _admin_read(api, seeded.draft, token)
 
@@ -250,7 +217,7 @@ def test_authenticated_observer_is_403_with_no_challenge(
     """FR-44: authorised against the permission, not the role - Observer
     holds neither `catalogue.edit_published` nor any permission close to
     it."""
-    token = _token_with_role(api, subject="sub-observer", role=Role.OBSERVER)
+    token = api.token_for_role(subject="sub-observer", role=Role.OBSERVER)
 
     response = _admin_read(api, seeded.draft, token)
 
@@ -264,7 +231,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp, seeded: SeededCatalogue)
     """A Reviewer holds `validation.acknowledge` (issue #224) but not
     `catalogue.edit_published` - proving the gate is this specific
     permission, not "any elevated role"."""
-    token = _token_with_role(api, subject="sub-reviewer", role=Role.REVIEWER)
+    token = api.token_for_role(subject="sub-reviewer", role=Role.REVIEWER)
 
     response = _admin_read(api, seeded.draft, token)
 
@@ -276,7 +243,7 @@ def test_authenticated_reviewer_is_403(api: ApiTestApp, seeded: SeededCatalogue)
 def test_administrator_without_mfa_gets_a_step_up_challenge(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
-    token = _admin_token(api, subject="sub-admin-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-admin-no-mfa", with_mfa=False)
 
     response = _admin_read(api, seeded.draft, token)
 
@@ -295,7 +262,7 @@ def test_unknown_business_key_is_a_404_with_the_generic_body(api: ApiTestApp) ->
     """Same fixed body the public route's own 404 carries (they share the
     same `EntryNotFoundError` handler) - no echo of the key, no hint
     whether it was ever minted."""
-    token = _admin_token(api, subject="sub-admin-404")
+    token = api.admin_token(subject="sub-admin-404")
 
     response = _admin_read(api, _seed.unused_business_key(), token)
 
@@ -306,7 +273,7 @@ def test_unknown_business_key_is_a_404_with_the_generic_body(api: ApiTestApp) ->
 @pytest.mark.req("FR-17")
 @pytest.mark.integration
 def test_a_malformed_business_key_is_a_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-admin-422")
+    token = api.admin_token(subject="sub-admin-422")
 
     response = _admin_read(api, "NPTC-abc", token)
 
@@ -325,7 +292,7 @@ def test_the_public_route_still_404s_a_draft_even_for_an_administrator(
     widening the public one: an Administrator's token does not make the
     *public* `/catalogue/entries/{key}` route see a draft. The admin
     capability lives only at `/catalogue/admin/entries/{key}`."""
-    token = _admin_token(api, subject="sub-admin-public-still-hidden")
+    token = api.admin_token(subject="sub-admin-public-still-hidden")
 
     response = api.get(f"/catalogue/entries/{seeded.draft}", token=token)
 

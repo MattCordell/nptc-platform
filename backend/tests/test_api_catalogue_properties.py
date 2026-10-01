@@ -22,14 +22,10 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_value import PropertyValue
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 from nptc_shared.terminology.models import Edition, ValidationResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,26 +55,6 @@ _SPECIMEN_SYSTEM = "http://example.org/specimen-test"
 @pytest.fixture
 def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
-
-
-def _admin_token(api: ApiTestApp, *, subject: str, with_mfa: bool = True) -> str:
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
 
 
 def _audit_event_count(api: ApiTestApp) -> int:
@@ -181,7 +157,7 @@ def _post_bulk_values(
 def test_save_property_values_replaces_whole_set_bumps_row_version_one_audit_event(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-save-happy")
+    token = api.admin_token(subject="sub-save-happy")
     key = _unique_key("save_happy")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -225,7 +201,7 @@ def test_save_property_values_first_write_audits_a_whole_set_snapshot_with_reaso
     `before=before_payload if existing else None` branch) and `after` is
     the one value just stored. The changelog note supplied still reaches
     `AuditEvent.reason` verbatim."""
-    token = _admin_token(api, subject="sub-save-audit")
+    token = api.admin_token(subject="sub-save-audit")
     key = _unique_key("save_audit")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -263,7 +239,7 @@ def test_save_property_values_second_write_audits_before_and_after_the_replaceme
     ADR-0040: once a value already exists, `before` is the whole prior set
     (`_value_payload` reading the stored row back, not the request's own
     submitted shape), not `None`."""
-    token = _admin_token(api, subject="sub-save-replace-audit")
+    token = api.admin_token(subject="sub-save-replace-audit")
     key = _unique_key("save_replace_audit")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -301,7 +277,7 @@ def test_save_property_values_second_write_audits_before_and_after_the_replaceme
 @pytest.mark.req("FR-09")
 @pytest.mark.integration
 def test_save_property_values_second_write_replaces_the_first(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-save-replace")
+    token = api.admin_token(subject="sub-save-replace")
     key = _unique_key("save_replace")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -337,7 +313,7 @@ def test_save_property_values_second_write_replaces_the_first(api: ApiTestApp) -
 def test_save_property_values_with_a_stale_row_version_is_409_with_conflict_body(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-save-stale")
+    token = api.admin_token(subject="sub-save-stale")
     key = _unique_key("save_stale")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -367,7 +343,7 @@ def test_save_property_values_unknown_business_key_is_404(api: ApiTestApp) -> No
     unknown `business_key` and an unknown property `key`), and neither had
     a test - mirroring `test_api_catalogue_bindings.py`'s own coverage of
     both causes for the identical response shape."""
-    token = _admin_token(api, subject="sub-save-404-entry")
+    token = api.admin_token(subject="sub-save-404-entry")
     key = _unique_key("save_404_entry")
     _create_string_property(api, token, key=key)
 
@@ -388,7 +364,7 @@ def test_save_property_values_unknown_business_key_is_404(api: ApiTestApp) -> No
 def test_save_property_values_unknown_property_key_is_404(api: ApiTestApp) -> None:
     """See `test_save_property_values_unknown_business_key_is_404`'s own
     docstring - the other of `_RESPONSE_404`'s two causes."""
-    token = _admin_token(api, subject="sub-save-404-property")
+    token = api.admin_token(subject="sub-save-404-property")
     entry = _new_entry(api)
 
     response = _put_values(
@@ -409,7 +385,7 @@ def test_save_property_values_unknown_property_key_is_404(api: ApiTestApp) -> No
 @pytest.mark.req("FR-37")
 @pytest.mark.integration
 def test_save_property_values_with_no_reason_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-save-no-reason")
+    token = api.admin_token(subject="sub-save-no-reason")
     key = _unique_key("save_no_reason")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -444,7 +420,7 @@ def test_save_property_values_with_no_reason_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-09")
 @pytest.mark.integration
 def test_save_property_values_schema_violation_is_422_with_named_issue(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-save-bad-value")
+    token = api.admin_token(subject="sub-save-bad-value")
     key = _unique_key("save_bad_value")
     created = _create_string_property(api, token, key=key, max_length=5)
     entry = _new_entry(api)
@@ -486,7 +462,7 @@ def test_save_property_values_schema_violation_is_422_with_named_issue(api: ApiT
 def test_save_property_values_against_a_deprecated_property_is_422_untouched(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-save-deprecated")
+    token = api.admin_token(subject="sub-save-deprecated")
     key = _unique_key("save_deprecated")
     created = _create_string_property(api, token, key=key)
     entry = _new_entry(api)
@@ -538,7 +514,7 @@ def test_save_property_values_against_a_deprecated_property_is_422_untouched(
 def test_specimen_accepts_the_samples_seven_specimen_worst_case(api: ApiTestApp) -> None:
     from nptc.db.bootstrap import seed_system_properties
 
-    token = _admin_token(api, subject="sub-specimen-seven")
+    token = api.admin_token(subject="sub-specimen-seven")
     seed_system_properties(api.session)
     api.session.flush()
     entry = _new_entry(api)
@@ -569,7 +545,7 @@ def test_specimen_accepts_the_samples_seven_specimen_worst_case(api: ApiTestApp)
 def test_specimen_rejects_the_literal_value_any(api: ApiTestApp) -> None:
     from nptc.db.bootstrap import seed_system_properties
 
-    token = _admin_token(api, subject="sub-specimen-any")
+    token = api.admin_token(subject="sub-specimen-any")
     seed_system_properties(api.session)
     api.session.flush()
     entry = _new_entry(api)
@@ -593,7 +569,7 @@ def test_specimen_rejects_the_literal_value_any(api: ApiTestApp) -> None:
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_save_property_values_no_credential_is_401(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-save-setup-401")
+    admin_token = api.admin_token(subject="sub-save-setup-401")
     key = _unique_key("save_no_cred")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api)
@@ -613,7 +589,7 @@ def test_save_property_values_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_save_property_values_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-save-setup-403")
+    admin_token = api.admin_token(subject="sub-save-setup-403")
     key = _unique_key("save_no_permission")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api)
@@ -636,9 +612,9 @@ def test_save_property_values_authenticated_without_permission_is_403(api: ApiTe
 def test_save_property_values_administrator_without_mfa_gets_step_up_challenge(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-save-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-save-no-mfa", with_mfa=False)
     key = _unique_key("save_no_mfa")
-    admin_token = _admin_token(api, subject="sub-save-no-mfa-setup")
+    admin_token = api.admin_token(subject="sub-save-no-mfa-setup")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api)
 
@@ -664,7 +640,7 @@ _PROPERTY_VALUE_BULK_ENTITY_TYPE = "property_value_bulk"
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_bulk_save_applies_across_entries_and_emits_one_batch_event(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-happy")
+    token = api.admin_token(subject="sub-bulk-happy")
     key = _unique_key("bulk_happy")
     _create_string_property(api, token, key=key)
     entry_a = _new_entry(api, "Bulk HTTP entry A")
@@ -720,7 +696,7 @@ def test_bulk_save_applies_across_entries_and_emits_one_batch_event(api: ApiTest
 def test_bulk_save_a_stale_entry_is_a_conflict_outcome_in_a_200_not_a_409(
     api: ApiTestApp,
 ) -> None:
-    token = _admin_token(api, subject="sub-bulk-conflict")
+    token = api.admin_token(subject="sub-bulk-conflict")
     key = _unique_key("bulk_conflict")
     _create_string_property(api, token, key=key)
     entry_stale = _new_entry(api, "Bulk HTTP stale entry")
@@ -762,7 +738,7 @@ def test_bulk_save_a_stale_entry_is_a_conflict_outcome_in_a_200_not_a_409(
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
 def test_bulk_save_a_missing_business_key_is_a_not_found_outcome(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-not-found")
+    token = api.admin_token(subject="sub-bulk-not-found")
     key = _unique_key("bulk_not_found")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api, "Bulk HTTP present entry")
@@ -796,7 +772,7 @@ def test_bulk_save_a_malformed_business_key_is_422_not_a_not_found_outcome(
     422 on a malformed path segment) - never a `not-found` outcome, which
     would make a typo indistinguishable from a well-formed key that simply
     does not exist."""
-    token = _admin_token(api, subject="sub-bulk-malformed-key")
+    token = api.admin_token(subject="sub-bulk-malformed-key")
     key = _unique_key("bulk_malformed_key")
     _create_string_property(api, token, key=key)
 
@@ -814,7 +790,7 @@ def test_bulk_save_a_malformed_business_key_is_422_not_a_not_found_outcome(
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
 def test_bulk_save_unknown_property_key_is_404(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-404")
+    token = api.admin_token(subject="sub-bulk-404")
     entry = _new_entry(api, "Bulk HTTP 404 entry")
 
     response = _post_bulk_values(
@@ -831,7 +807,7 @@ def test_bulk_save_unknown_property_key_is_404(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-37")
 @pytest.mark.integration
 def test_bulk_save_with_no_reason_is_422_before_touching_any_entry(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-no-reason")
+    token = api.admin_token(subject="sub-bulk-no-reason")
     key = _unique_key("bulk_no_reason")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api, "Bulk HTTP no-reason entry")
@@ -854,7 +830,7 @@ def test_bulk_save_with_no_reason_is_422_before_touching_any_entry(api: ApiTestA
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
 def test_bulk_save_duplicate_business_key_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-duplicate")
+    token = api.admin_token(subject="sub-bulk-duplicate")
     key = _unique_key("bulk_duplicate")
     _create_string_property(api, token, key=key)
     entry = _new_entry(api, "Bulk HTTP duplicate entry")
@@ -876,7 +852,7 @@ def test_bulk_save_duplicate_business_key_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
 def test_bulk_save_more_than_the_batch_cap_is_422(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-cap")
+    token = api.admin_token(subject="sub-bulk-cap")
     key = _unique_key("bulk_cap")
     _create_string_property(api, token, key=key)
 
@@ -894,7 +870,7 @@ def test_bulk_save_more_than_the_batch_cap_is_422(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
 def test_bulk_save_a_schema_violation_writes_nothing_for_any_entry(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-schema")
+    token = api.admin_token(subject="sub-bulk-schema")
     key = _unique_key("bulk_schema")
     _create_string_property(api, token, key=key, max_length=3)
     entry_a = _new_entry(api, "Bulk HTTP schema A")
@@ -930,7 +906,7 @@ def test_bulk_save_against_a_deprecated_property_is_422_before_touching_any_entr
     `_load_active_property_definition` helper, but never proves the
     whole-*batch* refusal a multi-entry request needs - that neither entry
     is touched, not just the one entry a singular write names."""
-    token = _admin_token(api, subject="sub-bulk-deprecated")
+    token = api.admin_token(subject="sub-bulk-deprecated")
     key = _unique_key("bulk_deprecated")
     created = _create_string_property(api, token, key=key)
     entry_a = _new_entry(api, "Bulk HTTP deprecated A")
@@ -968,7 +944,7 @@ def test_bulk_save_emits_no_batch_header_when_nothing_applied(api: ApiTestApp) -
     """A batch where the only target is `not-found` changed nothing, so it
     emits no `property_value.bulk_set` header (issue #265 review) - matching
     ADR-0018's "a no-op write emits no audit event" posture."""
-    token = _admin_token(api, subject="sub-bulk-no-header")
+    token = api.admin_token(subject="sub-bulk-no-header")
     key = _unique_key("bulk_no_header")
     _create_string_property(api, token, key=key)
     before = _audit_event_count(api)
@@ -1005,7 +981,7 @@ def test_bulk_specimen_conflict_rolls_back_an_earlier_entry_already_applied_in_t
     goes through `session_scope`, only through this route."""
     from nptc.db.bootstrap import seed_system_properties
 
-    token = _admin_token(api, subject="sub-bulk-specimen-abort")
+    token = api.admin_token(subject="sub-bulk-specimen-abort")
     key = _unique_key("bulk_specimen_abort")
     _create_string_property(api, token, key=key)
     entry_ok = _new_entry(api, "Bulk HTTP specimen ok")
@@ -1064,7 +1040,7 @@ def test_bulk_specimen_conflict_rolls_back_an_earlier_entry_already_applied_in_t
 @pytest.mark.req("NFR-20")
 @pytest.mark.integration
 def test_bulk_save_no_credential_is_401(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-bulk-setup-401")
+    admin_token = api.admin_token(subject="sub-bulk-setup-401")
     key = _unique_key("bulk_no_cred")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api, "Bulk HTTP 401 entry")
@@ -1083,7 +1059,7 @@ def test_bulk_save_no_credential_is_401(api: ApiTestApp) -> None:
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_bulk_save_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
-    admin_token = _admin_token(api, subject="sub-bulk-setup-403")
+    admin_token = api.admin_token(subject="sub-bulk-setup-403")
     key = _unique_key("bulk_no_permission")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api, "Bulk HTTP 403 entry")
@@ -1103,9 +1079,9 @@ def test_bulk_save_authenticated_without_permission_is_403(api: ApiTestApp) -> N
 @pytest.mark.req("NFR-06")
 @pytest.mark.integration
 def test_bulk_save_administrator_without_mfa_gets_step_up_challenge(api: ApiTestApp) -> None:
-    token = _admin_token(api, subject="sub-bulk-no-mfa", with_mfa=False)
+    token = api.admin_token(subject="sub-bulk-no-mfa", with_mfa=False)
     key = _unique_key("bulk_no_mfa")
-    admin_token = _admin_token(api, subject="sub-bulk-no-mfa-setup")
+    admin_token = api.admin_token(subject="sub-bulk-no-mfa-setup")
     _create_string_property(api, admin_token, key=key)
     entry = _new_entry(api, "Bulk HTTP no-mfa entry")
 

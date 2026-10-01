@@ -18,36 +18,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select
-
 from nptc.audit.writer import AuditContext, append_audit_event
-from nptc.auth.grants import grant_role_unchecked
-from nptc.auth.permissions import Role
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
-
-
-def admin_token(api: Any, *, subject: str, with_mfa: bool = True) -> str:
-    """Signs `subject` in, grants `Role.ADMINISTRATOR`, and returns a
-    token - matching `test_api_catalogue_bindings.py`'s own helper."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=Role.ADMINISTRATOR,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    extra_claims = {"acr": "2"} if with_mfa else {}
-    return api.token(subject=subject, extra_claims=extra_claims)
 
 
 def create_active_user(api: Any, username: str) -> User:

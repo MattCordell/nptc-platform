@@ -19,14 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
-from nptc.audit.writer import AuditContext
-from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.permissions import Role
-from nptc.db.models.user import User
-from nptc.db.models.user_identity import UserIdentity
 from nptc_shared.terminology import (
     AU_LANGUAGE_TAG,
     SNOMED_SYSTEM,
@@ -70,29 +65,6 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
 
 
-def _role_token(api: ApiTestApp, *, subject: str, role: Role) -> str:
-    """Resolves `subject` to exactly `role` - see
-    `test_api_registry_properties.py`'s identically-named helper for why
-    the default Provisional grant has to be cleared first."""
-    bootstrap = api.token(subject=subject)
-    api.get("/auth/me", token=bootstrap)
-    user = api.session.execute(
-        select(User)
-        .join(UserIdentity, UserIdentity.user_id == User.id)
-        .where(UserIdentity.subject == subject)
-    ).scalar_one()
-    revoke_all_roles_unchecked(api.session, target_user_id=user.id, audit=AuditContext.system())
-    grant_role_unchecked(
-        api.session,
-        target_user_id=user.id,
-        role=role,
-        granted_by_user_id=None,
-        audit=AuditContext.system(),
-    )
-    api.session.flush()
-    return api.token(subject=subject)
-
-
 def _seed_concept(api: ApiTestApp, *, code: str = _CODE, active: bool = True) -> None:
     api.terminology.add_concept(
         StubConcept(
@@ -120,7 +92,7 @@ def test_lookup_serves_the_injected_settings_not_the_environment(
     `NPTC_FSN_SEMANTIC_TAG` in the environment 500'd the route although the
     app was built with good settings."""
     _seed_concept(api)
-    token = _role_token(api, subject="sub-lookup-injected", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-injected", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -133,7 +105,7 @@ def test_lookup_serves_the_injected_settings_not_the_environment(
 @pytest.mark.integration
 def test_lookup_resolves_fsn_with_tag_and_au_preferred_term(api: ApiTestApp) -> None:
     _seed_concept(api)
-    token = _role_token(api, subject="sub-lookup-happy", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-happy", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -165,7 +137,7 @@ def test_lookup_18_digit_code_round_trips_exactly_as_a_string(api: ApiTestApp) -
     silently if it were a number by the time this test saw it."""
     code = "123456789012345605"
     _seed_concept(api, code=code)
-    token = _role_token(api, subject="sub-lookup-18-digit", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-18-digit", role=Role.PROVISIONAL)
 
     response = _get(api, token, code=code)
 
@@ -198,7 +170,7 @@ def test_lookup_response_carries_the_resolved_version_the_server_reported(
             properties=(),
         ),
     )
-    token = _role_token(api, subject="sub-lookup-resolved-version", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-resolved-version", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -231,7 +203,7 @@ def test_lookup_active_property_not_reported_serves_active_null(api: ApiTestApp)
             properties=(),
         ),
     )
-    token = _role_token(api, subject="sub-lookup-unreported", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-unreported", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -243,7 +215,7 @@ def test_lookup_active_property_not_reported_serves_active_null(api: ApiTestApp)
 @pytest.mark.integration
 def test_lookup_inactive_concept_is_200_with_active_false(api: ApiTestApp) -> None:
     _seed_concept(api, active=False)
-    token = _role_token(api, subject="sub-lookup-inactive", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-inactive", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -258,7 +230,7 @@ def test_lookup_issues_exactly_one_upstream_request(api: ApiTestApp) -> None:
     and, simultaneously, the offline proof (FR-53, NFR-37) - this is what
     proves the route calls `lookup` and nothing else."""
     _seed_concept(api)
-    token = _role_token(api, subject="sub-lookup-one-request", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-one-request", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -276,7 +248,7 @@ def test_lookup_issues_exactly_one_upstream_request(api: ApiTestApp) -> None:
 def test_lookup_invalid_sctid_is_422_with_no_upstream_request(
     api: ApiTestApp, bad_code: str
 ) -> None:
-    token = _role_token(api, subject=f"sub-lookup-invalid-{bad_code}", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject=f"sub-lookup-invalid-{bad_code}", role=Role.PROVISIONAL)
 
     response = _get(api, token, code=bad_code)
 
@@ -292,7 +264,7 @@ def test_lookup_code_not_on_server_is_404(api: ApiTestApp) -> None:
         TerminologyStatusError("not found", status_code=404),
         key=_CODE,
     )
-    token = _role_token(api, subject="sub-lookup-404", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-404", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -305,7 +277,7 @@ def test_lookup_code_not_on_server_is_404(api: ApiTestApp) -> None:
 @pytest.mark.integration
 def test_lookup_timeout_is_503(api: ApiTestApp) -> None:
     api.terminology.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"), key=_CODE)
-    token = _role_token(api, subject="sub-lookup-timeout", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-timeout", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -319,7 +291,7 @@ def test_lookup_transport_failure_is_503(api: ApiTestApp) -> None:
     api.terminology.seed_error(
         Operation.LOOKUP, TerminologyTransportError("connection refused"), key=_CODE
     )
-    token = _role_token(api, subject="sub-lookup-transport", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-transport", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -350,8 +322,8 @@ def test_lookup_persisted_rate_limit_is_503_with_retry_after(
         TerminologyRateLimitError("rate limited", status_code=429, retry_after=retry_after),
         key=_CODE,
     )
-    token = _role_token(
-        api, subject=f"sub-lookup-rate-limit-{expected_header}", role=Role.PROVISIONAL
+    token = api.exact_role_token(
+        subject=f"sub-lookup-rate-limit-{expected_header}", role=Role.PROVISIONAL
     )
 
     response = _get(api, token)
@@ -369,7 +341,7 @@ def test_lookup_rate_limit_with_no_retry_after_omits_the_header(api: ApiTestApp)
         TerminologyRateLimitError("rate limited", status_code=429, retry_after=None),
         key=_CODE,
     )
-    token = _role_token(api, subject="sub-lookup-rate-limit-none", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-rate-limit-none", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -383,7 +355,7 @@ def test_lookup_operation_outcome_body_is_502(api: ApiTestApp) -> None:
     api.terminology.seed_error(
         Operation.LOOKUP, TerminologyOutcomeError("server refused the request"), key=_CODE
     )
-    token = _role_token(api, subject="sub-lookup-outcome", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-outcome", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -399,7 +371,7 @@ def test_lookup_unseeded_stub_is_502_never_404(api: ApiTestApp) -> None:
     status nor a transport failure, so it must fall through to the 502
     catch-all - reading it as 404 would let an unseeded stub answer every
     lookup with a clean-looking absence."""
-    token = _role_token(api, subject="sub-lookup-unseeded", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-unseeded", role=Role.PROVISIONAL)
 
     response = _get(api, token, code="71388002")
 
@@ -414,7 +386,7 @@ def test_lookup_terminology_config_error_is_500(api: ApiTestApp) -> None:
     `nptc.api.errors`'s own config-error handler (500) rather than falling
     into `classify_terminology_error`'s 502 catch-all."""
     api.terminology.seed_error(Operation.LOOKUP, TerminologyConfigError("bad config"), key=_CODE)
-    token = _role_token(api, subject="sub-lookup-config-error", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-config-error", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
@@ -443,7 +415,7 @@ def test_lookup_authenticated_without_registry_read_is_403(api: ApiTestApp) -> N
     `Permission.REGISTRY_READ` - see `test_api_registry_properties.py`'s
     identically-reasoned test."""
     _seed_concept(api)
-    token = _role_token(api, subject="sub-lookup-observer", role=Role.OBSERVER)
+    token = api.exact_role_token(subject="sub-lookup-observer", role=Role.OBSERVER)
 
     response = _get(api, token)
 
@@ -460,7 +432,7 @@ def test_lookup_provisional_role_is_200(api: ApiTestApp) -> None:
     submitter, and FR-23 makes that Provisional and up) - fails if someone
     later re-gates this route on `Permission.CATALOGUE_EDIT_PUBLISHED`."""
     _seed_concept(api)
-    token = _role_token(api, subject="sub-lookup-provisional", role=Role.PROVISIONAL)
+    token = api.exact_role_token(subject="sub-lookup-provisional", role=Role.PROVISIONAL)
 
     response = _get(api, token)
 
