@@ -136,6 +136,12 @@ pre-commit run --all-files
 - Test trees (`backend/tests`, `transform/tests`, `shared/tests`, `scripts/tests`) have
   no `__init__.py` — pytest runs with `--import-mode=importlib`, and more than one tree
   is allowed to reuse a basename like `test_scaffolding.py` without colliding.
+- Backend test helpers have one home each; use them, never a per-file copy. In
+  `backend/tests/conftest.py`: `app_session` and `owner_session` (an ORM `Session` joined
+  to `app_db`/`db` through a SAVEPOINT, so `commit()` stays inside the rolled-back
+  transaction) and `capture_statements` (records the SQL a connection or engine runs). On
+  `ApiTestApp` in `api_app_support.py`: `token_for_role`, `admin_token` and
+  `exact_role_token`. Need a variant? Add a parameter there.
 - A test must never assert an absolute count/state on a table another test could
   plausibly have written to first (issue #190) — `backend/tests` shares one
   session-scoped Postgres container across every test in the run. Assert a relative
