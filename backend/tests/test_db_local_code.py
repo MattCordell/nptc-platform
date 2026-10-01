@@ -352,6 +352,26 @@ def test_match_strength_check_lists_exactly_the_enum_values() -> None:
 
 @pytest.mark.req("FR-91")
 @pytest.mark.integration
+@pytest.mark.parametrize("strength", list(SnomedMapMatchStrength), ids=lambda m: m.value)
+def test_the_migrated_database_accepts_every_match_strength(
+    db: Connection, strength: SnomedMapMatchStrength
+) -> None:
+    system_id = _insert_system(db, key="map_each_strength", uri="https://nptc.example.org/mes")
+    code_id = _insert_code(db, system_id=system_id)
+
+    try:
+        _insert_map_row(db, local_code_id=code_id, match_strength=strength.value)
+    except IntegrityError:
+        pytest.fail(
+            f"the migrated database rejects match_strength {strength.value!r}; a new "
+            "SnomedMapMatchStrength value needs a migration that replaces the CHECK constraint, "
+            "because compare_metadata does not compare CHECK text",
+            pytrace=False,
+        )
+
+
+@pytest.mark.req("FR-91")
+@pytest.mark.integration
 def test_map_row_advisory_note_cannot_be_blank(db: Connection) -> None:
     """FR-91: the map MUST be explicit that it is advisory - every row
     carries its own caveat, never an empty one."""
