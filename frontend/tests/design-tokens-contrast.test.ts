@@ -94,9 +94,9 @@ describe("design tokens meet WCAG AA contrast", () => {
     ["color-accent-hover", "the active nav link"],
     ["color-accent", "footer links"],
     ["color-text-muted", "the unavailable-sign-in text and footer line"],
-  ] as const)("--%s reaches 4.5:1 on --color-surface (%s)", (textToken) => {
+  ] as const)("--%s reaches 4.5:1 on --color-surface (%s)", (textToken, usedFor) => {
     const text = tokenValue(textToken);
     const surface = tokenValue("color-surface");
-    expect(contrastRatio(text, surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(contrastRatio(text, surface), usedFor).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });

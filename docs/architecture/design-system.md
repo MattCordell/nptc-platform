@@ -7,9 +7,10 @@ row-hover/`align`, and the new `StatusBadge`) that consume this vocabulary — s
 [components.md](components.md) for the component baseline itself.
 
 **This document describes the target design, not the current state of every screen.** The
-app shell, filter bar, detail-page two-column body and audit trail described under "Layout
-patterns" below are not yet implemented on any screen — that lands with the two follow-on
-issues (#324, #325). Read this as the destination, not a description of what exists today.
+app shell (issue #426: header with a user menu, and footer) is implemented. The filter bar,
+detail-page two-column body and audit trail described under "Layout patterns" below are not
+yet implemented on any screen — that lands with the follow-on issues (#324, #325). Read this
+as the destination, not a description of what exists today.
 
 ## Palette
 
@@ -51,6 +52,9 @@ Sizes in use: headings 26–38px, body/UI 13–15px, helper/meta text 12–12.5p
 - **App shell**: 56–60px top nav bar (serif wordmark left, primary nav links center-left,
   user avatar right), 1px `#DCD5C6` border beneath. Active nav link: teal underline +
   deep-teal text.
+  Implemented in `shell/site-header.tsx` and `shell/user-menu.tsx`: the right-hand control is
+  a user menu (the display name in a button, not an avatar). See
+  [frontend-routing.md](frontend-routing.md) for its four auth states.
 - **Page header**: serif title + secondary meta line (counts, version, status) left;
   primary action button right.
 - **Filter bar**: search input + pill-style toggle buttons (rounded, 20px radius) for

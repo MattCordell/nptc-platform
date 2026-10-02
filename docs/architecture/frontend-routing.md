@@ -192,15 +192,34 @@ only type it as a single literal templated field).
 
 `shell/root-layout.tsx` renders the chrome every route sits inside: `<HeadContent />` (per-
 route document title, declared via each route's `head` option), a skip link, `<header>`
-with `<nav aria-label="Primary">`, `<main id="main-content" tabIndex={-1}>`, and
-`<footer>`. Deliberately no `<h1>` in the shell — each page owns its own, so heading order
+with a wordmark, `<nav aria-label="Primary">` and the user menu, `<main id="main-content"
+tabIndex={-1}>`, and `<footer>` with `<nav aria-label="Footer">`. Deliberately no `<h1>` in the shell — each page owns its own, so heading order
 stays sane as screens are added.
 
 After a client-side navigation there is no full page load to reset focus, so
 `useFocusMainOnNavigation` moves focus to `<main>` on every route change after the first
 (NFR-31; PRD §17.2 item 4). The primary navigation is shown unconditionally, including
 links into the authenticated and admin sections — see "Authentication is structural"
-below for why that's fine.
+below for why that's fine. The router marks the current page's link with
+`aria-current="page"`, and the header underlines it so the cue is not colour alone.
+
+`shell/user-menu.tsx` is the only part of the header that varies with the auth status. It
+takes the same footprint in every state so the bar does not shift when the status settles:
+
+| Status | What the header shows |
+|---|---|
+| `restoring` | An inert, hidden-from-assistive-technology placeholder |
+| `signed-out` | Sign in and Register links (the `/sign-in` and `/register` routes start the OIDC redirect) |
+| `signed-in` | A button labelled with the user's display name that opens Account and Sign out |
+| `unavailable` | Muted text, "Sign-in unavailable", with no `role="status"` |
+
+The signed-in button calls `GET /auth/me` through `useSession`, and only in that state, so a
+signed-out or unavailable visitor triggers no extra request. The label falls back from
+display name to username to "Your account". The menu is a disclosure (a button with
+`aria-expanded` and `aria-controls`), not an ARIA `menu`: it closes on Escape (returning
+focus to the button), on a click outside, when focus leaves it, and on navigation. It offers
+links and never shows roles or permissions; the server still authorises every request
+(NFR-20).
 
 The shell's landmarks and skip link are now styled from `src/styles/app.css` (issue #148's
 Tailwind adoption, [ADR-0025](../adr/0025-frontend-styling.md)) — see
