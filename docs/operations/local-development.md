@@ -4,8 +4,12 @@ Use this when you edit the code and want hot reload. Postgres and Keycloak still
 Docker, while the API runs under `uv` and the web app under `pnpm`. To run the whole stack in
 containers instead, see [`deployment.md`](deployment.md).
 
-You need Docker, `uv`, Node 22 and `pnpm`. Run every command from the repository root unless
+You need Docker, `uv`, Node 26 and `pnpm`. Run every command from the repository root unless
 a step says otherwise.
+
+Node 25 and later ship no `corepack`, so `corepack enable` does not work. Install pnpm with
+npm instead, using the version in the `packageManager` field of the root `package.json`:
+`npm install --global pnpm@11.20.0`.
 
 ## 1. Create the settings files
 
