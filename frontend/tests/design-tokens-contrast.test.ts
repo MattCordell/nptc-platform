@@ -15,9 +15,8 @@ import { describe, expect, it } from "vitest";
  * `className` contains `text-[var(--color-status-draft-text)]` can only ever
  * prove that class string is present - it says nothing about whether that
  * token's value is contrast-safe. This file is the one place that claim is
- * actually checked, following NFR-31 now that `frontend/src/test/a11y.ts`
- * disables axe's `color-contrast` rule under jsdom and issue #211's manual
- * pass is cancelled - see docs/architecture/components.md.
+ * actually checked under jsdom, where `frontend/src/test/a11y.ts` disables
+ * axe's `color-contrast` rule (NFR-31, see docs/architecture/components.md).
  */
 
 const APP_CSS_PATH = join(
