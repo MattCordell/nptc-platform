@@ -22,7 +22,8 @@ async announcements. Issue #210 completes the set the entry-edit screens need â€
 the choice controls, a form wrapper and an error summary. The layout primitives (a page
 container, a page header and a card) round out the set; see "Layout primitives" below.
 
-Three properties below are not yet confirmed by anything: colour contrast, a
+Three properties below are not yet confirmed in a real browser or with a screen reader:
+colour contrast (the token pairs are checked arithmetically, but not as rendered), a
 repeated-hint pattern for option groups, and whole-screen defects (heading order, focus
 order across combined components) that no per-component check can see. Each is
 **unverified** today. The real-browser run covers contrast and whole-screen structure
