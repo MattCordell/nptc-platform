@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
@@ -286,6 +286,35 @@ function EarlyRefusalForm({ outcome }: { outcome: SubmitOutcome }) {
         return new Promise<SubmitOutcome>((resolve) => {
           window.setTimeout(() => resolve(outcome), 20);
         });
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
+ * A validate-on-change screen whose first save succeeds and whose second is
+ * refused after a delay. The first submit's `{ ok: true }` must not leave the
+ * second one disarmed: the settled id belongs to submit 1, not submit 2.
+ */
+function SecondSaveRefusedForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const saves = useRef(0);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={() => {
+        saves.current += 1;
+        if (saves.current === 1) {
+          return Promise.resolve({ ok: true });
+        }
+        window.setTimeout(() => setFormError("The catalogue rejected this entry."), 20);
+        return Promise.resolve({ ok: false });
       }}
     >
       <Field id="requesting-term" label="Requesting term">
@@ -710,6 +739,19 @@ describe("Form", () => {
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
     expect(summaryElement()).not.toHaveFocus();
+  });
+
+  it("announces a refusal on a second save after a first save resolved { ok: true }", async () => {
+    const user = userEvent.setup();
+    render(<SecondSaveRefusedForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    expect(summaryElement()).toHaveFocus();
   });
 
   it.each([

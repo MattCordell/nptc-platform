@@ -169,20 +169,27 @@ submit's answer until an error actually arrives, however many renders later, and
 require the caller to set `pending` for that to work — `pending` drives the button and
 `aria-busy` only.
 
-**`Form` supports validate-on-change, with a caveat.** A caller whose `onSubmit` returns
-a promise gets a second disarm path: the flag clears when that promise settles, whether
-it resolves or rejects, in addition to clearing when an error actually arrives. A screen
-that validates on *change* returns a promise from `onSubmit` so a settled successful
-submit disarms the flag before the next keystroke can produce an error.
+**`Form` supports validate-on-change through `SubmitOutcome`.** `onSubmit` returns either
+nothing or a promise that resolves a `SubmitOutcome`, `{ ok: boolean }`:
 
-The caveat: the promise must not settle until any error it causes is already set. A
-caller whose error state commits in a render *after* the promise settles — the common
-`mutateAsync()` shape, where `isError` / `error` can lag the resolved promise by a
-render or two — will have that later error go unannounced, because the flag already
-disarmed on the earlier settle with no error yet visible. See `onSubmit`'s doc comment
-in `form.tsx` and `SlowRefusingPromiseForm` in `form.test.tsx`, which pins this boundary.
-The void case (an `onSubmit` that returns nothing) is unaffected by any of this — it
-still relies solely on an error arriving, however many renders later, exactly as before.
+| `onSubmit` returns | Focus flag | Use it when |
+|---|---|---|
+| nothing | stays armed until an error arrives, however many renders later | `formError` comes from a mutation hook (every panel today) |
+| a promise resolving `{ ok: true }` | disarms, focus does not move | the screen validates on *change*, so a later keystroke error must not steal focus |
+| a promise resolving `{ ok: false }`, or rejecting | stays armed | the save failed and the error may commit on a later render |
+
+Anything else a promise resolves is read as `{ ok: false }`: an unannounced error is the
+defect, a stale armed flag is not. A rejection is handled inside `Form`, so it never
+surfaces as an unhandled rejection.
+
+The type is what protects the hook-driven panels. A bare `mutateAsync()` promise resolves
+the saved record, not an outcome, so `return add.mutateAsync(...)` fails to compile rather
+than silently losing the announcement. Map it instead:
+`.then(() => ({ ok: true }), () => ({ ok: false }))`. An `async` `onSubmit` that returns
+nothing is also a type error. The announcement for a server refusal is asserted at screen
+level in `admin-catalogue-edit.test.tsx` ("moves focus to the summary when the server
+refuses the save"); `SlowRefusingPromiseForm` in `form.test.tsx` pins each outcome. See
+ADR-0026's 2026-10-02 addendum for the alternatives rejected.
 
 ## Known limits of the automated check
 
