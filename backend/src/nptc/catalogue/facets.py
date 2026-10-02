@@ -44,6 +44,7 @@ its grouping value.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol
@@ -223,7 +224,7 @@ class FacetSource(Protocol):
         """A predicate over `catalogue_entry`, correlated where needed."""
         ...
 
-    def value_source(self) -> Select[Any] | None:
+    def value_source(self) -> Select[uuid.UUID, Any, str | None] | None:
         """`(entry_id, value, label)` rows for aggregation, or `None` where
         this source cannot be faceted at all (a `decimal` property, whose
         handler returns `None` from `facet_expression()` because every
@@ -293,7 +294,7 @@ class _PropertyFacetSource:
             .where(self.handler.filter_clause(op, value, _value_column()))
         )
 
-    def value_source(self) -> Select[Any] | None:
+    def value_source(self) -> Select[uuid.UUID, Any, str | None] | None:
         expression = self.handler.facet_expression(_value_column())
         if expression is None:
             return None
@@ -348,7 +349,7 @@ class _CoreColumnFacetSource:
             return type_cast("ColumnElement[bool]", self.column.in_(tuple(value)))
         raise UnsupportedFilterOperatorError(f"core-column facet does not support {op.value}")
 
-    def value_source(self) -> Select[Any] | None:
+    def value_source(self) -> Select[uuid.UUID, Any, str | None] | None:
         return sa_select(
             CatalogueEntry.id.label("entry_id"),
             self.column.label("value"),
@@ -679,12 +680,12 @@ class Facet:
 #: `nptc.catalogue.search` closes over its scored CTE, a plain browse over
 #: `catalogue_entry`. Given the predicates to apply, it returns a `SELECT` of
 #: entry ids.
-BaseEntryIds = Callable[[Sequence[ColumnElement[bool]]], Select[Any]]
+BaseEntryIds = Callable[[Sequence[ColumnElement[bool]]], Select[uuid.UUID]]
 
 
 def build_facet_count_statement(
-    descriptor: FacetDescriptor, base: Select[Any]
-) -> Select[Any] | None:
+    descriptor: FacetDescriptor, base: Select[uuid.UUID]
+) -> Select[Any, Any, int] | None:
     """One facet's bucket query, or `None` where the facet cannot be grouped.
 
     Public and separate from `compute_facets`, as
@@ -726,8 +727,8 @@ def build_facet_count_statement(
 
 def build_facet_counts_statement(
     descriptors: Sequence[FacetDescriptor],
-    base_for: Callable[[FacetDescriptor], Select[Any]],
-) -> Select[Any] | None:
+    base_for: Callable[[FacetDescriptor], Select[uuid.UUID]],
+) -> Select[*tuple[Any, ...]] | None:
     """Every facetable descriptor's buckets, unioned into one statement, or `None`
     if none can be grouped.
 
@@ -758,7 +759,7 @@ def build_facet_counts_statement(
     The cast lives in this wrapper so the grouping expression, and the plan that
     `test_db_property_index_plan.py` checks for it, stay untouched.
     """
-    branches: list[Select[Any]] = []
+    branches: list[Select[str, str, str | None, int, int]] = []
     for descriptor in descriptors:
         inner = build_facet_count_statement(descriptor, base_for(descriptor))
         if inner is None:
@@ -805,7 +806,7 @@ def compute_facets(
     `catalogue_entry` (ADR-0032).
     """
 
-    def base_for(descriptor: FacetDescriptor) -> Select[Any]:
+    def base_for(descriptor: FacetDescriptor) -> Select[uuid.UUID]:
         return base_entry_ids(filter_predicates(selections, excluding=descriptor.key))
 
     statement = build_facet_counts_statement(context.descriptors, base_for)
