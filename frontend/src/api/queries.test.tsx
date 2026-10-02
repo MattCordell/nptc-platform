@@ -912,7 +912,7 @@ describe("useCatalogueSearch", () => {
       (props: { q: string; after?: string }) => useCatalogueSearch(props),
       {
         wrapper: wrapperWithStatus("signed-in", queryClient),
-        initialProps: { q: "glucose" },
+        initialProps: { q: "glucose" } as { q: string; after?: string },
       },
     );
     await waitFor(() => expect(calls).toHaveLength(1));
