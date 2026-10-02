@@ -31,7 +31,7 @@
   contract, why search values stay raw strings, the not-found/error surfaces, and the
   structural (not access-control) authentication seam for issue #41.
 - [components.md](components.md) — the accessible component baseline (issue #148): the
-  five components screens are expected to compose, the automated `axe-core` check and its
+  components screens are expected to compose, the automated `axe-core` check and its
   known limits (`color-contrast` under jsdom), and the Tailwind styling strategy
   ([ADR-0025](../adr/0025-frontend-styling.md)).
 - [audit-log.md](audit-log.md) — the NFR-12 audit log query surface (issue #286): the read
