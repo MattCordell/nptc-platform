@@ -14,9 +14,9 @@ axe-core) is what verifies NFR-31 today; the manual keyboard, screen-reader and
 colour-contrast pass #211 would have added is deferred indefinitely, not merely delayed
 to a later phase — see PRD §13.6 for the current wording. Issue #148 landed the automated
 half and the first components later screens are expected to compose: a form field, a
-button, a modal dialog, a data table, and a live region for async announcements. Issue
-#210 completes the set the entry-edit screens need — a select, the choice controls, a
-form wrapper and an error summary. The layout primitives (a page container, a page
+button, a modal dialog, a data table, and a live region for async announcements.
+Issue #210 completes the set the entry-edit screens need — a select, the choice controls,
+a form wrapper and an error summary. The layout primitives (a page container, a page
 header and a card) round out the set; see "Layout primitives" below.
 
 Three properties below were written expecting that manual pass to confirm them: colour
