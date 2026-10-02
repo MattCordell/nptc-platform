@@ -8,6 +8,7 @@ import { asCollisionError, asVersionConflict } from "./conflicts.ts";
 import { stubApi } from "../test/stub-api.ts";
 import { createQueryClient } from "./query-client.ts";
 import {
+  type CatalogueSearchParams,
   useAcknowledgeCollision,
   useAddDesignations,
   useAdminEntriesList,
@@ -855,6 +856,17 @@ describe("useEntriesList filters and gating", () => {
     expect([...searchParams.keys()].sort()).toEqual(["after", "limit"]);
   });
 
+  it("sends no after parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntriesList({ after: null }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("after")).toBe(false);
+  });
+
   it("does not fetch while enabled is false", () => {
     const calls = stubApi([
       { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
@@ -909,10 +921,10 @@ describe("useCatalogueSearch", () => {
     ]);
     const queryClient = createQueryClient();
     const { rerender } = renderHook(
-      (props: { q: string; after?: string }) => useCatalogueSearch(props),
+      (props: CatalogueSearchParams) => useCatalogueSearch(props),
       {
         wrapper: wrapperWithStatus("signed-in", queryClient),
-        initialProps: { q: "glucose" } as { q: string; after?: string },
+        initialProps: { q: "glucose" } as CatalogueSearchParams,
       },
     );
     await waitFor(() => expect(calls).toHaveLength(1));
@@ -920,8 +932,32 @@ describe("useCatalogueSearch", () => {
     rerender({ q: "glucose", after: "cursor-1" });
     await waitFor(() => expect(calls).toHaveLength(2));
 
-    rerender({ q: "sodium", after: "cursor-1" });
+    rerender({ q: "glucose", after: "cursor-1", filters: { specimen: ["119297000"] } });
     await waitFor(() => expect(calls).toHaveLength(3));
+
+    rerender({ q: "glucose", after: "cursor-1", filters: { specimen: ["122575003"] } });
+    await waitFor(() => expect(calls).toHaveLength(4));
+
+    rerender({ q: "sodium", after: "cursor-1", filters: { specimen: ["122575003"] } });
+    await waitFor(() => expect(calls).toHaveLength(5));
+  });
+
+  // A page's next_cursor is `string | null`, so a screen passes it straight
+  // back; a null on the last page must mean "no cursor", not the text "null".
+  it("sends no after parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: SEARCH, status: 200, body: { items: [], facets: [] } },
+    ]);
+
+    const { result } = renderHook(
+      () => useCatalogueSearch({ q: "glucose", after: null }),
+      {
+        wrapper,
+      },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("after")).toBe(false);
   });
 
   it.each(["", "   "])("does not fetch for a blank q (%j)", (q) => {
@@ -1027,6 +1063,19 @@ describe("useEntryHistory", () => {
     expect(searchParams.get("limit")).toBe("5");
     expect(searchParams.get("before")).toBe("cursor-9");
     expect([...searchParams.keys()].sort()).toEqual(["before", "limit"]);
+  });
+
+  it("sends no before parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: HISTORY, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntryHistory(ENTRY_KEY, { before: null }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("before")).toBe(false);
   });
 
   it("surfaces a non-2xx response with an empty body as a query error", async () => {

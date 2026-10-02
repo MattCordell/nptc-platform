@@ -121,7 +121,7 @@ export interface CatalogueSearchParams {
   /** The previous page's `next_cursor`. The server binds a cursor to its `q`
    * and filters and refuses a mismatch with a 422, so all three sit in the
    * query key together. */
-  after?: string;
+  after?: string | null;
   filters?: Record<string, string[]>;
   enabled?: boolean;
 }
@@ -218,7 +218,7 @@ export function useEntryProperties(businessKey: string) {
 export interface EntryHistoryParams {
   limit?: number;
   /** The previous page's `next_cursor`, passed back unchanged (ADR-0024). */
-  before?: string;
+  before?: string | null;
 }
 
 /**
