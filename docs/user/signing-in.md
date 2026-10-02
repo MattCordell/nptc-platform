@@ -6,9 +6,10 @@ commenting, or reviewing.
 
 ## Creating an account
 
-Choose **Register** at the top right of any page. You are taken to the NPTC sign-in service, where you create an
-account with a username, an email address and a password. This is an ordinary
-registration form: the catalogue application itself never sees your password.
+Choose **Register** at the top right of any page. You are taken to the NPTC sign-in
+service, where you create an account with a username, an email address and a password.
+This is an ordinary registration form: the catalogue application itself never sees your
+password.
 
 Once you have registered you are returned to the catalogue, already signed in. A new
 account starts as a **Provisional** member; an administrator can grant further roles
@@ -20,8 +21,9 @@ later.
 
 ## Signing in
 
-Choose **Sign in** at the top right of any page, or try to open a page that needs an account — you will be sent to
-sign in and returned to the page you were heading for once you are done.
+Choose **Sign in** at the top right of any page, or try to open a page that needs an
+account — you will be sent to sign in and returned to the page you were heading for once
+you are done.
 
 If you have signed in recently, this may complete without showing you a form at all: the
 sign-in service remembers your session for a while, and the catalogue quietly re-uses it.

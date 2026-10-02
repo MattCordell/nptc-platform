@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -203,6 +203,27 @@ describe("UserMenu disclosure (NFR-31)", () => {
     await user.click(panelOf(button).getByRole("link", { name: "Account" }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/account"));
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes when the location changes without a click, and stays closed on return", async () => {
+    const { user, button, router } = await openMenu();
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await act(() => router.navigate({ to: "/terms" }));
+    expect(button).toHaveAttribute("aria-expanded", "false");
+
+    await act(() => router.navigate({ to: "/about" }));
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes when only the hash changes", async () => {
+    const { user, button, router } = await openMenu();
+    await user.click(button);
+
+    await act(() => router.navigate({ to: "/about", hash: "top" }));
+
     expect(button).toHaveAttribute("aria-expanded", "false");
   });
 

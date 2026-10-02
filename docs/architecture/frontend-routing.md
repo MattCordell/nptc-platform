@@ -193,8 +193,8 @@ only type it as a single literal templated field).
 `shell/root-layout.tsx` renders the chrome every route sits inside: `<HeadContent />` (per-
 route document title, declared via each route's `head` option), a skip link, `<header>`
 with a wordmark, `<nav aria-label="Primary">` and the user menu, `<main id="main-content"
-tabIndex={-1}>`, and `<footer>` with `<nav aria-label="Footer">`. Deliberately no `<h1>` in the shell — each page owns its own, so heading order
-stays sane as screens are added.
+tabIndex={-1}>`, and `<footer>` with `<nav aria-label="Footer">`. Deliberately no `<h1>`
+in the shell — each page owns its own, so heading order stays sane as screens are added.
 
 After a client-side navigation there is no full page load to reset focus, so
 `useFocusMainOnNavigation` moves focus to `<main>` on every route change after the first
@@ -213,13 +213,13 @@ takes the same footprint in every state so the bar does not shift when the statu
 | `signed-in` | A button labelled with the user's display name that opens Account and Sign out |
 | `unavailable` | Muted text, "Sign-in unavailable", with no `role="status"` |
 
-The signed-in button calls `GET /auth/me` through `useSession`, and only in that state, so a
-signed-out or unavailable visitor triggers no extra request. The label falls back from
-display name to username to "Your account". The menu is a disclosure (a button with
+The signed-in button calls `GET /auth/me` through `useSession`, and only in that state,
+so a signed-out or unavailable visitor triggers no extra request. The label falls back
+from display name to username to "Your account". The menu is a disclosure (a button with
 `aria-expanded` and `aria-controls`), not an ARIA `menu`: it closes on Escape (returning
-focus to the button), on a click outside, when focus leaves it, and on navigation. It offers
-links and never shows roles or permissions; the server still authorises every request
-(NFR-20).
+focus to the button), on a click outside, when focus leaves it, and on any change of
+location (page, search or hash). It offers links and never shows roles or permissions;
+the server still authorises every request (NFR-20).
 
 The shell's landmarks and skip link are now styled from `src/styles/app.css` (issue #148's
 Tailwind adoption, [ADR-0025](../adr/0025-frontend-styling.md)) — see

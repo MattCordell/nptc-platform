@@ -16,14 +16,20 @@ const FALLBACK_LABEL = "Your account";
  * ARIA `menu`: it is a button that shows a short list of links, so Tab moves
  * through them and no arrow-key handling is promised.
  *
- * `openPath` records the pathname the menu was opened on rather than a plain
- * boolean, so any navigation closes it without an effect that resets state.
+ * `openHref` records the full location the menu was opened on rather than a
+ * plain boolean, and is cleared during render as soon as the location differs.
+ * Any change of page, search or hash therefore closes the menu, including Back
+ * and programmatic redirects, and a later return to the same location cannot
+ * find it still open.
  */
 function SignedInMenu() {
   const session = useSession();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const [openPath, setOpenPath] = useState<string | null>(null);
-  const open = openPath === pathname;
+  const href = useRouterState({ select: (state) => state.location.href });
+  const [openHref, setOpenHref] = useState<string | null>(null);
+  if (openHref !== null && openHref !== href) {
+    setOpenHref(null);
+  }
+  const open = openHref !== null;
   const panelId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -31,7 +37,7 @@ function SignedInMenu() {
   const user = session.data?.user;
   const label = user?.display_name || user?.username || FALLBACK_LABEL;
 
-  const close = () => setOpenPath(null);
+  const close = () => setOpenHref(null);
 
   useEffect(() => {
     if (!open) {
@@ -39,12 +45,12 @@ function SignedInMenu() {
     }
     const closeIfOutside = (event: Event) => {
       if (!containerRef.current?.contains(event.target as Node)) {
-        setOpenPath(null);
+        setOpenHref(null);
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setOpenPath(null);
+        setOpenHref(null);
         buttonRef.current?.focus();
       }
     };
@@ -68,7 +74,7 @@ function SignedInMenu() {
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpenPath(open ? null : pathname)}
+        onClick={() => setOpenHref(open ? null : href)}
         className="rounded-control inline-flex h-9 max-w-56 items-center gap-2 border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-accent)]"
       >
         <span className="truncate">{label}</span>
