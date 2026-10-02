@@ -78,6 +78,27 @@ Sizes in use: headings 26–38px, body/UI 13–15px, helper/meta text 12–12.5p
 - **Borders over shadows**: no drop shadows in the system; separation comes from 1px
   `#DCD5C6` borders/rules.
 
+## Page layout
+
+The design notes above give no container width, gutter, rhythm or title size. These
+values are fixed here and implemented by `PageContainer`, `PageHeader` and `Card` in
+`frontend/src/components/` (see [components.md](components.md#layout-primitives)):
+
+- **Desktop-first.** The platform targets desktop and laptop screens. Phones are not a
+  design target and nothing is laid out for one; a tablet is acceptable, not designed for.
+  No component carries phone-specific behaviour or a responsive gutter.
+- **Container**: one fixed maximum width of 1200px (the `--container-page` token in
+  `app.css`), centred. There is no width option. The box is border-box, so the gutter
+  sits inside the 1200px and content is at most 1152px wide.
+- **Gutter and rhythm**: 24px horizontal gutter on the container; 24px between its
+  children. The container sits inside `main`, which pads 1rem (16px) in `app.css`, so
+  today content starts 40px from the viewport edge, not 24px. The app shell issue is
+  where those two paddings get reconciled; until then, read 40px as the rendered value.
+- **Card padding**: one value, 24px, inside the 22-32px range above. No padding option
+  and no variants.
+- **Page title**: `text-3xl`, 30px, inside the 26-38px range of the notes, in the serif
+  face. Its meta line is 12px, in the muted text colour.
+
 ## Voice & content rules
 
 - SCTIDs/codes: always monospace, always left-aligned, never ellipsis-truncated.

@@ -13,10 +13,11 @@ bind it the way it would a public service. Automated testing in CI (this baselin
 axe-core) is what verifies NFR-31 today; the manual keyboard, screen-reader and
 colour-contrast pass #211 would have added is deferred indefinitely, not merely delayed
 to a later phase — see PRD §13.6 for the current wording. Issue #148 landed the automated
-half and five components later screens are expected to compose: a form field, a button, a
-modal dialog, a data table, and a live region for async announcements. Issue #210
-completes the set the entry-edit screens need — a select, the choice controls, a form
-wrapper and an error summary.
+half and the first components later screens are expected to compose: a form field, a
+button, a modal dialog, a data table, and a live region for async announcements.
+Issue #210 completes the set the entry-edit screens need — a select, the choice controls,
+a form wrapper and an error summary. The layout primitives (a page container, a page
+header and a card) round out the set; see "Layout primitives" below.
 
 Three properties below were written expecting that manual pass to confirm them: colour
 contrast, a repeated-hint pattern for option groups, and whole-screen defects (heading
@@ -191,6 +192,29 @@ nothing is also a type error. The type is what protects a panel; no test can obs
 `admin-catalogue-edit.test.tsx` ("moves focus to the summary when the server refuses the
 save") pins the void path's late-refusal announcement for a hook-driven panel. See
 ADR-0026's 2026-10-02 addendum for the alternatives rejected.
+
+## Layout primitives
+
+Issue #427. Presentational components that carry the page structure from
+[design-system.md](design-system.md#page-layout), so a screen composes them instead of
+hand-rolling Tailwind layout. Same rules as above: a co-located test, an
+`expectNoA11yViolations` call, and design tokens only. Each test also asserts through the
+class string that no hex value, Tailwind palette class or `shadow-*` class is used
+(`expectTokenClassesOnly` in `frontend/src/test/token-classes.ts`).
+
+- **`page-container.tsx` — `PageContainer`.** The page-width wrapper: centred, capped at
+  the `--container-page` token, with a 24px gutter and 24px between its children. A `div`,
+  not `main` — `root-layout.tsx` already provides the one `<main id="main-content">`
+  landmark. Its gutter stacks on the `main { padding: 1rem }` base rule in `app.css`.
+- **`page-header.tsx` — `PageHeader`.** The page's single `h1`, an optional muted meta
+  line and optional actions on the right. The title and meta come before the actions in
+  DOM order, so keyboard order matches reading order. An optional `id` lands on the `h1`
+  so a screen keeps its `aria-labelledby` wiring; the component generates none. It renders
+  no empty meta or actions element when those props are absent, and it is deliberately not
+  a `<header>` element, because `app.css` pads every `header` globally.
+- **`card.tsx` — `Card`.** A white surface with a 1px border and the 6px card radius, one
+  24px padding and no shadow. It spreads native `div` props, so a caller adds `role` or
+  `aria-labelledby` when a card is a labelled region.
 
 ## Known limits of the automated check
 
