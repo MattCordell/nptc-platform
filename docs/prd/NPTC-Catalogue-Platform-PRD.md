@@ -1053,7 +1053,7 @@ The UK NHS standards **DCB0129** and **DCB0160** are the mature reference for th
 
 | Layer | Recommendation | Why |
 |---|---|---|
-| **Backend** | Python 3.12+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2 | The seeding transform, the anomaly report and the Ontoserver batch validation are all naturally Python and would be written in Python regardless of backend choice. Choosing a Python backend therefore removes a second language from the repository rather than adding one. Pydantic gives runtime validation with real enforcement, which the property registry needs. FastAPI emits OpenAPI 3.1 natively, which is what makes FR-20 nearly free. |
+| **Backend** | Python 3.14+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2 | The seeding transform, the anomaly report and the Ontoserver batch validation are all naturally Python and would be written in Python regardless of backend choice. Choosing a Python backend therefore removes a second language from the repository rather than adding one. Pydantic gives runtime validation with real enforcement, which the property registry needs. FastAPI emits OpenAPI 3.1 natively, which is what makes FR-20 nearly free. |
 | **Database** | PostgreSQL 16+, extensions `pg_trgm` and `unaccent` | JSONB with expression indexing carries the property registry. Trigram similarity carries duplicate detection and typo-tolerant search. Row-level privilege control enforces the append-only audit log. One data store, one backup, one consistency model. |
 | **Front end** | React 18+, TypeScript, Vite, TanStack Query | Client generated from the backend's OpenAPI document via `openapi-typescript`, so the contract is typed end to end without committing the whole system to one language. |
 | **Identity** | Keycloak | Section 13.1. |

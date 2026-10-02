@@ -27,6 +27,11 @@ jobs:
       - name: Fetch base ref
         run: git fetch --no-tags --prune origin "${{ github.event.pull_request.base.ref }}"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
       - name: PR title is a Conventional Commit
         env:
           TITLE: ${{ github.event.pull_request.title }}
@@ -87,4 +92,4 @@ jobs:
           # template's own instructional comment and read the word after it as a
           # genuine declared reason (issue #87).
           printf '%s' "$BODY" > /tmp/pr-body.txt
-          python3 scripts/doc_impact_gate.py /tmp/pr-body.txt
+          uv run --no-project python scripts/doc_impact_gate.py /tmp/pr-body.txt
