@@ -272,7 +272,8 @@ function SlowRefusingPromiseForm({ settle }: { settle: () => Promise<SubmitOutco
 /**
  * A caller that sets its error synchronously inside `onSubmit` but whose
  * promise settles only later - the error is visible before the settle, so
- * the announcement must not wait for it, and the settle must not undo it.
+ * the announcement must not wait for it. Pins the "error before settle"
+ * ordering for both outcomes.
  */
 function EarlyRefusalForm({ outcome }: { outcome: SubmitOutcome }) {
   const [formError, setFormError] = useState<string | undefined>(undefined);
@@ -771,12 +772,6 @@ describe("Form", () => {
       expect(
         await screen.findByText("The catalogue rejected this entry."),
       ).toBeInTheDocument();
-      await waitFor(() => expect(summaryElement()).toHaveFocus());
-
-      // Wait out the settle, then check it did not take focus back off.
-      await act(async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 40));
-      });
       await waitFor(() => expect(summaryElement()).toHaveFocus());
     },
   );

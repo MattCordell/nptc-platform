@@ -186,9 +186,10 @@ The type is what protects the hook-driven panels. A bare `mutateAsync()` promise
 the saved record, not an outcome, so `return add.mutateAsync(...)` fails to compile rather
 than silently losing the announcement. Map it instead:
 `.then(() => ({ ok: true }), () => ({ ok: false }))`. An `async` `onSubmit` that returns
-nothing is also a type error. The announcement for a server refusal is asserted at screen
-level in `admin-catalogue-edit.test.tsx` ("moves focus to the summary when the server
-refuses the save"); `SlowRefusingPromiseForm` in `form.test.tsx` pins each outcome. See
+nothing is also a type error. The type is what protects a panel; no test can observe it.
+`SlowRefusingPromiseForm` in `form.test.tsx` pins each outcome, and
+`admin-catalogue-edit.test.tsx` ("moves focus to the summary when the server refuses the
+save") pins the void path's late-refusal announcement for a hook-driven panel. See
 ADR-0026's 2026-10-02 addendum for the alternatives rejected.
 
 ## Known limits of the automated check

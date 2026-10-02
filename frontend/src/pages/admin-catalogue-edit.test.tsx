@@ -892,10 +892,13 @@ describe("adding synonyms", () => {
   });
 
   it("moves focus to the summary when the server refuses the save", async () => {
-    // NFR-31. The panel derives `formError` from the mutation hook, so the
-    // refusal commits on a render after the request settles. The summary must
-    // still be announced: that is the case `Form`'s `SubmitOutcome` contract
-    // protects, and the one the block-before-submit test above cannot reach.
+    // NFR-31. The panel's `onSubmit` returns nothing and derives `formError`
+    // from the mutation hook, so the refusal commits on a render after the
+    // request settles. This pins the void path's announcement of that late
+    // refusal - the path every panel ships, and one the block-before-submit
+    // test above cannot reach. It does not cover `SubmitOutcome`'s `ok: false`
+    // branch: the type, not a test, is what protects a panel from returning a
+    // promise.
     const user = userEvent.setup();
     const detail = "A term in this batch is longer than the catalogue allows.";
     const calls = stubApi([

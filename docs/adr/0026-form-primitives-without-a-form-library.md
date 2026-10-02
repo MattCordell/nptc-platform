@@ -117,14 +117,14 @@ an OpenAPI change first.
   that produced an error would pull focus out of the input the user was typing in, once
   per keystroke. **Issue #214 fixed this**: `onSubmit` was widened to
   `() => void | Promise<void>` and disarmed when the returned promise settled, whether it
-  resolved or rejected, so arming stays unconditional and the sync/void case is
-  unchanged (the 2026-10-02 addendum narrows this to a promise that resolves an outcome). The settle callback never decides arm/disarm directly — a bare
-  `.finally(...)` races a caller whose promise resolves right after it sets a form
-  error, clearing the flag as a microtask before the error-reading effect's macrotask
-  ever runs. Instead the settle callback only records "a result arrived for submit N";
-  the existing focus-move effect, guarded by a submit generation id, is the sole place
-  that decides to disarm, giving errors priority over a settled promise from the same
-  submit.
+  resolved or rejected, so arming stayed unconditional and the sync/void case was
+  unchanged. The 2026-10-02 addendum narrows this to a promise that resolves an outcome.
+  The settle callback never decides arm/disarm directly — a bare `.finally(...)` races a
+  caller whose promise resolves right after it sets a form error, clearing the flag as a
+  microtask before the error-reading effect's macrotask ever runs. Instead the settle
+  callback only records "a result arrived for submit N"; the existing focus-move effect,
+  guarded by a submit generation id, is the sole place that decides to disarm, giving
+  errors priority over a settled promise from the same submit.
 
   That widened signature left one case open: a caller whose error state commits in a
   render *after* the promise settles (`mutateAsync()`'s `isError` / `error` lagging the
