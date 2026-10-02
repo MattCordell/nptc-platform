@@ -5,28 +5,33 @@ import { Button } from "./button.tsx";
 import { ErrorSummary } from "./error-summary.tsx";
 import type { FormError } from "./error-summary.tsx";
 
+/** What a promise returned from `onSubmit` reports about the save. `ok: true`
+ * says the save succeeded; anything else, including a value that is not an
+ * outcome at all, is read as a failure. */
+export type SubmitOutcome = { ok: boolean };
+
 type FormProps = {
   /** Called once per accepted submit, already `preventDefault`-ed. Takes no
    * event: a caller that needed the event would be reaching around the one
    * submit path this component exists to provide.
    *
-   * A returned promise disarms the focus-move flag below when it settles,
-   * whether it resolves or rejects (issue #214) - a caller that returns
-   * nothing keeps the void-case behaviour unchanged, staying armed until an
-   * error prop actually arrives. `Form` handles the promise's rejection
-   * itself (it disarms either way), so a rejecting `onSubmit` no longer
-   * surfaces as an unhandled rejection the way it did before this prop
-   * accepted a promise.
+   * Returning nothing leaves the focus-move flag below armed until an error
+   * prop arrives, which is right for a caller that derives `formError` from a
+   * mutation hook: the error commits on a render after the request settles,
+   * and the flag is still there to announce it.
    *
-   * Contract: only settle the promise once any `errors` / `formError` the
-   * settlement itself causes is already set - synchronously, or awaited
-   * before resolving or rejecting. `Form` disarms on the settlement, not on
-   * a later render where an error prop happens to change, so a caller whose
-   * error state commits in a render *after* the promise settles (the
-   * `mutateAsync()` shape, where `isError` / `error` can lag the resolved
-   * promise by a render or two) will have that later error go unannounced.
-   * See `SlowRefusingPromiseForm` in `form.test.tsx` for the pinned case. */
-  onSubmit: () => void | Promise<void>;
+   * A returned promise must resolve a `SubmitOutcome`. `{ ok: true }` disarms
+   * the flag without moving focus, so a screen that validates on change does
+   * not pull focus out of the field being typed in once a save has
+   * succeeded. `{ ok: false }` and a rejection both leave the flag armed, so
+   * an error that commits several renders after the promise settles is still
+   * announced. `Form` handles the rejection itself, so it never surfaces as
+   * an unhandled rejection.
+   *
+   * The type is the guard against a `mutateAsync()` promise: it resolves the
+   * saved record, not an outcome, so returning it does not compile. Map it to
+   * an outcome instead - `.then(() => ({ ok: true }), () => ({ ok: false }))`. */
+  onSubmit: () => void | Promise<SubmitOutcome>;
   /** Field-level failures the caller has computed. Passing a non-empty list
    * after a submit attempt is what moves focus to the summary. */
   errors?: FormError[];
@@ -133,8 +138,8 @@ export function Form({
   // state: it only needs to be read back inside the settle handler and by
   // the effect below, never rendered.
   const submitIdRef = useRef(0);
-  // The most recently settled submit's id, or `undefined` before any promise
-  // has settled. Set only from a promise's `.then(settle, settle)` - never
+  // The most recent submit whose promise resolved `{ ok: true }`, or
+  // `undefined` before any has. Set only from that resolution - never
   // decided directly by the settle callback, which is a microtask that can
   // run before the effect below has even seen an error the same settle
   // caused the caller to set (see the effect's own comment for the race this
@@ -217,11 +222,10 @@ export function Form({
   // still listening, so an error appearing later with no further submit does
   // take focus. That is the better way round - after a submit, an error is
   // far more likely to be its answer than not - and an error that follows no
-  // submit at all still never moves focus. For a caller whose `onSubmit`
-  // returns a promise, a *successful* settle disarms below instead of
-  // waiting on an error that may never come - see the promise-settle branch.
-  // The void case (no promise returned) still relies entirely on an error
-  // arriving, exactly as before.
+  // submit at all still never moves focus. A caller that can say its save
+  // succeeded resolves `{ ok: true }`, which disarms below instead of waiting
+  // on an error that may never come. A caller that returns nothing, or
+  // resolves `{ ok: false }`, relies entirely on an error arriving.
   //
   // The dependency array below is not what gates this effect: `effectiveFormError`
   // has a new identity every render (see its own comment above), so in practice
@@ -240,22 +244,20 @@ export function Form({
       summaryRef.current?.focus();
       return;
     }
-    // A promise-driven success disarms without moving focus - this is what
-    // lets a validate-on-change screen use `Form` (issue #214): the settle
+    // A promise that resolved `{ ok: true }` disarms without moving focus -
+    // this is what lets a validate-on-change screen use `Form`: the settle
     // handler never decides arm/disarm directly (that would race the error
     // this same settle may have just caused the caller to set - see the
-    // settle handler's own comment), it only reports "a result arrived for
-    // submit N" via `settledSubmitId`, and this effect - which already runs
-    // once per render, after `hasErrors` is committed - is the one place
-    // that decides. Guarded by matching submit id: a stale settle from a
-    // superseded submit must not disarm the current one.
+    // settle handler's own comment), it only reports "a successful result
+    // arrived for submit N" via `settledSubmitId`, and this effect - which
+    // already runs once per render, after `hasErrors` is committed - is the
+    // one place that decides. Guarded by matching submit id: a stale settle
+    // from a superseded submit must not disarm the current one.
     //
-    // This still disarms the moment a settled submit has no error *yet* -
-    // it cannot wait to see whether one shows up in a later render, since
-    // that is indistinguishable from "no error is coming" (the case this
-    // effect exists to disarm for). See `onSubmit`'s doc comment for the
-    // contract this implies: a caller whose error state commits after the
-    // promise settles will have that error go unannounced.
+    // Only success reaches here. A failure never records a settled id, so it
+    // cannot disarm ahead of an error that commits on a later render - the
+    // caller said the save failed, which is a promise that an error is
+    // coming.
     if (settledSubmitId === submitIdRef.current) {
       awaitingResultRef.current = false;
     }
@@ -300,8 +302,20 @@ export function Form({
         // later too, silently regaining the always-armed contract's
         // opposite bug for every caller that never returns a promise.
         if (result instanceof Promise) {
-          const settle = () => setSettledSubmitId(thisSubmitId);
-          result.then(settle, settle);
+          result.then(
+            (outcome) => {
+              // Read as `ok: true` or nothing: a resolved value that is not an
+              // outcome must fail toward staying armed, since an unannounced
+              // error is the defect and a stale armed flag is not.
+              if ((outcome as SubmitOutcome | undefined)?.ok === true) {
+                setSettledSubmitId(thisSubmitId);
+              }
+            },
+            () => {
+              // Handled here so a rejecting `onSubmit` is never an unhandled
+              // rejection; the flag stays armed, like `{ ok: false }`.
+            },
+          );
         }
       }}
       className={["flex flex-col gap-4", className ?? ""].filter(Boolean).join(" ")}
