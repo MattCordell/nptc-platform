@@ -215,7 +215,7 @@ Six phases. Each is independently demonstrable, which matters for a project seek
 | **P2** | Submissions, workflow states, interest signals, internal comments, user administration and the full role model | The community-facing value. The Reviewer and Observer roles land here because the permission matrix at 4.7 is what the workflow states are enforced against. |
 | **P3** | Terminology validation against Ontoserver | Depends on P1 content existing. Independent of P2. |
 | **P4** | Releases, exports, export configuration versioning | Depends on P1 and P3. Cannot publish what has not been validated. |
-| **P5** | Hardening: automated accessibility testing, security review, performance, operational documentation | Not optional if adoption is a realistic outcome. |
+| **P5** | Hardening: accessibility checks (automated, real-browser and one manual pass), security review, performance, operational documentation | Not optional if adoption is a realistic outcome. |
 
 P0 can be built in parallel with P1 by a different developer.
 
@@ -1033,7 +1033,7 @@ The UK NHS standards **DCB0129** and **DCB0160** are the mature reference for th
 
 ### 13.6 Accessibility, performance and operations
 
-**NFR-31 (SHOULD):** WCAG 2.2 Level AA. Not a public-facing government service - the user base is a small, known community (fewer than 25 users) of RCPA-QAP and NCTS curators, so the DDA 1992 public-facing obligation does not bind this platform the way it would a public service. Automated testing in CI (component baseline plus axe-core) is in place; the manual keyboard, screen-reader and colour-contrast pass is deferred until it becomes a genuine requirement (e.g. the user base broadens or a public-facing view is added).
+**NFR-31 (SHOULD):** WCAG 2.2 Level AA. The authenticated user base is a small, known community (fewer than 25 users) of RCPA-QAP and NCTS curators, but the anonymous catalogue browser is a public-facing view, so the requirement is in progress at option B scope: (1) build accessibility in, with every screen composed from the shared accessible components and an axe-core assertion in each component test; (2) check in a real browser, with an axe run that includes colour contrast, because jsdom cannot compute it; (3) one manual pass before public launch, using the keyboard and one screen reader on the public and login screens only. A formal third-party audit and a WCAG conformance statement stay deferred. `docs/requirements/requirements.yaml` holds the definition, and CONTRIBUTING.md holds the per-change checklist.
 
 **NFR-32 (SHOULD):** Search returns in under 500 ms at the 95th percentile for a catalogue of 20,000 entries. Comfortably achievable in PostgreSQL at this scale with correct indexing.
 
@@ -1450,7 +1450,7 @@ Each phase is accepted against demonstrable criteria, not against a percentage.
 
 **P5: Hardening**
 
-- Automated accessibility testing passes. Manual keyboard and screen-reader pass is out of scope (deferred per §13.6 until NFR-31's re-entry condition is met).
+- Automated and real-browser accessibility checks pass. The one manual keyboard and screen-reader pass of the public and login screens is recorded before public launch (NFR-31, option B in §13.6). A formal audit and a conformance statement are out of scope.
 - Dependency and container scans clean of high and critical findings.
 - Backup taken and **restore actually performed** into a clean environment.
 - Operational documentation validated by someone other than the author performing a deployment from scratch.

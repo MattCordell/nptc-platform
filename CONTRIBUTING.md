@@ -73,7 +73,9 @@ From PRD §17.2, applying to every requirement:
 2. Every state-changing operation emits an audit event.
 3. Authorisation is enforced server-side and tested for the **negative** case, not only
    the positive one.
-4. Accessible: keyboard operable, correctly labelled, sensible focus order.
+4. Accessible: keyboard operable, correctly labelled, sensible focus order. For a
+   screen or component change, the [accessibility definition of
+   done](#accessibility-definition-of-done) below is the checklist.
 5. Errors tell the user what to do next — not a stack trace, not an HTTP status code.
 6. Documented where the behaviour is not self-evident.
 
@@ -85,6 +87,29 @@ Plus, for this project:
    infrastructure/process requirement with no plausible test, an `evidence:` path
    (pointing at the CI config or document that demonstrates it) may stand in for the test
    marker, or accompany one — see ADR-0002 and the `requirements.yaml` header.
+
+## Accessibility definition of done
+
+NFR-31 (WCAG 2.2 Level AA) is in progress at "option B" scope, defined once in
+`docs/requirements/requirements.yaml`. This checklist is the per-change part: a PR that adds
+or changes a screen or a component meets every row, or says in the PR body why a row does
+not apply.
+
+| Check | How it is checked |
+|---|---|
+| Every control works with the keyboard alone, and focus order matches reading order | Reviewer, by hand; component tests for each component's own key contract |
+| Focus is always visible, and a sticky header or dialog never hides the focused element (WCAG 2.4.11) | Reviewer, by hand |
+| Every control has a label or accessible name; use `frontend/src/components/`, not a bare `<input>` or `<button>` | `expectNoA11yViolations` in the component test |
+| The page has one `h1`, headings in order, and the landmarks from `root-layout.tsx` | axe test; Playwright run once it exists |
+| Colour contrast is checked in a real browser, not assumed from the tokens | Playwright with axe and colour contrast on; `frontend/tests/design-tokens-contrast.test.ts` for the token pairs |
+| Errors name the problem and the next step, and are announced through the live region or the error summary | Component test; reviewer, by hand |
+| No information is carried by colour alone (a status also has text) | Reviewer, by hand |
+| Click and tap targets are at least 24 by 24 CSS pixels (WCAG 2.5.8) | Reviewer, by hand |
+| Sign-in does not depend on a cognitive test such as retyping or transcribing a code (WCAG 3.3.8) | Reviewer, by hand, on the login screen |
+
+The one manual pass, keyboard plus a screen reader on the public and login screens, happens
+once before public launch and is tracked on its own issue. It is not part of each PR. A
+formal audit and a conformance statement stay deferred.
 
 ## Documentation is part of the change
 

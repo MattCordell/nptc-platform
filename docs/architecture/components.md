@@ -6,26 +6,30 @@ itself.
 
 ## Scope
 
-NFR-31 (WCAG 2.2 Level AA) is now SHOULD, not MUST: issue #211 was closed as deferred
-(2026-09-09) rather than delivered, since the platform's user base is a small, known
-community and the DDA 1992 public-facing obligation the PRD originally cited does not
-bind it the way it would a public service. Automated testing in CI (this baseline plus
-axe-core) is what verifies NFR-31 today; the manual keyboard, screen-reader and
-colour-contrast pass #211 would have added is deferred indefinitely, not merely delayed
-to a later phase — see PRD §13.6 for the current wording. Issue #148 landed the automated
-half and the first components later screens are expected to compose: a form field, a
-button, a modal dialog, a data table, and a live region for async announcements.
-Issue #210 completes the set the entry-edit screens need — a select, the choice controls,
-a form wrapper and an error summary. The layout primitives (a page container, a page
-header and a card) round out the set; see "Layout primitives" below.
+NFR-31 (WCAG 2.2 Level AA) is SHOULD and in progress at option B scope. It was deferred
+on 2026-09-09 while the user base was small and known; the anonymous catalogue browser is
+a public-facing view, which is the re-entry condition recorded then. The definition of
+option B lives once, in the NFR-31 entry of `docs/requirements/requirements.yaml`; PRD
+§13.6 summarises it and CONTRIBUTING.md holds the per-change checklist. In short, this
+baseline and its axe-core assertions are step one (build it in). A real-browser axe run
+with colour contrast on is step two. One manual keyboard and screen-reader pass of the
+public and login screens, before public launch, is step three. A formal audit and a
+conformance statement stay deferred.
 
-Three properties below were written expecting that manual pass to confirm them: colour
-contrast, a repeated-hint pattern for option groups, and whole-screen defects (heading
-order, focus order across combined components) that no per-component check can see. Now
-that issue #211 is cancelled, they are simply **unverified** — not confirmed, and not
-known to be wrong — and each note below says so explicitly rather than pointing at a pass
-that will not happen. Do not read the absence of a documented problem as evidence one of
-these is fine; issue #60 closing #211 verified nothing about them either.
+Issue #148 landed the automated half and the first components later screens are expected
+to compose: a form field, a button, a modal dialog, a data table, and a live region for
+async announcements. Issue #210 completes the set the entry-edit screens need — a select,
+the choice controls, a form wrapper and an error summary. The layout primitives (a page
+container, a page header and a card) round out the set; see "Layout primitives" below.
+
+Three properties below are not yet confirmed in a real browser or with a screen reader:
+colour contrast (the token pairs are checked arithmetically, but not as rendered), a
+repeated-hint pattern for option groups, and whole-screen defects (heading order, focus
+order across combined components) that no per-component check can see. Each is
+**unverified** today. The real-browser run covers contrast and whole-screen structure
+once it exists, and the manual pass covers the screen-reader properties. Each note below
+names the check that will confirm it. Do not read the absence of a documented problem as
+evidence one of these is fine.
 
 (The issue body cites NFR-19, the data-breach-response procedure — unrelated. The
 requirement this baseline implements is NFR-31.)
@@ -222,17 +226,18 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
   and computed rendering, which jsdom does not provide. It is disabled explicitly in
   `frontend/src/test/a11y.ts`, with a comment there rather than silently skipped. Contrast
   is instead carried by the `--color-*` tokens declared in `frontend/src/styles/app.css`'s
-  `@theme` block. **Unverified, not confirmed**, now that #211's manual pass is cancelled
-  (see "Scope" above) — CI passing has never meant contrast was verified, and there is no
-  remaining plan to verify it against a real browser's rendering.
+  `@theme` block, and `frontend/tests/design-tokens-contrast.test.ts` checks the token
+  pairs arithmetically. **Unverified against real rendering** until the real-browser axe
+  run with colour contrast enabled exists (option B step two, see "Scope" above) — CI
+  passing has never meant contrast was verified in a browser.
 - **A group's hint and error are announced once per option.** Wiring them to each
   `<input>` is what makes them announced at all — a `group` role's description is
   inconsistently supported — but the consequence is that a user tabbing through a
   six-option group hears the full hint and error six times. Whether that grates in
   practice is **unverified**: the refinement this would call for (describe only the
   *first* option by the hint while keeping the error on all of them) needs a real screen
-  reader in front of you to judge, not this reasoning alone, and #211's cancellation
-  leaves no plan to do that judging.
+  reader in front of you to judge, not this reasoning alone. The manual pre-launch pass
+  (option B step three) is where that judging happens, for the public and login screens.
 - **jsdom does not implement native radio behaviour** — neither the roving tabindex nor
   arrow-key traversal. `RadioGroup` therefore implements both itself and calls
   `preventDefault()` on the keys it handles, so a real browser's identical native
@@ -242,5 +247,5 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
 - The automated check runs component-by-component, in isolation. It catches what is wrong
   with a component's own markup; it cannot catch a whole-screen defect (heading order
   across several components, a focus order that only breaks once components are combined).
-  That class of defect is now **unverified** rather than deferred to a later pass — #211,
-  the pass that would have found it, is cancelled, not postponed.
+  That class of defect is **unverified** until the real-browser run walks whole screens
+  and the manual pre-launch pass covers the public and login screens.

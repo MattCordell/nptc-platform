@@ -32,7 +32,7 @@ Refs #
 - [ ] Tests cover the behaviour **and its principal failure mode**
 - [ ] State-changing operations emit an audit event (or: not applicable)
 - [ ] Authorisation enforced server-side, with a **negative-case** test (or: not applicable)
-- [ ] Keyboard operable, labelled, sensible focus order (or: not applicable)
+- [ ] Keyboard operable, labelled, sensible focus order, per the [accessibility checklist](https://github.com/MattCordell/nptc-platform/blob/main/CONTRIBUTING.md#accessibility-definition-of-done) (or: not applicable)
 - [ ] Errors say what to do next, not a stack trace or a status code
 - [ ] `requirements.yaml` status updated for any requirement now implemented
 - [ ] Full test suite green locally before this PR was raised
