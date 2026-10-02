@@ -6,12 +6,14 @@
 #     --build-arg VITE_OIDC_ISSUER=http://localhost:8080/realms/nptc \
 #     --build-arg VITE_OIDC_CLIENT_ID=nptc-frontend .
 
-FROM node:22.22.2-slim AS build
-# The version comes from "packageManager" in the root package.json.
-RUN corepack enable
+FROM node:26.10.0-slim AS build
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Node 25 and later images ship no corepack, so pnpm is installed with npm. The
+# version comes from "packageManager" in the root package.json, as it does
+# everywhere else.
+RUN npm install --global "pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
 COPY frontend/package.json frontend/package.json
 RUN pnpm install --frozen-lockfile --filter nptc-frontend...
 
