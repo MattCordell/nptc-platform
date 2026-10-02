@@ -15,7 +15,7 @@ by a future contributor who has not read §14.1.
 
 | Layer | Choice |
 |---|---|
-| Backend | Python 3.12+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2 |
+| Backend | Python 3.14+, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2 |
 | Database | PostgreSQL 16+, extensions `pg_trgm` and `unaccent` |
 | Frontend | React 19, TypeScript, Vite, TanStack Query; client generated from the backend's OpenAPI document via `openapi-typescript` |
 | Identity | Keycloak, realm configuration managed as code |

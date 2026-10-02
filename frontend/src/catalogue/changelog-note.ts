@@ -89,7 +89,7 @@ function normaliseForComparison(text: string): string {
 //: `\w` matches exactly `GC ∈ {L*, N*}` (letters and *every* numeric
 //: category, including `Nd` - an ordinary decimal digit - not just `Nl`/`No`)
 //: plus `_` - verified by enumerating all 1,114,112 codepoints on CPython
-//: 3.12 / UCD 15.0
+//: 3.14 / UCD 16.0
 //: (`test_word_char_matches_exactly_letter_and_number_categories_plus_underscore`
 //: in `backend/tests/test_changelog_note.py`, issue #262) - and `\p{L}\p{N}_`
 //: is exactly that set in JavaScript's Unicode property syntax (`\p{N}`

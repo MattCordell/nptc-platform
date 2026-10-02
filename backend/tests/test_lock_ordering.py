@@ -552,7 +552,7 @@ def test_bulk_and_singular_property_writes_do_not_deadlock(
             )
             session.commit()
             results["singular"] = "ok"
-        except (EntryVersionConflictError, StaleDataError):
+        except EntryVersionConflictError, StaleDataError:
             session.rollback()
             results["singular"] = "conflict"
         except BaseException as exc:  # surfaced below, not swallowed

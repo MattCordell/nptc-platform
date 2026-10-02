@@ -273,6 +273,9 @@ shared-fixture-generation machinery this ADR already rejected (see Rejected alte
 it instead carries the boundary characters this amendment named, quoted from the Python test
 (condition 2) - a fixed, hand-picked sample, not a substitute for the residual above.
 
+The runtime moved from CPython 3.12 (UCD 15.0) to 3.14 (UCD 16.0) on 2026-10-02. Both
+enumeration tests pass on 3.14, so the identity holds under each of the two UCD versions.
+
 Both `_HAS_LETTER_RE` (`changelog.py`) and `HAS_LETTER_RE`/`STRIP_PUNCTUATION_RE`
 (`changelog-note.ts`) now carry a comment pointing at this amendment and the enumeration test,
 so a reader who doubts the identity again finds the verification rather than re-filing the

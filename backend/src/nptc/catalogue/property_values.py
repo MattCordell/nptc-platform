@@ -623,7 +623,7 @@ def save_property_values_for_entries(
                 expected_row_version=target.expected_row_version,
             )
             savepoint.commit()
-        except (StaleDataError, ObjectDeletedError):
+        except StaleDataError, ObjectDeletedError:
             savepoint.rollback()
             session.expire(entry)
             try:

@@ -75,7 +75,7 @@ def _normalise(value: object) -> object:
         return [_normalise(item) for item in value]
     try:
         return normalise_json_value(value)
-    except (UnserialisableAuditValueError, ValueError):
+    except UnserialisableAuditValueError, ValueError:
         return str(value)
 
 

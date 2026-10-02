@@ -160,7 +160,7 @@ def test_has_letter_re_matches_exactly_letter_and_numeric_categories(
     """Issue #262 was filed claiming `_HAS_LETTER_RE` (`[^\\W\\d_]`) misses some
     numeric codepoint outside `L*`/`N*` categories (naming U+3007 IDEOGRAPHIC
     NUMBER ZERO, which turned out to already be `Nl`). Verification found no
-    such codepoint on CPython 3.12 / UCD 15.0 - this asserts the identity
+    such codepoint on CPython 3.14 / UCD 16.0 - this asserts the identity
     holds over every codepoint, so a future UCD update that actually breaks
     it fails here with the offending codepoints named, rather than surfacing
     as another unverified issue report."""
@@ -179,7 +179,7 @@ def test_word_char_matches_exactly_letter_and_number_categories_plus_underscore(
 ) -> None:
     """ADR-0030 previously claimed JavaScript's `\\p{L}\\p{N}_` is not a
     byte-for-byte match for Python's Unicode `\\w`. Verification (#262) found
-    the two are identical on CPython 3.12 / UCD 15.0: `\\w` matches exactly
+    the two are identical on CPython 3.14 / UCD 16.0: `\\w` matches exactly
     `GC ∈ {L*, N*}` plus the literal `_`. This asserts that identity over
     every codepoint, so a UCD update that actually breaks it is caught here
     rather than resting on an unverified claim in the ADR."""
