@@ -115,28 +115,22 @@ an OpenAPI change first.
   submit the form stayed armed indefinitely. For a validate-on-submit screen that was
   benign. For a screen that also validated on change it was not — the next keystroke
   that produced an error would pull focus out of the input the user was typing in, once
-  per keystroke. **Issue #214 fixed this**: `onSubmit` is widened to
-  `() => void | Promise<void>` and disarms when the returned promise settles, whether it
-  resolves or rejects, so arming stays unconditional and the sync/void case is
-  unchanged. The settle callback never decides arm/disarm directly — a bare
-  `.finally(...)` races a caller whose promise resolves right after it sets a form
-  error, clearing the flag as a microtask before the error-reading effect's macrotask
-  ever runs. Instead the settle callback only records "a result arrived for submit N";
-  the existing focus-move effect, guarded by a submit generation id, is the sole place
-  that decides to disarm, giving errors priority over a settled promise from the same
-  submit.
+  per keystroke. **Issue #214 fixed this**: `onSubmit` was widened to
+  `() => void | Promise<void>` and disarmed when the returned promise settled, whether it
+  resolved or rejected, so arming stayed unconditional and the sync/void case was
+  unchanged. The 2026-10-02 addendum narrows this to a promise that resolves an outcome.
+  The settle callback never decides arm/disarm directly — a bare `.finally(...)` races a
+  caller whose promise resolves right after it sets a form error, clearing the flag as a
+  microtask before the error-reading effect's macrotask ever runs. Instead the settle
+  callback only records "a result arrived for submit N"; the existing focus-move effect,
+  guarded by a submit generation id, is the sole place that decides to disarm, giving
+  errors priority over a settled promise from the same submit.
 
-  This closes the race for a caller whose error state commits before, or in the same
-  pass as, the settle — the `try { await mutate() } catch (e) { setFormError(e) }`
-  shape the issue was raised against. It does not close every case: a caller whose error
-  state commits in a render *after* the promise settles (`mutateAsync()`'s `isError` /
-  `error` lagging the resolved promise by a render or two) still has that error go
-  unannounced, because the flag already disarmed on the earlier settle with no error yet
-  visible. `Form`'s contract is narrower than "no longer assumes validate-on-submit": it
-  supports validate-on-change for a caller whose promise does not settle before its
-  error state does. See `onSubmit`'s doc comment in `form.tsx` and
-  `SlowRefusingPromiseForm` in `form.test.tsx`, which pins this boundary rather than
-  hiding it.
+  That widened signature left one case open: a caller whose error state commits in a
+  render *after* the promise settles (`mutateAsync()`'s `isError` / `error` lagging the
+  resolved promise) had that error go unannounced, because the flag disarmed on the
+  earlier settle with no error yet visible. The 2026-10-02 addendum below closes it by
+  changing what the promise resolves, rather than documenting the boundary.
 - `RadioGroup`'s hand-written key handling is a divergence risk if the ARIA authoring
   practices for radios change. It is covered by tests that state the expected behaviour
   in full, so a future change is a visible diff rather than a silent drift.
@@ -204,3 +198,41 @@ this ADR's existing tests assert - rather than the alternative the review offere
 call `onSubmit` and let `Form` merge the blocked reason into the announced errors), which
 would have required every caller to add its own "don't actually mutate while blocked" guard
 in exchange for removing one already-tested guarantee.
+
+## Addendum (2026-10-02): `onSubmit`'s promise resolves a `SubmitOutcome`
+
+The #214 signature, `() => void | Promise<void>`, disarmed the focus flag on any settle.
+That is wrong for the shape a caller most naturally reaches for. Every `Form` caller
+derives `formError` from a React Query mutation hook, so the refusal commits on a render
+*after* the request settles. They are safe only because their `onSubmit` returns nothing.
+Changing `add.mutate(...)` to `return add.mutateAsync(...)` renders the refusal and never
+announces it to a screen-reader user, and nothing fails: no type error, no test, no lint.
+
+**Decision: `onSubmit` is `() => void | Promise<SubmitOutcome>`, where
+`SubmitOutcome = { ok: boolean }`.** Only `{ ok: true }` disarms, without moving focus,
+which keeps the validate-on-change fix. `{ ok: false }`, a rejection, and any resolved
+value that is not an outcome all leave the flag armed, so an error that commits several
+renders later is still announced. A bare `mutateAsync()` promise resolves the saved
+record, which is not a `SubmitOutcome`, so that shape no longer compiles. The arm side,
+the submit-generation guard and the rule that an error takes priority over a settle are
+unchanged. The boundary #214 documented is now closed rather than documented.
+
+`{ ok: boolean }` is the narrowest type that closes the hole. A discriminated union with
+room for further fields can replace it if a second use appears.
+
+**Alternatives rejected:**
+
+- **Hold the disarm for one commit after a settle with no error visible.** This guesses a
+  timing window. A caller can commit its error three timer ticks after the settle, so a
+  one-commit delay would not cover it, and a hook's `isError` lag is not bounded to one
+  render. It was also the fourth heuristic for the same arm/disarm race, after the
+  `pending`-keyed clear, the bare `.finally`, and the strict settle. Too short a window
+  reintroduces the always-armed bug; too long a window swallows the next real error.
+- **Convert one panel to validate-on-change as a worked example.** It adds
+  validate-on-change behaviour to a screen with no product need for it, and leaves the other
+  callers one refactor from the failure.
+- **A lint rule against `return ...mutateAsync(...)`.** It would police one spelling of the
+  mistake. The type rejects every promise that does not state an outcome.
+
+**Consequence:** an `async` `onSubmit` that returns nothing is now a type error. That is
+the forcing function: a caller that opts into a promise must say whether the save worked.

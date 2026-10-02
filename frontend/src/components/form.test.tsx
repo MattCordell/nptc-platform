@@ -1,12 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
 import { Button } from "./button.tsx";
 import { Field } from "./field.tsx";
 import { Form } from "./form.tsx";
+import type { SubmitOutcome } from "./form.tsx";
 import { RadioGroup } from "./radio-group.tsx";
 
 const STATUS_OPTIONS = [
@@ -94,7 +95,11 @@ function ValidateOnChangeForm() {
   const [errors, setErrors] = useState<{ fieldId: string; message: string }[]>([]);
 
   return (
-    <Form submitLabel="Save entry" errors={errors} onSubmit={() => Promise.resolve()}>
+    <Form
+      submitLabel="Save entry"
+      errors={errors}
+      onSubmit={() => Promise.resolve({ ok: true })}
+    >
       <Field id="requesting-term" label="Requesting term">
         {(controlProps) => (
           <input
@@ -118,12 +123,14 @@ function ValidateOnChangeForm() {
 }
 
 /**
- * A caller whose `onSubmit` returns a promise that *resolves* right after it
- * sets a form error - the exact shape a bare `.finally(() => disarm)` gets
- * wrong (issue #214's approach notes): that microtask would beat the
- * error-reading effect's macrotask and disarm the flag before the summary
- * ever got focus. The fix routes the settle through the same effect that
- * reads `hasErrors`, so the error takes priority regardless of timing.
+ * A caller whose `onSubmit` returns a promise that *resolves* `{ ok: true }`
+ * right after it sets a form error - the exact shape a bare
+ * `.finally(() => disarm)` gets wrong (issue #214's approach notes): that
+ * microtask would beat the error-reading effect's macrotask and disarm the
+ * flag before the summary ever got focus. The fix routes the settle through
+ * the same effect that reads `hasErrors`, so the error takes priority
+ * regardless of timing. A caller that set an error would normally resolve
+ * `{ ok: false }`; resolving success here is what exercises that priority.
  */
 function ResolvingAfterErrorForm() {
   const [formError, setFormError] = useState<string | undefined>(undefined);
@@ -134,6 +141,7 @@ function ResolvingAfterErrorForm() {
       formError={formError}
       onSubmit={async () => {
         setFormError("The catalogue rejected this entry.");
+        return { ok: true };
       }}
     >
       <Field id="requesting-term" label="Requesting term">
@@ -222,17 +230,13 @@ function SlowRefusingForm() {
 
 /**
  * The same slow refusal as `SlowRefusingForm`, but `onSubmit` also returns a
- * settled promise - the `mutateAsync()` shape, where the promise resolves
- * once the network call finishes but `isError` / `error` surface a render
- * or two later. This is a known, documented limitation (see `onSubmit`'s
- * doc comment in `form.tsx`): the promise settles with no error yet
- * visible, so the flag disarms there, and the refusal that commits several
- * renders later goes unannounced. This test pins that boundary rather than
- * hiding it - the void-case equivalent (`SlowRefusingForm`, exercised by
- * "announces a refusal that arrives late") still announces correctly,
- * because it never returns a promise for the settle path to disarm early.
+ * promise - the `mutateAsync()` shape, where the promise settles once the
+ * network call finishes but `isError` / `error` surface a render or two
+ * later. `settle` supplies what the promise does, so a test can pin each
+ * outcome: only `{ ok: true }` disarms the flag ahead of the refusal; every
+ * other result leaves it armed so the late refusal is announced.
  */
-function SlowRefusingPromiseForm() {
+function SlowRefusingPromiseForm({ settle }: { settle: () => Promise<SubmitOutcome> }) {
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [tick, setTick] = useState(0);
 
@@ -255,7 +259,63 @@ function SlowRefusingPromiseForm() {
       formError={formError}
       onSubmit={() => {
         setTick(1);
-        return Promise.resolve();
+        return settle();
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
+ * A caller that sets its error synchronously inside `onSubmit` but whose
+ * promise settles only later - the error is visible before the settle, so
+ * the announcement must not wait for it. Pins the "error before settle"
+ * ordering for both outcomes.
+ */
+function EarlyRefusalForm({ outcome }: { outcome: SubmitOutcome }) {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={() => {
+        setFormError("The catalogue rejected this entry.");
+        return new Promise<SubmitOutcome>((resolve) => {
+          window.setTimeout(() => resolve(outcome), 20);
+        });
+      }}
+    >
+      <Field id="requesting-term" label="Requesting term">
+        {(controlProps) => <input {...controlProps} type="text" />}
+      </Field>
+    </Form>
+  );
+}
+
+/**
+ * A validate-on-change screen whose first save succeeds and whose second is
+ * refused after a delay. The first submit's `{ ok: true }` must not leave the
+ * second one disarmed: the settled id belongs to submit 1, not submit 2.
+ */
+function SecondSaveRefusedForm() {
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const saves = useRef(0);
+
+  return (
+    <Form
+      submitLabel="Save entry"
+      formError={formError}
+      onSubmit={() => {
+        saves.current += 1;
+        if (saves.current === 1) {
+          return Promise.resolve({ ok: true });
+        }
+        window.setTimeout(() => setFormError("The catalogue rejected this entry."), 20);
+        return Promise.resolve({ ok: false });
       }}
     >
       <Field id="requesting-term" label="Requesting term">
@@ -613,20 +673,108 @@ describe("Form", () => {
     expect(summaryElement()).toHaveFocus();
   });
 
-  it("pins the known limitation: a refusal committed after a settled promise is not announced", async () => {
+  it("announces a refusal committed after a promise that resolved { ok: false }", async () => {
     const user = userEvent.setup();
-    render(<SlowRefusingPromiseForm />);
+    render(<SlowRefusingPromiseForm settle={() => Promise.resolve({ ok: false })} />);
 
     await user.click(screen.getByRole("button", { name: "Save entry" }));
 
-    // The promise settled with no error yet, disarming the flag - see
-    // onSubmit's doc comment. The refusal still renders, it is just not
-    // announced: this documents the boundary rather than papering over it.
     expect(
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
+  });
+
+  it("announces a refusal committed after a promise that rejected, with no unhandled rejection", async () => {
+    // Vitest fails the run on an unhandled rejection, so this test passing is
+    // also the proof that `Form` handles the rejection itself.
+    const user = userEvent.setup();
+    render(
+      <SlowRefusingPromiseForm
+        settle={() => Promise.reject(new Error("network down"))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["an object with no ok field", { id: 7 }],
+    ["an ok that is not true", { ok: "yes" }],
+  ])(
+    "reads a resolved value that is %s as a failure, and announces a late refusal",
+    async (_name, value) => {
+      const user = userEvent.setup();
+      render(
+        <SlowRefusingPromiseForm
+          settle={() => Promise.resolve(value as unknown as SubmitOutcome)}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+      expect(
+        await screen.findByText("The catalogue rejected this entry."),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(summaryElement()).toHaveFocus());
+    },
+  );
+
+  it("does not announce an error that follows a promise that resolved { ok: true }", async () => {
+    const user = userEvent.setup();
+    render(<SlowRefusingPromiseForm settle={() => Promise.resolve({ ok: true })} />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    // The caller said the save succeeded, so the flag disarmed with no error
+    // yet visible. The error still renders - it is just not an answer to a
+    // submit - which is what keeps a validate-on-change screen from losing
+    // the user's place.
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    // The error has rendered; flush any pending effect so a missing focus move
+    // is a real absence, not one that has not happened yet.
+    await act(async () => {});
     expect(summaryElement()).not.toHaveFocus();
   });
+
+  it("announces a refusal on a second save after a first save resolved { ok: true }", async () => {
+    const user = userEvent.setup();
+    render(<SecondSaveRefusedForm />);
+
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+    await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+    expect(
+      await screen.findByText("The catalogue rejected this entry."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
+  });
+
+  it.each([
+    ["{ ok: false }", { ok: false }],
+    ["{ ok: true }", { ok: true }],
+  ])(
+    "announces an error set before the promise settles with %s",
+    async (_name, outcome) => {
+      const user = userEvent.setup();
+      render(<EarlyRefusalForm outcome={outcome} />);
+
+      await user.click(screen.getByRole("button", { name: "Save entry" }));
+
+      expect(
+        await screen.findByText("The catalogue rejected this entry."),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(summaryElement()).toHaveFocus());
+    },
+  );
 
   it("announces again on a resubmit that fails the same way", async () => {
     const user = userEvent.setup();
