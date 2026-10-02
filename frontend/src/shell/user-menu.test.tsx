@@ -100,6 +100,19 @@ describe("UserMenu in each auth state (NFR-31)", () => {
     ).toBeInTheDocument();
   });
 
+  it("still offers Account and Sign out when /auth/me fails", async () => {
+    stubApi([{ method: "GET", path: "/auth/me", status: 500, body: { detail: "boom" } }]);
+    const user = userEvent.setup();
+    await renderRoute("/about", SIGNED_IN);
+
+    const button = await within(header()).findByRole("button", { name: /Your account/ });
+    await user.click(button);
+
+    const panel = within(document.getElementById(button.getAttribute("aria-controls")!)!);
+    expect(panel.getByRole("link", { name: "Account" })).toBeVisible();
+    expect(panel.getByRole("link", { name: "Sign out" })).toBeVisible();
+  });
+
   it("never shows roles or permissions in the menu", async () => {
     stubApi([sessionRoute(CURATOR)]);
     const user = userEvent.setup();
