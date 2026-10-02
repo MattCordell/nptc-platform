@@ -913,7 +913,7 @@ describe("adding synonyms", () => {
 
     expect(await screen.findByText(detail)).toBeInTheDocument();
     const summary = screen.getByText("There is a problem");
-    expect(summary.closest("[tabindex='-1']")).toHaveFocus();
+    await waitFor(() => expect(summary.closest("[tabindex='-1']")).toHaveFocus());
     expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
     // The refusal costs the editor nothing they typed.
     expect(screen.getByLabelText("Synonyms")).toHaveValue("Zovirax");

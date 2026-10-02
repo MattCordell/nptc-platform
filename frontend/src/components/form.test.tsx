@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -681,7 +681,7 @@ describe("Form", () => {
     expect(
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
-    expect(summaryElement()).toHaveFocus();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
   });
 
   it("announces a refusal committed after a promise that rejected, with no unhandled rejection", async () => {
@@ -699,7 +699,7 @@ describe("Form", () => {
     expect(
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
-    expect(summaryElement()).toHaveFocus();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
   });
 
   it.each([
@@ -721,7 +721,7 @@ describe("Form", () => {
       expect(
         await screen.findByText("The catalogue rejected this entry."),
       ).toBeInTheDocument();
-      expect(summaryElement()).toHaveFocus();
+      await waitFor(() => expect(summaryElement()).toHaveFocus());
     },
   );
 
@@ -738,6 +738,9 @@ describe("Form", () => {
     expect(
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
+    // The error has rendered; flush any pending effect so a missing focus move
+    // is a real absence, not one that has not happened yet.
+    await act(async () => {});
     expect(summaryElement()).not.toHaveFocus();
   });
 
@@ -751,7 +754,7 @@ describe("Form", () => {
     expect(
       await screen.findByText("The catalogue rejected this entry."),
     ).toBeInTheDocument();
-    expect(summaryElement()).toHaveFocus();
+    await waitFor(() => expect(summaryElement()).toHaveFocus());
   });
 
   it.each([
@@ -768,13 +771,13 @@ describe("Form", () => {
       expect(
         await screen.findByText("The catalogue rejected this entry."),
       ).toBeInTheDocument();
-      expect(summaryElement()).toHaveFocus();
+      await waitFor(() => expect(summaryElement()).toHaveFocus());
 
       // Wait out the settle, then check it did not take focus back off.
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 40));
       });
-      expect(summaryElement()).toHaveFocus();
+      await waitFor(() => expect(summaryElement()).toHaveFocus());
     },
   );
 
