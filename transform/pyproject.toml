@@ -2,7 +2,7 @@
 name = "nptc-transform"
 version = "0.0.0"
 description = "P0 seeding transform: converts the published SPIA workbook into a validated import dataset or a defect report (PRD section 12)."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "openpyxl>=3.1",
     "typer>=0.13",

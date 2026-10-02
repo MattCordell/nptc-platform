@@ -467,7 +467,7 @@ def entry_child_write(
         yield
         bump_entry_row_version(entry)
         session.flush()
-    except (StaleDataError, ObjectDeletedError):
+    except StaleDataError, ObjectDeletedError:
         savepoint.rollback()
         session.expire(entry)
         refreshed = load_entry_for_update(session, business_key)
@@ -578,7 +578,7 @@ def save_entry(
         # `record_change` raising if anything above failed, not on
         # `append_audit_event` always flushing before it returns.
         savepoint.commit()
-    except (StaleDataError, ObjectDeletedError):
+    except StaleDataError, ObjectDeletedError:
         savepoint.rollback()
         session.expire(entry)
         refreshed = load_entry_for_update(session, business_key)

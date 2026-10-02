@@ -2,7 +2,7 @@
 name = "nptc-platform"
 version = "0.0.0"
 description = "NPTC Catalogue Maintenance Platform - workspace root (not published)"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "Apache-2.0"
 readme = "README.md"
 
@@ -46,7 +46,7 @@ members = ["backend", "transform", "shared"]
 # the repo root (`ruff check .`, `ruff format .`), not from inside a package.
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 src = ["backend/src", "transform/src", "shared/src"]
 
 [tool.ruff.lint]
@@ -72,7 +72,7 @@ known-first-party = ["nptc", "nptc_transform", "nptc_shared"]
 # or command"), and scripts/ has no __init__.py to be a package in the first
 # place - it must be a files entry, so packages can't be kept alongside it.
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 mypy_path = ["backend/src", "transform/src", "shared/src"]
 files = ["backend/src", "transform/src", "shared/src", "scripts", "backend/migrations"]
 strict = true

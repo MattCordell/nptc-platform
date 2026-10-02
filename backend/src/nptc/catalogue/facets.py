@@ -279,7 +279,7 @@ class _PropertyFacetSource:
             return raw
         try:
             return coercion(raw)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             raise FilterValueError(
                 f"{raw!r} is not a usable value for property {self.spec.key!r}"
             ) from None

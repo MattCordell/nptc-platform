@@ -6,7 +6,7 @@
 
 FROM ghcr.io/astral-sh/uv:0.12.21 AS uv
 
-FROM python:3.12.14-slim AS build
+FROM python:3.14.7-slim AS build
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -28,7 +28,7 @@ COPY shared/src shared/src
 # needs the venv alone and no source tree.
 RUN uv sync --locked --no-dev --no-editable --package nptc-backend
 
-FROM python:3.12.14-slim AS runtime
+FROM python:3.14.7-slim AS runtime
 RUN groupadd --system --gid 10001 nptc \
     && useradd --system --uid 10001 --gid nptc --no-create-home nptc
 WORKDIR /app

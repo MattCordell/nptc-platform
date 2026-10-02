@@ -335,7 +335,7 @@ def _retry_after_seconds(header: str | None) -> float | None:
         return float(text)
     try:
         parsed = email.utils.parsedate_to_datetime(text)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.UTC)
