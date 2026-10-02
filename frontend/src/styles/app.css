@@ -88,6 +88,9 @@
   --radius-card: 6px;
   --radius-pill: 20px;
 
+  /* Tailwind v4 exposes this as the `max-w-page` utility. */
+  --container-page: 1200px;
+
   /* Width/offset of the focus ring components must render at every focus
      stop (NFR-31) - kept as tokens so no component can drift to a fainter
      value under its own styling. */
