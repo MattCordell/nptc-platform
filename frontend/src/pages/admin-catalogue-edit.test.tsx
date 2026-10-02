@@ -891,6 +891,34 @@ describe("adding synonyms", () => {
     expect(inTermsPanel().getByLabelText(/Changelog note/)).toHaveFocus();
   });
 
+  it("moves focus to the summary when the server refuses the save", async () => {
+    // NFR-31. The panel derives `formError` from the mutation hook, so the
+    // refusal commits on a render after the request settles. The summary must
+    // still be announced: that is the case `Form`'s `SubmitOutcome` contract
+    // protects, and the one the block-before-submit test above cannot reach.
+    const user = userEvent.setup();
+    const detail = "A term in this batch is longer than the catalogue allows.";
+    const calls = stubApi([
+      READ_OK,
+      { method: "POST", path: ADD_PATH, status: 422, body: { detail } },
+    ]);
+    await renderLoaded();
+
+    await user.type(screen.getByLabelText("Synonyms"), "Zovirax");
+    await user.type(
+      inTermsPanel().getByLabelText(/Changelog note/),
+      "Add the brand name",
+    );
+    await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+    expect(await screen.findByText(detail)).toBeInTheDocument();
+    const summary = screen.getByText("There is a problem");
+    expect(summary.closest("[tabindex='-1']")).toHaveFocus();
+    expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
+    // The refusal costs the editor nothing they typed.
+    expect(screen.getByLabelText("Synonyms")).toHaveValue("Zovirax");
+  });
+
   it("shows the cell's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
     // Before this was fixed, the cell's own validation lived inside
     // `onSubmit`, which never ran while the note gate was blocked - so an
