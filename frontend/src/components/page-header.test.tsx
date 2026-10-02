@@ -51,6 +51,25 @@ describe("PageHeader", () => {
     expect(row.firstElementChild?.children).toHaveLength(1);
   });
 
+  it("renders a meta of zero, since a count of none is still a count", () => {
+    render(<PageHeader title="Catalogue" meta={0} />);
+    expect(screen.getByText("0")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["null", null],
+    ["false", false],
+    ["an empty string", ""],
+  ])("renders no meta or actions element for %s", (_label, empty) => {
+    const { container } = render(
+      <PageHeader title="Catalogue" meta={empty} actions={empty} />,
+    );
+
+    const row = container.firstElementChild as HTMLElement;
+    expect(row.children).toHaveLength(1);
+    expect(row.firstElementChild?.children).toHaveLength(1);
+  });
+
   it("places the actions after the title in DOM order", () => {
     render(<PageHeader title="Catalogue" actions={<button type="button">Add</button>} />);
 
