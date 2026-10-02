@@ -18,7 +18,8 @@ What the backend cannot store, and the loader therefore refuses rather than repa
 
 - A specimen value with no SNOMED CT code. A `property_value` holds `{system, code}`, and the
   specimen binding requires a code in the specimen value set, so a verbatim label has nowhere to
-  go. RCPA-QAP resolves it in the workbook, then the transform is run again.
+  go. RCPA-QAP maps it in the transform's specimen table or corrects the workbook, then the
+  transform is run again.
 - A named specimen on an entry flagged `specimen_unconstrained` (FR-89 refuses the pair).
 - A code binding with no FSN, which `create_binding` requires and which means the transform
   found no FSN cell.
@@ -224,8 +225,9 @@ def _entry_problems(entry: DatasetEntry) -> list[str]:
     for value in entry.properties.specimen:
         if value.code is None:
             problems.append(
-                f"{where}: specimen {value.value!r} has no SNOMED CT code - code it in the "
-                "workbook, then run the transform again"
+                f"{where}: specimen {value.value!r} has no SNOMED CT code (the transform reports "
+                "it as SPECIMEN_VALUE_UNMAPPED) - add it to the transform's specimen table or "
+                "correct the workbook value, then run the transform again"
             )
     if entry.specimen_unconstrained and entry.properties.specimen:
         problems.append(

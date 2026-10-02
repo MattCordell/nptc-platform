@@ -311,6 +311,8 @@ def test_a_collision_names_the_entry_and_rolls_everything_back(
 
     error = exc_info.value
     assert error.business_key == "NPTC-500002"
+    assert error.preferred_term == clash
+    assert repr(clash) in str(error)
     assert error.row == 4
     assert error.cause_type == "DesignationCollisionError"
     assert "NPTC-500000" in error.detail

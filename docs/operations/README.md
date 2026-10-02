@@ -26,7 +26,8 @@ reads, kept in step with `deploy/.env.example`, including its
 
 [`runbooks/`](runbooks/README.md) holds operational procedures for jobs, validation sweeps,
 exports and releases - starting with [`runbooks/transform.md`](runbooks/transform.md) for the
-P0 seeding transform CLI.
+P0 seeding transform CLI and [`runbooks/seed-baseline.md`](runbooks/seed-baseline.md) for the
+one-off step that loads its dataset into an empty catalogue.
 
 [`upgrade.md`](upgrade.md) documents running Alembic migrations (which the compose
 `migrate` service does for you), the two database DSNs, app-role login provisioning, and

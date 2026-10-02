@@ -117,13 +117,15 @@ class SeedEntryError(SeedImportError):
 
     def __init__(self, entry: DatasetEntry, cause: Exception) -> None:
         self.business_key = entry.business_key
+        self.preferred_term = entry.preferred_term
         self.sheet = entry.source.sheet
         self.row = entry.source.row
         self.cause_type = type(cause).__name__
         self.detail = "" if isinstance(cause, SQLAlchemyError) else str(cause)
         super().__init__(
-            f"{entry.business_key} (sheet {entry.source.sheet!r}, row {entry.source.row}) was "
-            f"refused: {self.cause_type}" + (f": {self.detail}" if self.detail else "")
+            f"{entry.business_key} {entry.preferred_term!r} (sheet {entry.source.sheet!r}, "
+            f"row {entry.source.row}) was refused: {self.cause_type}"
+            + (f": {self.detail}" if self.detail else "")
         )
 
 

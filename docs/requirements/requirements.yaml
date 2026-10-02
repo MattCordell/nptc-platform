@@ -490,7 +490,7 @@
   phase: p0
   title: "The seeded data MUST be imported as a synthetic baseline release representing the state at seeding"
   status: in-progress
-  notes: "The transform side lands with P0-9/#31 (ADR-0010): --emit-dataset --release-name YYYY-MM writes import-dataset.json's baseline_release block, a machine-generated release standing in for a curation cycle that never happened, so the first genuinely new release produces a meaningful diff (FR-60). Not implemented: the backend Release table and initial data load that actually import the dataset - backend/src/nptc/{catalogue,releases,db} are bare scaffolding and backend/migrations/ is empty until P1-1, so this stays in-progress rather than implemented."
+  notes: "The transform side lands with P0-9/#31 (ADR-0010): --emit-dataset --release-name YYYY-MM writes import-dataset.json's baseline_release block, a machine-generated release standing in for a curation cycle that never happened, so the first genuinely new release produces a meaningful diff (FR-60). The backend side lands with #329 (ADR-0042): scripts/seed_baseline.py loads the dataset into an empty catalogue in one transaction and records the run in an immutable seed_import row, with each entry's legacy Version/History in entry_seed_provenance. Not implemented: the Release table (P4, FR-57/FR-58/FR-61). Until it lands the baseline is a seed record, not a Release, and FR-60's diff against it is deferred, so this stays in-progress rather than implemented."
 - id: "FR-77"
   priority: SHOULD
   phase: p1

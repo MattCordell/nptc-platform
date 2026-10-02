@@ -38,6 +38,7 @@ COPY --from=build /app/.venv /app/.venv
 COPY pyproject.toml ./
 COPY backend/migrations backend/migrations
 COPY scripts/grant_role.py scripts/grant_role.py
+COPY scripts/seed_baseline.py scripts/seed_baseline.py
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
