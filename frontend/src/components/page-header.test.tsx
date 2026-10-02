@@ -60,6 +60,8 @@ describe("PageHeader", () => {
     ["null", null],
     ["false", false],
     ["an empty string", ""],
+    ["an empty array", []],
+    ["an array of nothing", [null, false]],
   ])("renders no meta or actions element for %s", (_label, empty) => {
     const { container } = render(
       <PageHeader title="Catalogue" meta={empty} actions={empty} />,

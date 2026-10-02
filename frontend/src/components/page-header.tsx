@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 
 type PageHeaderProps = {
   title: string;
@@ -7,11 +7,10 @@ type PageHeaderProps = {
   id?: string;
 };
 
-// Not a truthiness check: a meta of 0 (an empty count) must still render.
+// Not a truthiness check: a meta of 0 (an empty count) must still render. An
+// array that maps to nothing counts as empty too, so no empty wrapper renders.
 function hasContent(node: ReactNode): boolean {
-  return (
-    node !== undefined && node !== null && node !== false && node !== true && node !== ""
-  );
+  return Children.toArray(node).some((child) => child !== "");
 }
 
 /**
