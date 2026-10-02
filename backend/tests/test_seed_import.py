@@ -416,7 +416,14 @@ def test_the_whole_table_check_finds_a_term_that_skipped_clean_term(
         )
     )
 
-    assert find_unclean_preferred_terms(app_session) == ["NPTC-499998"]
+    app_session.execute(
+        text(
+            "INSERT INTO catalogue_entry (business_key, preferred_term) "
+            "VALUES ('NPTC-499997', 'Zero width' || chr(8203))"
+        )
+    )
+
+    assert sorted(find_unclean_preferred_terms(app_session)) == ["NPTC-499997", "NPTC-499998"]
 
 
 @pytest.mark.integration
@@ -454,3 +461,20 @@ def test_the_system_properties_exist_after_a_run(
         .all()
     )
     assert keys == ["discipline", "specimen", "subgroup", "usage_guidance"]
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_synonym_equal_to_its_own_preferred_term_is_stored_as_the_workbook_has_it(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    """The platform's synonym path treats the same entry's own terms as no collision, so the
+    loader neither refuses nor silently drops the row."""
+    document = make_dataset_document(1)
+    term = document["entries"][0]["preferred_term"]
+    document["entries"][0]["designations"][1]["term"] = term
+
+    _seed(app_session, document, write_dataset)
+
+    synonyms = app_session.execute(select(Designation.term)).scalars().all()
+    assert synonyms == [term]
