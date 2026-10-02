@@ -86,4 +86,17 @@ describe("design tokens meet WCAG AA contrast", () => {
       expect(contrastRatio(text, surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     },
   );
+
+  // The site header and footer set 14px text on --color-surface in these
+  // colours, and axe's contrast rule cannot run in jsdom.
+  it.each([
+    ["color-text", "ordinary nav links"],
+    ["color-accent-hover", "the active nav link"],
+    ["color-accent", "footer links"],
+    ["color-text-muted", "the unavailable-sign-in text and footer line"],
+  ] as const)("--%s reaches 4.5:1 on --color-surface (%s)", (textToken) => {
+    const text = tokenValue(textToken);
+    const surface = tokenValue("color-surface");
+    expect(contrastRatio(text, surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+  });
 });

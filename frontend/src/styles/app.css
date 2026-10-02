@@ -158,11 +158,6 @@ h2 {
   font-weight: 600;
 }
 
-header,
-footer {
-  padding: 1rem;
-}
-
 main {
   padding: 1rem;
   min-height: 60vh;
