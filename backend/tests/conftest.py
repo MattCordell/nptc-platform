@@ -30,6 +30,9 @@ Fixture graph::
                                     test - requested explicitly by the few
                                     tests whose assertion is genuinely
                                     whole-table (issue #190)
+    pristine_catalogue  (function) the same for committed catalogue_entry and
+                                    its child rows - the seed loader's
+                                    empty-catalogue precondition
 
 The `integration` marker is derived, not only hand-written: a test whose
 fixture closure reaches `postgres_container` is marked at collection, so
@@ -291,6 +294,41 @@ def pristine_audit_event(owner_engine: Engine, migrated: None) -> Iterator[None]
     _wipe_committed_audit_state(owner_engine)
     yield
     _wipe_committed_audit_state(owner_engine)
+
+
+#: Child tables first, each a plain literal: `test_sql_parameterisation.py`'s AST guard forbids SQL
+#: built from runtime data, and `catalogue_entry` is FK-referenced by every table before it.
+_WIPE_CATALOGUE_STATEMENTS = (
+    "DELETE FROM entry_seed_provenance",
+    "DELETE FROM validation_finding",
+    "DELETE FROM designation_collision_acknowledgement",
+    "DELETE FROM property_value",
+    "DELETE FROM code_binding",
+    "DELETE FROM designation",
+    "DELETE FROM catalogue_entry",
+    "DELETE FROM seed_import",
+)
+
+
+def _wipe_committed_catalogue(owner_engine: Engine) -> None:
+    """Deletes every committed catalogue row, as the owner (`nptc_app_login` has no DELETE on
+    these tables). Leaves `audit_event` alone: request `pristine_audit_event` as well when the
+    assertion needs an empty chain."""
+    with owner_engine.connect() as connection:
+        for statement in _WIPE_CATALOGUE_STATEMENTS:
+            connection.execute(text(statement))
+        connection.commit()
+
+
+@pytest.fixture
+def pristine_catalogue(owner_engine: Engine, migrated: None) -> Iterator[None]:
+    """Explicit isolation for an assertion that is whole-table by definition: the seed loader
+    refuses a catalogue holding any entry, so its test cannot scope the check to rows it created.
+    Cleans before yielding as well as after, so the precondition is never inherited from whatever
+    ran earlier in this worker."""
+    _wipe_committed_catalogue(owner_engine)
+    yield
+    _wipe_committed_catalogue(owner_engine)
 
 
 @pytest.fixture(scope="session")

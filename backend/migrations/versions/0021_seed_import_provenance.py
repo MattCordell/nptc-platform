@@ -4,7 +4,7 @@ Revision ID: 0021
 Revises: 0020
 Create Date: 2026-10-03
 
-Issue #329 (FR-76, ADR-0010, ADR-0042): the record of the baseline seeding run, and each seeded
+FR-76, ADR-0010, ADR-0042: the record of the baseline seeding run, and each seeded
 entry's provenance, which ADR-0010 commits to preserving verbatim. See
 `nptc.db.models.seed_import` and `nptc.db.models.entry_seed_provenance` for the reasoning.
 

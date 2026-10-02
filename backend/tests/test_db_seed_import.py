@@ -1,4 +1,4 @@
-"""seed_import and entry_seed_provenance constraint and privilege tests (issue #329, FR-76).
+"""seed_import and entry_seed_provenance constraint and privilege tests (FR-76).
 
 Each violation gets its own test, because a failed statement aborts the surrounding transaction
 (25P02); see `test_db_catalogue_entry.py`.

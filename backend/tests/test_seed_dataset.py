@@ -1,4 +1,4 @@
-"""Reader tests for `import-dataset.json` (issue #329, FR-76, ADR-0010). No database."""
+"""Reader tests for `import-dataset.json` (FR-76, ADR-0010). No database."""
 
 from __future__ import annotations
 
