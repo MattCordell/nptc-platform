@@ -49,6 +49,7 @@ no egress, not the container).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -316,3 +317,111 @@ def hostile_api_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
     yield
     get_api_settings.cache_clear()
+
+
+#: Real `(code, fsn, preferred_term)` rows from the sample workbook's emitted dataset, so every
+#: code passes the Verhoeff check. `make_dataset_document` takes as many as it is asked for.
+_SEED_SAMPLE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("121348009", "1,1,1-Trichloroethane measurement", "1,1,1-Trichloroethane"),
+    (
+        "873871000168106",
+        "Measurement of 1,5-Anhydroglucitol in serum specimen",
+        "1,5-Anhydroglucitol",
+    ),
+    ("104607005", "11-deoxycorticosterone measurement", "11-Deoxycorticosterone"),
+    ("313778009", "Serum 11-deoxycortisol measurement", "11-Deoxycortisol"),
+    (
+        "444132007",
+        "Quantitative measurement of 11-deoxycortisol in urine specimen",
+        "11-Deoxycortisol urine",
+    ),
+    (
+        "430551003",
+        "Measurement of 14-3-3 protein concentration in cerebrospinal fluid",
+        "14-3-3 protein CSF",
+    ),
+    ("41668001", "17 Hydroxyprogesterone measurement, serum", "17-Hydroxyprogesterone"),
+    ("413044009", "Saliva 17a-hydroxy progesterone measurement", "17-Hydroxyprogesterone saliva"),
+)
+
+
+@pytest.fixture
+def make_dataset_document() -> Callable[..., dict[str, Any]]:
+    """Builds an ADR-0010 `import-dataset.json` document as a plain dict a test can edit before
+    writing it. Every entry is seedable: one coded specimen, one discipline, one synonym.
+
+    `first_key_number` is high on purpose. A sequence is not transactional, so the loader's
+    `advance_sequence_past` outlives the test's rollback; keys far above anything else a test
+    mints keep that from perturbing another test's expectations."""
+
+    def make(entry_count: int = 2, *, first_key_number: int = 500_000) -> dict[str, Any]:
+        entries = []
+        for index, (code, fsn, term) in enumerate(_SEED_SAMPLE_ROWS[:entry_count]):
+            entries.append(
+                {
+                    "business_key": f"NPTC-{first_key_number + index:06d}",
+                    "source": {
+                        "sheet": "RCPA SPIA Requesting_Jun 2026",
+                        "row": index + 2,
+                        "legacy_version": "2024-07-01T00:00:00",
+                        "legacy_history": "Jul 2024 - Added by PI Pilot 22-24",
+                    },
+                    "preferred_term": term,
+                    "status": "active",
+                    "specimen_unconstrained": False,
+                    "designations": [
+                        {
+                            "term": term,
+                            "use": "preferred",
+                            "language": "en-AU",
+                            "status": "active",
+                        },
+                        {
+                            "term": f"{term} synonym",
+                            "use": "synonym",
+                            "language": "en-AU",
+                            "status": "active",
+                        },
+                    ],
+                    "code_bindings": [
+                        {
+                            "system": "http://snomed.info/sct",
+                            "code": code,
+                            "fsn": fsn,
+                            "au_preferred_term": None,
+                            "edition_hint": "unknown",
+                            "status": "active",
+                        }
+                    ],
+                    "properties": {
+                        "discipline": [{"value": "Chemical pathology", "code": None}],
+                        "subgroup": [],
+                        "specimen": [{"value": "Serum", "code": "119364003"}],
+                        "usage_guidance": None,
+                    },
+                }
+            )
+        return {
+            "schema_version": 1,
+            "tool_version": "0.0.0",
+            "source": {"filename": "workbook.xlsx", "sha256": "a" * 64},
+            "baseline_release": {
+                "name": "2026-06",
+                "note": "Synthetic baseline release representing the state at seeding (FR-76).",
+            },
+            "entries": entries,
+        }
+
+    return make
+
+
+@pytest.fixture
+def write_dataset(tmp_path: Path) -> Callable[[object], Path]:
+    """Writes a dataset document (or any JSON value) to a temp file and returns its path."""
+
+    def write(document: object) -> Path:
+        path = tmp_path / "import-dataset.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    return write
