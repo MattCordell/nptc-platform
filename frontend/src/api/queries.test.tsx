@@ -5,16 +5,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthContext, type AuthContextValue } from "../auth/session.ts";
 import { asCollisionError, asVersionConflict } from "./conflicts.ts";
+import { stubApi } from "../test/stub-api.ts";
 import { createQueryClient } from "./query-client.ts";
 import {
+  type CatalogueSearchParams,
   useAcknowledgeCollision,
   useAddDesignations,
   useAdminEntriesList,
   useAdminEntryDetail,
   useAdminSearch,
   useAmendDesignation,
+  useCatalogueSearch,
   useEntriesList,
+  useEntryBindings,
+  useEntryByCode,
+  useEntryBySystemCode,
+  useEntryDesignations,
   useEntryDetail,
+  useEntryHistory,
+  useEntryProperties,
   usePatchEntryCore,
   usePropertyDefinitions,
   usePropertyValueOptions,
@@ -23,6 +32,7 @@ import {
   useSavePropertyValues,
   useSession,
 } from "./queries.ts";
+import type { ApiError } from "./unwrap.ts";
 
 /**
  * TanStack Query hooks over the generated client (issue #147).
@@ -781,5 +791,502 @@ describe("usePatchEntryCore", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(asVersionConflict(result.current.error)?.current_row_version).toBe(4);
+  });
+});
+
+/**
+ * The public catalogue read hooks (FR-14 to FR-19). These use the shared
+ * `stubApi` so each test can assert the query string the request carried,
+ * not only its path.
+ */
+
+const ENTRY_KEY = "NPTC-000247";
+const ENTRIES = "/api/v1/catalogue/entries";
+
+function wrapperWithStatus(
+  status: AuthContextValue["status"],
+  queryClient = createQueryClient(),
+) {
+  return function StatusWrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={{ ...AUTH, status }}>
+          {children}
+        </AuthContext.Provider>
+      </QueryClientProvider>
+    );
+  };
+}
+
+describe("useEntriesList filters and gating", () => {
+  it("sends each facet selection as a repeated filter.<key> pair", async () => {
+    const calls = stubApi([
+      { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(
+      () =>
+        useEntriesList({
+          filters: { specimen: ["119297000", "122575003"], discipline: ["chem"] },
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const { searchParams } = calls[0]!;
+    expect(searchParams.getAll("filter.specimen")).toEqual(["119297000", "122575003"]);
+    expect(searchParams.getAll("filter.discipline")).toEqual(["chem"]);
+  });
+
+  it("passes the after cursor through unchanged and sends no offset, page or total", async () => {
+    const calls = stubApi([
+      { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(
+      () => useEntriesList({ limit: 10, after: "opaque+/=cursor" }),
+      {
+        wrapper,
+      },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const { searchParams } = calls[0]!;
+    expect(searchParams.get("after")).toBe("opaque+/=cursor");
+    expect([...searchParams.keys()].sort()).toEqual(["after", "limit"]);
+  });
+
+  it("sends no after parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntriesList({ after: null }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("after")).toBe(false);
+  });
+
+  it("does not fetch while enabled is false", () => {
+    const calls = stubApi([
+      { method: "GET", path: ENTRIES, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntriesList({ enabled: false }), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("useCatalogueSearch", () => {
+  const SEARCH = "/api/v1/catalogue/search";
+
+  it("sends q, the cursor and repeated filters, and exposes the parsed page", async () => {
+    const page = { items: [], facets: [], next_cursor: null };
+    const calls = stubApi([{ method: "GET", path: SEARCH, status: 200, body: page }]);
+
+    const { result } = renderHook(
+      () =>
+        useCatalogueSearch({
+          q: "glucose",
+          limit: 25,
+          after: "cursor-1",
+          filters: { specimen: ["119297000", "122575003"] },
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(page);
+    const call = calls[0]!;
+    expect(call.path).toBe(SEARCH);
+    expect(call.searchParams.get("q")).toBe("glucose");
+    expect(call.searchParams.get("limit")).toBe("25");
+    expect(call.searchParams.get("after")).toBe("cursor-1");
+    expect(call.searchParams.getAll("filter.specimen")).toEqual([
+      "119297000",
+      "122575003",
+    ]);
+    expect(
+      [...call.searchParams.keys()].some((key) => /^(offset|page|total)/.test(key)),
+    ).toBe(false);
+  });
+
+  it("keeps a different q, cursor or filter set in a separate cache entry", async () => {
+    const calls = stubApi([
+      { method: "GET", path: SEARCH, status: 200, body: { items: [], facets: [] } },
+    ]);
+    const queryClient = createQueryClient();
+    const { rerender } = renderHook(
+      (props: CatalogueSearchParams) => useCatalogueSearch(props),
+      {
+        wrapper: wrapperWithStatus("signed-in", queryClient),
+        initialProps: { q: "glucose" } as CatalogueSearchParams,
+      },
+    );
+    await waitFor(() => expect(calls).toHaveLength(1));
+
+    rerender({ q: "glucose", after: "cursor-1" });
+    await waitFor(() => expect(calls).toHaveLength(2));
+
+    rerender({ q: "glucose", after: "cursor-1", filters: { specimen: ["119297000"] } });
+    await waitFor(() => expect(calls).toHaveLength(3));
+
+    rerender({ q: "glucose", after: "cursor-1", filters: { specimen: ["122575003"] } });
+    await waitFor(() => expect(calls).toHaveLength(4));
+
+    rerender({ q: "sodium", after: "cursor-1", filters: { specimen: ["122575003"] } });
+    await waitFor(() => expect(calls).toHaveLength(5));
+  });
+
+  // A page's next_cursor is `string | null`, so a screen passes it straight
+  // back; a null on the last page must mean "no cursor", not the text "null".
+  it("sends no after parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: SEARCH, status: 200, body: { items: [], facets: [] } },
+    ]);
+
+    const { result } = renderHook(
+      () => useCatalogueSearch({ q: "glucose", after: null }),
+      {
+        wrapper,
+      },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("after")).toBe(false);
+  });
+
+  it.each(["", "   "])("does not fetch for a blank q (%j)", (q) => {
+    const calls = stubApi([{ method: "GET", path: SEARCH, status: 200, body: {} }]);
+
+    const { result } = renderHook(() => useCatalogueSearch({ q }), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("surfaces a non-2xx response as a query error", async () => {
+    stubApi([
+      { method: "GET", path: SEARCH, status: 422, body: { detail: "bad cursor" } },
+    ]);
+
+    const { result } = renderHook(() => useCatalogueSearch({ q: "glucose" }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ApiError).status).toBe(422);
+  });
+
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => useCatalogueSearch({ q: "glucose" }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
+  });
+});
+
+describe.each([
+  { name: "useEntryDesignations", hook: useEntryDesignations, suffix: "designations" },
+  { name: "useEntryBindings", hook: useEntryBindings, suffix: "bindings" },
+  { name: "useEntryProperties", hook: useEntryProperties, suffix: "properties" },
+])("$name", ({ hook, suffix }) => {
+  const path = `${ENTRIES}/${ENTRY_KEY}/${suffix}`;
+
+  it("fetches the entry's records and exposes the parsed body", async () => {
+    const body = { items: [{ marker: suffix }] };
+    const calls = stubApi([{ method: "GET", path, status: 200, body }]);
+
+    const { result } = renderHook(() => hook(ENTRY_KEY), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(body);
+    expect(calls[0]!.path).toBe(path);
+    expect([...calls[0]!.searchParams.keys()]).toEqual([]);
+  });
+
+  it("surfaces a 404 as a query error that keeps its status", async () => {
+    stubApi([{ method: "GET", path, status: 404, body: { detail: "no such entry" } }]);
+
+    const { result } = renderHook(() => hook(ENTRY_KEY), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ApiError).status).toBe(404);
+  });
+
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => hook(ENTRY_KEY), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it("does not fetch for a blank business key", () => {
+    const calls = stubApi([{ method: "GET", path, status: 200, body: {} }]);
+
+    const { result } = renderHook(() => hook(""), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("useEntryHistory", () => {
+  const HISTORY = `${ENTRIES}/${ENTRY_KEY}/history`;
+
+  it("sends limit and the before cursor, and exposes the parsed page", async () => {
+    const page = { items: [], next_cursor: null };
+    const calls = stubApi([{ method: "GET", path: HISTORY, status: 200, body: page }]);
+
+    const { result } = renderHook(
+      () => useEntryHistory(ENTRY_KEY, { limit: 5, before: "cursor-9" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(page);
+    const { searchParams } = calls[0]!;
+    expect(searchParams.get("limit")).toBe("5");
+    expect(searchParams.get("before")).toBe("cursor-9");
+    expect([...searchParams.keys()].sort()).toEqual(["before", "limit"]);
+  });
+
+  it("sends no before parameter for a null cursor", async () => {
+    const calls = stubApi([
+      { method: "GET", path: HISTORY, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntryHistory(ENTRY_KEY, { before: null }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.searchParams.has("before")).toBe(false);
+  });
+
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => useEntryHistory(ENTRY_KEY), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it("does not fetch for a blank business key", () => {
+    const calls = stubApi([{ method: "GET", path: HISTORY, status: 200, body: {} }]);
+
+    const { result } = renderHook(() => useEntryHistory(""), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+
+  // Principal failure mode (NFR-26): the route answers `changed_by: null` to
+  // an anonymous caller. A page cached before the session restored must not
+  // be served to the signed-in reader afterwards.
+  it("waits for the session to restore before asking", () => {
+    const calls = stubApi([
+      { method: "GET", path: HISTORY, status: 200, body: { items: [] } },
+    ]);
+
+    const { result } = renderHook(() => useEntryHistory(ENTRY_KEY), {
+      wrapper: wrapperWithStatus("restoring"),
+    });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("asks again, rather than reusing the cached page, when the caller signs in", async () => {
+    const calls = stubApi([
+      { method: "GET", path: HISTORY, status: 200, body: { items: [] } },
+    ]);
+    const queryClient = createQueryClient();
+    let status: AuthContextValue["status"] = "signed-out";
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <AuthContext.Provider value={{ ...AUTH, status }}>
+            {children}
+          </AuthContext.Provider>
+        </QueryClientProvider>
+      );
+    }
+
+    const { result, rerender } = renderHook(() => useEntryHistory(ENTRY_KEY), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls).toHaveLength(1);
+
+    status = "signed-in";
+    rerender();
+
+    await waitFor(() => expect(calls).toHaveLength(2));
+  });
+});
+
+describe("useEntryByCode", () => {
+  it("fetches the entry for a code under a system token", async () => {
+    const entry = { business_key: ENTRY_KEY };
+    const calls = stubApi([
+      {
+        method: "GET",
+        path: "/api/v1/catalogue/code/sct/26604007",
+        status: 200,
+        body: entry,
+      },
+    ]);
+
+    const { result } = renderHook(() => useEntryByCode("sct", "26604007"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(entry);
+    expect(calls[0]!.path).toBe("/api/v1/catalogue/code/sct/26604007");
+  });
+
+  // FR-06: a number-typed code would lose the leading zeros. The assertion is
+  // on the raw request URL, which a coerced value could not fake.
+  it("keeps a code with leading zeros as written", async () => {
+    const calls = stubApi([
+      {
+        method: "GET",
+        path: "/code/sct/0012345",
+        status: 200,
+        body: { business_key: ENTRY_KEY },
+      },
+    ]);
+
+    const { result } = renderHook(() => useEntryByCode("sct", "0012345"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(new URL(calls[0]!.url).pathname.endsWith("/code/sct/0012345")).toBe(true);
+  });
+
+  it("surfaces a 404 as a query error that keeps its status", async () => {
+    stubApi([
+      {
+        method: "GET",
+        path: "/code/sct/999",
+        status: 404,
+        body: { detail: "No such entry." },
+      },
+    ]);
+
+    const { result } = renderHook(() => useEntryByCode("sct", "999"), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ApiError).status).toBe(404);
+  });
+
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => useEntryByCode("sct", "26604007"), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it.each([
+    ["a blank token", "", "26604007"],
+    ["a blank code", "sct", ""],
+  ])("does not fetch for %s", (_label, token, code) => {
+    const calls = stubApi([{ method: "GET", path: "/code/", status: 200, body: {} }]);
+
+    const { result } = renderHook(() => useEntryByCode(token, code), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("useEntryBySystemCode", () => {
+  const LOOKUP = "/api/v1/catalogue/lookup";
+  const SNOMED = "http://snomed.info/sct";
+
+  it("sends the system URI and code as query parameters", async () => {
+    const entry = { business_key: ENTRY_KEY };
+    const calls = stubApi([{ method: "GET", path: LOOKUP, status: 200, body: entry }]);
+
+    const { result } = renderHook(() => useEntryBySystemCode(SNOMED, "26604007"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(entry);
+    expect(calls[0]!.path).toBe(LOOKUP);
+    expect(calls[0]!.searchParams.get("system")).toBe(SNOMED);
+    expect(calls[0]!.searchParams.get("code")).toBe("26604007");
+  });
+
+  it("keeps a code with leading zeros as written", async () => {
+    const calls = stubApi([
+      { method: "GET", path: LOOKUP, status: 200, body: { business_key: ENTRY_KEY } },
+    ]);
+
+    const { result } = renderHook(() => useEntryBySystemCode(SNOMED, "0012345"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(new URL(calls[0]!.url).search).toContain("code=0012345");
+  });
+
+  it("surfaces a 404 as a query error that keeps its status", async () => {
+    stubApi([
+      { method: "GET", path: LOOKUP, status: 404, body: { detail: "No such entry." } },
+    ]);
+
+    const { result } = renderHook(() => useEntryBySystemCode(SNOMED, "999"), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ApiError).status).toBe(404);
+  });
+
+  it("surfaces a non-2xx response with an empty body as a query error", async () => {
+    stubFetchEmptyBody(500);
+
+    const { result } = renderHook(() => useEntryBySystemCode(SNOMED, "26604007"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it.each([
+    ["a blank system", "", "26604007"],
+    ["a blank code", SNOMED, ""],
+  ])("does not fetch for %s", (_label, system, code) => {
+    const calls = stubApi([{ method: "GET", path: LOOKUP, status: 200, body: {} }]);
+
+    const { result } = renderHook(() => useEntryBySystemCode(system, code), { wrapper });
+
+    // A hook that fired would be fetching by now; the stub's call log alone
+    // lags behind it.
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(calls).toHaveLength(0);
   });
 });

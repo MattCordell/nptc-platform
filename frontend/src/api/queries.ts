@@ -1,5 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useAuth } from "../auth/session.ts";
 import type { AdminListingSort } from "../router/search-params.ts";
 import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
@@ -69,22 +70,81 @@ export function useSession() {
   });
 }
 
+type PublicEntriesQuery = NonNullable<
+  paths["/api/v1/catalogue/entries"]["get"]["parameters"]["query"]
+>;
+type PublicSearchQuery = NonNullable<
+  paths["/api/v1/catalogue/search"]["get"]["parameters"]["query"]
+>;
+type PublicHistoryQuery = NonNullable<
+  paths["/api/v1/catalogue/entries/{business_key}/history"]["get"]["parameters"]["query"]
+>;
+
 export interface EntriesListParams {
   limit?: number;
+  /** The previous page's `next_cursor`, passed back unchanged (ADR-0024). */
   after?: string | null;
+  /** Keyed by facet, as `filterSelections` produces them - sent as repeated
+   * `filter.<key>` pairs by `filterQueryParams`. */
+  filters?: Record<string, string[]>;
+  enabled?: boolean;
 }
 
+/**
+ * One page of published catalogue entries, ascending by business key
+ * (ADR-0024: keyset paging, so no page number, offset or total exists here).
+ *
+ * The merged query is cast through the generated operation's own query type
+ * for the reason `useAdminEntriesList` gives: the schema types the facet
+ * parameters as the single literal field `"filter.{property_key}"`.
+ */
 export function useEntriesList(params: EntriesListParams = {}) {
   const client = useApiClient();
+  const { limit, after, filters = {}, enabled = true } = params;
+  const query = { limit, after, ...filterQueryParams(filters) };
   return useQuery({
-    queryKey: ["api", "/api/v1/catalogue/entries", params],
+    queryKey: ["api", "/api/v1/catalogue/entries", query],
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/entries", {
-          params: { query: params },
+          params: { query: query as unknown as PublicEntriesQuery },
           signal,
         }),
       ),
+    enabled,
+  });
+}
+
+export interface CatalogueSearchParams {
+  q: string;
+  limit?: number;
+  /** The previous page's `next_cursor`. The server binds a cursor to its `q`
+   * and filters and refuses a mismatch with a 422, so all three sit in the
+   * query key together. */
+  after?: string | null;
+  filters?: Record<string, string[]>;
+  enabled?: boolean;
+}
+
+/**
+ * Search published entries by term, best match first, with facet counts over
+ * the whole result set. Gated on a non-blank (trimmed) `q`: the route 422s a
+ * blank one, so firing it would only produce an error.
+ */
+export function useCatalogueSearch(params: CatalogueSearchParams) {
+  const client = useApiClient();
+  const { q, limit, after, filters = {}, enabled = true } = params;
+  const query = { q, limit, after, ...filterQueryParams(filters) };
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/search", query],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/search", {
+          params: { query: query as unknown as PublicSearchQuery },
+          signal,
+        }),
+      ),
+    enabled: enabled && q.trim().length > 0,
   });
 }
 
@@ -102,6 +162,138 @@ export function useEntryDetail(businessKey: string) {
     // A blank business key can't resolve to a real entry - don't fire the
     // request only to fail with a 422.
     enabled: businessKey.length > 0,
+  });
+}
+
+export function useEntryDesignations(businessKey: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: [
+      "api",
+      "/api/v1/catalogue/entries/{business_key}/designations",
+      businessKey,
+    ],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries/{business_key}/designations", {
+          params: { path: { business_key: businessKey } },
+          signal,
+        }),
+      ),
+    enabled: businessKey.length > 0,
+  });
+}
+
+/** Includes retired bindings (FR-08), with their reason and successor code. */
+export function useEntryBindings(businessKey: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/entries/{business_key}/bindings", businessKey],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries/{business_key}/bindings", {
+          params: { path: { business_key: businessKey } },
+          signal,
+        }),
+      ),
+    enabled: businessKey.length > 0,
+  });
+}
+
+export function useEntryProperties(businessKey: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/entries/{business_key}/properties", businessKey],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries/{business_key}/properties", {
+          params: { path: { business_key: businessKey } },
+          signal,
+        }),
+      ),
+    enabled: businessKey.length > 0,
+  });
+}
+
+export interface EntryHistoryParams {
+  limit?: number;
+  /** The previous page's `next_cursor`, passed back unchanged (ADR-0024). */
+  before?: string | null;
+}
+
+/**
+ * An entry's change history, most recent first (FR-19).
+ *
+ * The route returns `changed_by: null` to an anonymous caller (NFR-26), so
+ * the cached answer depends on who asked. Sign-in and sign-out leave the app
+ * for Keycloak and so start with an empty cache, but the status still moves
+ * inside one page load: it settles out of `"restoring"` after the first
+ * render, and a failed renewal drops it to `"signed-out"`. Two guards cover
+ * that: the key carries whether the caller is signed in, so a page cached
+ * for one is never served to the other, and the query waits out
+ * `"restoring"` so a signed-in reader is not first shown the anonymous page.
+ */
+export function useEntryHistory(businessKey: string, params: EntryHistoryParams = {}) {
+  const client = useApiClient();
+  const { status } = useAuth();
+  const { limit, before } = params;
+  const query: PublicHistoryQuery = { limit, before };
+  return useQuery({
+    queryKey: [
+      "api",
+      "/api/v1/catalogue/entries/{business_key}/history",
+      businessKey,
+      query,
+      { signedIn: status === "signed-in" },
+    ],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/entries/{business_key}/history", {
+          params: { path: { business_key: businessKey }, query },
+          signal,
+        }),
+      ),
+    enabled: businessKey.length > 0 && status !== "restoring",
+  });
+}
+
+/**
+ * One published entry, resolved by an exact code under a short system alias
+ * such as `sct` (FR-17). Serves the same body as `useEntryDetail`.
+ *
+ * Gated on a non-empty token and code only. The server is the authority on
+ * what a valid code looks like, and answers an unknown and a malformed code
+ * with the identical 404, so the caller reads `ApiError.status` for "no such
+ * entry". The code is passed as the string it arrived as (FR-06).
+ */
+export function useEntryByCode(systemToken: string, code: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/code/{system_token}/{code}", systemToken, code],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/code/{system_token}/{code}", {
+          params: { path: { system_token: systemToken, code } },
+          signal,
+        }),
+      ),
+    enabled: systemToken.length > 0 && code.length > 0,
+  });
+}
+
+/** The same lookup as `useEntryByCode`, for a caller holding the system's full URI. */
+export function useEntryBySystemCode(system: string, code: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/catalogue/lookup", system, code],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/catalogue/lookup", {
+          params: { query: { system, code } },
+          signal,
+        }),
+      ),
+    enabled: system.length > 0 && code.length > 0,
   });
 }
 

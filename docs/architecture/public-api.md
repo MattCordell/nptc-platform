@@ -450,3 +450,42 @@ pending). `frontend/src/api/queries.ts` wraps that in TanStack Query hooks.
 SNOMED CT identifier field in the generated schema is `string`, never `number` (FR-06) -
 if a future backend change ever typed one as a number, `pnpm typecheck` fails on this
 file rather than the defect reaching the frontend silently.
+
+### Query hooks for the public catalogue routes
+
+Each public read route has one hook in `frontend/src/api/queries.ts`, so a screen never
+writes fetch code of its own:
+
+| Hook | Route |
+|---|---|
+| `useEntriesList` | `GET /catalogue/entries` |
+| `useCatalogueSearch` | `GET /catalogue/search` |
+| `useEntryDetail` | `GET /catalogue/entries/{business_key}` |
+| `useEntryDesignations` | `GET /catalogue/entries/{business_key}/designations` |
+| `useEntryBindings` | `GET /catalogue/entries/{business_key}/bindings` |
+| `useEntryProperties` | `GET /catalogue/entries/{business_key}/properties` |
+| `useEntryHistory` | `GET /catalogue/entries/{business_key}/history` |
+| `useEntryByCode` | `GET /catalogue/code/{system_token}/{code}` |
+| `useEntryBySystemCode` | `GET /catalogue/lookup` |
+
+- **Paging is keyset only** (ADR-0024). The list and search hooks take `after`, the
+  history hook takes `before`, and each passes the previous page's `next_cursor` through
+  unchanged. No hook has a page number, an offset or a total. Search puts `q`, `after`
+  and the filters in one query key, because the server binds a cursor to its `q` and
+  filters and answers a mismatch with a 422.
+- **Facet filters are repeated `filter.<key>` pairs.** The generated type has only the
+  literal field `"filter.{property_key}"`, because OpenAPI cannot describe a parameter
+  name that varies. The list and search hooks therefore take `filters:
+  Record<string, string[]>`, build the wire pairs with `filterQueryParams`
+  (`frontend/src/api/filter-params.ts`), and cast the result through the operation's own
+  query type. The admin hooks use the same approach. This closes the gap that issue #276
+  recorded.
+- **Codes stay strings** (FR-06). The lookup hooks pass `code` exactly as given, so
+  `0012345` reaches the server as `0012345`. They check only that the code is not empty;
+  the server decides what a valid code is, and it answers an unknown and a malformed code
+  with the same 404. A caller reads `ApiError.status` to tell "no such entry" from an
+  outage.
+- **History depends on who asks** (NFR-26). The route returns `changed_by: null` to an
+  anonymous caller. `useEntryHistory` puts whether the caller is signed in into its query
+  key, and waits while the session is still restoring, so an anonymous page is never
+  shown to a signed-in reader.

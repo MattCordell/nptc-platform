@@ -55,7 +55,18 @@ export interface StubOptions {
  * assertions on what was actually sent.
  */
 export function stubApi(routes: Route[], options: StubOptions = {}) {
-  const calls: { method: string; path: string; body: unknown; text: string }[] = [];
+  const calls: {
+    method: string;
+    path: string;
+    /** The request's query string, parsed - repeated keys such as
+     * `filter.specimen` stay readable through `getAll`. */
+    searchParams: URLSearchParams;
+    /** The raw URL, for a test that must see exactly what went on the wire
+     * (FR-06: a leading-zero code is a string in the path and query too). */
+    url: string;
+    body: unknown;
+    text: string;
+  }[] = [];
   const fetchMock = vi.fn(async (request: Request) => {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -69,7 +80,14 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     const priorSameCalls = calls.filter(
       (call) => call.method === method && call.path === path,
     ).length;
-    calls.push({ method, path, body, text });
+    calls.push({
+      method,
+      path,
+      searchParams: url.searchParams,
+      url: request.url,
+      body,
+      text,
+    });
     const route =
       options.vary?.({ method, path, searchParams: url.searchParams }, priorSameCalls) ??
       routes.find((r) => r.method === method && path.endsWith(r.path));
