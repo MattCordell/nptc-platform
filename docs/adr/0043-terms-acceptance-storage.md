@@ -115,8 +115,8 @@ custom Keycloak code. Shape 2 meets it with the stack's existing parts.
 
 - #434 builds the table, the read and accept endpoints, the refusal code and the audit event.
   #435 builds the terms page and the gate. Both bodies are edited to match this ADR.
-- Enforcement runs per request on the write path. The cost is one indexed read of the user's
-  latest acceptance.
+- Enforcement runs per request on the write path. The cost is one read of the user's
+  latest acceptance, so #434 should index the table by user.
 - A user who registers and never returns has an account but no acceptance row. The account
   cannot contribute, which is the intended outcome.
 - Keycloak's own terms attribute stays unused. Nothing in the platform reads it.
