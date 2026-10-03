@@ -192,6 +192,34 @@ def create_local_code(
     see `nptc.db.models.local_code`'s own docstring. Requires
     `Permission.REGISTRY_MANAGE`."""
     _require_registry_manage(actor)
+    return create_local_code_unchecked(
+        session,
+        ctx,
+        system=system,
+        code=code,
+        display=display,
+        definition=definition,
+        provisional=provisional,
+        reason=reason,
+    )
+
+
+def create_local_code_unchecked(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    system: LocalCodeSystem,
+    code: str,
+    display: str,
+    definition: str | None = None,
+    provisional: bool = False,
+    reason: str,
+) -> LocalCode:
+    """`create_local_code` without the permission check, for a system-initiated write that has no
+    `Principal`: the baseline seed loader migrating Subgroup values as provisional codes
+    (FR-92). The audit event and changelog note are unchanged; `ctx` names the system actor, as
+    `grant_role_unchecked` does for the first administrator. A route must call
+    `create_local_code`."""
     validated_reason = validate_changelog_note(reason)
 
     local_code = LocalCode(

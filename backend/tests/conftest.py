@@ -30,6 +30,9 @@ Fixture graph::
                                     test - requested explicitly by the few
                                     tests whose assertion is genuinely
                                     whole-table (issue #190)
+    pristine_catalogue  (function) the same for committed catalogue_entry and
+                                    its child rows - the seed loader's
+                                    empty-catalogue precondition
 
 The `integration` marker is derived, not only hand-written: a test whose
 fixture closure reaches `postgres_container` is marked at collection, so
@@ -49,6 +52,7 @@ no egress, not the container).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -292,6 +296,41 @@ def pristine_audit_event(owner_engine: Engine, migrated: None) -> Iterator[None]
     _wipe_committed_audit_state(owner_engine)
 
 
+#: Child tables first, each a plain literal: `test_sql_parameterisation.py`'s AST guard forbids SQL
+#: built from runtime data, and `catalogue_entry` is FK-referenced by every table before it.
+_WIPE_CATALOGUE_STATEMENTS = (
+    "DELETE FROM entry_seed_provenance",
+    "DELETE FROM validation_finding",
+    "DELETE FROM designation_collision_acknowledgement",
+    "DELETE FROM property_value",
+    "DELETE FROM code_binding",
+    "DELETE FROM designation",
+    "DELETE FROM catalogue_entry",
+    "DELETE FROM seed_import",
+)
+
+
+def _wipe_committed_catalogue(owner_engine: Engine) -> None:
+    """Deletes every committed catalogue row, as the owner (`nptc_app_login` has no DELETE on
+    these tables). Leaves `audit_event` alone: request `pristine_audit_event` as well when the
+    assertion needs an empty chain."""
+    with owner_engine.connect() as connection:
+        for statement in _WIPE_CATALOGUE_STATEMENTS:
+            connection.execute(text(statement))
+        connection.commit()
+
+
+@pytest.fixture
+def pristine_catalogue(owner_engine: Engine, migrated: None) -> Iterator[None]:
+    """Explicit isolation for an assertion that is whole-table by definition: the seed loader
+    refuses a catalogue holding any entry, so its test cannot scope the check to rows it created.
+    Cleans before yielding as well as after, so the precondition is never inherited from whatever
+    ran earlier in this worker."""
+    _wipe_committed_catalogue(owner_engine)
+    yield
+    _wipe_committed_catalogue(owner_engine)
+
+
 @pytest.fixture(scope="session")
 def app_login_credentials(migrated: None) -> tuple[str, str]:
     """`(APP_LOGIN_ROLE, APP_LOGIN_PASSWORD)`, for a test module that needs
@@ -316,3 +355,111 @@ def hostile_api_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("NPTC_FSN_SEMANTIC_TAG", "stripped")
     yield
     get_api_settings.cache_clear()
+
+
+#: Real `(code, fsn, preferred_term)` rows from the sample workbook's emitted dataset, so every
+#: code passes the Verhoeff check. `make_dataset_document` takes as many as it is asked for.
+_SEED_SAMPLE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("121348009", "1,1,1-Trichloroethane measurement", "1,1,1-Trichloroethane"),
+    (
+        "873871000168106",
+        "Measurement of 1,5-Anhydroglucitol in serum specimen",
+        "1,5-Anhydroglucitol",
+    ),
+    ("104607005", "11-deoxycorticosterone measurement", "11-Deoxycorticosterone"),
+    ("313778009", "Serum 11-deoxycortisol measurement", "11-Deoxycortisol"),
+    (
+        "444132007",
+        "Quantitative measurement of 11-deoxycortisol in urine specimen",
+        "11-Deoxycortisol urine",
+    ),
+    (
+        "430551003",
+        "Measurement of 14-3-3 protein concentration in cerebrospinal fluid",
+        "14-3-3 protein CSF",
+    ),
+    ("41668001", "17 Hydroxyprogesterone measurement, serum", "17-Hydroxyprogesterone"),
+    ("413044009", "Saliva 17a-hydroxy progesterone measurement", "17-Hydroxyprogesterone saliva"),
+)
+
+
+@pytest.fixture
+def make_dataset_document() -> Callable[..., dict[str, Any]]:
+    """Builds an ADR-0010 `import-dataset.json` document as a plain dict a test can edit before
+    writing it. Every entry is seedable: one coded specimen, one discipline, one synonym.
+
+    `first_key_number` is high on purpose. A sequence is not transactional, so the loader's
+    `advance_sequence_past` outlives the test's rollback; keys far above anything else a test
+    mints keep that from perturbing another test's expectations."""
+
+    def make(entry_count: int = 2, *, first_key_number: int = 500_000) -> dict[str, Any]:
+        entries = []
+        for index, (code, fsn, term) in enumerate(_SEED_SAMPLE_ROWS[:entry_count]):
+            entries.append(
+                {
+                    "business_key": f"NPTC-{first_key_number + index:06d}",
+                    "source": {
+                        "sheet": "RCPA SPIA Requesting_Jun 2026",
+                        "row": index + 2,
+                        "legacy_version": "2024-07-01T00:00:00",
+                        "legacy_history": "Jul 2024 - Added by PI Pilot 22-24",
+                    },
+                    "preferred_term": term,
+                    "status": "active",
+                    "specimen_unconstrained": False,
+                    "designations": [
+                        {
+                            "term": term,
+                            "use": "preferred",
+                            "language": "en-AU",
+                            "status": "active",
+                        },
+                        {
+                            "term": f"{term} synonym",
+                            "use": "synonym",
+                            "language": "en-AU",
+                            "status": "active",
+                        },
+                    ],
+                    "code_bindings": [
+                        {
+                            "system": "http://snomed.info/sct",
+                            "code": code,
+                            "fsn": fsn,
+                            "au_preferred_term": None,
+                            "edition_hint": "unknown",
+                            "status": "active",
+                        }
+                    ],
+                    "properties": {
+                        "discipline": [{"value": "Chemical pathology", "code": None}],
+                        "subgroup": [],
+                        "specimen": [{"value": "Serum", "code": "119364003"}],
+                        "usage_guidance": None,
+                    },
+                }
+            )
+        return {
+            "schema_version": 1,
+            "tool_version": "0.0.0",
+            "source": {"filename": "workbook.xlsx", "sha256": "a" * 64},
+            "baseline_release": {
+                "name": "2026-06",
+                "note": "Synthetic baseline release representing the state at seeding (FR-76).",
+            },
+            "entries": entries,
+        }
+
+    return make
+
+
+@pytest.fixture
+def write_dataset(tmp_path: Path) -> Callable[[object], Path]:
+    """Writes a dataset document (or any JSON value) to a temp file and returns its path."""
+
+    def write(document: object) -> Path:
+        path = tmp_path / "import-dataset.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    return write

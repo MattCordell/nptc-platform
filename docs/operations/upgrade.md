@@ -64,6 +64,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0016_code_binding_retired_at.py`](../../backend/migrations/versions/0016_code_binding_retired_at.py) | `code_binding.retired_at`, `ck_code_binding_retired_at` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | See [below](#0016_code_binding_retired_atpy) - backfills existing retired rows from `updated_at` before adding the `NOT NULL`-when-retired `CHECK` |
 | [`0017_code_binding_system_code_index.py`](../../backend/migrations/versions/0017_code_binding_system_code_index.py) | `ix_code_binding_system_code` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None |
 | [`0018_validation_finding.py`](../../backend/migrations/versions/0018_validation_finding.py) | `validation_finding`, `ix_audit_event_entity_type_entity_id_sequence` on `audit_event` (see [`data-model.md`](../architecture/data-model.md#validation_finding-fr-18-fr-45-fr-55-issue-141)) | See [below](#0018_validation_findingpy) - the new `audit_event` index is a blocking build |
+| [`0021_seed_import_provenance.py`](../../backend/migrations/versions/0021_seed_import_provenance.py) | `seed_import`, `entry_seed_provenance` (see [`data-model.md`](../architecture/data-model.md#seeded-baseline-provenance-issue-329-fr-76-adr-0010-adr-0042)) | None to upgrade. To populate them, run the [seed baseline runbook](runbooks/seed-baseline.md) once on a new deployment |
 
 ## Provisioning the app role's login
 

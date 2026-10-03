@@ -242,3 +242,13 @@ GRANT_VALIDATION_FINDING_SQL = "GRANT SELECT ON TABLE validation_finding TO nptc
 REVOKE_VALIDATION_FINDING_WRITE_SQL = (
     "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE validation_finding FROM nptc_app;"
 )
+
+#: FR-76, ADR-0042: the seeding run and each seeded entry's provenance are written once by the
+#: loader, which runs as the app role, and never edited or removed by any path (ADR-0010: "never an
+#: editable field").
+GRANT_SEED_IMPORT_SQL = "GRANT SELECT, INSERT ON TABLE seed_import TO nptc_app;"
+REVOKE_SEED_IMPORT_WRITE_SQL = "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE seed_import FROM nptc_app;"
+GRANT_ENTRY_SEED_PROVENANCE_SQL = "GRANT SELECT, INSERT ON TABLE entry_seed_provenance TO nptc_app;"
+REVOKE_ENTRY_SEED_PROVENANCE_WRITE_SQL = (
+    "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE entry_seed_provenance FROM nptc_app;"
+)

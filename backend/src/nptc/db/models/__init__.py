@@ -13,6 +13,7 @@ from nptc.db.models.designation import Designation, DesignationStatus, Designati
 from nptc.db.models.designation_collision_acknowledgement import (
     DesignationCollisionAcknowledgement,
 )
+from nptc.db.models.entry_seed_provenance import EntrySeedProvenance
 from nptc.db.models.local_code import LocalCode, LocalCodeStatus
 from nptc.db.models.local_code_snomed_map import LocalCodeSnomedMap, SnomedMapMatchStrength
 from nptc.db.models.local_code_system import LocalCodeSystem, LocalCodeSystemStatus
@@ -26,6 +27,7 @@ from nptc.db.models.property_definition import (
     PropertyStatus,
 )
 from nptc.db.models.property_value import PropertyValue
+from nptc.db.models.seed_import import SeedImport
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.models.user_role import UserRole
@@ -44,6 +46,7 @@ __all__ = [
     "DesignationCollisionAcknowledgement",
     "DesignationStatus",
     "DesignationUse",
+    "EntrySeedProvenance",
     "LocalCode",
     "LocalCodeSnomedMap",
     "LocalCodeStatus",
@@ -55,6 +58,7 @@ __all__ = [
     "PropertyScope",
     "PropertyStatus",
     "PropertyValue",
+    "SeedImport",
     "SnomedMapMatchStrength",
     "User",
     "UserIdentity",

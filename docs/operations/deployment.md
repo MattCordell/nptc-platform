@@ -81,6 +81,19 @@ grant a role.
    API hides the role: `GET /api/v1/auth/me` lists only `provisional`, although the database
    already holds the grant. See [`permissions.md`](../architecture/permissions.md).
 
+## Seed the baseline catalogue
+
+A new stack has an empty catalogue. Load the transform's `import-dataset.json` once, before
+anyone edits. The seed refuses a catalogue that already holds data, so run `--dry-run` first.
+The full procedure, the exit codes and the fix for each refusal are in
+[`runbooks/seed-baseline.md`](runbooks/seed-baseline.md).
+
+```powershell
+docker compose -f deploy/compose.yml cp transform-report/import-dataset.json backend:/tmp/import-dataset.json
+docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.py --dataset /tmp/import-dataset.json --dry-run
+docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.py --dataset /tmp/import-dataset.json
+```
+
 ## Stop the stack
 
 Stop the containers and keep the database:

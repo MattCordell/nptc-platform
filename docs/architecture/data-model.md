@@ -1373,6 +1373,46 @@ not the process-lifetime `lru_cache` the registry used before this needed a `Ses
 mapping three outcomes (absent, code deprecated, owning system deprecated independently of
 the code's own status) to a distinct `ValidationIssue` code each.
 
+## Seeded baseline provenance (issue #329, FR-76, ADR-0010, ADR-0042)
+
+Two tables record the one-off seeding of the catalogue from the RCPA workbook. Both are
+written once by the seed loader (`nptc.catalogue.seed_import`, run by
+[`scripts/seed_baseline.py`](../../scripts/seed_baseline.py)) and never edited or removed:
+`nptc_app` holds `SELECT, INSERT` only, so ADR-0010's "never an editable field" is a
+privilege-level guarantee rather than a convention. There is no `release` table yet; it
+lands with P4, and ADR-0042 records why the baseline is not a placeholder `Release` row.
+
+### `seed_import`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `singleton` | `BOOLEAN` | `NOT NULL DEFAULT true`, `CHECK (singleton)`, unique index `ix_seed_import_singleton` - together these allow at most one row |
+| `release_name` | `TEXT` | `NOT NULL`, `CHECK` not blank. The dataset's `baseline_release.name` |
+| `release_note` | `TEXT` | `NOT NULL`. The dataset's `baseline_release.note` |
+| `source_filename` | `TEXT` | `NOT NULL`. The workbook's basename (ADR-0010) |
+| `source_sha256` | `TEXT` | `NOT NULL`, `CHECK` 64 lowercase hex characters. Identifies the exact workbook |
+| `dataset_schema_version` | `INTEGER` | `NOT NULL`. The `import-dataset.json` `schema_version` the loader read |
+| `entry_count` | `INTEGER` | `NOT NULL`, `CHECK > 0`. How many entries the run wrote |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+### `entry_seed_provenance`
+
+| Column | Type | Notes |
+|---|---|---|
+| `entry_id` | `UUID` | PK and FK to `catalogue_entry.id`: at most one row per entry |
+| `seed_import_id` | `UUID` | `NOT NULL`, FK to `seed_import.id` |
+| `source_sheet` | `TEXT` | `NOT NULL`, `CHECK` not blank. The workbook sheet the entry came from |
+| `source_row` | `INTEGER` | `NOT NULL`, `CHECK >= 1`. The row on that sheet |
+| `legacy_version` | `TEXT` | Nullable. The hand-typed `Version` cell, verbatim |
+| `legacy_history` | `TEXT` | Nullable. The hand-typed `History` cell, verbatim |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+
+Provenance sits in its own table rather than as columns on `catalogue_entry`, which would
+then carry columns that are null for every entry created after cutover. An entry created
+through the application has no provenance row. Both tables emit a `created` audit event
+(NFR-08), and every column is classified in the model's audit policy.
+
 ## Extensions
 
 `pg_trgm` and `unaccent` are created in `0001_extensions_and_app_role.py` - the public

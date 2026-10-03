@@ -643,9 +643,11 @@ from a run that checked and found nothing.
 The following are owned by later issues and will change what this tool
 produces, but not the guarantees above:
 
-- The backend's initial data load consuming `import-dataset.json` -
-  `backend/src/nptc/{catalogue,releases,db}` are bare scaffolding and
-  `backend/migrations/` is empty until P1-1, so nothing consumes the file yet.
+- The `Release` table that turns the seeded baseline into a real release (P4). The backend
+  already loads `import-dataset.json` into an empty catalogue with `scripts/seed_baseline.py`
+  (see [`seed-baseline.md`](seed-baseline.md)), which records the baseline as a seed record
+  until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
+  `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading.
 - Terminology-served enrichment of `import-dataset.json`'s `edition_hint`,
   `fsn` and `au_preferred_term` from a live `--check-terminology` sweep (see
   "The import dataset" above).
