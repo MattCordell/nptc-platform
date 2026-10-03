@@ -188,11 +188,14 @@ describe("/ (homepage)", () => {
       async (status) => {
         await renderRoute("/", { auth: { status } });
 
-        const card = main().getByRole("heading", { name: "How to contribute" })
-          .parentElement as HTMLElement;
-        expect(within(card).queryByRole("link")).not.toBeInTheDocument();
-        expect(card).toHaveTextContent("Registered members can propose new tests");
-        expect(card).not.toHaveTextContent("Register to get started");
+        expect(
+          main().queryByRole("link", {
+            name: /^(Register to contribute|My submissions)$/,
+          }),
+        ).not.toBeInTheDocument();
+        expect(
+          main().getByText(/Registered members can propose new tests and amendments/),
+        ).not.toHaveTextContent("Register to get started");
       },
     );
   });

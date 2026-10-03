@@ -50,9 +50,8 @@ const LINK_CLASSES = "text-[var(--color-accent)] hover:underline";
 
 /**
  * The contribute card follows the same status keying as `HomeActions`. Its
- * link is named "Register to contribute", not "Register": a second link
- * named exactly "Register" would make `getByRole("link", { name: "Register" })`
- * ambiguous on this page.
+ * link is named "Register to contribute", not "Register": two links with one
+ * name to one route are indistinguishable in a screen reader's list of links.
  */
 function ContributeCard() {
   const { status } = useAuth();
@@ -125,7 +124,7 @@ function CatalogueSearchForm() {
 
 export function HomePage() {
   return (
-    <PageContainer className="gap-8 py-6">
+    <PageContainer className="py-6">
       <section aria-labelledby="home-heading" className="flex flex-col gap-6">
         <div className="flex max-w-3xl flex-col gap-3">
           <h1 id="home-heading" className="m-0 text-4xl">
@@ -151,9 +150,7 @@ export function HomePage() {
         <Card className="flex flex-col gap-3">
           <h2 className="m-0 text-xl">What the catalogue is</h2>
           <p className="m-0 text-[var(--color-text-muted)]">
-            The National Pathology Test Catalogue is the SPIA Requesting terminology. It
-            lists the pathology tests that can be requested, and it is published as a
-            SNOMED CT reference set and a FHIR ValueSet.
+            It lists the pathology tests that can be requested.
           </p>
           <Link to="/about" className={LINK_CLASSES}>
             About the catalogue
@@ -162,8 +159,7 @@ export function HomePage() {
         <Card className="flex flex-col gap-3">
           <h2 className="m-0 text-xl">Who maintains it</h2>
           <p className="m-0 text-[var(--color-text-muted)]">
-            RCPA-QAP curates the catalogue. NCTS publishes it as a SNOMED CT reference set
-            and a FHIR ValueSet.
+            RCPA-QAP curates the catalogue, and NCTS publishes it.
           </p>
         </Card>
         <ContributeCard />
