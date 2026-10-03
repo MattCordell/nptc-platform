@@ -586,3 +586,60 @@ def test_every_classification_refusal_is_reported_together(
     assert len(exc_info.value.problems) == 2
     assert "Phrenology" in problems
     assert "deprecated" in problems
+
+
+@pytest.mark.req("FR-92")
+@pytest.mark.integration
+def test_subgroup_labels_differing_only_in_case_share_one_provisional_code(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document(2)
+    document["entries"][0]["properties"]["subgroup"] = [{"value": "Coagulation", "code": None}]
+    document["entries"][1]["properties"]["subgroup"] = [{"value": "coagulation", "code": None}]
+
+    report, _ = _seed(app_session, document, write_dataset)
+
+    assert report.provisional_subgroup_codes == ("Coagulation",)
+    created = app_session.execute(
+        select(func.count())
+        .select_from(LocalCode)
+        .where(func.lower(LocalCode.display) == "coagulation")
+    ).scalar_one()
+    assert created == 1
+    for key in ("NPTC-500000", "NPTC-500001"):
+        (value,) = _values(app_session, _entry(app_session, key), "subgroup")
+        assert value["code"] == "Coagulation"
+
+
+@pytest.mark.integration
+def test_two_spellings_of_one_label_in_one_entry_are_stored_once(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document(1)
+    document["entries"][0]["properties"]["discipline"] = [
+        {"value": "Chemical pathology", "code": None},
+        {"value": "chemical PATHOLOGY", "code": None},
+    ]
+
+    _seed(app_session, document, write_dataset)
+
+    values = _values(app_session, _entry(app_session, "NPTC-500000"), "discipline")
+    assert [value["code"] for value in values] == ["chemical_pathology"]
+
+
+@pytest.mark.integration
+def test_a_specimen_named_twice_with_one_code_is_stored_once(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document(1)
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Serum", "code": "119364003"},
+        {"value": "serum", "code": "119364003"},
+        {"value": "Plasma", "code": "119361006"},
+    ]
+
+    report, _ = _seed(app_session, document, write_dataset)
+
+    values = _values(app_session, _entry(app_session, "NPTC-500000"), "specimen")
+    assert [value["code"] for value in values] == ["119364003", "119361006"]
+    assert report.property_values == 1 + 2 + 0

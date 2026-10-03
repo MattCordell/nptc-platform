@@ -63,6 +63,8 @@ Everything happens in one transaction. Either all of it commits, or none of it d
 - One provisional `subgroup` local code per distinct subgroup label that no existing code
   names (FR-92). Labels match a code's display or code, ignoring case, so a subgroup an
   administrator added first is reused. RCPA-QAP settles the real vocabulary later.
+  Labels that differ only in case share one code, and a value named twice in one cell, or in
+  two spellings of one code, is stored once.
 - One audit event per write, attributed to the system (NFR-08), then a single
   `advance_sequence_past` call, so the next entry the application creates gets a key above the
   highest seeded one.

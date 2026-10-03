@@ -311,7 +311,14 @@ def _resolve_classification(
     if problems:
         raise SeedPrerequisiteError(problems)
 
+    # Labels differing only in case name one subgroup, as `_match_label` treats them: create the
+    # first spelling and map the others to it, so the run never creates two codes its own rule
+    # would call ambiguous.
+    first_spelling: dict[str, str] = {}
     for label in to_create:
+        first_spelling.setdefault(label.casefold(), label)
+    created_values: dict[str, dict[str, str]] = {}
+    for label in first_spelling.values():
         created = create_local_code_unchecked(
             session,
             ctx,
@@ -321,8 +328,10 @@ def _resolve_classification(
             provisional=True,
             reason=SEED_IMPORT_NOTE,
         )
-        subgroup[label] = _coded_value(subgroup_system.uri, created.code, created.display)
-    return _Classification(discipline, subgroup, tuple(to_create))
+        created_values[label] = _coded_value(subgroup_system.uri, created.code, created.display)
+    for label in to_create:
+        subgroup[label] = created_values[first_spelling[label.casefold()]]
+    return _Classification(discipline, subgroup, tuple(first_spelling.values()))
 
 
 def _require_property_definitions(session: Session) -> None:
@@ -338,6 +347,15 @@ def _require_property_definitions(session: Session) -> None:
         )
 
 
+def _unique_coded(values: Iterable[dict[str, str]]) -> list[PropertyValueInput]:
+    """One input per `(system, code)`, in first-seen order. A hand-edited cell can name a value
+    twice, or in two spellings that resolve to one code, and the registry would store both."""
+    first_seen: dict[tuple[str, str], dict[str, str]] = {}
+    for value in values:
+        first_seen.setdefault((value["system"], value["code"]), value)
+    return [PropertyValueInput(value=value) for value in first_seen.values()]
+
+
 def _property_values(
     entry: DatasetEntry,
     discipline: dict[str, dict[str, str]],
@@ -345,18 +363,15 @@ def _property_values(
 ) -> list[tuple[str, list[PropertyValueInput]]]:
     properties = entry.properties
     specimen = [
-        PropertyValueInput(value=_coded_value(SNOMED_SYSTEM, code, value.value))
+        _coded_value(SNOMED_SYSTEM, code, value.value)
         for value in properties.specimen
         if (code := value.code) is not None
     ]
     guidance = properties.usage_guidance
     return [
-        (
-            _DISCIPLINE,
-            [PropertyValueInput(value=discipline[v.value]) for v in properties.discipline],
-        ),
-        (_SUBGROUP, [PropertyValueInput(value=subgroup[v.value]) for v in properties.subgroup]),
-        (_SPECIMEN, specimen),
+        (_DISCIPLINE, _unique_coded(discipline[v.value] for v in properties.discipline)),
+        (_SUBGROUP, _unique_coded(subgroup[v.value] for v in properties.subgroup)),
+        (_SPECIMEN, _unique_coded(specimen)),
         (
             _USAGE_GUIDANCE,
             [PropertyValueInput(value=guidance)] if guidance and guidance.strip() else [],
