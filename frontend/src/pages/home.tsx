@@ -140,7 +140,7 @@ export function HomePage() {
         <div className="max-w-3xl">
           <CatalogueSearchForm />
         </div>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex min-h-10 flex-wrap items-center gap-x-6 gap-y-3">
           <HomeActions />
           <Link to="/catalogue" className={LINK_CLASSES}>
             Search the catalogue
