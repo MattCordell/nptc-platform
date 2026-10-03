@@ -150,7 +150,7 @@ export function HomePage() {
         <Card className="flex flex-col gap-3">
           <h2 className="m-0 text-xl">What the catalogue is</h2>
           <p className="m-0 text-[var(--color-text-muted)]">
-            It lists the pathology tests that can be requested.
+            The catalogue lists the pathology tests that can be requested.
           </p>
           <Link to="/about" className={LINK_CLASSES}>
             About the catalogue
