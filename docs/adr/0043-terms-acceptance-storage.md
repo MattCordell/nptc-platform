@@ -32,10 +32,10 @@ Three facts about the current stack shape the comparison:
 
 ## Decision
 
-**The platform stores acceptance in its own database, and the API refuses writes from a
-signed-in user who has not accepted the current version.** The user meets this as a gate
-shown straight after sign-in. Keycloak's registration page carries only a short notice and a
-link to the terms.
+**The platform stores acceptance in its own database, and the API refuses contributions from
+a signed-in user who has not accepted the current version.** The user meets this as a gate
+shown straight after sign-in. Keycloak's registration page carries the collection notice and
+links to the privacy policy and the terms.
 
 ### What is stored
 
@@ -50,26 +50,46 @@ link to the terms.
 ### How it is enforced
 
 - **The server enforces it, and the SPA gate only presents it.** A signed-in user without
-  acceptance of the current version receives a refusal on every state-changing request. This
-  matches NFR-20: the interface is never the authority.
-- The refusal carries a **machine-readable code**, so the SPA can route to the gate without
-  parsing a message. The existing MFA challenge (`principal_for`, `permission_dep` and a 403
-  with a machine-readable challenge) is the model.
+  acceptance of the current version receives a refusal on every *contribution*, which is the
+  scope NFR-45 sets ("before their next contribution"). This matches NFR-20: the interface is
+  never the authority.
+- **These stay open to a user who has not accepted:** all reads, the accept request itself,
+  sign-out, account closure (NFR-17) and requests to see or correct personal information
+  (NFR-14, NFR-16), for the routes that exist or are added later. A user who declines a new
+  version must still be able to leave and to exercise their privacy rights. #434 keeps the
+  exempt routes in one explicit list, and the refusal and each exemption have a test.
+- **The refusal is a 403 with a stable code in the response body** (`detail`), the way the
+  manual-link refusal works. It adds no `WWW-Authenticate` header. The existing step-up
+  refusal uses that header because RFC 9470 defines it for authentication strength, and
+  terms acceptance is not an authentication matter. The SPA routes on the body code, and the
+  step-up loop (ADR-0036) is untouched. #434 sets the exact code string.
 - Whether the check rides on `principal_for` or on a separate dependency is #434's call. This
   ADR fixes the contract, not the wiring. Per FR-44 the check is a permission or a named
   condition, never a role name, and the denied case needs its own test.
-- Reads stay open. A user who has not accepted can still browse, read the terms and sign out.
+
+### What the accept request carries
+
+The accept request **names the version the user saw**. The server refuses it, with a distinct
+conflict response that reports the current version, when the named version is not the
+current one. Without this rule, a user who loaded the gate under version A and clicks accept
+after version B deploys would be recorded as accepting B, a text they never read. That would
+break NFR-47, which needs the accepted text to be reproducible exactly. After the refusal the
+SPA shows the gate again under the new version.
 
 ### How the SPA learns the state
 
 `GET /api/v1/auth/me`, or a sibling endpoint, reports the current version and whether the
-caller has accepted it. The terms page and the gate render from the API's copy of the text.
+caller has accepted it. The terms page and the gate render from the API's copy of the text,
+which the API can serve for the current version and for any earlier one.
 
 ### Placeholder terms
 
-One Markdown file in the repository holds the version, the effective date and the text
-(NFR-47). The API serves it, and the SPA renders what the API returns, so there is no second
-copy. The text is marked as temporary. Production replaces the file and sets a new version.
+The repository holds **one Markdown file per version** in one directory, each with its
+version, effective date and text (NFR-47). A published file is never edited. A new version is
+a new file, and one declared setting names the current one. The API serves any version by its
+id, so the text a user accepted can be reproduced exactly from the deployed service and not
+only from git history. The SPA renders what the API returns, so there is no second copy. The
+first file is marked as temporary text, and production adds its own file as a later version.
 The legal wording of the contribution licence (NFR-46) is outside this decision.
 
 ### Audit
@@ -78,11 +98,20 @@ Each acceptance emits an audit event that names the version (NFR-08).
 
 ### How this reads "at registration"
 
-NFR-14 and NFR-45 say "at registration". This ADR reads that as *before the user's first
-contribution*, with the gate shown the moment registration returns the user to the
-application. Keycloak's page shows a notice and a link. The gate gives the positive
-acceptance and the record. We chose this reading because it is the only one that keeps the
-version in the platform database and also covers existing users when a version changes.
+NFR-14 and NFR-45 both say "at registration" but ask for different things, so they are read
+separately.
+
+- **NFR-14 (privacy policy and collection notice, APP 1 and APP 5).** The notice must reach
+  the user at or before the point where personal information is collected, and Keycloak's
+  registration form is that point. So the collection notice and a link to the privacy policy
+  go **on Keycloak's registration page**, in the #432 theme. The gate repeats the collection
+  notice, so a user who registered before the notice existed also sees it.
+- **NFR-45 (terms, positive acceptance, recorded version).** This ADR reads "at registration"
+  as *before the user's first contribution*, with the gate shown the moment registration
+  returns the user to the application. Keycloak's page links the terms. The gate gives the
+  positive acceptance and the record. We chose this reading because it is the only one that
+  keeps the version in the platform database and also covers existing users when a version
+  changes.
 
 If a reviewer holds that positive acceptance must happen on Keycloak's own page, shapes 3 and
 4 below need another look. Each would need a custom Keycloak provider to record a version.
@@ -109,12 +138,17 @@ custom Keycloak code. Shape 2 meets it with the stack's existing parts.
 | **Keycloak `TERMS_AND_CONDITIONS` required action** | It stores a timestamp and no version, so NFR-45 cannot be met without a custom Java provider or an admin-API sweep. This repository has no Keycloak extension point, and the record would live outside the database that holds everything else a reviewer must query. |
 | **Themed registration page with a required checkbox** | The form action persists nothing. The checkbox gates one moment and leaves no record, and it never reaches existing users. |
 | **A `terms_accepted_version` column on `app_user`** | A single column holds only the latest acceptance. NFR-45 requires the prior acceptance record to be kept. |
+| **Refusing every state-changing request** | Read literally, it refuses the accept request itself, so the gate could never be passed. It also blocks account closure (NFR-17) and privacy requests (NFR-14, NFR-16) for a user who declines a new version. NFR-45 asks only to block the next contribution. |
+| **One terms file that is overwritten for each version** | The deployed API could then show only the current text, and the text of an earlier acceptance would survive only in git history. NFR-47 asks for reproduction of the exact accepted text. |
+| **A `WWW-Authenticate` challenge for the terms refusal** | RFC 9470 defines that header for authentication strength. Terms acceptance is not an authentication matter, and reusing it would blur the step-up loop in ADR-0036. A body code is enough for the SPA to route on. |
 | **Enforcing in the SPA only** | A direct API call would contribute without acceptance. NFR-20 and test item 15 in the PRD require the server to refuse. |
 
 ## Consequences
 
-- #434 builds the table, the read and accept endpoints, the refusal code and the audit event.
-  #435 builds the terms page and the gate. Both bodies are edited to match this ADR.
+- #434 builds the table, the read and accept endpoints, the refusal code, the exempt-route
+  list, the per-version terms files and the audit event. #435 builds the terms page and the
+  gate. #432 adds the collection notice and the privacy and terms links to the Keycloak
+  registration page. The three issue bodies are edited to match this ADR.
 - Enforcement runs per request on the write path. The cost is one read of the user's
   latest acceptance, so #434 should index the table by user.
 - A user who registers and never returns has an account but no acceptance row. The account
