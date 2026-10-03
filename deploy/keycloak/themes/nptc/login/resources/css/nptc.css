@@ -95,6 +95,13 @@ a:hover {
   color: var(--color-accent-hover);
 }
 
+/* Standalone links such as "Forgot password?" meet the 24px target size. */
+main a {
+  display: inline-block;
+  min-height: 1.5rem;
+  line-height: 1.5rem;
+}
+
 .pf-v5-c-button.pf-m-primary {
   background-color: var(--color-accent);
   color: var(--color-accent-contrast);
@@ -277,4 +284,11 @@ a {
   .nptc-panel-headline {
     font-size: 1.75rem;
   }
+}
+
+/* The stock checkbox is 13px; the platform's minimum target is 24px. */
+.pf-v5-c-check__input,
+input[type="checkbox"] {
+  width: 1.5rem;
+  height: 1.5rem;
 }
