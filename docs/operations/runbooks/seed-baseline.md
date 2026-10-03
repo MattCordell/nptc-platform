@@ -60,8 +60,9 @@ Everything happens in one transaction. Either all of it commits, or none of it d
   and `History` cells.
 - The four system property definitions (`discipline`, `subgroup`, `specimen`,
   `usage_guidance`), if they do not exist yet.
-- One provisional `subgroup` local code per distinct subgroup label (FR-92). RCPA-QAP settles
-  the real vocabulary later.
+- One provisional `subgroup` local code per distinct subgroup label that no existing code
+  names (FR-92). Labels match a code's display or code, ignoring case, so a subgroup an
+  administrator added first is reused. RCPA-QAP settles the real vocabulary later.
 - One audit event per write, attributed to the system (NFR-08), then a single
   `advance_sequence_past` call, so the next entry the application creates gets a key above the
   highest seeded one.
@@ -92,7 +93,9 @@ Each fix is a data change followed by a new transform run. The loader never repa
 | `marked as accepting any specimen but also lists named specimens` | The cell has `Any` beside a named specimen. FR-89 allows one or the other. | Keep one in the workbook. |
 | `code binding ... has no FSN` | The transform found no FSN cell for the row. | Fill the FSN in the workbook, or check the column mapping. |
 | `schema_version is ...` | The dataset came from a different transform version. | Emit it again with the matching transform. |
-| `discipline '...' is not an active code` | The workbook names a discipline the governed `discipline` code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
+| `discipline '...' is not a code in the 'discipline' local code system` | The workbook names a discipline the governed code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
+| `... matches only a deprecated code` | A discipline or subgroup label matches a code that has been deprecated. | Correct the workbook, or have an administrator add an active code. |
+| `... matches N active codes` | A label matches more than one active code, by display or code, ignoring case. | An administrator removes the ambiguity in the code system. |
 | `... DesignationCollisionError: ... collision(s) against NPTC-nnnnnn (FR-05)` | A term collides with another entry's designation at error severity. The baseline cannot exist until RCPA-QAP resolves it editorially (PRD 6.3). | Resolve it in the workbook, then run the transform again. The message names the entry that failed, and the entry it collided with. |
 | `the catalogue already holds entries` | Not a data problem. See "Reseeding". | |
 

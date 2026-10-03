@@ -21,6 +21,7 @@ from nptc.audit.verification import verify_chain
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.changelog import SEED_IMPORT_NOTE
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN, allocate_business_key, create_entry
+from nptc.catalogue.local_codes import create_local_code_unchecked
 from nptc.catalogue.seed_dataset import ImportDataset, read_import_dataset
 from nptc.catalogue.seed_import import (
     CatalogueNotEmptyError,
@@ -36,6 +37,7 @@ from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.designation import Designation
 from nptc.db.models.entry_seed_provenance import EntrySeedProvenance
 from nptc.db.models.local_code import LocalCode
+from nptc.db.models.local_code_system import LocalCodeSystem
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.models.seed_import import SeedImport
 
@@ -478,3 +480,109 @@ def test_a_synonym_equal_to_its_own_preferred_term_is_stored_as_the_workbook_has
 
     synonyms = app_session.execute(select(Designation.term)).scalars().all()
     assert synonyms == [term]
+
+
+def _add_local_code(
+    session: Session, system_key: str, *, code: str, display: str, deprecated: bool = False
+) -> LocalCode:
+    system = session.execute(
+        select(LocalCodeSystem).where(LocalCodeSystem.key == system_key)
+    ).scalar_one()
+    created = create_local_code_unchecked(
+        session,
+        AuditContext.system(),
+        system=system,
+        code=code,
+        display=display,
+        reason=SEED_IMPORT_NOTE,
+    )
+    if deprecated:
+        created.status = "deprecated"
+        created.deprecated_at = func.now()
+        created.deprecation_reason = SEED_IMPORT_NOTE
+        session.flush()
+    return created
+
+
+def _with_subgroup(document: dict[str, Any], label: str) -> dict[str, Any]:
+    document["entries"][0]["properties"]["subgroup"] = [{"value": label, "code": None}]
+    return document
+
+
+@pytest.mark.req("FR-92")
+@pytest.mark.integration
+def test_an_existing_subgroup_code_is_reused_by_display_ignoring_case(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    """The governed codes use a slug for `code` and a readable `display` (`haematology` /
+    `Haematology`), so a subgroup an administrator added first looks the same way."""
+    _add_local_code(app_session, "subgroup", code="coag_slug", display="Coagulation")
+    document = _with_subgroup(make_dataset_document(1), "COAGULATION")
+
+    report, _ = _seed(app_session, document, write_dataset)
+
+    assert report.provisional_subgroup_codes == ()
+    (value,) = _values(app_session, _entry(app_session, "NPTC-500000"), "subgroup")
+    assert (value["code"], value["display"]) == ("coag_slug", "Coagulation")
+    matching = app_session.execute(
+        select(func.count())
+        .select_from(LocalCode)
+        .where(func.lower(LocalCode.display) == "coagulation")
+    ).scalar_one()
+    assert matching == 1
+
+
+@pytest.mark.req("FR-92")
+@pytest.mark.integration
+def test_a_deprecated_subgroup_code_refuses_up_front_and_creates_nothing(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    _add_local_code(app_session, "subgroup", code="coag", display="Coagulation", deprecated=True)
+    document = _with_subgroup(make_dataset_document(2), "Coagulation")
+    document["entries"][1]["properties"]["subgroup"] = [{"value": "Drug measurement", "code": None}]
+    dataset = _read(document, write_dataset)
+
+    with pytest.raises(SeedPrerequisiteError) as exc_info:
+        seed_baseline(app_session, dataset)
+
+    assert "deprecated" in exc_info.value.problems[0]
+    assert _count(app_session, CatalogueEntry) == 0
+    created = app_session.execute(
+        select(func.count()).select_from(LocalCode).where(LocalCode.code == "Drug measurement")
+    ).scalar_one()
+    assert created == 0
+
+
+@pytest.mark.req("FR-90")
+@pytest.mark.integration
+def test_a_label_naming_two_active_codes_is_refused_not_resolved_silently(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    _add_local_code(app_session, "discipline", code="chem_dup", display="CHEMICAL PATHOLOGY")
+    dataset = _read(make_dataset_document(1), write_dataset)
+
+    with pytest.raises(SeedPrerequisiteError) as exc_info:
+        seed_baseline(app_session, dataset)
+
+    (problem,) = exc_info.value.problems
+    assert "chem_dup" in problem
+    assert "chemical_pathology" in problem
+    assert _count(app_session, CatalogueEntry) == 0
+
+
+@pytest.mark.integration
+def test_every_classification_refusal_is_reported_together(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    _add_local_code(app_session, "subgroup", code="coag", display="Coagulation", deprecated=True)
+    document = _with_subgroup(make_dataset_document(2), "Coagulation")
+    document["entries"][1]["properties"]["discipline"] = [{"value": "Phrenology", "code": None}]
+    dataset = _read(document, write_dataset)
+
+    with pytest.raises(SeedPrerequisiteError) as exc_info:
+        seed_baseline(app_session, dataset)
+
+    problems = " | ".join(exc_info.value.problems)
+    assert len(exc_info.value.problems) == 2
+    assert "Phrenology" in problems
+    assert "deprecated" in problems

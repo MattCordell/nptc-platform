@@ -26,9 +26,11 @@ discipline.
 - The en-AU preferred term lives only in `catalogue_entry.preferred_term`
   (`ck_designation_no_en_au_preferred`), so the dataset's preferred designation is checked by the
   reader and not written again. Synonyms go through `add_synonyms`.
-- Discipline labels resolve to the governed `discipline` local codes by display, ignoring case.
-  A label with no match refuses the run: the vocabulary is RCPA-QAP's to extend.
-- Subgroup labels become provisional local codes, verbatim, when no code exists yet (FR-92).
+- Discipline and subgroup labels resolve to local codes by one rule: an active code whose
+  display or code matches, ignoring case. A discipline label with no match refuses the run, since
+  the vocabulary is RCPA-QAP's to extend. A subgroup label with no match becomes a provisional
+  code, verbatim (FR-92). A label whose only matches are deprecated, or that names more than one
+  active code, refuses the run before any entry is written.
 - Specimen values are stored with the SNOMED CT code the transform proved (FR-88). The reader has
   already refused any without one.
 - `seed_system_properties` runs first, because nothing else creates the four system property
@@ -233,56 +235,94 @@ def _coded_value(system_uri: str, code: str, display: str) -> dict[str, str]:
     return {"system": system_uri, "code": code, "display": display}
 
 
-def _resolve_discipline(session: Session, dataset: ImportDataset) -> dict[str, dict[str, str]]:
-    system, codes = _load_system_with_codes(session, _DISCIPLINE)
-    by_display = {
-        code.display.casefold(): code
-        for code in codes
-        if code.status == str(LocalCodeStatus.ACTIVE)
-    }
-    resolved: dict[str, dict[str, str]] = {}
-    unknown: list[str] = []
-    for label in _distinct_labels(dataset, _DISCIPLINE):
-        match = by_display.get(label.casefold())
-        if match is None:
-            unknown.append(label)
-        else:
-            resolved[label] = _coded_value(system.uri, match.code, match.display)
-    if unknown:
-        raise SeedPrerequisiteError(
-            [
-                f"discipline {label!r} is not an active code in the 'discipline' local code "
-                "system - correct it in the workbook, or have an administrator add the code"
-                for label in unknown
-            ]
+def _match_label(
+    key: str, codes: Sequence[LocalCode], label: str
+) -> tuple[LocalCode | None, str | None]:
+    """The one active code `label` names in the `key` system, matching its display or its code
+    and ignoring case. Returns `(code, None)` for a match, `(None, None)` when nothing names it,
+    and `(None, problem)` when the only matches are deprecated or more than one is active. Both
+    classified properties use this one rule, so a refusal never depends on which property a label
+    came from."""
+    folded = label.casefold()
+    candidates = [
+        code for code in codes if folded in (code.display.casefold(), code.code.casefold())
+    ]
+    if not candidates:
+        return None, None
+    active = [code for code in candidates if code.status == str(LocalCodeStatus.ACTIVE)]
+    if len(active) == 1:
+        return active[0], None
+    if not active:
+        return None, (
+            f"{key} {label!r} matches only a deprecated code in the {key!r} local code system - "
+            "correct it in the workbook, or have an administrator add an active code"
         )
-    return resolved
+    names = ", ".join(sorted(code.code for code in active))
+    return None, (
+        f"{key} {label!r} matches {len(active)} active codes in the {key!r} local code system "
+        f"({names}) - an administrator must remove the ambiguity"
+    )
 
 
-def _resolve_subgroup(
+@dataclass(frozen=True)
+class _Classification:
+    discipline: dict[str, dict[str, str]]
+    subgroup: dict[str, dict[str, str]]
+    #: Subgroup labels created as provisional codes by this run.
+    provisional: tuple[str, ...]
+
+
+def _resolve_classification(
     session: Session, ctx: AuditContext, dataset: ImportDataset
-) -> tuple[dict[str, dict[str, str]], tuple[str, ...]]:
-    """Existing codes are reused; every other label becomes a provisional code, verbatim, awaiting
-    RCPA-QAP's vocabulary decision (FR-92)."""
-    system, codes = _load_system_with_codes(session, _SUBGROUP)
-    by_code = {code.code: code for code in codes}
-    resolved: dict[str, dict[str, str]] = {}
-    created: list[str] = []
-    for label in _distinct_labels(dataset, _SUBGROUP):
-        existing = by_code.get(label)
-        if existing is None:
-            existing = create_local_code_unchecked(
-                session,
-                ctx,
-                system=system,
-                code=label,
-                display=label,
-                provisional=True,
-                reason=SEED_IMPORT_NOTE,
+) -> _Classification:
+    """Resolves every discipline and subgroup label before any entry is written, and raises one
+    `SeedPrerequisiteError` listing every refusal. A discipline label no code names is refused:
+    the vocabulary is RCPA-QAP's to extend (FR-90). A subgroup label no code names becomes a
+    provisional code, verbatim, awaiting RCPA-QAP's vocabulary decision (FR-92). Provisional
+    codes are created only once nothing is left to refuse."""
+    discipline_system, discipline_codes = _load_system_with_codes(session, _DISCIPLINE)
+    subgroup_system, subgroup_codes = _load_system_with_codes(session, _SUBGROUP)
+    problems: list[str] = []
+
+    discipline: dict[str, dict[str, str]] = {}
+    for label in _distinct_labels(dataset, _DISCIPLINE):
+        code, problem = _match_label(_DISCIPLINE, discipline_codes, label)
+        if problem is not None:
+            problems.append(problem)
+        elif code is None:
+            problems.append(
+                f"discipline {label!r} is not a code in the 'discipline' local code system - "
+                "correct it in the workbook, or have an administrator add the code"
             )
-            created.append(label)
-        resolved[label] = _coded_value(system.uri, existing.code, existing.display)
-    return resolved, tuple(created)
+        else:
+            discipline[label] = _coded_value(discipline_system.uri, code.code, code.display)
+
+    subgroup: dict[str, dict[str, str]] = {}
+    to_create: list[str] = []
+    for label in _distinct_labels(dataset, _SUBGROUP):
+        code, problem = _match_label(_SUBGROUP, subgroup_codes, label)
+        if problem is not None:
+            problems.append(problem)
+        elif code is None:
+            to_create.append(label)
+        else:
+            subgroup[label] = _coded_value(subgroup_system.uri, code.code, code.display)
+
+    if problems:
+        raise SeedPrerequisiteError(problems)
+
+    for label in to_create:
+        created = create_local_code_unchecked(
+            session,
+            ctx,
+            system=subgroup_system,
+            code=label,
+            display=label,
+            provisional=True,
+            reason=SEED_IMPORT_NOTE,
+        )
+        subgroup[label] = _coded_value(subgroup_system.uri, created.code, created.display)
+    return _Classification(discipline, subgroup, tuple(to_create))
 
 
 def _require_property_definitions(session: Session) -> None:
@@ -443,8 +483,7 @@ def seed_baseline(
 
     system_properties_created = tuple(seed_system_properties(session))
     _require_property_definitions(session)
-    discipline = _resolve_discipline(session, dataset)
-    subgroup, provisional_codes = _resolve_subgroup(session, audit, dataset)
+    classification = _resolve_classification(session, audit, dataset)
 
     seed_import = SeedImport(
         release_name=dataset.baseline_release.name,
@@ -474,8 +513,8 @@ def seed_baseline(
                 entry=entry,
                 seed_import=seed_import,
                 registry=registry,
-                discipline=discipline,
-                subgroup=subgroup,
+                discipline=classification.discipline,
+                subgroup=classification.subgroup,
                 tally=tally,
             )
         except SeedImportError:
@@ -501,6 +540,6 @@ def seed_baseline(
         code_bindings=tally.code_bindings,
         property_values=tally.property_values,
         highest_business_key=highest,
-        provisional_subgroup_codes=provisional_codes,
+        provisional_subgroup_codes=classification.provisional,
         system_properties_created=system_properties_created,
     )

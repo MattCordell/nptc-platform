@@ -41,10 +41,13 @@ where the legacy cells live, without fixing P4's design early.
    uncoded specimen verbatim, so the transform's report stays complete, but the loader will
    not seed it. A `property_value` holds `{system, code}`, and the specimen binding requires
    a code in the specimen value set.
-6. **Classification resolves through the governed code systems.** Discipline labels match
-   the `discipline` local codes by display, ignoring case, and an unmatched label refuses the
-   run, because the vocabulary is RCPA-QAP's to extend (FR-90). Subgroup labels become
-   provisional local codes, verbatim, when no code exists (FR-92).
+6. **Classification resolves through the governed code systems, by one rule.** A discipline or
+   subgroup label matches the one active local code whose display or code equals it, ignoring
+   case. An unmatched discipline label refuses the run, because the vocabulary is RCPA-QAP's
+   to extend (FR-90). An unmatched subgroup label becomes a provisional local code, verbatim
+   (FR-92). A label whose only matches are deprecated, or that names more than one active
+   code, refuses the run. Every such refusal is listed before any entry is written, and
+   provisional codes are created only after none remain.
 7. **One transaction, real write paths.** The loader writes through `create_entry`,
    `add_synonyms`, `create_binding` and `save_property_values`, never a Core insert or
    `COPY`, so FR-05, FR-37, NFR-08 and `clean_term` apply to every seeded row. The caller
