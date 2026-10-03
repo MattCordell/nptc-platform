@@ -47,6 +47,7 @@ const ROUTES = [
   { to: "/exports", heading: /^Exports$/i },
   { to: "/about", heading: /About the catalogue/i },
   { to: "/terms", heading: /Terms of use/i },
+  { to: "/privacy", heading: /Privacy policy/i },
   // #41's auth entry points render under the harness's default
   // "unavailable" session, which is the one status with no redirect side
   // effect - what each shows for a real session is asserted in
