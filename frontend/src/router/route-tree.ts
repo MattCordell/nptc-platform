@@ -278,6 +278,12 @@ const accountRoute = createRoute({
 // Deliberately no `/admin/submissions`: the reviewer queue is `/submissions`
 // above, and what a given user sees there is decided server-side (NFR-20).
 
+// The one built admin screen, offered from every admin stub as a way on.
+const ADMIN_NEAREST = {
+  to: "/admin/catalogue",
+  label: "Catalogue administration",
+} as const;
+
 const adminRoute = createRoute({
   getParentRoute: () => authenticatedRoute,
   path: "admin",
@@ -287,7 +293,10 @@ const adminRoute = createRoute({
 const adminHomeRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Administration" }),
+  component: createPlaceholderPage({
+    title: "Administration",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Administration"),
 });
 
@@ -320,7 +329,10 @@ const adminCatalogueListRoute = createRoute({
 const adminCatalogueNewRoute = createRoute({
   getParentRoute: () => adminCatalogueRoute,
   path: "new",
-  component: createPlaceholderPage({ title: "New catalogue entry" }),
+  component: createPlaceholderPage({
+    title: "New catalogue entry",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("New catalogue entry"),
 });
 
@@ -340,21 +352,32 @@ const adminPropertiesRoute = createRoute({
 const adminPropertyListRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Property registry" }),
+  component: createPlaceholderPage({
+    title: "Property registry",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Property registry"),
 });
 
 const adminPropertyNewRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "new",
-  component: createPlaceholderPage({ title: "New property", issue: 151 }),
+  component: createPlaceholderPage({
+    title: "New property",
+    issue: 151,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("New property"),
 });
 
 const adminPropertyDetailRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "$propertyKey",
-  component: createPlaceholderPage({ title: "Property", issue: 151 }),
+  component: createPlaceholderPage({
+    title: "Property",
+    issue: 151,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Property"),
 });
 
@@ -367,14 +390,20 @@ const adminUsersRoute = createRoute({
 const adminUserListRoute = createRoute({
   getParentRoute: () => adminUsersRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "User administration" }),
+  component: createPlaceholderPage({
+    title: "User administration",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("User administration"),
 });
 
 const adminUserDetailRoute = createRoute({
   getParentRoute: () => adminUsersRoute,
   path: "$userId",
-  component: createPlaceholderPage({ title: "User" }),
+  component: createPlaceholderPage({
+    title: "User",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("User"),
 });
 
@@ -387,14 +416,22 @@ const adminValidationRoute = createRoute({
 const adminFindingListRoute = createRoute({
   getParentRoute: () => adminValidationRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Validation findings", issue: 141 }),
+  component: createPlaceholderPage({
+    title: "Validation findings",
+    issue: 141,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Validation findings"),
 });
 
 const adminFindingDetailRoute = createRoute({
   getParentRoute: () => adminValidationRoute,
   path: "$findingId",
-  component: createPlaceholderPage({ title: "Validation finding", issue: 141 }),
+  component: createPlaceholderPage({
+    title: "Validation finding",
+    issue: 141,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Validation finding"),
 });
 
@@ -407,14 +444,22 @@ const adminReleasesRoute = createRoute({
 const adminReleaseListRoute = createRoute({
   getParentRoute: () => adminReleasesRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Release administration", issue: 141 }),
+  component: createPlaceholderPage({
+    title: "Release administration",
+    issue: 141,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Release administration"),
 });
 
 const adminReleaseNewRoute = createRoute({
   getParentRoute: () => adminReleasesRoute,
   path: "new",
-  component: createPlaceholderPage({ title: "Cut a release", issue: 141 }),
+  component: createPlaceholderPage({
+    title: "Cut a release",
+    issue: 141,
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Cut a release"),
 });
 
@@ -422,7 +467,10 @@ const adminReleaseNewRoute = createRoute({
 const adminExportConfigRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "exports/config",
-  component: createPlaceholderPage({ title: "Export configuration" }),
+  component: createPlaceholderPage({
+    title: "Export configuration",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Export configuration"),
 });
 
@@ -430,7 +478,10 @@ const adminExportConfigRoute = createRoute({
 const adminAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "audit",
-  component: createPlaceholderPage({ title: "Audit log" }),
+  component: createPlaceholderPage({
+    title: "Audit log",
+    nearest: ADMIN_NEAREST,
+  }),
   head: titled("Audit log"),
 });
 
