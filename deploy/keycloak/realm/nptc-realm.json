@@ -2,6 +2,7 @@
   "realm": "nptc",
   "enabled": true,
   "displayName": "National Pathology Test Catalogue",
+  "loginTheme": "nptc",
   "sslRequired": "external",
   "registrationAllowed": true,
   "resetPasswordAllowed": true,

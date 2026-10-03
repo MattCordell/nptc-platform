@@ -1,0 +1,123 @@
+/*
+ * NPTC login theme. The custom properties below repeat the design tokens in
+ * frontend/src/styles/app.css under the same names; the token-drift test in
+ * backend/tests/test_keycloak_login_theme.py fails if the two files disagree.
+ * Keycloak serves its own static files, so the SPA's stylesheet and fonts are
+ * not reachable from here.
+ */
+@font-face {
+  font-family: "Source Serif 4 Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 900;
+  src: url("../fonts/source-serif-4-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url("../fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("../fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+:root {
+  --color-accent: #2c6e6b;
+  --color-accent-hover: #204e4c;
+  --color-accent-contrast: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f1ede2;
+  --color-border: #dcd5c6;
+  --color-text: #1e2a2c;
+  --color-text-muted: #5a6462;
+  --color-danger: #b42318;
+  --color-danger-surface: #fef3f2;
+
+  --font-display: "Source Serif 4 Variable", Georgia, serif;
+  --font-sans: "IBM Plex Sans Variable", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --radius-control: 4px;
+  --radius-card: 6px;
+
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Point PatternFly's own variables at the tokens, so every control the
+     parent theme renders picks up the platform's colours and faces. */
+  --pf-v5-global--FontFamily--text: var(--font-sans);
+  --pf-v5-global--FontFamily--heading: var(--font-display);
+  --pf-v5-global--FontFamily--sans-serif: var(--font-sans);
+  --pf-v5-global--Color--100: var(--color-text);
+  --pf-v5-global--Color--200: var(--color-text-muted);
+  --pf-v5-global--primary-color--100: var(--color-accent);
+  --pf-v5-global--primary-color--200: var(--color-accent-hover);
+  --pf-v5-global--active-color--100: var(--color-accent);
+  --pf-v5-global--link--Color: var(--color-accent);
+  --pf-v5-global--link--Color--hover: var(--color-accent-hover);
+  --pf-v5-global--BorderColor--100: var(--color-border);
+  --pf-v5-global--BorderRadius--sm: var(--radius-control);
+  --pf-v5-global--danger-color--100: var(--color-danger);
+  --pf-v5-global--danger-color--200: var(--color-danger);
+  --pf-v5-global--BackgroundColor--100: var(--color-surface);
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+body {
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+h1,
+.pf-v5-c-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+a {
+  color: var(--color-accent);
+}
+
+a:hover {
+  color: var(--color-accent-hover);
+}
+
+.pf-v5-c-button.pf-m-primary {
+  background-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+  border-radius: var(--radius-control);
+  min-height: 2.5rem;
+}
+
+.pf-v5-c-button.pf-m-primary:hover {
+  background-color: var(--color-accent-hover);
+}
+
+.pf-v5-c-button.pf-m-secondary {
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-control);
+}
+
+.pf-v5-c-button.pf-m-secondary:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.pf-v5-c-form-control {
+  border-radius: var(--radius-control);
+}
