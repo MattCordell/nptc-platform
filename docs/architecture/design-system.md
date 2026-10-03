@@ -9,7 +9,8 @@ row-hover/`align`, and the new `StatusBadge`) that consume this vocabulary — s
 **This document describes the target design, not the current state of every screen.** The
 app shell (issue #426: header with a user menu, and footer) and the landing page
 (issue #428: a flat serif hero at `text-4xl` with a search box, then three cards; it
-writes its own `h1` because `PageHeader` has one fixed title size) are implemented. The filter bar,
+writes its own `h1` because `PageHeader` has one fixed title size) are implemented, as is
+the sign-in and registration treatment in the Keycloak login theme (issue #432). The filter bar,
 detail-page two-column body and audit trail described under "Layout patterns" below are not
 yet implemented on any screen — that lands with the follow-on issues (#324, #325). Read this
 as the destination, not a description of what exists today.
@@ -79,6 +80,9 @@ Sizes in use: headings 26–38px, body/UI 13–15px, helper/meta text 12–12.5p
   teal, underline on hover.
 - **Hero/ceremony treatment**: reserved for sign-in (split panel, deep-teal side panel with
   serif headline + stats) and publish flows — everywhere else stays flat and quiet.
+  Sign-in is built as the Keycloak login theme (issue #432): a deep-teal side panel with a
+  serif headline and three factual lines, and no statistics, because the platform has no
+  figures to show. See [authentication.md](authentication.md#the-login-theme).
 - **Radius**: 4px for inputs/buttons/chips, 6px for cards, 20px (pill) for filter toggles
   and status pills.
 - **Borders over shadows**: no drop shadows in the system; separation comes from 1px

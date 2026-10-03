@@ -15,9 +15,13 @@ Once you have registered you are returned to the catalogue, already signed in. A
 account starts as a **Provisional** member; an administrator can grant further roles
 later.
 
-> **Not yet implemented.** The privacy notice and terms of use are not currently
-> presented for acceptance during registration. See the follow-up issue linked from
-> [ADR-0021](../adr/0021-browser-side-pkce-login.md).
+The registration page explains how your details are used and links to the privacy policy
+and the terms of use. Both links open in a new tab, so your form stays as you left it.
+
+> **Not yet implemented.** The privacy policy and terms of use pages are placeholders, and
+> the catalogue does not yet ask you to accept the terms or record that you did. The
+> registration notice says that the retention period is still being settled. See
+> [ADR-0043](../adr/0043-terms-acceptance-storage.md) for the plan.
 
 ## Signing in
 
