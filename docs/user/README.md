@@ -1,6 +1,7 @@
 # User guides
 
 - [Signing in, registering, and signing out](signing-in.md) — issue #41.
+- [Using the landing page](using-the-landing-page.md) — issue #428.
 - [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
   the screens shipped so far.
 - [Finding and filtering entries for editing](finding-entries.md) — issue #267.
