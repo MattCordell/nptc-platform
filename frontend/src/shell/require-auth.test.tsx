@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { expectNoA11yViolations } from "../test/a11y.ts";
 import { renderRoute } from "../test/render-route.tsx";
 
 /**
@@ -82,6 +83,15 @@ describe("RequireAuth - session still restoring", () => {
     expect(router.state.location.pathname).toBe(path);
     expect(router.history.length).toBe(1);
   });
+
+  it("has no axe violations while it waits", async () => {
+    const { container } = await renderRoute("/submissions", {
+      auth: { status: "restoring" },
+    });
+
+    await screen.findByRole("heading", { level: 1, name: /checking your session/i });
+    await expectNoA11yViolations(container);
+  });
 });
 
 describe("RequireAuth - sign-in unavailable", () => {
@@ -105,6 +115,21 @@ describe("RequireAuth - sign-in unavailable", () => {
         name: /search the catalogue/i,
       }),
     ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", {
+        name: "Back to the landing page",
+      }),
+    ).toHaveAttribute("href", "/");
+  });
+
+  it("has one h1 and no axe violations", async () => {
+    const { container } = await renderRoute("/submissions", {
+      auth: { status: "unavailable" },
+    });
+
+    await screen.findByRole("heading", { level: 1, name: /sign-in is unavailable/i });
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    await expectNoA11yViolations(container);
   });
 });
 

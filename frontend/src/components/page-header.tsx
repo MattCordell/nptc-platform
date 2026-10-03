@@ -5,6 +5,8 @@ type PageHeaderProps = {
   meta?: ReactNode;
   actions?: ReactNode;
   id?: string;
+  /** Lets the `h1` take programmatic focus (`tabindex="-1"`) without joining the tab order. */
+  focusable?: boolean;
 };
 
 // Not a truthiness check: a meta of 0 (an empty count) must still render. An
@@ -20,11 +22,15 @@ function hasContent(node: ReactNode): boolean {
  * Deliberately not a `<header>` element: `app.css` pads every `header`
  * globally, and a page title is not the page's banner landmark.
  */
-export function PageHeader({ title, meta, actions, id }: PageHeaderProps) {
+export function PageHeader({ title, meta, actions, id, focusable }: PageHeaderProps) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex flex-col gap-1">
-        <h1 id={id} className="m-0 text-3xl leading-tight text-[var(--color-text)]">
+        <h1
+          id={id}
+          tabIndex={focusable === true ? -1 : undefined}
+          className="m-0 text-3xl leading-tight text-[var(--color-text)]"
+        >
           {title}
         </h1>
         {hasContent(meta) ? (

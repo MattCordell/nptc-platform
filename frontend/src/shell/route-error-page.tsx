@@ -1,6 +1,10 @@
 import { Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { Button } from "../components/button.tsx";
+import { buttonClassName } from "../components/button-class-name.ts";
+import { NoticePage } from "../components/notice-page.tsx";
 import { useDocumentTitle } from "./use-document-title.ts";
 
 /**
@@ -22,22 +26,32 @@ export function RouteErrorPage({ error, reset }: ErrorComponentProps) {
   }, [error]);
 
   return (
-    <section aria-labelledby="route-error-heading">
-      <h1 id="route-error-heading">Something went wrong on this page</h1>
-      <p>
+    <NoticePage
+      title="Something went wrong on this page"
+      id="route-error-heading"
+      focusHeading
+      actions={
+        <>
+          <Button
+            type="button"
+            onClick={() => {
+              reset();
+              void router.invalidate();
+            }}
+          >
+            Try again
+          </Button>
+          <BackToLandingLink />
+          <Link to="/catalogue" className={buttonClassName("secondary")}>
+            Search the catalogue
+          </Link>
+        </>
+      }
+    >
+      <p className="m-0">
         The page didn&apos;t load. Try again - if it keeps happening, go back to the
         catalogue and report the problem along with the address you were using.
       </p>
-      <button
-        type="button"
-        onClick={() => {
-          reset();
-          void router.invalidate();
-        }}
-      >
-        Try again
-      </button>
-      <Link to="/catalogue">Search the catalogue</Link>
-    </section>
+    </NoticePage>
   );
 }
