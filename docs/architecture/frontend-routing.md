@@ -24,7 +24,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 
 | URL | Driving FRs |
 |---|---|
-| `/` | landing |
+| `/` | landing (its search box navigates to `/catalogue` with the trimmed `q`) |
 | `/catalogue` (+ `q`, `page`, `sort` search params) | FR-14, FR-15, FR-16, FR-18 |
 | `/catalogue/$businessKey` | FR-17, FR-19 |
 | `/catalogue/$businessKey/history` | FR-19, FR-35 |

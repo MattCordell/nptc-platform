@@ -7,7 +7,9 @@ row-hover/`align`, and the new `StatusBadge`) that consume this vocabulary — s
 [components.md](components.md) for the component baseline itself.
 
 **This document describes the target design, not the current state of every screen.** The
-app shell (issue #426: header with a user menu, and footer) is implemented. The filter bar,
+app shell (issue #426: header with a user menu, and footer) and the landing page
+(issue #428: a flat serif hero at `text-4xl` with a search box, then three cards; it
+writes its own `h1` because `PageHeader` has one fixed title size) are implemented. The filter bar,
 detail-page two-column body and audit trail described under "Layout patterns" below are not
 yet implemented on any screen — that lands with the follow-on issues (#324, #325). Read this
 as the destination, not a description of what exists today.
