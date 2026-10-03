@@ -41,7 +41,9 @@ import pytest
 from testcontainers.core.container import DockerContainer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REALM_DIR = REPO_ROOT / "deploy" / "keycloak" / "realm"
+DEPLOY_DIR = REPO_ROOT / "deploy"
+REALM_DIR = DEPLOY_DIR / "keycloak" / "realm"
+THEME_DIR = DEPLOY_DIR / "keycloak" / "themes" / "nptc"
 
 _conftest_spec = importlib.util.spec_from_file_location(
     "keycloak_pkce_conftest", Path(__file__).parent / "conftest.py"
@@ -51,6 +53,7 @@ _conftest = importlib.util.module_from_spec(_conftest_spec)
 sys.modules["keycloak_pkce_conftest"] = _conftest
 _conftest_spec.loader.exec_module(_conftest)
 image_from_compose = _conftest.image_from_compose
+compose_config = _conftest.compose_config
 
 CLIENT_ID = "nptc-frontend"
 FRONTEND_BASE_URL = "http://frontend.test"
@@ -92,6 +95,14 @@ class Realm:
         return str(self.discovery["end_session_endpoint"])
 
 
+def _theme_mount_source() -> Path:
+    """The theme directory compose mounts, read from compose.yml, as the
+    realm directory is."""
+    volumes: list[str] = compose_config()["services"]["keycloak"]["volumes"]
+    (mount,) = [v for v in volumes if v.split(":")[1] == "/opt/keycloak/themes/nptc"]
+    return (DEPLOY_DIR / mount.split(":")[0]).resolve()
+
+
 def _wait_for_discovery(base_url: str, attempts: int = 60, delay: float = 2.0) -> httpx.Response:
     last_error: Exception | None = None
     for _ in range(attempts):
@@ -122,14 +133,14 @@ def _admin_token(base_url: str) -> str:
     return str(response.json()["access_token"])
 
 
-def _create_test_user(base_url: str) -> None:
+def _create_test_user(base_url: str, username: str = TEST_USERNAME) -> None:
     token = _admin_token(base_url)
     response = httpx.post(
         f"{base_url}/admin/realms/nptc/users",
         headers={"Authorization": f"Bearer {token}"},
         json={
-            "username": TEST_USERNAME,
-            "email": f"{TEST_USERNAME}@example.test",
+            "username": username,
+            "email": f"{username}@example.test",
             "emailVerified": True,
             "enabled": True,
             "credentials": [{"type": "password", "value": TEST_PASSWORD, "temporary": False}],
@@ -150,6 +161,7 @@ def realm() -> Iterator[Realm]:
         .with_env("KC_BOOTSTRAP_ADMIN_PASSWORD", ADMIN_PASSWORD)
         .with_env("NPTC_FRONTEND_BASE_URL", FRONTEND_BASE_URL)
         .with_volume_mapping(str(REALM_DIR), "/opt/keycloak/data/import", mode="ro")
+        .with_volume_mapping(str(_theme_mount_source()), "/opt/keycloak/themes/nptc", mode="ro")
         .with_command("start-dev --import-realm")
     )
     with container:
@@ -423,3 +435,118 @@ def test_logout_ends_the_session_so_the_next_login_re_authenticates(realm: Realm
     location = after.headers.get("location", "")
     assert "error=login_required" in location, location
     assert "code=" not in location, location
+
+
+def _label_targets_without_input(page: str) -> list[str]:
+    """``for`` values of labels whose id is absent from the page - an input
+    with no accessible name, which axe reports as ``label``."""
+    ids = set(re.findall(r'\sid="([^"]+)"', page))
+    return [
+        target for target in re.findall(r'<label[^>]*\sfor="([^"]+)"', page) if target not in ids
+    ]
+
+
+def _registration_page(realm: Realm) -> httpx.Response:
+    _verifier, challenge = _pkce_pair()
+    response = httpx.get(
+        realm.authorization_endpoint.removesuffix("/auth") + "/registrations",
+        params=_authorize_params(challenge, state=secrets.token_urlsafe(16)),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response
+
+
+@pytest.mark.integration
+@pytest.mark.req("NFR-31")
+def test_sign_in_page_renders_in_the_theme_with_one_heading_and_its_form(realm: Realm) -> None:
+    _verifier, challenge = _pkce_pair()
+
+    page = httpx.get(
+        realm.authorization_endpoint,
+        params=_authorize_params(challenge, state=secrets.token_urlsafe(16)),
+        timeout=30,
+    )
+
+    assert page.status_code == 200
+    assert "/login/nptc/css/nptc.css" in page.text
+    assert '<aside class="nptc-panel">' in page.text
+    assert len(re.findall(r"<h1[\s>]", page.text)) == 1
+    assert '<form id="kc-form-login"' in page.text
+    assert _label_targets_without_input(page.text) == []
+
+
+@pytest.mark.integration
+@pytest.mark.req("NFR-14")
+def test_registration_page_shows_the_notice_and_links_without_a_checkbox(realm: Realm) -> None:
+    """ADR-0043: the notice and the two links are Keycloak's job; the
+    acceptance record is the SPA's. A checkbox on this page would record
+    nothing, so there must be none."""
+    page = _registration_page(realm).text
+
+    assert "/login/nptc/css/nptc.css" in page
+    assert 'id="kc-registration-notice"' in page
+    assert f'href="{FRONTEND_BASE_URL}/privacy"' in page
+    assert f'href="{FRONTEND_BASE_URL}/terms"' in page
+    assert 'type="checkbox"' not in page
+    assert len(re.findall(r"<h1[\s>]", page)) == 1
+    assert _label_targets_without_input(page) == []
+
+
+@pytest.mark.integration
+@pytest.mark.req("NFR-31")
+def test_totp_setup_page_renders_in_the_theme_with_every_input_labelled(realm: Realm) -> None:
+    """The step-up page (ADR-0021) is the one the stock template gets wrong:
+    both its labels point at an id that does not exist. A separate account
+    is used because this flow leaves a pending required action on the user,
+    which would make every later sign-in of the shared account ask for it."""
+    username = "totp-theme-user"
+    _create_test_user(realm.base_url, username)
+    _verifier, challenge = _pkce_pair()
+    jar = CookieJar()
+
+    with httpx.Client(timeout=30) as client:
+        login = client.get(
+            realm.authorization_endpoint,
+            params=_authorize_params(challenge, state="totp", acr_values="2"),
+            follow_redirects=True,
+        )
+        jar.collect(login)
+        action = re.search(r'<form id="kc-form-login"[^>]*action="([^"]+)"', login.text)
+        assert action is not None, "Keycloak login page had no login form"
+        submitted = client.post(
+            html.unescape(action.group(1)),
+            data={"username": username, "password": TEST_PASSWORD},
+            follow_redirects=False,
+            headers=jar.header,
+        )
+        jar.collect(submitted)
+        assert submitted.status_code in (302, 303), submitted.text
+        setup = client.get(submitted.headers["location"], headers=jar.header)
+
+    assert 'id="kc-totp-settings-form"' in setup.text
+    assert "/login/nptc/css/nptc.css" in setup.text
+    assert len(re.findall(r"<h1[\s>]", setup.text)) == 1
+    assert _label_targets_without_input(setup.text) == []
+    assert 'alt="Figure: Barcode"' not in setup.text
+
+
+@pytest.mark.integration
+@pytest.mark.req("NFR-31")
+def test_error_page_renders_in_the_theme(realm: Realm) -> None:
+    _verifier, challenge = _pkce_pair()
+
+    response = httpx.get(
+        realm.authorization_endpoint,
+        params=_authorize_params(
+            challenge,
+            state=secrets.token_urlsafe(16),
+            redirect_uri="http://attacker.example/auth/callback",
+        ),
+        follow_redirects=False,
+        timeout=30,
+    )
+
+    assert response.status_code == 400
+    assert "/login/nptc/css/nptc.css" in response.text
+    assert len(re.findall(r"<h1[\s>]", response.text)) == 1

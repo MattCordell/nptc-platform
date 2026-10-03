@@ -1,8 +1,7 @@
-<#-- Copy of keycloak.v2's register.ftl with the collection notice added above the submit button (NFR-14, ADR-0043). It adds no acceptance checkbox. -->
+<#-- Copy of keycloak.v2's register.ftl with the collection notice added above the submit button (NFR-14, ADR-0043). The stock terms checkbox is removed, because a checkbox here would record nothing. -->
 <#import "template.ftl" as layout>
 <#import "field.ftl" as field>
 <#import "user-profile-commons.ftl" as userProfileCommons>
-<#import "register-commons.ftl" as registerCommons>
 <#import "password-validation.ftl" as validator>
 <@layout.registrationLayout displayMessage=messagesPerField.exists('global') displayRequiredFields=true; section>
 <!-- template: register.ftl -->
@@ -41,8 +40,6 @@
                     </p>
                 </#if>
             </section>
-
-            <@registerCommons.termsAcceptance/>
 
             <#if recaptchaRequired?? && (recaptchaVisible!false)>
                 <div class="form-group">
