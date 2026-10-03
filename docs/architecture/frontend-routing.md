@@ -42,8 +42,27 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/admin/releases{,/new}`, `/admin/exports/config`, `/admin/audit` | FR-56–FR-61, FR-78, NFR-08–NFR-13 |
 
 Every route not yet implemented mounts `pages/placeholder.tsx`'s `createPlaceholderPage`
-factory rather than one bespoke file per stub, so swapping in a real screen is a one-line
-route-table edit plus a new page file.
+factory rather than one bespoke file per stub.
+
+### How a stub becomes a real screen
+
+A stub is one `createPlaceholderPage({ title, issue?, nearest? })` call in
+`router/route-tree.ts`. The factory renders a `NoticePage` with the title as the one `h1`,
+a text "Planned" status, the issue it lands with (when `issue` is set), a link back to the
+landing page and, when `nearest` is set, a link to the closest built screen. Only the
+admin stubs set `nearest` (to `/admin/catalogue`), because the public `/catalogue` is
+itself a stub.
+
+To replace a stub with the real screen:
+
+1. Add the page file under `frontend/src/pages/`, with its own `h1` (use `PageHeader`) and
+   a co-located test that calls `expectNoA11yViolations`.
+2. In `route-tree.ts`, change that route's `component` from the `createPlaceholderPage(...)`
+   call to your page component. Leave `path` and `head: titled(...)` as they are.
+3. Delete the stub's `issue` and `nearest` options with the call. If it was the last stub
+   using a given `nearest` constant, delete the constant too.
+
+No route path changes, so links, `aria-current` and the title mechanism keep working.
 
 There is deliberately no `/admin/submissions`: the reviewer queue is `/submissions`, and
 what a given user sees there is decided server-side. That is NFR-20 expressed in the route
@@ -243,6 +262,12 @@ to wire one (PRD §17.2 item 5).
   a raw status code — `router.test.tsx`'s test asserts the exception text is *absent* from
   the DOM, not just that the friendly heading is present (a heading-only assertion would
   still pass with a stack trace printed underneath).
+
+Both are built on `NoticePage`, the same component the stub and sign-in screens use. Each
+moves focus to its `h1` on mount (`focusHeading`), because it replaces the page the user
+asked for and a keyboard or screen-reader user would otherwise hear nothing change. Each
+links back to the landing page. `router.test.tsx` asserts focus on the heading both on a
+cold load and after a client-side navigation, where `root-layout.tsx` also moves focus.
 
 Both set `document.title` themselves via `shell/use-document-title.ts`, rather than relying
 on a route's `head` option: they render in place of whatever route was requested, not as a

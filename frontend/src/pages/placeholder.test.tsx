@@ -1,4 +1,5 @@
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
@@ -54,6 +55,22 @@ describe("placeholder screens", () => {
     expect(
       main().getByRole("link", { name: "Catalogue administration" }),
     ).toHaveAttribute("href", "/admin/catalogue");
+  });
+
+  it("reaches the landing link, then the nearest link, in reading order from the keyboard", async () => {
+    const user = userEvent.setup();
+    await renderRoute("/admin/properties", { auth: { status: "signed-in" } });
+    await screen.findByRole("heading", { level: 1, name: "Property registry" });
+
+    const landing = main().getByRole("link", { name: "Back to the landing page" });
+    const nearest = main().getByRole("link", { name: "Catalogue administration" });
+    landing.focus();
+    await user.tab();
+
+    expect(document.activeElement).toBe(nearest);
+    expect(landing.compareDocumentPosition(nearest)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("does not wrap the screen in a second landmark", async () => {

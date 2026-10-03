@@ -219,6 +219,14 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
 - **`card.tsx` — `Card`.** A white surface with a 1px border and the 6px card radius, one
   24px padding and no shadow. It spreads native `div` props, so a caller adds `role` or
   `aria-labelledby` when a card is a labelled region.
+- **`notice-page.tsx` — `NoticePage`.** A whole screen that says one thing and offers a way
+  on: a `PageContainer`, a `PageHeader` (the one `h1`) and a `Card` holding the message,
+  then the actions, in that DOM order. The stub placeholder, not-found, route-error and
+  sign-in states all use it, so they look alike. `focusHeading` moves focus to the `h1`
+  once on mount (via `use-focus-heading-on-mount.ts`, which gives it `tabindex="-1"`); set
+  it only on a screen that replaces the page the user asked for.
+- **`back-to-landing-link.tsx` — `BackToLandingLink`.** The "Back to the landing page" link,
+  styled as a button, so the wording is the same on every such screen.
 
 ## Known limits of the automated check
 
