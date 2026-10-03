@@ -30,6 +30,14 @@ describe("PageHeader", () => {
     expect(screen.getByRole("heading", { level: 1 })).not.toHaveAttribute("id");
   });
 
+  it("is not focusable by default, and takes tabindex -1 when asked", () => {
+    const { rerender } = render(<PageHeader title="Catalogue" />);
+    expect(screen.getByRole("heading", { level: 1 })).not.toHaveAttribute("tabindex");
+
+    rerender(<PageHeader title="Catalogue" focusable />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAttribute("tabindex", "-1");
+  });
+
   it("renders the meta line and the actions when given", () => {
     render(
       <PageHeader

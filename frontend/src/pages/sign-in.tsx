@@ -68,7 +68,9 @@ export function SignInPage() {
         id="sign-in-heading"
         actions={<BackToLandingLink variant="primary" />}
       >
-        <p className="m-0">Continue to the part of the platform you were heading for.</p>
+        <p className="m-0">
+          Use the navigation to go where you were heading, or return to the landing page.
+        </p>
       </NoticePage>
     );
   }

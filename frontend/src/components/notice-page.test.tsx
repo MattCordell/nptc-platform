@@ -40,14 +40,35 @@ describe("NoticePage", () => {
     expect(body.compareDocumentPosition(action)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("renders no actions wrapper when there are none", () => {
-    const { container } = render(
+  it.each([undefined, null, false])(
+    "renders no actions wrapper when actions is %s",
+    (actions) => {
+      const { container } = render(
+        <NoticePage title="Page title" actions={actions}>
+          <p>Body</p>
+        </NoticePage>,
+      );
+
+      // The card is the last block; with no actions it holds only the body.
+      const card = container.firstElementChild?.lastElementChild;
+      expect(card?.children).toHaveLength(1);
+    },
+  );
+
+  it("makes the h1 focusable only when asked to move focus to it", () => {
+    const { rerender } = render(
       <NoticePage title="Page title">
         <p>Body</p>
       </NoticePage>,
     );
+    expect(screen.getByRole("heading", { level: 1 })).not.toHaveAttribute("tabindex");
 
-    expect(container.querySelector("a, button")).toBeNull();
+    rerender(
+      <NoticePage title="Page title" focusHeading>
+        <p>Body</p>
+      </NoticePage>,
+    );
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAttribute("tabindex", "-1");
   });
 
   it("leaves focus alone unless asked to move it", () => {

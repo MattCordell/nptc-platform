@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { Children, useId, type ReactNode } from "react";
 
 import { Card } from "./card.tsx";
 import { PageContainer } from "./page-container.tsx";
@@ -37,12 +37,12 @@ export function NoticePage({
 
   return (
     <PageContainer className="py-6">
-      <PageHeader title={title} meta={meta} id={headingId} />
+      <PageHeader title={title} meta={meta} id={headingId} focusable={focusHeading} />
       <Card className="flex max-w-3xl flex-col gap-4">
         <div className="flex flex-col gap-3 text-[var(--color-text-muted)]">
           {children}
         </div>
-        {actions === undefined ? null : (
+        {Children.toArray(actions).length === 0 ? null : (
           <div className="flex flex-wrap items-center gap-3">{actions}</div>
         )}
       </Card>

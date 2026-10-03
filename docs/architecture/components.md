@@ -215,16 +215,19 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
   DOM order, so keyboard order matches reading order. An optional `id` lands on the `h1`
   so a screen keeps its `aria-labelledby` wiring; the component generates none. It renders
   no empty meta or actions element when those props are absent, and it is deliberately not
-  a `<header>` element, because `app.css` pads every `header` globally.
+  a `<header>` element, because `app.css` pads every `header` globally. `focusable`
+  renders `tabindex="-1"` on the `h1`, so a screen can move focus to it without adding
+  a tab stop.
 - **`card.tsx` — `Card`.** A white surface with a 1px border and the 6px card radius, one
   24px padding and no shadow. It spreads native `div` props, so a caller adds `role` or
   `aria-labelledby` when a card is a labelled region.
 - **`notice-page.tsx` — `NoticePage`.** A whole screen that says one thing and offers a way
   on: a `PageContainer`, a `PageHeader` (the one `h1`) and a `Card` holding the message,
   then the actions, in that DOM order. The stub placeholder, not-found, route-error and
-  sign-in states all use it, so they look alike. `focusHeading` moves focus to the `h1`
-  once on mount (via `use-focus-heading-on-mount.ts`, which gives it `tabindex="-1"`); set
-  it only on a screen that replaces the page the user asked for.
+  sign-in states all use it, so they look alike. `focusHeading` makes the `h1`
+  focusable (`PageHeader`'s `focusable`, which renders `tabindex="-1"`) and moves focus
+  to it once on mount (`use-focus-heading-on-mount.ts`); set it only on a screen that
+  replaces the page the user asked for.
 - **`back-to-landing-link.tsx` — `BackToLandingLink`.** The "Back to the landing page" link,
   styled as a button, so the wording is the same on every such screen.
 

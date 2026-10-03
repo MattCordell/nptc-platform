@@ -267,7 +267,13 @@ Both are built on `NoticePage`, the same component the stub and sign-in screens 
 moves focus to its `h1` on mount (`focusHeading`), because it replaces the page the user
 asked for and a keyboard or screen-reader user would otherwise hear nothing change. Each
 links back to the landing page. `router.test.tsx` asserts focus on the heading both on a
-cold load and after a client-side navigation, where `root-layout.tsx` also moves focus.
+cold load and after a client-side navigation.
+
+`root-layout.tsx` also moves focus to `<main>` after every navigation
+(`shell/use-focus-main-on-navigation.ts`). That hook leaves focus alone when it is
+already inside `<main>`, so the heading keeps focus whichever order the two moves
+commit in. The heading takes focus once, on mount: going from one unknown URL straight
+to another reuses the same screen, so focus stays where it already is, inside `<main>`.
 
 Both set `document.title` themselves via `shell/use-document-title.ts`, rather than relying
 on a route's `head` option: they render in place of whatever route was requested, not as a
