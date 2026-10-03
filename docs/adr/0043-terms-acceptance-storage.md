@@ -58,11 +58,17 @@ links to the privacy policy and the terms.
   (NFR-14, NFR-16), for the routes that exist or are added later. A user who declines a new
   version must still be able to leave and to exercise their privacy rights. #434 keeps the
   exempt routes in one explicit list, and the refusal and each exemption have a test.
-- **The refusal is a 403 with a stable code in the response body** (`detail`), the way the
-  manual-link refusal works. It adds no `WWW-Authenticate` header. The existing step-up
-  refusal uses that header because RFC 9470 defines it for authentication strength, and
-  terms acceptance is not an authentication matter. The SPA routes on the body code, and the
-  step-up loop (ADR-0036) is untouched. #434 sets the exact code string.
+- **Any state-changing route not on the exempt list is refused.** The default is refusal, so
+  a write route added later is covered without anyone remembering to opt it in. #434 builds
+  an exempt list, never a list of "contribution" routes.
+- **The refusal is a 403 with a typed body that carries a machine `code` beside a
+  human-readable `detail`.** Existing error bodies hold only a sentence in `detail`, so this
+  is a new field, declared in the OpenAPI document. The version-conflict refusal already
+  returns a typed body in the same way. The SPA routes on `code` and never parses `detail`.
+  The response adds no `WWW-Authenticate` header. The existing step-up refusal uses that
+  header because RFC 9470 defines it for authentication strength, and terms acceptance is not
+  an authentication matter. The step-up loop (ADR-0036) is untouched. #434 sets the exact
+  `code` string and the body's name.
 - Whether the check rides on `principal_for` or on a separate dependency is #434's call. This
   ADR fixes the contract, not the wiring. Per FR-44 the check is a permission or a named
   condition, never a role name, and the denied case needs its own test.
@@ -86,11 +92,15 @@ which the API can serve for the current version and for any earlier one.
 
 The repository holds **one Markdown file per version** in one directory, each with its
 version, effective date and text (NFR-47). A published file is never edited. A new version is
-a new file, and one declared setting names the current one. The API serves any version by its
-id, so the text a user accepted can be reproduced exactly from the deployed service and not
-only from git history. The SPA renders what the API returns, so there is no second copy. The
-first file is marked as temporary text, and production adds its own file as a later version.
-The legal wording of the contribution licence (NFR-46) is outside this decision.
+a new file, and one declared setting names the current one. The service refuses to start if
+that setting names a version with no file, as it does for a malformed terminology setting.
+Otherwise the gate would have nothing to show and every contribution would be refused.
+
+The API serves any version by its id, so the text a user accepted can be reproduced exactly
+from the deployed service and not only from git history. The SPA renders what the API
+returns, so there is no second copy. The first file is marked as temporary text, and
+production adds its own file as a later version. The legal wording of the contribution
+licence (NFR-46) is outside this decision.
 
 ### Audit
 
