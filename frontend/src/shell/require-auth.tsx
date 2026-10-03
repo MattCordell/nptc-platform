@@ -2,6 +2,9 @@ import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { useAuthStatus } from "../auth/auth-status.ts";
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { buttonClassName } from "../components/button-class-name.ts";
+import { NoticePage } from "../components/notice-page.tsx";
 
 /**
  * Structural only. This is presentation, not access control: NFR-20 requires
@@ -52,31 +55,42 @@ export function RequireAuth() {
     // unknown for one silent round trip, and treating that as signed-out
     // would send a user with a perfectly good SSO session out of the SPA.
     return (
-      <section aria-labelledby="sign-in-required-heading">
-        <h1 id="sign-in-required-heading">Checking your session</h1>
-        <p>One moment.</p>
-      </section>
+      <NoticePage title="Checking your session" id="sign-in-required-heading">
+        <p className="m-0">One moment.</p>
+      </NoticePage>
     );
   }
 
   if (status === "signed-out") {
     return (
-      <section aria-labelledby="sign-in-required-heading">
-        <h1 id="sign-in-required-heading">Taking you to sign in</h1>
-        <p>This part of the platform needs an account.</p>
-      </section>
+      <NoticePage
+        title="Taking you to sign in"
+        id="sign-in-required-heading"
+        actions={<BackToLandingLink />}
+      >
+        <p className="m-0">This part of the platform needs an account.</p>
+      </NoticePage>
     );
   }
 
   return (
-    <section aria-labelledby="sign-in-unavailable-heading">
-      <h1 id="sign-in-unavailable-heading">Sign-in is unavailable</h1>
-      <p>
+    <NoticePage
+      title="Sign-in is unavailable"
+      id="sign-in-unavailable-heading"
+      actions={
+        <>
+          <BackToLandingLink variant="primary" />
+          <Link to="/catalogue" className={buttonClassName("secondary")}>
+            Search the catalogue
+          </Link>
+        </>
+      }
+    >
+      <p className="m-0">
         The platform cannot reach the sign-in service at the moment, so this screen cannot
         be shown. Try again in a few minutes; the public catalogue is still available
         meanwhile.
       </p>
-      <Link to="/catalogue">Search the catalogue</Link>
-    </section>
+    </NoticePage>
   );
 }

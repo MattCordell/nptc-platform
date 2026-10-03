@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { NoticePage } from "../components/notice-page.tsx";
 import { useDocumentTitle } from "./use-document-title.ts";
@@ -21,9 +22,7 @@ export function NotFoundPage() {
       focusHeading
       actions={
         <>
-          <Link to="/" className={buttonClassName("primary")}>
-            Back to the landing page
-          </Link>
+          <BackToLandingLink variant="primary" />
           <Link to="/catalogue" className={buttonClassName("secondary")}>
             Search the catalogue
           </Link>

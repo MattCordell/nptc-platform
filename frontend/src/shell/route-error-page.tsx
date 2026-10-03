@@ -1,6 +1,7 @@
 import { Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
 import { Button } from "../components/button.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { NoticePage } from "../components/notice-page.tsx";
@@ -40,9 +41,7 @@ export function RouteErrorPage({ error, reset }: ErrorComponentProps) {
           >
             Try again
           </Button>
-          <Link to="/" className={buttonClassName("secondary")}>
-            Back to the landing page
-          </Link>
+          <BackToLandingLink />
           <Link to="/catalogue" className={buttonClassName("secondary")}>
             Search the catalogue
           </Link>

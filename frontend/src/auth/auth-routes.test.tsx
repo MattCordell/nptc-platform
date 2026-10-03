@@ -1,6 +1,7 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { expectNoA11yViolations } from "../test/a11y.ts";
 import { renderRoute } from "../test/render-route.tsx";
 
 /**
@@ -12,7 +13,23 @@ import { renderRoute } from "../test/render-route.tsx";
  * same paths.
  */
 
+const LANDING_LINK = { name: "Back to the landing page" };
+
 describe("/sign-in", () => {
+  it("shows the redirect screen with a way home, and no axe violations", async () => {
+    const { container } = await renderRoute("/sign-in", {
+      auth: { status: "signed-out" },
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Taking you to sign in" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
+    ).toHaveAttribute("href", "/");
+    await expectNoA11yViolations(container);
+  });
+
   it("starts the redirect to Keycloak for a signed-out visitor", async () => {
     const signIn = vi.fn(() => Promise.resolve());
 
@@ -72,6 +89,9 @@ describe("/sign-in", () => {
     expect(
       await screen.findByRole("heading", { name: /already signed in/i }),
     ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
+    ).toBeInTheDocument();
     expect(signIn).not.toHaveBeenCalled();
   });
 
@@ -82,6 +102,9 @@ describe("/sign-in", () => {
 
     expect(
       await screen.findByRole("heading", { name: /sign-in is unavailable/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
     ).toBeInTheDocument();
     expect(signIn).not.toHaveBeenCalled();
   });

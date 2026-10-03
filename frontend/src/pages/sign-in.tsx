@@ -2,6 +2,8 @@ import { getRouteApi } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { useAuth } from "../auth/session.ts";
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { NoticePage } from "../components/notice-page.tsx";
 import { asInternalRedirect } from "../router/search-params.ts";
 
 /**
@@ -53,41 +55,49 @@ export function SignInPage() {
     // The cold-load probe has not answered yet. Starting an interactive
     // redirect now would throw away a session that is about to restore.
     return (
-      <section aria-labelledby="sign-in-heading">
-        <h1 id="sign-in-heading">Checking your session</h1>
-        <p>One moment.</p>
-      </section>
+      <NoticePage title="Checking your session" id="sign-in-heading">
+        <p className="m-0">One moment.</p>
+      </NoticePage>
     );
   }
 
   if (status === "signed-in") {
     return (
-      <section aria-labelledby="sign-in-heading">
-        <h1 id="sign-in-heading">You are already signed in</h1>
-        <p>Continue to the part of the platform you were heading for.</p>
-      </section>
+      <NoticePage
+        title="You are already signed in"
+        id="sign-in-heading"
+        actions={<BackToLandingLink variant="primary" />}
+      >
+        <p className="m-0">Continue to the part of the platform you were heading for.</p>
+      </NoticePage>
     );
   }
 
   if (status === "unavailable") {
     return (
-      <section aria-labelledby="sign-in-heading">
-        <h1 id="sign-in-heading">Sign-in is unavailable</h1>
-        <p>
+      <NoticePage
+        title="Sign-in is unavailable"
+        id="sign-in-heading"
+        actions={<BackToLandingLink variant="primary" />}
+      >
+        <p className="m-0">
           The platform cannot reach the sign-in service at the moment. Try again in a few
           minutes; the public catalogue is still available meanwhile.
         </p>
-      </section>
+      </NoticePage>
     );
   }
 
   return (
-    <section aria-labelledby="sign-in-heading">
-      <h1 id="sign-in-heading">Taking you to sign in</h1>
-      <p>
+    <NoticePage
+      title="Taking you to sign in"
+      id="sign-in-heading"
+      actions={<BackToLandingLink />}
+    >
+      <p className="m-0">
         You are being sent to the NPTC sign-in service. If nothing happens, your browser
         may have blocked the redirect - reload this page to try again.
       </p>
-    </section>
+    </NoticePage>
   );
 }

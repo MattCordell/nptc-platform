@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { NoticePage } from "../components/notice-page.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
@@ -38,9 +39,7 @@ export function createPlaceholderPage({ title, issue, nearest }: PlaceholderPage
         id="placeholder-heading"
         actions={
           <>
-            <Link to="/" className={buttonClassName("primary")}>
-              Back to the landing page
-            </Link>
+            <BackToLandingLink variant="primary" />
             {nearest === undefined ? null : (
               <Link to={nearest.to} className={buttonClassName("secondary")}>
                 {nearest.label}
