@@ -14,8 +14,16 @@ production baseline is never filtered. See docs/operations/runbooks/seed-baselin
 Needs: uv on PATH, Docker, and a running stack ('docker compose -f deploy/compose.yml up -d
 --build') whose 'migrate' service has finished.
 
-Exit codes: 0 seeded; 4 the catalogue already holds data, nothing written; any other non-zero
-value is the failing step's own exit code (the loader's codes are listed in the runbook).
+Exit codes. The script's own steps never share a code with the loader, so a code identifies
+what failed:
+  0   seeded
+  1   a prerequisite is missing: uv, Docker, or a running backend service
+  10  the transform failed or found a blocking problem in the workbook
+  11  the filter failed or left no entry
+  12  copying the dataset into the backend container failed
+  2-6 the loader's own codes, passed through from the dry run or the load. 4 means the
+      catalogue already holds data and nothing was written.
+The loader's codes are listed in docs/operations/runbooks/seed-baseline.md.
 
 .EXAMPLE
 powershell -File scripts/dev-seed.ps1
@@ -34,6 +42,9 @@ $Workbook = Join-Path $RepoRoot 'transform\tests\fixtures\spia-requesting-sample
 $WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ('nptc-dev-seed-' + [guid]::NewGuid().ToString('N'))
 $ContainerPath = '/tmp/import-dataset.json'
 $ExitCatalogueNotEmpty = 4
+$ExitTransformFailed = 10
+$ExitFilterFailed = 11
+$ExitCopyFailed = 12
 
 function Invoke-Step {
     param([string]$Title, [string]$File, [string[]]$Arguments)
@@ -67,16 +78,16 @@ try {
     $code = Invoke-Step 'Run the transform on the sample workbook' 'uv' @(
         'run', 'nptc-transform', 'run', '--workbook', $Workbook,
         '--emit-dataset', '--release-name', $ReleaseName, '--report-dir', $RawDir)
-    if ($code -ne 0) { exit $code }
+    if ($code -ne 0) { Write-Host "error: the transform failed (exit $code)"; exit $ExitTransformFailed }
 
     $code = Invoke-Step 'Drop the entries the loader would refuse' 'uv' @(
         'run', 'python', 'scripts/dev_seed_filter.py',
         '--input', (Join-Path $RawDir 'import-dataset.json'), '--output', $Filtered)
-    if ($code -ne 0) { exit $code }
+    if ($code -ne 0) { Write-Host "error: the filter failed (exit $code)"; exit $ExitFilterFailed }
 
     $code = Invoke-Step 'Copy the dataset into the backend container' 'docker' @(
         'compose', '-f', $ComposeFile, 'cp', $Filtered, "backend:$ContainerPath")
-    if ($code -ne 0) { exit $code }
+    if ($code -ne 0) { Write-Host "error: the copy failed (exit $code)"; exit $ExitCopyFailed }
 
     $seedArguments = @('compose', '-f', $ComposeFile, 'exec', '-T', 'backend',
         'python', 'scripts/seed_baseline.py', '--dataset', $ContainerPath)

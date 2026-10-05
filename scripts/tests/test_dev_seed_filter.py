@@ -1,7 +1,10 @@
 """Offline tests for scripts/dev_seed_filter.py (FR-70, FR-76). No Docker or Postgres.
 
-The fixture tests run the real transform on the committed 50-row excerpt, so a change to the
-fixture or the specimen table that reopens a loader refusal fails here rather than at seed time.
+The fixture tests run the real transform on the committed 50-row excerpt. The loader's reader
+catches an uncoded specimen offline, so a fixture or table change that reopens that refusal fails
+here. It does not check FR-05 collisions or a code held by two entries, so the invariant test below
+checks those directly. The dry run in scripts/dev-seed.ps1 is the final arbiter of what the loader
+accepts.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from nptc.catalogue.seed_dataset import (
     DatasetNotSeedableError,
     read_import_dataset,
 )
+from nptc_shared.similarity import collision_key
 from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
 from nptc_transform.pipeline import Mode, run_transform
 from nptc_transform.workbook import read_workbook
@@ -51,6 +55,7 @@ def _entry(
     preferred: str,
     synonyms: tuple[str, ...] = (),
     specimen_code: str | None = "119364003",
+    code: str | None = None,
 ) -> dict[str, Any]:
     designations = [
         {"term": preferred, "use": "preferred", "language": "en-AU", "status": "active"}
@@ -62,6 +67,13 @@ def _entry(
         "business_key": key,
         "preferred_term": preferred,
         "designations": designations,
+        "code_bindings": [
+            {
+                "system": "http://snomed.info/sct",
+                "code": code or f"9{key[-6:]}",
+                "status": "active",
+            }
+        ],
         "properties": {"specimen": [{"value": "Serum", "code": specimen_code}]},
     }
 
@@ -106,6 +118,27 @@ def test_the_filtered_excerpt_keeps_every_code_a_string(
             assert isinstance(binding["code"], str)
         for value in entry["properties"]["specimen"]:
             assert value["code"] is None or isinstance(value["code"], str)
+
+
+def test_the_filtered_excerpt_has_no_collision_and_no_shared_code(
+    emitted_dataset: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "import-dataset.json"
+    cli.main(["--input", str(emitted_dataset), "--output", str(output)])
+    entries = json.loads(output.read_text(encoding="utf-8"))["entries"]
+
+    preferred = [collision_key(e["preferred_term"]) for e in entries]
+    synonyms = [
+        collision_key(d["term"])
+        for e in entries
+        for d in e["designations"]
+        if d["use"] == "synonym"
+    ]
+    codes = [b["code"] for e in entries for b in e["code_bindings"]]
+
+    assert len(set(preferred)) == len(preferred)
+    assert not set(preferred) & set(synonyms)
+    assert len(set(codes)) == len(codes)
 
 
 def test_the_filtered_excerpt_still_varies(emitted_dataset: Path, tmp_path: Path) -> None:
@@ -165,6 +198,20 @@ def test_a_synonym_matching_an_earlier_preferred_term_drops_the_later_entry() ->
     _, dropped = cli.filter_dataset(document)
 
     assert [d.business_key for d in dropped] == ["NPTC-000002"]
+
+
+def test_a_code_already_bound_to_an_earlier_entry_drops_the_later_entry() -> None:
+    document = _document(
+        _entry("NPTC-000001", "Sodium", code="25197003"),
+        _entry("NPTC-000002", "Natrium", code="25197003"),
+    )
+
+    filtered, dropped = cli.filter_dataset(document)
+
+    assert [e["business_key"] for e in filtered["entries"]] == ["NPTC-000001"]
+    assert [d.business_key for d in dropped] == ["NPTC-000002"]
+    assert "25197003" in dropped[0].reason
+    assert "NPTC-000001" in dropped[0].reason
 
 
 def test_a_synonym_shared_between_entries_is_only_a_warning_and_stays() -> None:

@@ -2,12 +2,15 @@
 """Drops the entries from a transform `import-dataset.json` that the baseline loader would
 refuse, so the 50-row sample workbook can seed a development stack (FR-70, FR-76, ADR-0042).
 
-The sample is a real excerpt that nobody edits. Two things in it stop `seed_baseline.py`:
+The sample is a real excerpt that nobody edits. Three things stop `seed_baseline.py`:
 
-- an entry with a specimen that has no SNOMED CT code (loader exit 3), and
-- an entry whose preferred term equals a designation on an earlier entry (FR-05, loader exit 5).
+- an entry with a specimen that has no SNOMED CT code (loader exit 3),
+- an entry whose preferred term equals a designation on an earlier entry (FR-05, loader exit 5),
+- an entry whose SNOMED CT code an earlier entry already holds (the database allows one active
+  entry per code, loader exit 5).
 
-Both are editorial matters for RCPA-QAP, so the dev seed leaves those entries out and says which.
+Each is an editorial matter for RCPA-QAP, so the dev seed leaves those entries out and says which.
+The sample today has no duplicate code; the rule keeps the filter right if the sample changes.
 Entries keep their business keys, so the kept keys have gaps. Everything outside `entries` passes
 through unchanged, including `source.sha256`, which still names the full workbook.
 
@@ -80,6 +83,10 @@ def _collides_with(
     return None
 
 
+def _bound_codes(entry: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(b["system"], b["code"]) for b in entry["code_bindings"] if b["status"] == "active"]
+
+
 def filter_dataset(document: dict[str, Any]) -> tuple[dict[str, Any], list[DroppedEntry]]:
     """Returns a copy of `document` without the entries the loader would refuse, and what was
     dropped. Raises `DatasetShapeError` for a document that is not an import dataset."""
@@ -91,6 +98,7 @@ def filter_dataset(document: dict[str, Any]) -> tuple[dict[str, Any], list[Dropp
     dropped: list[DroppedEntry] = []
     kept_preferred: set[str] = set()
     kept_synonyms: set[str] = set()
+    code_holder: dict[tuple[str, str], str] = {}
     try:
         for entry in entries:
             key = entry["business_key"]
@@ -106,7 +114,14 @@ def filter_dataset(document: dict[str, Any]) -> tuple[dict[str, Any], list[Dropp
                     DroppedEntry(key, f"{colliding!r} collides with an earlier entry (FR-05)")
                 )
                 continue
+            held = next((c for c in _bound_codes(entry) if c in code_holder), None)
+            if held is not None:
+                dropped.append(
+                    DroppedEntry(key, f"code {held[1]} is already bound to {code_holder[held]}")
+                )
+                continue
             kept.append(entry)
+            code_holder.update(dict.fromkeys(_bound_codes(entry), key))
             kept_preferred.add(collision_key(entry["preferred_term"]))
             kept_synonyms.update(collision_key(t) for t in _designation_terms(entry, "synonym"))
     except (KeyError, TypeError) as exc:
