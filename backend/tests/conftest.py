@@ -88,6 +88,21 @@ def compose_config() -> dict[str, Any]:
     return data
 
 
+THEME_MOUNT_TARGET = "/opt/keycloak/themes/nptc"
+
+
+def theme_mount_source() -> Path:
+    """The login theme directory compose mounts into Keycloak, read from
+    compose.yml so that a moved directory breaks the test that uses it rather
+    than diverging silently. Fails if the mount is missing, duplicated or
+    writable."""
+    volumes: list[str] = compose_config()["services"]["keycloak"]["volumes"]
+    mounts = [v for v in volumes if v.split(":")[1] == THEME_MOUNT_TARGET]
+    assert len(mounts) == 1, f"expected one mount at {THEME_MOUNT_TARGET}, found {mounts}"
+    assert mounts[0].endswith(":ro"), "the theme is mounted read-only"
+    return (COMPOSE_FILE.parent / mounts[0].split(":")[0]).resolve()
+
+
 def image_from_compose(service: str = "postgres") -> str:
     """The exact tag a given service pins, so bumping compose moves the
     integration test target automatically."""

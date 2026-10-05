@@ -99,3 +99,25 @@ describe("design tokens meet WCAG AA contrast", () => {
     expect(contrastRatio(text, surface), usedFor).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
+
+// The Keycloak login theme (deploy/keycloak/themes/nptc) repeats these tokens
+// in its own stylesheet, and its CSS has no component test, so the pairs it
+// renders are checked here against the same values.
+describe("login theme colour pairs meet WCAG AA contrast", () => {
+  it.each([
+    ["color-accent-contrast", "color-accent-hover", "side-panel text"],
+    ["color-accent-contrast", "color-accent", "primary button label"],
+    ["color-accent", "color-surface-sunken", "links in the registration notice"],
+    ["color-text", "color-surface-sunken", "registration notice text"],
+    ["color-text-muted", "color-surface-sunken", "the notice's new-tab hint"],
+  ] as const)(
+    "--%s reaches 4.5:1 on --%s (%s)",
+    (textToken, backgroundToken, usedFor) => {
+      const text = tokenValue(textToken);
+      const background = tokenValue(backgroundToken);
+      expect(contrastRatio(text, background), usedFor).toBeGreaterThanOrEqual(
+        AA_NORMAL_TEXT,
+      );
+    },
+  );
+});

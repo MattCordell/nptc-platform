@@ -189,6 +189,15 @@ const termsRoute = createRoute({
   head: titled("Terms of use"),
 });
 
+// The registration page on Keycloak links here (ADR-0043, NFR-14), so the
+// path must resolve before the policy text exists.
+const privacyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "privacy",
+  component: createPlaceholderPage({ title: "Privacy policy", issue: 64 }),
+  head: titled("Privacy policy"),
+});
+
 // --- public: auth entry points (#41) ---------------------------------------
 
 const signInRoute = createRoute({
@@ -500,6 +509,7 @@ export const routeTree = rootRoute.addChildren([
   exportsRoute,
   aboutRoute,
   termsRoute,
+  privacyRoute,
   signInRoute,
   signOutRoute,
   registerRoute,

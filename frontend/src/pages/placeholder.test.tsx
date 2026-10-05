@@ -24,6 +24,17 @@ describe("placeholder screens", () => {
     await expectNoA11yViolations(container);
   });
 
+  it("serves the privacy policy path Keycloak's registration page links to, with no axe violations", async () => {
+    const { container } = await renderRoute("/privacy");
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Privacy policy" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(main().getByText("Planned with issue #64.")).toBeVisible();
+    await expectNoA11yViolations(container);
+  });
+
   it("omits the issue line when the route names no issue", async () => {
     await renderRoute("/exports");
 

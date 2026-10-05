@@ -207,11 +207,57 @@ Keycloak resolves every request to the flow's highest level and demands OTP enro
 every user — which is what the committed realm did before #41, contradicting NFR-02. See
 ADR-0021 for the evidence.
 
+## The login theme
+
+Keycloak's own pages are the only place a password is typed (NFR-01), so they carry the
+platform's look through a login theme named `nptc` in `deploy/keycloak/themes/nptc/login/`.
+
+- **Plain files, no build step.** The theme is FreeMarker templates and CSS on top of
+  Keycloak's `keycloak.v2` theme (`parent=keycloak.v2`). It uses no Keycloakify and no Java
+  provider, which this repository does not build or ship. Keycloak's own markup and element
+  IDs, such as `kc-form-login`, stay as they are.
+- **How it loads.** `deploy/compose.yml` mounts the directory read-only at
+  `/opt/keycloak/themes/nptc`, and `nptc-realm.json` sets `"loginTheme": "nptc"`. No console
+  step is involved (NFR-03).
+- **What the pages show.** A deep-teal side panel with a serif headline and three factual
+  lines sits beside the form, as the design guide asks for sign-in
+  ([design-system.md](design-system.md)). The panel carries no statistics, because the
+  platform has none to show. The theme is light only, because the design guide defines no
+  dark palette.
+- **Registration notice.** The registration page shows the collection notice (NFR-14) and
+  links to the SPA's `/privacy` and `/terms`. The links take their address from the realm
+  attribute `nptcFrontendBaseUrl`, which comes from `NPTC_FRONTEND_BASE_URL`. A client's own
+  `baseUrl` is not used, because the `account-console` client's points at Keycloak. The page
+  has no acceptance checkbox: acceptance is recorded by the platform after sign-in, not by
+  Keycloak ([ADR-0043](../adr/0043-terms-acceptance-storage.md)). The notice says only that
+  the retention period is still being settled, because OI-15 has not closed.
+- **Three copied templates.** The theme overrides `template.ftl` (the side panel),
+  `register.ftl` (the notice, and no stock terms checkbox) and `login-config-totp.ftl`. The
+  stock TOTP template points both labels at an id that does not exist, so its inputs have no
+  accessible name. **When the Keycloak image tag changes, compare these three files with
+  the new image's `keycloak.v2` originals** and carry over any fix.
+- **Tokens are repeated, not shared.** Keycloak serves its own static files, so the SPA's
+  stylesheet and fonts are not reachable. `resources/css/nptc.css` repeats the colour,
+  radius, focus-ring and font tokens from `frontend/src/styles/app.css`, and
+  `resources/fonts/` holds copies of the three font files with their OFL licences. A test
+  fails if a repeated token differs from the SPA's.
+- **To change it.** Edit the files and reload the page. `start-dev` does not cache themes,
+  so no restart is needed. Then run `uv run pytest backend/tests/test_keycloak_login_theme.py`
+  (no Docker) and, for page changes, `backend/tests/test_keycloak_pkce_login.py`.
+
+The TOTP setup page appears on step-up, not on an ordinary sign-in. To see it, request
+`acr_values=2` with an account that has no authenticator yet.
+
 ## What is tested where
 
+- `backend/tests/test_keycloak_login_theme.py` — without Docker: the realm's `loginTheme`
+  names the directory compose mounts, the theme's tokens match `app.css`, each font has its
+  licence, and the registration template has the notice and no checkbox.
 - `backend/tests/test_keycloak_pkce_login.py` — the real round trip against the pinned
   Keycloak image, including the two checks Keycloak owns (mismatched `code_verifier`,
-  replayed code) and that logout ends the SSO session.
+  replayed code) and that logout ends the SSO session. It also fetches the themed sign-in,
+  registration, TOTP setup and error pages and asserts one `h1`, labelled inputs, the
+  registration notice and links, and no acceptance checkbox.
 - `backend/tests/test_api_auth_session.py` — the dependency chain over HTTP.
 - `backend/tests/test_api_error_mapping.py` — the 401/403/409 table above, the
   `AuthSettings`-derived `acr_values`, and the CORS `expose_headers` assertion.

@@ -13,7 +13,7 @@ P5). Do not expose it to the internet.
 | Service | What it does | Host port |
 |---|---|---|
 | `postgres` | The database (PostgreSQL 18, pinned to UTF-8) | `POSTGRES_PORT`, default 5432 |
-| `keycloak` | Sign-in (OIDC); imports the committed realm on every start | `KEYCLOAK_PORT`, default 8080 |
+| `keycloak` | Sign-in (OIDC); imports the committed realm on every start and shows it in the `nptc` login theme | `KEYCLOAK_PORT`, default 8080 |
 | `migrate` | Runs once: applies every migration, then creates the `nptc_app_login` database login. It exits when done | none |
 | `backend` | The API. Starts only after `migrate` succeeds | none |
 | `web` | Caddy: serves the web app and forwards `/api/*` to `backend`, so the browser sees one origin | `NPTC_WEB_PORT`, default 8081 |
@@ -115,7 +115,12 @@ docker compose -f deploy/compose.yml down -v
 - **After changing `VITE_OIDC_ISSUER` or `VITE_OIDC_CLIENT_ID`**, rebuild the `web` image.
   Vite writes these values into the built files, so a restart is not enough.
 - **After changing `NPTC_FRONTEND_BASE_URL`**, recreate `keycloak` as well
-  (`up -d --force-recreate keycloak`). The realm import reads it only at start.
+  (`up -d --force-recreate keycloak`). The realm import reads it only at start. The privacy
+  and terms links on the registration page use the same address.
+- **After editing the login theme** in `deploy/keycloak/themes/nptc/`, reload the browser
+  page. `start-dev` does not cache themes, so the next page load shows the change and no
+  restart is needed. A change to `loginTheme` in the realm file is different: recreate
+  `keycloak` as above. See [the login theme](../architecture/authentication.md#the-login-theme).
 - **After changing a port**, change the matching address too:
   - `NPTC_WEB_PORT` must match the port in `NPTC_FRONTEND_BASE_URL`.
   - `KEYCLOAK_PORT` must match the port in both `NPTC_OIDC_ISSUER` and `VITE_OIDC_ISSUER`.

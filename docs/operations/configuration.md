@@ -138,12 +138,20 @@ docker compose -f deploy/compose.yml up -d --force-recreate keycloak
 per-service form needs Compose v2.24+ — on an older v2 it tears down the whole stack. The
 single `--force-recreate` command above works on any Compose v2 and says what it means.)
 
+**The login theme is selected here and mounted separately.** The realm file sets
+`"loginTheme": "nptc"`, and `deploy/compose.yml` mounts `deploy/keycloak/themes/nptc` read-only
+at `/opt/keycloak/themes/nptc`. The two must agree: a realm that names a theme no mount
+provides falls back to Keycloak's own look without an error
+(`backend/tests/test_keycloak_login_theme.py` checks this). See
+[the login theme](../architecture/authentication.md#the-login-theme).
+
 **`${NPTC_FRONTEND_BASE_URL}` is the file's only placeholder.** Keycloak resolves `${VAR}` in
 an imported realm file from the container's environment; `deploy/compose.yml` passes the
 `NPTC_FRONTEND_BASE_URL` environment variable through for exactly this. It drives the
 `nptc-frontend` client's `rootUrl`, `redirectUris`, `webOrigins` and post-logout redirect URI
-— the one part of this realm that is genuinely per-deployment. Everything else in the file is
-static, which is what makes "identical realm on every clean clone" testable at all
+— the one part of this realm that is genuinely per-deployment. The registration page also
+reads it, through the realm attribute `nptcFrontendBaseUrl`, to build its links to `/privacy` and
+`/terms`. Everything else in the file is static, which is what makes "identical realm on every clean clone" testable at all
 (`backend/tests/test_keycloak_realm.py`).
 
 **What is deliberately absent:** no users (registration is open —
