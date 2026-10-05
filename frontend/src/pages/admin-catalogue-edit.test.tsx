@@ -246,7 +246,7 @@ describe("the entry it loads", () => {
       ),
     ).toBe(true);
     expect(screen.getByText("Entry status").nextElementSibling).toHaveTextContent(
-      "draft",
+      "Draft",
     );
   });
 
