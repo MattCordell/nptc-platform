@@ -20,6 +20,7 @@ import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
 import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { Field } from "../components/field.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
@@ -117,9 +118,6 @@ function sortLabel(sort: AdminListingSort): string {
  * says what is true without adding a fifth real sort value anywhere.
  */
 const SEARCH_MODE_SORT_VALUE = "relevance";
-
-const INPUT_CLASSES =
-  "min-h-10 w-full rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base text-[var(--color-text)]";
 
 const CHIP_CLASSES =
   "cursor-pointer rounded-[var(--radius-pill)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-sm text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]";
@@ -524,10 +522,10 @@ export function AdminCatalogueListPage() {
         <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
 
         {/* Kept outside the `active.data &&` gate below, deliberately: this is
-          the one control that must stay reachable even while the listing
-          itself is refused (e.g. a filter the server no longer recognises),
-          since it is the only way out of that state (PR #285 review
-          finding 1). */}
+            the one control that must stay reachable even while the listing
+            itself is refused (e.g. a filter the server no longer recognises),
+            since it is the only way out of that state (PR #285 review
+            finding 1). */}
         {activeFilters.length > 0 && (
           <div
             role="group"

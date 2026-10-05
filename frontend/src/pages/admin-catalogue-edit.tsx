@@ -117,13 +117,13 @@ export function AdminCatalogueEditPage() {
         {entry.isPending && <p>Loading {businessKey}…</p>}
 
         {/* `isError` and `data` are not exclusive: `retry` is off and
-          `refetchOnWindowFocus` is on, so an entry that loaded and then failed
-          a *re*fetch has both. Rendering the failure paragraph unconditionally
-          put "you cannot edit this entry" directly above a working editor -
-          and the amend mutation's conflict refetch makes that a designed-in
-          path, since a long-open session is exactly when one expires (PR #238
-          review). A first load that fails blocks; a failed refresh is a
-          banner over the terms the screen already has. */}
+            `refetchOnWindowFocus` is on, so an entry that loaded and then failed
+            a *re*fetch has both. Rendering the failure paragraph unconditionally
+            put "you cannot edit this entry" directly above a working editor -
+            and the amend mutation's conflict refetch makes that a designed-in
+            path, since a long-open session is exactly when one expires (PR #238
+            review). A first load that fails blocks; a failed refresh is a
+            banner over the terms the screen already has. */}
         {hardFailureMessage !== null && <p>{hardFailureMessage}</p>}
 
         {staleData && <p>{staleWarning(businessKey)}</p>}
@@ -142,8 +142,8 @@ export function AdminCatalogueEditPage() {
                   />
                 </dd>
                 {/* FR-85/FR-24: the published character count of the preferred
-                term, computed by the server and shown as text. There is
-                deliberately no control for it anywhere on this screen. */}
+                    term, computed by the server and shown as text. There is
+                    deliberately no control for it anywhere on this screen. */}
                 <dt className="text-[var(--color-text-muted)]">Preferred term length</dt>
                 <dd className="m-0 tabular-nums">{entry.data.length}</dd>
                 <dt className="text-[var(--color-text-muted)]">Last changed</dt>
@@ -154,9 +154,9 @@ export function AdminCatalogueEditPage() {
             </Card>
 
             {/* Keyed on the entry so its panel state - the warnings from the
-              last write, and any open dialog - cannot survive navigation from
-              one entry's edit screen to another's, which re-renders this same
-              route component rather than remounting it (review finding 4). */}
+                last write, and any open dialog - cannot survive navigation from
+                one entry's edit screen to another's, which re-renders this same
+                route component rather than remounting it (review finding 4). */}
             <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
             <BindingsPanel key={entry.data.business_key} entry={entry.data} />
             <PropertiesPanel key={entry.data.business_key} entry={entry.data} />
