@@ -10,10 +10,12 @@ row-hover/`align`, and the new `StatusBadge`) that consume this vocabulary — s
 app shell (issue #426: header with a user menu, and footer) and the landing page
 (issue #428: a flat serif hero at `text-4xl` with a search box, then three cards; it
 writes its own `h1` because `PageHeader` has one fixed title size) are implemented, as is
-the sign-in and registration treatment in the Keycloak login theme (issue #432). The filter bar,
-detail-page two-column body and audit trail described under "Layout patterns" below are not
-yet implemented on any screen — that lands with the follow-on issues (#324, #325). Read this
-as the destination, not a description of what exists today.
+the sign-in and registration treatment in the Keycloak login theme (issue #432). The filter
+bar is implemented on the admin catalogue list (issue #325), which also shows status as a
+`StatusBadge`, codes in monospace and dates in tabular figures; the admin edit screen uses
+the same page header, `Card` and status treatment. The detail-page two-column body and the
+audit trail described under "Layout patterns" below are not yet implemented on any screen.
+Read this as the destination, not a description of what exists today.
 
 ## Palette
 

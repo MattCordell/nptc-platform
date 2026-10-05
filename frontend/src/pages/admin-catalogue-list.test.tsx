@@ -174,6 +174,17 @@ describe("AdminCatalogueListPage", () => {
     );
   });
 
+  it("shows each status as its label rather than the raw value", async () => {
+    stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+    await renderRoute(LIST_URL, SIGNED_IN);
+
+    const draftRow = (await screen.findByRole("link", { name: DRAFT_KEY })).closest("tr");
+    const activeRow = screen.getByRole("link", { name: ACTIVE_KEY }).closest("tr");
+    expect(within(draftRow as HTMLElement).getByText("Draft")).toBeInTheDocument();
+    expect(within(activeRow as HTMLElement).getByText("Active")).toBeInTheDocument();
+  });
+
   it("dispatches to the search route once q is set in the URL", async () => {
     const calls = stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 

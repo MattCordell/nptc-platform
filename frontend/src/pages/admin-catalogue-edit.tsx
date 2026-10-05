@@ -7,7 +7,12 @@ import { ApiError } from "../api/unwrap.ts";
 import { BindingsPanel } from "../catalogue/bindings-panel.tsx";
 import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
 import { PropertiesPanel } from "../catalogue/properties-panel.tsx";
+import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import { Card } from "../components/card.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
+import { PageContainer } from "../components/page-container.tsx";
+import { PageHeader } from "../components/page-header.tsx";
+import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 
 /**
@@ -103,49 +108,61 @@ export function AdminCatalogueEditPage() {
     <section aria-labelledby="edit-entry-heading">
       <LiveRegion message={message} politeness={politeness} />
 
-      <h1 id="edit-entry-heading">
-        {entry.data ? entry.data.preferred_term : `Edit ${businessKey}`}
-      </h1>
+      <PageContainer className="py-6">
+        <PageHeader
+          id="edit-entry-heading"
+          title={entry.data ? entry.data.preferred_term : `Edit ${businessKey}`}
+        />
 
-      {entry.isPending && <p>Loading {businessKey}…</p>}
+        {entry.isPending && <p>Loading {businessKey}…</p>}
 
-      {/* `isError` and `data` are not exclusive: `retry` is off and
-          `refetchOnWindowFocus` is on, so an entry that loaded and then failed
-          a *re*fetch has both. Rendering the failure paragraph unconditionally
-          put "you cannot edit this entry" directly above a working editor -
-          and the amend mutation's conflict refetch makes that a designed-in
-          path, since a long-open session is exactly when one expires (PR #238
-          review). A first load that fails blocks; a failed refresh is a
-          banner over the terms the screen already has. */}
-      {hardFailureMessage !== null && <p>{hardFailureMessage}</p>}
+        {/* `isError` and `data` are not exclusive: `retry` is off and
+            `refetchOnWindowFocus` is on, so an entry that loaded and then failed
+            a *re*fetch has both. Rendering the failure paragraph unconditionally
+            put "you cannot edit this entry" directly above a working editor -
+            and the amend mutation's conflict refetch makes that a designed-in
+            path, since a long-open session is exactly when one expires (PR #238
+            review). A first load that fails blocks; a failed refresh is a
+            banner over the terms the screen already has. */}
+        {hardFailureMessage !== null && <p>{hardFailureMessage}</p>}
 
-      {staleData && <p>{staleWarning(businessKey)}</p>}
+        {staleData && <p>{staleWarning(businessKey)}</p>}
 
-      {entry.data && (
-        <>
-          <dl>
-            <dt>Identifier</dt>
-            <dd>{entry.data.business_key}</dd>
-            <dt>Entry status</dt>
-            <dd>{entry.data.status}</dd>
-            {/* FR-85/FR-24: the published character count of the preferred
-                term, computed by the server and shown as text. There is
-                deliberately no control for it anywhere on this screen. */}
-            <dt>Preferred term length</dt>
-            <dd>{entry.data.length}</dd>
-            <dt>Last changed</dt>
-            <dd>{new Date(entry.data.updated_at).toLocaleString()}</dd>
-          </dl>
+        {entry.data && (
+          <>
+            <Card>
+              <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-3">
+                <dt className="text-[var(--color-text-muted)]">Identifier</dt>
+                <dd className="m-0 font-mono">{entry.data.business_key}</dd>
+                <dt className="text-[var(--color-text-muted)]">Entry status</dt>
+                <dd className="m-0">
+                  <StatusBadge
+                    tone={statusToneFor(entry.data.status)}
+                    label={statusLabelFor(entry.data.status)}
+                  />
+                </dd>
+                {/* FR-85/FR-24: the published character count of the preferred
+                    term, computed by the server and shown as text. There is
+                    deliberately no control for it anywhere on this screen. */}
+                <dt className="text-[var(--color-text-muted)]">Preferred term length</dt>
+                <dd className="m-0 tabular-nums">{entry.data.length}</dd>
+                <dt className="text-[var(--color-text-muted)]">Last changed</dt>
+                <dd className="m-0 tabular-nums">
+                  {new Date(entry.data.updated_at).toLocaleString()}
+                </dd>
+              </dl>
+            </Card>
 
-          {/* Keyed on the entry so its panel state - the warnings from the
-              last write, and any open dialog - cannot survive navigation from
-              one entry's edit screen to another's, which re-renders this same
-              route component rather than remounting it (review finding 4). */}
-          <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
-          <BindingsPanel key={entry.data.business_key} entry={entry.data} />
-          <PropertiesPanel key={entry.data.business_key} entry={entry.data} />
-        </>
-      )}
+            {/* Keyed on the entry so its panel state - the warnings from the
+                last write, and any open dialog - cannot survive navigation from
+                one entry's edit screen to another's, which re-renders this same
+                route component rather than remounting it (review finding 4). */}
+            <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
+            <BindingsPanel key={entry.data.business_key} entry={entry.data} />
+            <PropertiesPanel key={entry.data.business_key} entry={entry.data} />
+          </>
+        )}
+      </PageContainer>
     </section>
   );
 }

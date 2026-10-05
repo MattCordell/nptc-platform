@@ -66,3 +66,12 @@ export function statusToneFor(status: CatalogueEntryStatus | (string & {})): Sta
       return "neutral";
   }
 }
+
+/**
+ * The display label for a status value, falling back to the raw string for a
+ * value `STATUS_OPTIONS` does not list, for the same reason `statusToneFor`
+ * degrades rather than throws.
+ */
+export function statusLabelFor(status: CatalogueEntryStatus | (string & {})): string {
+  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+}

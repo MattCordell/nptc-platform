@@ -7,6 +7,7 @@ import { Button } from "../components/button.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { Card } from "../components/card.tsx";
 import { Field } from "../components/field.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { PageContainer } from "../components/page-container.tsx";
 
 /**
@@ -82,9 +83,6 @@ function ContributeCard() {
     </Card>
   );
 }
-
-const INPUT_CLASSES =
-  "min-h-10 w-full rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base text-[var(--color-text)]";
 
 function CatalogueSearchForm() {
   const navigate = useNavigate();

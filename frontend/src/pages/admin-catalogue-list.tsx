@@ -16,9 +16,16 @@ import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-p
 import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
 import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
 import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
-import { STATUS_OPTIONS } from "../catalogue/status-options.ts";
+import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
+import { Field } from "../components/field.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { LiveRegion } from "../components/live-region.tsx";
+import { PageContainer } from "../components/page-container.tsx";
+import { PageHeader } from "../components/page-header.tsx";
+import { Select } from "../components/select.tsx";
+import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import {
   activeFilterEntries,
@@ -112,6 +119,9 @@ function sortLabel(sort: AdminListingSort): string {
  */
 const SEARCH_MODE_SORT_VALUE = "relevance";
 
+const CHIP_CLASSES =
+  "cursor-pointer rounded-[var(--radius-pill)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-sm text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]";
+
 /**
  * A facet's display name for the active-filter chip row (issue #289). `status`
  * is special-cased the same way `AdminCatalogueFilterPanel` special-cases it
@@ -152,7 +162,7 @@ function resolveValueLabel(
   valueLabelByFacetKey: Map<string, Map<string, string>>,
 ): string {
   if (facetKey === "status") {
-    return STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value;
+    return statusLabelFor(value);
   }
   if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
     return valueLabelByFacetKey.get(facetKey)?.get(value) ?? value;
@@ -458,204 +468,241 @@ export function AdminCatalogueListPage() {
     <section aria-labelledby="catalogue-list-heading">
       <LiveRegion message={message} politeness={politeness} />
 
-      <h1 id="catalogue-list-heading">Catalogue administration</h1>
+      <PageContainer className="py-6">
+        <PageHeader id="catalogue-list-heading" title="Catalogue administration" />
 
-      <form role="search" onSubmit={handleSearchSubmit}>
-        <label htmlFor="catalogue-list-query">Search term or SNOMED CT code</label>
-        <input
-          id="catalogue-list-query"
-          type="text"
-          value={queryDraft}
-          onChange={(event) => setQueryDraft(event.target.value)}
-        />
-        <button type="submit">Search</button>
-      </form>
+        <div className="flex flex-wrap items-end gap-4">
+          <form
+            role="search"
+            onSubmit={handleSearchSubmit}
+            className="flex min-w-64 flex-1 items-end gap-3"
+          >
+            <Field
+              id="catalogue-list-query"
+              label="Search term or SNOMED CT code"
+              className="flex-1"
+            >
+              {(controlProps) => (
+                <input
+                  {...controlProps}
+                  type="text"
+                  value={queryDraft}
+                  onChange={(event) => setQueryDraft(event.target.value)}
+                  className={INPUT_CLASSES}
+                />
+              )}
+            </Field>
+            <Button type="submit" className="min-h-10">
+              Search
+            </Button>
+          </form>
 
-      {/* Issue #287. Disabled in search mode: `GET /catalogue/admin/search`
-          stays relevance-ranked, matching the backend's own scope for this
-          issue, so there is nothing here to send a `sort` to while a query
-          is active. */}
-      <div>
-        <label htmlFor="catalogue-list-sort">Sort by</label>
-        <select
-          id="catalogue-list-sort"
-          value={
-            mode === "search" ? SEARCH_MODE_SORT_VALUE : (search.sort ?? "business_key")
-          }
-          onChange={handleSortChange}
-          disabled={mode === "search"}
-        >
-          {mode === "search" && <option value={SEARCH_MODE_SORT_VALUE}>Relevance</option>}
-          {SORT_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
-
-      {/* Kept outside the `active.data &&` gate below, deliberately: this is
-          the one control that must stay reachable even while the listing
-          itself is refused (e.g. a filter the server no longer recognises),
-          since it is the only way out of that state (PR #285 review
-          finding 1). */}
-      {activeFilters.length > 0 && (
-        <div
-          role="group"
-          aria-label="Active filters"
-          className="flex flex-wrap items-center gap-2"
-        >
-          {activeFilters.map(({ facetKey, value }) => {
-            const facetLabel = resolveFacetLabel(facetKey, definitionByKey);
-            const valueLabel = resolveValueLabel(
-              facetKey,
-              value,
-              definitionByKey,
-              valueLabelByFacetKey,
-            );
-            return (
-              <button
-                key={`${facetKey}:${value}`}
-                type="button"
-                aria-label={`Remove filter ${facetLabel}: ${valueLabel}`}
-                onClick={() => handleFilterToggle(facetKey, value)}
-              >
-                {facetLabel}: {valueLabel}
-                <span aria-hidden="true"> ✕</span>
-              </button>
-            );
-          })}
-          <button type="button" onClick={handleClearAllFilters}>
-            Clear all filters
-          </button>
-        </div>
-      )}
-
-      {active.isPending && <p>Loading catalogue entries…</p>}
-
-      {hardFailure && <p>{hardFailureMessage}</p>}
-
-      {staleData && <p>{STALE_DATA_WARNING}</p>}
-
-      {active.data && (
-        <>
-          <BulkReclassifyToolbar
-            selectedCount={selected.size}
-            onLaunch={() => {
-              // Cleared here, not left to `onComplete`'s next call: a batch
-              // that aborts whole (FR-89's 422) leaves the dialog open with
-              // nothing applied, and without this the *previous* batch's
-              // tallies would still be showing behind it, reading as this
-              // batch's own outcome (PR #290 review).
-              setBulkResult(null);
-              setBulkDialogOpen(true);
-            }}
-          />
-
-          {bulkResult && (
-            <BulkOutcomeSummary
-              ref={bulkResultsSectionRef}
-              result={bulkResult.result}
-              propertyLabel={bulkResult.propertyLabel}
-            />
-          )}
-
-          <DataTable
-            caption="Catalogue entries"
-            columns={[
-              {
-                key: "business_key",
-                header: "Code",
-                isRowHeader: true,
-                render: (row: Row) => (
-                  <Link
-                    to="/admin/catalogue/$businessKey/edit"
-                    params={{ businessKey: row.business_key }}
-                  >
-                    {row.business_key}
-                  </Link>
-                ),
-              },
-              {
-                key: "preferred_term",
-                header: "Requesting term",
-                render: (row: Row) => row.preferred_term,
-              },
-              { key: "status", header: "Status", render: (row: Row) => row.status },
-              {
-                key: "updated_at",
-                header: "Last changed",
-                render: (row: Row) => new Date(row.updated_at).toLocaleString(),
-              },
+          {/* Issue #287. Disabled in search mode: `GET /catalogue/admin/search`
+              stays relevance-ranked, matching the backend's own scope for this
+              issue, so there is nothing here to send a `sort` to while a query
+              is active. */}
+          <Select
+            id="catalogue-list-sort"
+            label="Sort by"
+            value={
+              mode === "search" ? SEARCH_MODE_SORT_VALUE : (search.sort ?? "business_key")
+            }
+            onChange={handleSortChange}
+            disabled={mode === "search"}
+            options={[
+              ...(mode === "search"
+                ? [{ value: SEARCH_MODE_SORT_VALUE, label: "Relevance" }]
+                : []),
+              ...SORT_OPTIONS,
             ]}
-            rows={items}
-            getRowKey={(row) => row.business_key}
-            emptyState={emptyStateText(mode, search.q)}
-            selection={{
-              selectedKeys: new Set(selected.keys()),
-              selectAllLabel: "Select all rows on this page",
-              getRowLabel: (row) => `Select ${row.business_key}`,
-              onSelectRow: (key, isSelected) => {
-                setSelected((current) => {
-                  const next = new Map(current);
-                  if (isSelected) {
-                    const row = items.find((item) => item.business_key === key);
-                    if (row) {
-                      next.set(key, row.row_version);
-                    }
-                  } else {
-                    next.delete(key);
-                  }
-                  return next;
-                });
-              },
-              onSelectAll: (isSelected) => {
-                setSelected((current) => {
-                  const next = new Map(current);
-                  for (const row of items) {
+            className="min-h-10"
+          />
+        </div>
+
+        <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
+
+        {/* Kept outside the `active.data &&` gate below, deliberately: this is
+            the one control that must stay reachable even while the listing
+            itself is refused (e.g. a filter the server no longer recognises),
+            since it is the only way out of that state (PR #285 review
+            finding 1). */}
+        {activeFilters.length > 0 && (
+          <div
+            role="group"
+            aria-label="Active filters"
+            className="flex flex-wrap items-center gap-2"
+          >
+            {activeFilters.map(({ facetKey, value }) => {
+              const facetLabel = resolveFacetLabel(facetKey, definitionByKey);
+              const valueLabel = resolveValueLabel(
+                facetKey,
+                value,
+                definitionByKey,
+                valueLabelByFacetKey,
+              );
+              return (
+                <button
+                  key={`${facetKey}:${value}`}
+                  type="button"
+                  aria-label={`Remove filter ${facetLabel}: ${valueLabel}`}
+                  onClick={() => handleFilterToggle(facetKey, value)}
+                  className={CHIP_CLASSES}
+                >
+                  {facetLabel}: {valueLabel}
+                  <span aria-hidden="true"> ✕</span>
+                </button>
+              );
+            })}
+            <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
+              Clear all filters
+            </Button>
+          </div>
+        )}
+
+        {active.isPending && <p>Loading catalogue entries…</p>}
+
+        {hardFailure && <p>{hardFailureMessage}</p>}
+
+        {staleData && <p>{STALE_DATA_WARNING}</p>}
+
+        {active.data && (
+          <>
+            <BulkReclassifyToolbar
+              selectedCount={selected.size}
+              onLaunch={() => {
+                // Cleared here, not left to `onComplete`'s next call: a batch
+                // that aborts whole (FR-89's 422) leaves the dialog open with
+                // nothing applied, and without this the *previous* batch's
+                // tallies would still be showing behind it, reading as this
+                // batch's own outcome (PR #290 review).
+                setBulkResult(null);
+                setBulkDialogOpen(true);
+              }}
+            />
+
+            {bulkResult && (
+              <BulkOutcomeSummary
+                ref={bulkResultsSectionRef}
+                result={bulkResult.result}
+                propertyLabel={bulkResult.propertyLabel}
+              />
+            )}
+
+            <DataTable
+              caption="Catalogue entries"
+              columns={[
+                {
+                  key: "business_key",
+                  header: "Code",
+                  isRowHeader: true,
+                  render: (row: Row) => (
+                    <Link
+                      to="/admin/catalogue/$businessKey/edit"
+                      params={{ businessKey: row.business_key }}
+                      className="font-mono"
+                    >
+                      {row.business_key}
+                    </Link>
+                  ),
+                },
+                {
+                  key: "preferred_term",
+                  header: "Requesting term",
+                  render: (row: Row) => row.preferred_term,
+                },
+                {
+                  key: "status",
+                  header: "Status",
+                  render: (row: Row) => (
+                    <StatusBadge
+                      tone={statusToneFor(row.status)}
+                      label={statusLabelFor(row.status)}
+                    />
+                  ),
+                },
+                {
+                  key: "updated_at",
+                  header: "Last changed",
+                  align: "right",
+                  render: (row: Row) => (
+                    <span className="tabular-nums">
+                      {new Date(row.updated_at).toLocaleString()}
+                    </span>
+                  ),
+                },
+              ]}
+              rows={items}
+              getRowKey={(row) => row.business_key}
+              emptyState={emptyStateText(mode, search.q)}
+              selection={{
+                selectedKeys: new Set(selected.keys()),
+                selectAllLabel: "Select all rows on this page",
+                getRowLabel: (row) => `Select ${row.business_key}`,
+                onSelectRow: (key, isSelected) => {
+                  setSelected((current) => {
+                    const next = new Map(current);
                     if (isSelected) {
-                      next.set(row.business_key, row.row_version);
+                      const row = items.find((item) => item.business_key === key);
+                      if (row) {
+                        next.set(key, row.row_version);
+                      }
                     } else {
-                      next.delete(row.business_key);
+                      next.delete(key);
                     }
-                  }
-                  return next;
-                });
-              },
+                    return next;
+                  });
+                },
+                onSelectAll: (isSelected) => {
+                  setSelected((current) => {
+                    const next = new Map(current);
+                    for (const row of items) {
+                      if (isSelected) {
+                        next.set(row.business_key, row.row_version);
+                      } else {
+                        next.delete(row.business_key);
+                      }
+                    }
+                    return next;
+                  });
+                },
+              }}
+            />
+
+            {nextCursor !== null && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleNextPage}
+                className="self-start"
+              >
+                Next page
+              </Button>
+            )}
+          </>
+        )}
+
+        {bulkDialogOpen && (
+          <BulkReclassifyDialog
+            entries={Array.from(selected, ([business_key, expected_row_version]) => ({
+              business_key,
+              expected_row_version,
+            }))}
+            onClose={() => setBulkDialogOpen(false)}
+            onComplete={(result, propertyLabel) => {
+              setBulkDialogOpen(false);
+              // Every captured `expected_row_version` is stale the moment
+              // anything applied - refreshing them from the outcome list
+              // instead would let a second submit blind-overwrite whatever a
+              // concurrent editor did in between (issue #63 plan). The results
+              // panel below is the durable record of what to revisit.
+              suppressSelectionAnnouncementRef.current = true;
+              setSelected(new Map());
+              setBulkResult({ result, propertyLabel });
+              announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);
             }}
           />
-
-          {nextCursor !== null && (
-            <button type="button" onClick={handleNextPage}>
-              Next page
-            </button>
-          )}
-        </>
-      )}
-
-      {bulkDialogOpen && (
-        <BulkReclassifyDialog
-          entries={Array.from(selected, ([business_key, expected_row_version]) => ({
-            business_key,
-            expected_row_version,
-          }))}
-          onClose={() => setBulkDialogOpen(false)}
-          onComplete={(result, propertyLabel) => {
-            setBulkDialogOpen(false);
-            // Every captured `expected_row_version` is stale the moment
-            // anything applied - refreshing them from the outcome list
-            // instead would let a second submit blind-overwrite whatever a
-            // concurrent editor did in between (issue #63 plan). The results
-            // panel below is the durable record of what to revisit.
-            suppressSelectionAnnouncementRef.current = true;
-            setSelected(new Map());
-            setBulkResult({ result, propertyLabel });
-            announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);
-          }}
-        />
-      )}
+        )}
+      </PageContainer>
     </section>
   );
 }
