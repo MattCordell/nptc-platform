@@ -150,8 +150,8 @@ an imported realm file from the container's environment; `deploy/compose.yml` pa
 `NPTC_FRONTEND_BASE_URL` environment variable through for exactly this. It drives the
 `nptc-frontend` client's `rootUrl`, `redirectUris`, `webOrigins` and post-logout redirect URI
 — the one part of this realm that is genuinely per-deployment. The registration page also
-reads it, through the client's `baseUrl`, to build its links to `/privacy` and `/terms`. Everything else in the file is
-static, which is what makes "identical realm on every clean clone" testable at all
+reads it, through the realm attribute `nptcFrontendBaseUrl`, to build its links to `/privacy` and
+`/terms`. Everything else in the file is static, which is what makes "identical realm on every clean clone" testable at all
 (`backend/tests/test_keycloak_realm.py`).
 
 **What is deliberately absent:** no users (registration is open —

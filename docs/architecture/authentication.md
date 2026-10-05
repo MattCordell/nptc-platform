@@ -225,8 +225,9 @@ platform's look through a login theme named `nptc` in `deploy/keycloak/themes/np
   platform has none to show. The theme is light only, because the design guide defines no
   dark palette.
 - **Registration notice.** The registration page shows the collection notice (NFR-14) and
-  links to the SPA's `/privacy` and `/terms`. The links take their address from the
-  `nptc-frontend` client's `baseUrl`, which comes from `NPTC_FRONTEND_BASE_URL`. The page
+  links to the SPA's `/privacy` and `/terms`. The links take their address from the realm
+  attribute `nptcFrontendBaseUrl`, which comes from `NPTC_FRONTEND_BASE_URL`. A client's own
+  `baseUrl` is not used, because the `account-console` client's points at Keycloak. The page
   has no acceptance checkbox: acceptance is recorded by the platform after sign-in, not by
   Keycloak ([ADR-0043](../adr/0043-terms-acceptance-storage.md)). The notice says only that
   the retention period is still being settled, because OI-15 has not closed.

@@ -219,6 +219,7 @@
     }
   ],
   "attributes": {
-    "acr.loa.map": "{\"1\": 1, \"2\": 2}"
+    "acr.loa.map": "{\"1\": 1, \"2\": 2}",
+    "nptcFrontendBaseUrl": "${NPTC_FRONTEND_BASE_URL}"
   }
 }

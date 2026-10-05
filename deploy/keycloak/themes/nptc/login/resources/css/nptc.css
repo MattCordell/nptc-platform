@@ -39,7 +39,6 @@
   --color-text: #1e2a2c;
   --color-text-muted: #5a6462;
   --color-danger: #b42318;
-  --color-danger-surface: #fef3f2;
 
   --font-display: "Source Serif 4 Variable", Georgia, serif;
   --font-sans: "IBM Plex Sans Variable", system-ui, sans-serif;
@@ -95,11 +94,24 @@ a:hover {
   color: var(--color-accent-hover);
 }
 
-/* Standalone links such as "Forgot password?" meet the 24px target size. */
-main a {
+/* Standalone links meet the 24px target size (WCAG 2.5.8). Links inside a
+   sentence are exempt, and links styled as buttons keep PatternFly's sizing. */
+.pf-v5-c-helper-text__item-text a,
+#kc-form-options a,
+#mode-manual,
+#mode-barcode,
+#backToApplication,
+.nptc-notice-links a {
   display: inline-block;
   min-height: 1.5rem;
   line-height: 1.5rem;
+}
+
+/* The manual TOTP key is typed into an authenticator app, so a monospace face
+   keeps similar characters apart. */
+#kc-totp-secret-key {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 .pf-v5-c-button.pf-m-primary {
@@ -258,11 +270,6 @@ a {
   flex-wrap: wrap;
   gap: 0.25rem 1.5rem;
   margin: 0.75rem 0 0;
-}
-
-.nptc-notice-links a {
-  display: inline-block;
-  min-height: 1.5rem;
 }
 
 .nptc-new-tab {

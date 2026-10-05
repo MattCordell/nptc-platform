@@ -722,8 +722,8 @@
   priority: MUST
   phase: p1
   title: "A privacy policy and a collection notice are presented at registration"
-  status: planned
-  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The requirement stays planned because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
+  status: in-progress
+  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The requirement stays in-progress because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
 - id: "NFR-15"
   priority: MUST
   phase: p1

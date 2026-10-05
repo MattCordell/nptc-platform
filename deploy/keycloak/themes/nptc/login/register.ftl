@@ -32,7 +32,7 @@
                     <li>${msg("nptcRegisterNoticeRetention")}</li>
                     <li>${msg("nptcRegisterNoticeAccess")}</li>
                 </ul>
-                <#assign spaOrigin = ((client.baseUrl)!'')?remove_ending('/')>
+                <#assign spaOrigin = ((realm.attributes.nptcFrontendBaseUrl)!'')?remove_ending('/')>
                 <#if spaOrigin?has_content>
                     <p class="nptc-notice-links">
                         <a id="kc-privacy-link" href="${spaOrigin}/privacy" target="_blank" rel="noopener noreferrer">${msg("nptcRegisterPrivacyLink")}<span class="nptc-new-tab"> ${msg("nptcOpensInNewTab")}</span></a>
