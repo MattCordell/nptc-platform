@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STATUS_OPTIONS, statusToneFor } from "./status-options.ts";
+import { STATUS_OPTIONS, statusLabelFor, statusToneFor } from "./status-options.ts";
 
 describe("statusToneFor", () => {
   it.each([
@@ -23,5 +23,15 @@ describe("statusToneFor", () => {
     for (const option of STATUS_OPTIONS) {
       expect(statusToneFor(option.value)).not.toBe("neutral");
     }
+  });
+});
+
+describe("statusLabelFor", () => {
+  it("returns the STATUS_OPTIONS label for a listed status", () => {
+    expect(statusLabelFor("withdrawn")).toBe("Withdrawn");
+  });
+
+  it("falls back to the raw value for an unrecognised status", () => {
+    expect(statusLabelFor("archived")).toBe("archived");
   });
 });

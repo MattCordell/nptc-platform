@@ -16,7 +16,7 @@ import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-p
 import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
 import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
 import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
-import { STATUS_OPTIONS, statusToneFor } from "../catalogue/status-options.ts";
+import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
 import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { Field } from "../components/field.tsx";
@@ -164,7 +164,7 @@ function resolveValueLabel(
   valueLabelByFacetKey: Map<string, Map<string, string>>,
 ): string {
   if (facetKey === "status") {
-    return STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value;
+    return statusLabelFor(value);
   }
   if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
     return valueLabelByFacetKey.get(facetKey)?.get(value) ?? value;
@@ -618,10 +618,7 @@ export function AdminCatalogueListPage() {
                   render: (row: Row) => (
                     <StatusBadge
                       tone={statusToneFor(row.status)}
-                      label={
-                        STATUS_OPTIONS.find((option) => option.value === row.status)
-                          ?.label ?? row.status
-                      }
+                      label={statusLabelFor(row.status)}
                     />
                   ),
                 },

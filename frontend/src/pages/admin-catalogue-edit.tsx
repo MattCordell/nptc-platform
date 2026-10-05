@@ -7,7 +7,7 @@ import { ApiError } from "../api/unwrap.ts";
 import { BindingsPanel } from "../catalogue/bindings-panel.tsx";
 import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
 import { PropertiesPanel } from "../catalogue/properties-panel.tsx";
-import { STATUS_OPTIONS, statusToneFor } from "../catalogue/status-options.ts";
+import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
 import { Card } from "../components/card.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
@@ -138,10 +138,7 @@ export function AdminCatalogueEditPage() {
                 <dd className="m-0">
                   <StatusBadge
                     tone={statusToneFor(entry.data.status)}
-                    label={
-                      STATUS_OPTIONS.find((option) => option.value === entry.data.status)
-                        ?.label ?? entry.data.status
-                    }
+                    label={statusLabelFor(entry.data.status)}
                   />
                 </dd>
                 {/* FR-85/FR-24: the published character count of the preferred
