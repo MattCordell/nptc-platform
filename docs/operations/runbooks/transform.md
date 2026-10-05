@@ -647,7 +647,11 @@ produces, but not the guarantees above:
   already loads `import-dataset.json` into an empty catalogue with `scripts/seed_baseline.py`
   (see [`seed-baseline.md`](seed-baseline.md)), which records the baseline as a seed record
   until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
-  `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading.
+  `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
+  workbook has eight such entries and one FR-05 collision, so it does not load as emitted.
+  The development stack seeds it through `scripts/dev-seed.ps1`, which drops those nine
+  entries (see "Load sample data for evaluation" in
+  [`deployment.md`](../deployment.md#load-sample-data-for-evaluation)).
 - Terminology-served enrichment of `import-dataset.json`'s `edition_hint`,
   `fsn` and `au_preferred_term` from a live `--check-terminology` sweep (see
   "The import dataset" above).

@@ -9,6 +9,11 @@ The decision to record the baseline as a seed record, and not as a `Release`, is
 [ADR-0042](../../adr/0042-seeded-baseline-representation.md). The two tables it writes are in
 [`data-model.md`](../../architecture/data-model.md#seeded-baseline-provenance-issue-329-fr-76-adr-0010-adr-0042).
 
+To seed a development stack from the 50-row sample workbook, use `scripts/dev-seed.ps1`
+instead. It filters out the entries this loader refuses and then calls it. See
+[`deployment.md`](../deployment.md#load-sample-data-for-evaluation). Never filter a real
+baseline: the refusals below are the point.
+
 ## Before you run it
 
 1. The stack is up and `migrate` has exited `0`. See [`deployment.md`](../deployment.md).

@@ -94,6 +94,37 @@ docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.p
 docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.py --dataset /tmp/import-dataset.json
 ```
 
+### Load sample data for evaluation
+
+To see the catalogue screens with content, load the 50-row sample workbook with one command.
+This is for development and evaluation only. `docker compose up` never runs it, and a
+production baseline is never filtered.
+
+Unlike the rest of this guide, this step needs [`uv`](https://docs.astral.sh/uv/) on your
+machine, because the transform runs on the host and the backend image does not contain it.
+Run it from the repository root, with the stack up and `migrate` finished:
+
+```powershell
+powershell -File scripts/dev-seed.ps1
+```
+
+The script runs the transform on `transform/tests/fixtures/spia-requesting-sample.xlsx`,
+drops the entries the loader would refuse, then loads the rest with a dry run first. It makes
+no network calls to a terminology server.
+
+- **What loads:** 41 of the 50 entries, all `active`, so they appear at
+  <http://localhost:8081/api/v1/catalogue/entries> without signing in. They cover six
+  disciplines (some entries have two), five subgroups, and entries with and without synonyms.
+- **What is dropped, and why:** eight entries have a specimen with no SNOMED CT code, and the
+  loader refuses those. One more, NPTC-000045 "Adrenal Ab", collides with a synonym on
+  NPTC-000009 (FR-05), which RCPA-QAP must resolve (PRD 6.3). The script prints each dropped
+  entry and its reason. The kept entries keep their business keys, so the keys have gaps.
+- **What it cannot show:** every sample row has a SNOMED CT code, so the sample has no entry
+  without one. The transform treats a missing code as a blocking finding.
+- **Running it twice:** the second run exits `4`, says the catalogue already holds data, and
+  writes nothing. To start again, run `docker compose -f deploy/compose.yml down -v`, then
+  start the stack and create the first administrator again.
+
 ## Stop the stack
 
 Stop the containers and keep the database:
