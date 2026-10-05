@@ -43,7 +43,6 @@ from testcontainers.core.container import DockerContainer
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_DIR = REPO_ROOT / "deploy"
 REALM_DIR = DEPLOY_DIR / "keycloak" / "realm"
-THEME_DIR = DEPLOY_DIR / "keycloak" / "themes" / "nptc"
 
 _conftest_spec = importlib.util.spec_from_file_location(
     "keycloak_pkce_conftest", Path(__file__).parent / "conftest.py"
@@ -53,7 +52,7 @@ _conftest = importlib.util.module_from_spec(_conftest_spec)
 sys.modules["keycloak_pkce_conftest"] = _conftest
 _conftest_spec.loader.exec_module(_conftest)
 image_from_compose = _conftest.image_from_compose
-compose_config = _conftest.compose_config
+theme_mount_source = _conftest.theme_mount_source
 
 CLIENT_ID = "nptc-frontend"
 FRONTEND_BASE_URL = "http://frontend.test"
@@ -93,14 +92,6 @@ class Realm:
     @property
     def end_session_endpoint(self) -> str:
         return str(self.discovery["end_session_endpoint"])
-
-
-def _theme_mount_source() -> Path:
-    """The theme directory compose mounts, read from compose.yml, as the
-    realm directory is."""
-    volumes: list[str] = compose_config()["services"]["keycloak"]["volumes"]
-    (mount,) = [v for v in volumes if v.split(":")[1] == "/opt/keycloak/themes/nptc"]
-    return (DEPLOY_DIR / mount.split(":")[0]).resolve()
 
 
 def _wait_for_discovery(base_url: str, attempts: int = 60, delay: float = 2.0) -> httpx.Response:
@@ -161,7 +152,7 @@ def realm() -> Iterator[Realm]:
         .with_env("KC_BOOTSTRAP_ADMIN_PASSWORD", ADMIN_PASSWORD)
         .with_env("NPTC_FRONTEND_BASE_URL", FRONTEND_BASE_URL)
         .with_volume_mapping(str(REALM_DIR), "/opt/keycloak/data/import", mode="ro")
-        .with_volume_mapping(str(_theme_mount_source()), "/opt/keycloak/themes/nptc", mode="ro")
+        .with_volume_mapping(str(theme_mount_source()), "/opt/keycloak/themes/nptc", mode="ro")
         .with_command("start-dev --import-realm")
     )
     with container:
@@ -446,11 +437,11 @@ def _label_targets_without_input(page: str) -> list[str]:
     ]
 
 
-def _registration_page(realm: Realm) -> httpx.Response:
+def _registration_page(realm: Realm, **params: str) -> httpx.Response:
     _verifier, challenge = _pkce_pair()
     response = httpx.get(
         realm.authorization_endpoint.removesuffix("/auth") + "/registrations",
-        params=_authorize_params(challenge, state=secrets.token_urlsafe(16)),
+        params=_authorize_params(challenge, state=secrets.token_urlsafe(16), **params),
         timeout=30,
     )
     response.raise_for_status()
@@ -491,6 +482,25 @@ def test_registration_page_shows_the_notice_and_links_without_a_checkbox(realm: 
     assert 'type="checkbox"' not in page
     assert len(re.findall(r"<h1[\s>]", page)) == 1
     assert _label_targets_without_input(page) == []
+
+
+@pytest.mark.integration
+@pytest.mark.req("NFR-14")
+def test_registration_links_point_at_the_frontend_whichever_client_started_the_flow(
+    realm: Realm,
+) -> None:
+    """Keycloak creates an ``account-console`` client in every realm, and its
+    ``baseUrl`` is under ``/realms/nptc/account/``. Someone who registers from
+    the account page must still get links to the SPA, not to Keycloak."""
+    page = _registration_page(
+        realm,
+        client_id="account-console",
+        redirect_uri=f"{realm.base_url}/realms/nptc/account/",
+    ).text
+
+    assert f'href="{FRONTEND_BASE_URL}/privacy"' in page
+    assert f'href="{FRONTEND_BASE_URL}/terms"' in page
+    assert "/account/privacy" not in page
 
 
 @pytest.mark.integration

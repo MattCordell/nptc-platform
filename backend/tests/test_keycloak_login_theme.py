@@ -24,15 +24,13 @@ LOGIN_DIR = THEME_DIR / "login"
 THEME_CSS = LOGIN_DIR / "resources" / "css" / "nptc.css"
 APP_CSS = REPO_ROOT / "frontend" / "src" / "styles" / "app.css"
 
-THEME_MOUNT_TARGET = "/opt/keycloak/themes/nptc"
-
 _conftest_spec = importlib.util.spec_from_file_location(
     "_test_keycloak_login_theme_conftest", Path(__file__).parent / "conftest.py"
 )
 assert _conftest_spec is not None and _conftest_spec.loader is not None
 _conftest = importlib.util.module_from_spec(_conftest_spec)
 _conftest_spec.loader.exec_module(_conftest)
-compose_config = _conftest.compose_config
+theme_mount_source = _conftest.theme_mount_source
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 #: Tokens the theme repeats from app.css. Every one the theme declares has to
@@ -47,19 +45,9 @@ def _tokens(css_path: Path) -> dict[str, str]:
     return {name: " ".join(value.split()) for name, value in _SHARED_TOKEN_RE.findall(css)}
 
 
-def _theme_mount_source() -> Path:
-    """The theme directory compose mounts, read from compose.yml so that a
-    moved directory breaks this test rather than diverging silently."""
-    volumes: list[str] = compose_config()["services"]["keycloak"]["volumes"]
-    mounts = [v for v in volumes if v.split(":")[1] == THEME_MOUNT_TARGET]
-    assert len(mounts) == 1, f"expected one mount at {THEME_MOUNT_TARGET}, found {mounts}"
-    assert mounts[0].endswith(":ro"), "the theme is mounted read-only"
-    return (DEPLOY_DIR / mounts[0].split(":")[0]).resolve()
-
-
 @pytest.mark.req("NFR-03")
 def test_compose_mounts_the_theme_directory_the_repo_commits() -> None:
-    assert _theme_mount_source() == THEME_DIR.resolve()
+    assert theme_mount_source() == THEME_DIR.resolve()
     assert (LOGIN_DIR / "theme.properties").is_file()
 
 
@@ -70,7 +58,7 @@ def test_realm_selects_a_theme_that_compose_mounts() -> None:
     caught here rather than by someone seeing the wrong page."""
     realm = json.loads(REALM_FILE.read_text(encoding="utf-8"))
 
-    assert realm["loginTheme"] == _theme_mount_source().name
+    assert realm["loginTheme"] == theme_mount_source().name
 
 
 @pytest.mark.req("NFR-31")
@@ -93,10 +81,33 @@ def test_every_font_the_theme_loads_ships_with_its_licence() -> None:
     fonts = re.findall(r'url\("\.\./fonts/([^"]+)"\)', css)
 
     assert fonts, "the theme loads no fonts"
+    fonts_dir = LOGIN_DIR / "resources" / "fonts"
     for font in fonts:
-        assert (LOGIN_DIR / "resources" / "fonts" / font).is_file(), font
-    licences = list((LOGIN_DIR / "resources" / "fonts").glob("LICENSE-*.txt"))
-    assert len(licences) == 3, "one OFL licence per font family"
+        assert (fonts_dir / font).is_file(), font
+        family = re.sub(r"-latin.*$", "", font)
+        assert (fonts_dir / f"LICENSE-{family}.txt").is_file(), f"no licence for {font}"
+
+
+@pytest.mark.req("NFR-31")
+def test_every_token_the_theme_declares_is_used() -> None:
+    """A declared token nothing references is dead weight, and for a font
+    token it also means a file the browser downloads for nothing."""
+    css = _COMMENT_RE.sub("", THEME_CSS.read_text(encoding="utf-8"))
+
+    for name in _tokens(THEME_CSS):
+        assert f"var(--{name})" in css, f"--{name} is declared but never used"
+
+
+@pytest.mark.req("NFR-03")
+def test_realm_carries_the_frontend_origin_the_registration_links_use() -> None:
+    """The registration page reads this attribute, not a client's baseUrl:
+    the account-console client's baseUrl points at Keycloak itself."""
+    realm = json.loads(REALM_FILE.read_text(encoding="utf-8"))
+
+    assert realm["attributes"]["nptcFrontendBaseUrl"] == "${NPTC_FRONTEND_BASE_URL}"
+    template = (LOGIN_DIR / "register.ftl").read_text(encoding="utf-8")
+    assert "realm.attributes.nptcFrontendBaseUrl" in template
+    assert "client.baseUrl" not in template
 
 
 @pytest.mark.req("NFR-14")
