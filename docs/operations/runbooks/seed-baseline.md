@@ -9,6 +9,9 @@ The decision to record the baseline as a seed record, and not as a `Release`, is
 [ADR-0042](../../adr/0042-seeded-baseline-representation.md). The two tables it writes are in
 [`data-model.md`](../../architecture/data-model.md#seeded-baseline-provenance-issue-329-fr-76-adr-0010-adr-0042).
 
+To load the real workbook, follow the end-to-end guide in [`load-baseline.md`](load-baseline.md).
+This page is the reference for the loader itself.
+
 To seed a development stack from the 50-row sample workbook, use `scripts/dev-seed.ps1`
 instead. It filters out the entries this loader refuses and then calls it. See
 [`deployment.md`](../deployment.md#load-sample-data-for-evaluation). Never filter a real

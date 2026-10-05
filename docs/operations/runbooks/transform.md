@@ -649,6 +649,7 @@ produces, but not the guarantees above:
   until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
   `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
   workbook has eight such entries and one FR-05 collision, so it does not load as emitted.
+  [`load-baseline.md`](load-baseline.md) walks through loading the real workbook.
   The development stack seeds it through `scripts/dev-seed.ps1`, which drops those nine
   entries (see "Load sample data for evaluation" in
   [`deployment.md`](../deployment.md#load-sample-data-for-evaluation)).

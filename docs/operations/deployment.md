@@ -118,12 +118,27 @@ no network calls to a terminology server.
 - **What is dropped, and why:** eight entries have a specimen with no SNOMED CT code, and the
   loader refuses those. One more, NPTC-000045 "Adrenal Ab", collides with a synonym on
   NPTC-000009 (FR-05), which RCPA-QAP must resolve (PRD 6.3). The script prints each dropped
-  entry and its reason. The kept entries keep their business keys, so the keys have gaps.
+  entry and its reason. The filter also drops a later entry whose SNOMED CT code an earlier
+  entry already holds, which the sample does not need today. The kept entries keep their
+  business keys, so the keys have gaps.
 - **What it cannot show:** every sample row has a SNOMED CT code, so the sample has no entry
   without one. The transform treats a missing code as a blocking finding.
 - **Running it twice:** the second run exits `4`, says the catalogue already holds data, and
   writes nothing. To start again, run `docker compose -f deploy/compose.yml down -v`, then
   start the stack and create the first administrator again.
+- **Exit codes:** each step of the script has its own code, so a code tells you what failed.
+
+  | Code | Meaning |
+  |---|---|
+  | `0` | Seeded. |
+  | `1` | A prerequisite is missing: `uv`, Docker, or a running `backend` service. |
+  | `10` | The transform failed or found a blocking problem. |
+  | `11` | The filter failed or left no entry. |
+  | `12` | Copying the dataset into the backend container failed. |
+  | `2` to `6` | The loader's own codes, passed through. `4` means the catalogue already holds data. See [`runbooks/seed-baseline.md`](runbooks/seed-baseline.md#exit-codes). |
+
+To load the real RCPA-QAP workbook, do not use this script. Follow
+[`runbooks/load-baseline.md`](runbooks/load-baseline.md).
 
 ## Stop the stack
 
