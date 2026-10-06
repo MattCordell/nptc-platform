@@ -19,7 +19,8 @@ is attached route by route. The gate is a named condition, never a role (FR-44).
 exercise their privacy rights, so sign-out, account closure (NFR-17) and a request to see or
 correct personal information (NFR-14, NFR-16) belong on this list when they become HTTP routes.
 Today none is: closure is a library function, `nptc.auth.identity.close_account`, and the SPA
-signs out at Keycloak. `test_terms_gate.py` fails for an entry that names no real route.
+signs out at Keycloak. `test_every_exempt_entry_names_a_real_mutating_route` fails for an entry
+that names no real route.
 """
 
 from __future__ import annotations
@@ -95,16 +96,16 @@ def declare_terms_refusal(app: FastAPI) -> None:
         if app.openapi_schema is not None:
             return app.openapi_schema
         schema = original()
-        _add_terms_refusal(schema, _exempt_operations(app))
+        _add_terms_refusal(schema)
         return schema
 
     app.openapi = openapi  # type: ignore[method-assign]
 
 
-def _exempt_operations(app: FastAPI) -> frozenset[tuple[str, str]]:
-    return frozenset((method.lower(), f"{API_PREFIX}{path}") for method, path in EXEMPT_ROUTES)
-
-
+#: `EXEMPT_ROUTES` as the OpenAPI document spells them: lower-case method, full path.
+_EXEMPT_OPERATIONS: Final = frozenset(
+    (method.lower(), f"{API_PREFIX}{path}") for method, path in EXEMPT_ROUTES
+)
 _TERMS_REFUSAL_REF: Final = {"$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"}
 _TERMS_REFUSAL_DESCRIPTION: Final = (
     "The current terms of use have not been accepted. The body carries "
@@ -113,7 +114,7 @@ _TERMS_REFUSAL_DESCRIPTION: Final = (
 )
 
 
-def _add_terms_refusal(schema: dict[str, Any], exempt: frozenset[tuple[str, str]]) -> None:
+def _add_terms_refusal(schema: dict[str, Any]) -> None:
     components = schema.setdefault("components", {}).setdefault("schemas", {})
     components["TermsAcceptanceRequiredResponse"] = (
         TermsAcceptanceRequiredResponse.model_json_schema(
@@ -122,7 +123,7 @@ def _add_terms_refusal(schema: dict[str, Any], exempt: frozenset[tuple[str, str]
     )
     for path, operations in schema.get("paths", {}).items():
         for method, operation in operations.items():
-            if method.upper() in _SAFE_METHODS or (method, path) in exempt:
+            if method.upper() in _SAFE_METHODS or (method, path) in _EXEMPT_OPERATIONS:
                 continue
             responses = operation.setdefault("responses", {})
             existing = responses.get("403")

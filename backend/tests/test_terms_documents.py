@@ -90,6 +90,13 @@ def test_a_malformed_file_is_refused(raw: str) -> None:
         _parse("2026-10-06", raw)
 
 
+@pytest.mark.parametrize("fence", ["---", "--- ", "---\t", " ---"])
+def test_either_fence_may_carry_stray_whitespace(fence: str) -> None:
+    raw = f"{fence}\nversion: 2026-10-06\neffective: 2026-10-06\n{fence}\n\nBody\n"
+
+    assert _parse("2026-10-06", raw).text == "Body\n"
+
+
 def test_windows_line_endings_parse_the_same_as_unix() -> None:
     raw = "---\nversion: 2026-10-06\neffective: 2026-10-06\n---\n\n# Title\n\nBody\n"
 

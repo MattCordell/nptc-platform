@@ -43,12 +43,11 @@ def _parse(version: str, raw: str) -> TermsDocument:
     lines = raw.replace("\r\n", "\n").split("\n")
     if not lines or lines[0].strip() != _FENCE:
         raise TermsFileMalformedError(f"terms file {version}.md has no front matter")
-    try:
-        closing = lines.index(_FENCE, 1)
-    except ValueError:
+    closing = next((n for n, line in enumerate(lines[1:], 1) if line.strip() == _FENCE), None)
+    if closing is None:
         raise TermsFileMalformedError(
             f"terms file {version}.md has an unterminated front matter block"
-        ) from None
+        )
 
     fields: dict[str, str] = {}
     for line in lines[1:closing]:
