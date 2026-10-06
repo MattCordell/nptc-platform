@@ -25,6 +25,7 @@ import {
   useEntryHistory,
   useEntryProperties,
   usePatchEntryCore,
+  usePropertyDefinition,
   usePropertyDefinitions,
   usePropertyValueOptions,
   useReinstateDesignation,
@@ -640,6 +641,40 @@ describe("usePropertyDefinitions", () => {
     const requestUrl = new URL(requestFor(fetchMock).url);
     expect(requestUrl.pathname).toBe("/api/v1/registry/properties");
     expect(requestUrl.searchParams.get("include_deprecated")).toBe("true");
+  });
+});
+
+describe("usePropertyDefinition", () => {
+  it("fetches one definition by key", async () => {
+    const definition = { key: "specimen", label: "Specimen", status: "deprecated" };
+    const fetchMock = stubFetch(200, definition);
+
+    const { result } = renderHook(() => usePropertyDefinition("specimen"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(definition);
+    expect(new URL(requestFor(fetchMock).url).pathname).toBe(
+      "/api/v1/registry/properties/specimen",
+    );
+  });
+
+  it("surfaces a 404 as an error carrying its status", async () => {
+    stubFetch(404, { detail: "No property definition matches the given key." });
+
+    const { result } = renderHook(() => usePropertyDefinition("missing"), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect((result.current.error as ApiError).status).toBe(404);
+  });
+
+  it("does not fetch for a blank key", () => {
+    const fetchMock = stubFetch(200, {});
+
+    renderHook(() => usePropertyDefinition(""), { wrapper });
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
