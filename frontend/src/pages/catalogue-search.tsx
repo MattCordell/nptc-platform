@@ -12,6 +12,7 @@ import type {
   FilterDropdown,
   FilterToggleGroup,
 } from "../components/filter-bar.tsx";
+import { FindingIndicator } from "../components/finding-indicator.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
@@ -132,18 +133,6 @@ function emptyStateText(
   return hasCursor
     ? "No more catalogue entries."
     : "The catalogue has no published entries yet.";
-}
-
-function FindingIndicator({ open }: { open: boolean }) {
-  if (!open) {
-    return <span className="text-[var(--color-text-muted)]">None</span>;
-  }
-  return (
-    <span className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-[var(--color-danger-surface)] px-2 py-0.5 text-xs font-medium text-[var(--color-danger)]">
-      <span aria-hidden="true">!</span>
-      Open finding
-    </span>
-  );
 }
 
 export function CatalogueSearchPage() {
