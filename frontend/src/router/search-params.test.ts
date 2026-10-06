@@ -15,65 +15,51 @@ import {
 } from "./search-params.ts";
 
 describe("validateCatalogueSearch", () => {
-  it("defaults every field when absent", () => {
-    expect(validateCatalogueSearch({})).toEqual({ q: "", page: 1, sort: "relevance" });
+  it("defaults to an empty query with no cursor or filters", () => {
+    expect(validateCatalogueSearch({})).toEqual({ q: "" });
   });
 
-  it("degrades a malformed page and sort to their defaults rather than throwing", () => {
-    expect(validateCatalogueSearch({ page: "not-a-number", sort: "nonsense" })).toEqual({
-      q: "",
-      page: 1,
-      sort: "relevance",
+  it("passes through q, the cursor and every filter value", () => {
+    expect(
+      validateCatalogueSearch({
+        q: "glucose",
+        after: "0.5:abc:NPTC-000123",
+        "filter.discipline": ["chem", "haem"],
+      }),
+    ).toEqual({
+      q: "glucose",
+      after: "0.5:abc:NPTC-000123",
+      "filter.discipline": ["chem", "haem"],
     });
   });
 
-  // The router only ever calls this with strings (every search value comes
-  // off the URL as a raw string - see router.tsx's custom parseSearch), so
-  // that is what these tests supply, not JS numbers.
-  it("passes through valid values", () => {
+  it("normalises a single filter value to an array", () => {
+    expect(validateCatalogueSearch({ "filter.discipline": "chem" })).toEqual({
+      q: "",
+      "filter.discipline": ["chem"],
+    });
+  });
+
+  // The public endpoints offer neither: a stale link carrying them must not
+  // end up sending them, or claiming an order the results are not in.
+  it("drops the page and sort keys an older link may carry", () => {
     expect(validateCatalogueSearch({ q: "glucose", page: "3", sort: "code" })).toEqual({
       q: "glucose",
-      page: 3,
-      sort: "code",
     });
   });
 
-  it("rejects a page below 1", () => {
-    expect(validateCatalogueSearch({ page: "0" })).toEqual({
-      q: "",
-      page: 1,
-      sort: "relevance",
-    });
+  // FR-06: a facet value can be a SNOMED CT code; it must stay a string.
+  it("keeps a numeric-looking filter value as a string", () => {
+    const result = validateCatalogueSearch({ "filter.specimen": "119297000" });
+    expect(result["filter.specimen"]).toEqual(["119297000"]);
   });
 
-  // `Number.parseInt` accepts trailing garbage after a numeric prefix and
-  // has no ceiling - both would let a malformed page number through as if
-  // it were valid.
-  it("rejects a page with trailing non-digit characters, rather than parsing its numeric prefix", () => {
-    expect(validateCatalogueSearch({ page: "3drop" })).toEqual({
-      q: "",
-      page: 1,
-      sort: "relevance",
-    });
-  });
-
-  it("rejects a page past the upper bound, rather than accepting an unbounded number", () => {
-    expect(validateCatalogueSearch({ page: "99999999999999999999" })).toEqual({
-      q: "",
-      page: 1,
-      sort: "relevance",
-    });
-  });
-
-  // TanStack Router calls validateSearch more than once per navigation, and
-  // a later call receives this function's own previously-validated output
-  // (page as a real number), not the raw URL string. Feeding the output
-  // straight back in must reproduce it exactly - this is the regression
-  // test for the bug where that second call saw `page: 3` (a number),
-  // `asString` rejected it for not being a string, and the result silently
-  // fell back to page 1.
   it("is idempotent - validating its own output reproduces it", () => {
-    const once = validateCatalogueSearch({ q: "glucose", page: "3", sort: "code" });
+    const once = validateCatalogueSearch({
+      q: "glucose",
+      after: "NPTC-000123",
+      "filter.discipline": "chem",
+    });
     const twice = validateCatalogueSearch(once as unknown as Record<string, unknown>);
     expect(twice).toEqual(once);
   });
@@ -400,9 +386,7 @@ describe("changeSort", () => {
 describe("every validator is idempotent", () => {
   // TanStack Router calls validateSearch more than once per navigation, and
   // a later call passes the validator's own previously-validated output back
-  // in as input (see the detailed comment on `validateCatalogueSearch`'s own
-  // idempotency test above, which is the regression test for the bug this
-  // generalises). ADR-0020 makes idempotency a rule for every validator this
+  // in as input. ADR-0020 makes idempotency a rule for every validator this
   // file defines, not just the one that broke - enforce it as a test here
   // rather than leaving it as documentation a fifth validator could miss.
   const cases: Array<[string, (search: Record<string, unknown>) => unknown]> = [
