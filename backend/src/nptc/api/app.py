@@ -40,8 +40,6 @@ def create_app(
         version="0.0.0",
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=f"{API_PREFIX}/docs",
-        # ADR-0043: the default is refusal. Every mutating route is covered, including one
-        # added later, unless it is on the gate's exempt list.
         dependencies=[Depends(require_current_terms)],
     )
     declare_terms_refusal(app)
@@ -63,8 +61,7 @@ def create_app(
     # request-scoped (FR-10).
     get_terminology_client()
 
-    # ADR-0043: a current version with no file leaves the gate nothing to show while every
-    # contribution is refused, so it is a start-up failure, as for the terminology setting above.
+    # A current version with no file would refuse every contribution with nothing to show.
     load_terms_document(api_settings.terms_current_version)
 
     # Exactly one origin, never "*": ADR-0021 has the browser hold the access

@@ -1,18 +1,12 @@
 """The `terms_acceptance` table: which terms version a user accepted, and when (NFR-45, ADR-0043).
 
-**Append-only, one row per acceptance.** A column on `app_user` would hold only the latest
-acceptance, and NFR-45 requires the prior record to be kept. `nptc.db.roles.
-REVOKE_TERMS_ACCEPTANCE_WRITE_SQL` makes "insert once, never update or delete" a privilege-level
-guarantee. The row refers to the internal user id, which account closure keeps (NFR-17), and holds
-no personal data, so the record of what was accepted survives closure.
+Append-only, one row per acceptance: `nptc.db.roles.REVOKE_TERMS_ACCEPTANCE_WRITE_SQL` makes that a
+privilege. A column on `app_user` would keep only the latest, and NFR-45 keeps the prior record.
+The row holds the internal user id and no personal data, so it survives account closure (NFR-17).
 
-**The latest row decides, and `id` decides which is latest.** `id` is an identity column, so it
-rises with every insert even inside one transaction, where `accepted_at` could tie. A user whose
-latest row names a version other than the current one has not accepted the current one, whether
-the current version moved forward or back. `version` is an opaque string compared for equality.
-
-**Indexed on `(user_id, id)`.** The write-path gate reads one user's latest row on every
-state-changing request, which this index serves as a backwards scan with no sort.
+The latest row decides, and `id` (an identity column) says which is latest, because `accepted_at`
+could tie inside one transaction. `version` is compared for equality, so moving the current
+version back also asks for acceptance again. `(user_id, id)` serves the gate's per-request read.
 """
 
 from __future__ import annotations
@@ -30,18 +24,13 @@ from nptc.db.base import Base
 
 __all__ = ["TermsAcceptance"]
 
-#: A plain string literal, never built from runtime data: `test_sql_parameterisation.py`'s AST
-#: guard forbids an f-string as a SQL call's first argument.
 _VERSION_NOT_BLANK_SQL = "length(btrim(version)) > 0"
 
 
 class TermsAcceptance(Base):
     __tablename__ = "terms_acceptance"
 
-    # nptc.audit.policy (NFR-08): every real column classified. `version` is the substance of the
-    # event. `user_id` is an internal UUID and not identifying data, as in `user_role.py`, and
-    # without it the log could not say whose acceptance this was. `id` is bookkeeping and
-    # `accepted_at` repeats the event's own `occurred_at`.
+    # nptc.audit.policy (NFR-08): `accepted_at` repeats the event's own `occurred_at`.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset({"user_id", "version"})
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset({"id", "accepted_at"})
@@ -51,8 +40,7 @@ class TermsAcceptance(Base):
         Index("ix_terms_acceptance_user_id_id", "user_id", "id"),
     )
 
-    # Identity, not a `serial` default, for the reason `AuditEvent.sequence` gives: INSERT on the
-    # table suffices, with no separate `GRANT USAGE ON SEQUENCE`.
+    # Identity, as for `AuditEvent.sequence`: INSERT suffices, with no `GRANT USAGE ON SEQUENCE`.
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_user.id"), nullable=False, active_history=True
