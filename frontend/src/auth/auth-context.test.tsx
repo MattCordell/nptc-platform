@@ -367,8 +367,8 @@ describe("getAccessToken", () => {
     expect(renewal).toHaveBeenCalledTimes(1);
   });
 
-  // Issue #472: where Keycloak forbids framing, every renewal waits out the
-  // iframe timeout, so an anonymous visitor must not start one per request.
+  // Where Keycloak forbids framing, every renewal waits out the iframe
+  // timeout, so an anonymous visitor must not start one per request.
   describe("once the probe has settled signed out", () => {
     it("answers null without another silent renewal", async () => {
       const renewal = noSession();
