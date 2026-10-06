@@ -208,19 +208,33 @@ def test_login_pages_may_be_framed_by_the_frontend_origin_only(realm: dict[str, 
     assert ancestors == ["'self'", "${NPTC_FRONTEND_BASE_URL}"]
 
 
+#: Keycloak 26.7's own `browserSecurityHeaders`, read from a realm created
+#: without one. Everything but `contentSecurityPolicy` must stay as Keycloak
+#: ships it.
+_KEYCLOAK_DEFAULT_SECURITY_HEADERS = {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "referrerPolicy": "no-referrer",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+}
+
+
 @pytest.mark.req("NFR-03")
 def test_overriding_the_csp_keeps_every_other_browser_security_header(
     realm: dict[str, Any],
 ) -> None:
     """Keycloak replaces the whole header map when the realm file supplies
-    one, so a partial map silently drops the headers it leaves out."""
-    headers = realm["browserSecurityHeaders"]
+    one, so a map that leaves a key out silently drops that header from every
+    login page. Comparing the whole map, not a few keys, is what catches it."""
+    headers = dict(realm["browserSecurityHeaders"])
 
-    assert headers["xContentTypeOptions"] == "nosniff"
-    assert headers["xFrameOptions"] == "SAMEORIGIN"
-    assert headers["xRobotsTag"] == "none"
-    assert headers["strictTransportSecurity"]
-    assert _csp_directives(headers["contentSecurityPolicy"])["object-src"] == ["'none'"]
+    csp = headers.pop("contentSecurityPolicy")
+
+    assert headers == _KEYCLOAK_DEFAULT_SECURITY_HEADERS
+    assert _csp_directives(csp)["object-src"] == ["'none'"]
+    assert _csp_directives(csp)["frame-src"] == ["'self'"]
 
 
 @pytest.mark.req("NFR-07")
@@ -482,6 +496,12 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
         login_page.raise_for_status()
         framing_policy = _csp_directives(login_page.headers["content-security-policy"])
         assert framing_policy["frame-ancestors"] == ["'self'", frontend_base_url]
+        # The other headers Keycloak sends only when their key is in the map.
+        assert login_page.headers["referrer-policy"] == "no-referrer"
+        assert login_page.headers["x-content-type-options"] == "nosniff"
+        assert login_page.headers["x-frame-options"] == "SAMEORIGIN"
+        assert login_page.headers["x-robots-tag"] == "none"
+        assert "max-age=" in login_page.headers["strict-transport-security"]
 
         executions_response = httpx.get(
             f"{base_url}/admin/realms/nptc/authentication/flows/"
