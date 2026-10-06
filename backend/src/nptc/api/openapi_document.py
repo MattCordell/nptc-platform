@@ -19,7 +19,7 @@ from nptc.api.app import create_app
 from nptc.settings import ApiSettings
 
 #: Not a real deployment target: `create_app` requires an origin for CORS, and it never
-#: appears in the document. Public so the drift test builds its app from this constant.
+#: appears in the document. Public so tests build their apps from this constant.
 #: `model_construct` skips the origin validator, so this must be a bare origin.
 GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
 
