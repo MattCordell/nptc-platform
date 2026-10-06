@@ -252,3 +252,10 @@ GRANT_ENTRY_SEED_PROVENANCE_SQL = "GRANT SELECT, INSERT ON TABLE entry_seed_prov
 REVOKE_ENTRY_SEED_PROVENANCE_WRITE_SQL = (
     "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE entry_seed_provenance FROM nptc_app;"
 )
+
+#: NFR-45, ADR-0043: an acceptance is a fact about a past moment, so it is never edited or removed.
+#: The prior record of what a user accepted is kept even after they accept a later version.
+GRANT_TERMS_ACCEPTANCE_SQL = "GRANT SELECT, INSERT ON TABLE terms_acceptance TO nptc_app;"
+REVOKE_TERMS_ACCEPTANCE_WRITE_SQL = (
+    "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE terms_acceptance FROM nptc_app;"
+)
