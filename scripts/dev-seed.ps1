@@ -3,10 +3,12 @@
 Seeds a running development stack with the 50-row sample workbook (FR-70, FR-76, NFR-41).
 
 .DESCRIPTION
-Runs the transform on the committed sample workbook, drops the entries the baseline loader would
-refuse (scripts/dev_seed_filter.py), copies the result into the backend container, and loads it
-with scripts/seed_baseline.py: a dry run first, then the real load. Afterwards the public
-catalogue at /api/v1/catalogue/entries lists the seeded entries.
+Copies the committed sample workbook without the rows that collide under FR-05
+(scripts/dev_seed_workbook_filter.py), because the transform blocks a dataset that holds one. Runs
+the transform on that copy, drops the entries the baseline loader would still refuse
+(scripts/dev_seed_filter.py), copies the result into the backend container, and loads it with
+scripts/seed_baseline.py: a dry run first, then the real load. Afterwards the public catalogue at
+/api/v1/catalogue/entries lists the seeded entries.
 
 This is for development and evaluation only. It is not part of 'docker compose up', and a
 production baseline is never filtered. See docs/operations/runbooks/seed-baseline.md.
@@ -19,7 +21,7 @@ what failed:
   0   seeded
   1   a prerequisite is missing: uv, Docker, or a running backend service
   10  the transform failed or found a blocking problem in the workbook
-  11  the filter failed or left no entry
+  11  a filter failed or left no entry
   12  copying the dataset into the backend container failed
   2-6 the loader's own codes, passed through from the dry run or the load. 4 means the
       catalogue already holds data and nothing was written.
@@ -40,6 +42,7 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ComposeFile = Join-Path $RepoRoot 'deploy\compose.yml'
 $Workbook = Join-Path $RepoRoot 'transform\tests\fixtures\spia-requesting-sample.xlsx'
 $WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ('nptc-dev-seed-' + [guid]::NewGuid().ToString('N'))
+$WorkbookCopy = Join-Path $WorkDir (Split-Path -Leaf $Workbook)
 $ContainerPath = '/tmp/import-dataset.json'
 $ExitCatalogueNotEmpty = 4
 $ExitTransformFailed = 10
@@ -75,15 +78,20 @@ try {
         exit 1
     }
 
+    $code = Invoke-Step 'Copy the sample workbook without the rows that collide (FR-05)' 'uv' @(
+        'run', 'python', 'scripts/dev_seed_workbook_filter.py',
+        '--input', $Workbook, '--output', $WorkbookCopy)
+    if ($code -ne 0) { Write-Host "error: the workbook filter failed (exit $code)"; exit $ExitFilterFailed }
+
     $code = Invoke-Step 'Run the transform on the sample workbook' 'uv' @(
-        'run', 'nptc-transform', 'run', '--workbook', $Workbook,
+        'run', 'nptc-transform', 'run', '--workbook', $WorkbookCopy,
         '--emit-dataset', '--release-name', $ReleaseName, '--report-dir', $RawDir)
     if ($code -ne 0) { Write-Host "error: the transform failed (exit $code)"; exit $ExitTransformFailed }
 
     $code = Invoke-Step 'Drop the entries the loader would refuse' 'uv' @(
         'run', 'python', 'scripts/dev_seed_filter.py',
         '--input', (Join-Path $RawDir 'import-dataset.json'), '--output', $Filtered)
-    if ($code -ne 0) { Write-Host "error: the filter failed (exit $code)"; exit $ExitFilterFailed }
+    if ($code -ne 0) { Write-Host "error: the dataset filter failed (exit $code)"; exit $ExitFilterFailed }
 
     $code = Invoke-Step 'Copy the dataset into the backend container' 'docker' @(
         'compose', '-f', $ComposeFile, 'cp', $Filtered, "backend:$ContainerPath")
