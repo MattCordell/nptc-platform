@@ -18,10 +18,15 @@ later.
 The registration page explains how your details are used and links to the privacy policy
 and the terms of use. Both links open in a new tab, so your form stays as you left it.
 
-> **Not yet implemented.** The privacy policy and terms of use pages are placeholders, and
-> the catalogue does not yet ask you to accept the terms or record that you did. The
+> **Partly implemented.** The platform now records which version of the terms of use you
+> accept, and it refuses a contribution until you have accepted the current version. The
+> screen that shows the terms and asks you to accept is not built yet. The terms text is
+> temporary placeholder wording, and the privacy policy page is still a placeholder. The
 > registration notice says that the retention period is still being settled. See
 > [ADR-0043](../adr/0043-terms-acceptance-storage.md) for the plan.
+
+When the terms change, you are asked to accept the new version before your next
+contribution. You can still read the catalogue and sign out without accepting.
 
 ## Signing in
 

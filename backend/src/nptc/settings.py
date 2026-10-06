@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from nptc.terms.documents import DEFAULT_TERMS_VERSION
+
 _URL_DELIMITERS = ("@", ":", "/", "?", "#", "%")
 
 
@@ -199,6 +201,18 @@ class ApiSettings(BaseSettings):
     #: preferred_term_length` remains the only place length is computed;
     #: this is only the ceiling to compare it against.
     max_preferred_term_length: int | None = Field(default=None, ge=1)
+
+    #: NFR-47: names the terms file `nptc/terms/versions/<version>.md`. `create_app` refuses to
+    #: start when it does not exist.
+    terms_current_version: str = DEFAULT_TERMS_VERSION
+
+    @field_validator("terms_current_version", mode="before")
+    @classmethod
+    def _blank_terms_current_version_is_the_default(cls, value: object) -> object:
+        """Blank means the packaged default, so a compose pass-through of an unset variable works."""
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_TERMS_VERSION
+        return value
 
     @field_validator("max_preferred_term_length", mode="before")
     @classmethod

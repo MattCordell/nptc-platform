@@ -256,6 +256,40 @@ Three layers, in `backend/tests/`:
    route that no longer exists). Proven meaningful today via a positive-control synthetic
    app; intended to be shared with issue #165's own route-table inventory test.
 
+## NFR-45: the terms gate
+
+A signed-in user who has not accepted the current terms version is refused on every
+state-changing route that is not on one exempt list (ADR-0043). The check is a named
+condition, not a role or a permission (FR-44): `nptc.api.terms_gate.require_current_terms`,
+registered for the whole app in `create_app`.
+
+- **The default is refusal.** The gate is an app-level dependency, so a mutating route added
+  later is covered without anyone opting it in. A wrapper on `permission_dep` could not promise
+  this, because that wrapper is attached route by route.
+- **It runs before the route's own permission check.** An unaccepted user who also lacks the
+  permission sees the terms refusal first.
+- **It skips** safe methods (GET, HEAD, OPTIONS), anonymous callers (the route's own check
+  gives a 401), accounts that are not active (a suspended user keeps the ordinary permission
+  refusal), and `EXEMPT_ROUTES`. On a safe method it resolves no caller at all, so a public
+  read never fails on a bad token because of the gate.
+- **The exempt list** is `EXEMPT_ROUTES`: `(method, path)` pairs spelled as the route table
+  spells them. Today it holds only `POST /auth/terms/acceptance`. A user who declines a new
+  version must still be able to leave and to use their privacy rights, so sign-out, account
+  closure (NFR-17) and a request to see or correct personal information (NFR-14, NFR-16) are
+  added to it when they exist as HTTP routes. `test_api_terms.py` fails for an entry that names
+  no real route.
+- **The refusal** is a 403 whose body carries `code: terms_acceptance_required` beside `detail`.
+  It has no `WWW-Authenticate` header: RFC 9470 defines that for authentication strength, and
+  terms acceptance is not an authentication matter. The SPA routes on `code`.
+  `declare_terms_refusal` adds the body to every gated operation in the OpenAPI document.
+- **Accepting names the version seen.** `POST /auth/terms/acceptance` returns a 409 with
+  `code: terms_version_stale` and the `current_version` when the named version is no longer
+  current, so a user is never recorded as accepting text they did not read (NFR-47).
+
+The comparison is equality against the user's latest acceptance, so a version rolled back to an
+earlier one also asks for acceptance again. See
+[`data-model.md`](data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043) for the table.
+
 ## Requirement status
 
 - **FR-44**: `implemented` — the matrix test and the AST guard
@@ -265,6 +299,9 @@ Three layers, in `backend/tests/`:
   property tests here are stronger than any per-endpoint test, but the issue's own
   acceptance criterion is vacuously true at zero endpoints; the route inventory test
   (with its positive control) holds that debt honestly.
+- **NFR-45, NFR-47**: `in-progress` - the API half (record, gate, serve the text by version)
+  is built and tested. The terms page and the gate the user sees belong to the SPA and stay
+  open, as ADR-0043 records.
 - **NFR-06**: `implemented` — server refusal and realm step-up flow verified against a
   real container, and the SPA-side request/challenge handling closes the loop end to end
   (issue #184, ADR-0036).

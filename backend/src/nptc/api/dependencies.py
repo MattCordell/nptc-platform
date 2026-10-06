@@ -246,6 +246,11 @@ def current_principal(
     make "presented a bad token" indistinguishable from "presented none"
     in both the response and any log built from it.
     """
+    # The terms gate calls this directly, so the route's own dependency must reuse its result.
+    resolved: Principal | None = getattr(request.state, "principal", None)
+    if resolved is not None:
+        return resolved
+
     token = bearer_token(request)
     if token is None:
         return ANONYMOUS
@@ -264,6 +269,7 @@ def current_principal(
         claims=identity.claims,
         mfa_acr_values=settings.mfa_acr_values,
     )
+    request.state.principal = principal
     return principal
 
 

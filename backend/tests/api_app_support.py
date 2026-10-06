@@ -62,9 +62,11 @@ from nptc.auth.grants import grant_role_unchecked, revoke_all_roles_unchecked
 from nptc.auth.jwks import SigningKeys
 from nptc.auth.permissions import Role
 from nptc.auth.tokens import TokenVerifier
+from nptc.db.models.terms_acceptance import TermsAcceptance
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terms.acceptance import has_accepted
 from nptc_shared.terminology import StubTerminologyClient
 
 # Registered in sys.modules before exec_module - see
@@ -138,6 +140,7 @@ class ApiTestApp:
         role: Role,
         with_mfa: bool = True,
         replace_roles: bool = False,
+        accept_terms: bool = True,
     ) -> str:
         """Signs `subject` in through the real auth chain, grants `role`, and
         returns a token carrying the `acr` claim the realm maps to LoA-2
@@ -146,7 +149,12 @@ class ApiTestApp:
         `replace_roles` clears the identity's existing grants first. A brand-new
         identity is auto-granted `Role.PROVISIONAL` on first sign-in and roles
         are additive, so without it the token holds `role` plus Provisional's
-        permissions - which hides a missing permission on `role` itself."""
+        permissions - which hides a missing permission on `role` itself.
+
+        `accept_terms` records acceptance of the app's current terms version, so a test of any
+        write route gets past the terms gate (ADR-0043) without saying so. A test of the gate
+        itself passes `False`. The row is inserted directly, not through `accept_terms`, so the
+        helper writes no audit event for a test to count."""
         bootstrap = self.token(subject=subject)
         self.get("/auth/me", token=bootstrap)
         # By `subject`, not "the newest `User` row": `created_at` is
@@ -169,8 +177,22 @@ class ApiTestApp:
             audit=AuditContext.system(),
         )
         self.session.flush()
+        if accept_terms:
+            self.accept_current_terms(user.id)
         extra_claims = {"acr": "2"} if with_mfa else {}
         return self.token(subject=subject, extra_claims=extra_claims)
+
+    @property
+    def current_terms_version(self) -> str:
+        return str(self.app.dependency_overrides[get_api_settings]().terms_current_version)
+
+    def accept_current_terms(self, user_id: Any) -> None:
+        """Records that `user_id` accepted this app's current terms version, unless their latest
+        acceptance already names it."""
+        version = self.current_terms_version
+        if not has_accepted(self.session, user_id, current_version=version):
+            self.session.add(TermsAcceptance(user_id=user_id, version=version))
+            self.session.flush()
 
     def admin_token(self, *, subject: str, with_mfa: bool = True) -> str:
         return self.token_for_role(subject=subject, role=Role.ADMINISTRATOR, with_mfa=with_mfa)

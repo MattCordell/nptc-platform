@@ -7,7 +7,7 @@ read settings and opened a connection pool at import time.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from nptc.api.dependencies import get_api_settings, get_auth_settings, get_terminology_client
@@ -25,7 +25,9 @@ from nptc.api.routers import (
     registry,
     terminology,
 )
+from nptc.api.terms_gate import declare_terms_refusal, require_current_terms
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terms.documents import load_terms_document
 
 __all__ = ["API_PREFIX", "create_app"]
 
@@ -38,7 +40,9 @@ def create_app(
         version="0.0.0",
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=f"{API_PREFIX}/docs",
+        dependencies=[Depends(require_current_terms)],
     )
+    declare_terms_refusal(app)
     api_settings = settings or get_api_settings()
     app.dependency_overrides[get_api_settings] = lambda: api_settings
     # Not `Depends(get_auth_settings)`: `register_exception_handlers` runs at
@@ -56,6 +60,9 @@ def create_app(
     # instance. `get_datatype_registry` cannot be called here: it is
     # request-scoped (FR-10).
     get_terminology_client()
+
+    # A current version with no file would refuse every contribution with nothing to show.
+    load_terms_document(api_settings.terms_current_version)
 
     # Exactly one origin, never "*": ADR-0021 has the browser hold the access
     # token and send it here, so a permissive policy would let any origin drive

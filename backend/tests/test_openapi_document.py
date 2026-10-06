@@ -68,6 +68,7 @@ def test_committed_openapi_document_matches_the_app() -> None:
     [
         ("NPTC_FSN_SEMANTIC_TAG", "stripped"),
         ("NPTC_MAX_PREFERRED_TERM_LENGTH", "0"),
+        ("NPTC_TERMS_CURRENT_VERSION", "2099-01-01"),
     ],
 )
 def test_document_build_ignores_api_settings_variables(

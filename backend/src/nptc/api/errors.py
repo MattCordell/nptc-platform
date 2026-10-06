@@ -35,7 +35,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Final, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -119,6 +119,11 @@ from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
     TerminologyUpstreamError,
+)
+from nptc.terms.errors import (
+    TermsAcceptanceRequiredError,
+    TermsVersionNotFoundError,
+    TermsVersionStaleError,
 )
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
@@ -261,6 +266,35 @@ class PropertyValidationResponse(BaseModel):
 
     detail: str
     issues: list[PropertyIssueItem]
+
+
+#: ADR-0043: the SPA routes on `code` and never parses `detail`. Each is a one-member `Literal`
+#: so `docs/api/openapi.json` carries the value and a generated client can match on it.
+TERMS_ACCEPTANCE_REQUIRED_CODE: Final = "terms_acceptance_required"
+TERMS_VERSION_STALE_CODE: Final = "terms_version_stale"
+
+
+class TermsAcceptanceRequiredResponse(BaseModel):
+    """The 403 for a contribution from a user who has not accepted the current terms (NFR-45).
+
+    It carries no `WWW-Authenticate` header: RFC 9470 defines that for authentication strength,
+    and terms acceptance is not an authentication matter (ADR-0043)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    code: Literal["terms_acceptance_required"]
+
+
+class TermsVersionStaleResponse(BaseModel):
+    """The 409 for an accept request that names a version other than the current one. It
+    reports the current version so the SPA can show the gate again under that text (NFR-47)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    code: Literal["terms_version_stale"]
+    current_version: str
 
 
 def _step_up_challenge(mfa_acr_values: frozenset[str]) -> str:
@@ -453,6 +487,13 @@ _DETAIL_INVALID_LOCAL_CODE_SYSTEM_KEY = (
 )
 _DETAIL_INVALID_MATCH_STRENGTH = (
     "The match strength must be one of: exact, narrower, broader, ambiguous."
+)
+_DETAIL_TERMS_NOT_FOUND = "No terms of use were found for the given version."
+_DETAIL_TERMS_ACCEPTANCE_REQUIRED = (
+    "You need to accept the current terms of use before you can do this."
+)
+_DETAIL_TERMS_VERSION_STALE = (
+    "The terms of use changed since you opened them. Review the current terms and accept again."
 )
 
 
@@ -721,6 +762,10 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
     ConceptNotFoundError: _Refusal(
         _DETAIL_CONCEPT_NOT_FOUND, "concept lookup refused, not found: %s"
     ),
+    # The class name alone: the exception message quotes a caller-supplied version.
+    TermsVersionNotFoundError: _Refusal(
+        _DETAIL_TERMS_NOT_FOUND, "terms version not found: %s", _name
+    ),
     # ERROR: an unusable response from a conformant endpoint is a defect worth
     # investigating, not an ordinary outage. See the exception's own docstring
     # for why this is the catch-all rather than a 404.
@@ -773,6 +818,30 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             # same serialisation the declared schema promises.
             content=body.model_dump(mode="json"),
         )
+
+    @app.exception_handler(TermsAcceptanceRequiredError)
+    async def _handle_terms_acceptance_required(
+        _request: Request, exc: TermsAcceptanceRequiredError
+    ) -> JSONResponse:
+        # INFO: a routine refusal for a user who has not yet accepted a new version. Logged
+        # without the user, who is already named by the request's own context.
+        _logger.info("contribution refused, current terms not accepted")
+        body = TermsAcceptanceRequiredResponse(
+            detail=_DETAIL_TERMS_ACCEPTANCE_REQUIRED, code=TERMS_ACCEPTANCE_REQUIRED_CODE
+        )
+        return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(TermsVersionStaleError)
+    async def _handle_terms_version_stale(
+        _request: Request, exc: TermsVersionStaleError
+    ) -> JSONResponse:
+        _logger.info("terms acceptance refused, stale version: %s", exc)
+        body = TermsVersionStaleResponse(
+            detail=_DETAIL_TERMS_VERSION_STALE,
+            code=TERMS_VERSION_STALE_CODE,
+            current_version=exc.current_version,
+        )
+        return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
 
     @app.exception_handler(AuditFilterError)
     async def _handle_audit_filter_error(_request: Request, exc: AuditFilterError) -> JSONResponse:

@@ -1413,6 +1413,32 @@ then carry columns that are null for every entry created after cutover. An entry
 through the application has no provenance row. Both tables emit a `created` audit event
 (NFR-08), and every column is classified in the model's audit policy.
 
+## `terms_acceptance` (NFR-45, NFR-47, ADR-0043)
+
+One row per acceptance of a terms version by a user. It is append-only: `nptc_app` holds
+`SELECT, INSERT` only, so an acceptance is never edited or removed and the prior record
+survives a later acceptance (NFR-45). It is a table and not a column on `app_user`, which
+could hold only the latest.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `BIGINT` | PK, `GENERATED ALWAYS AS IDENTITY`. Rises with every insert, even inside one transaction |
+| `user_id` | `UUID` | `NOT NULL`, FK to `app_user.id`. The internal id, which account closure keeps (NFR-17) |
+| `version` | `TEXT` | `NOT NULL`, `CHECK` not blank. An opaque id compared for equality; today a zero-padded date |
+| `accepted_at` | `TIMESTAMPTZ` | `NOT NULL`, `clock_timestamp()`: the instant of acceptance, not the start of the transaction |
+
+`ix_terms_acceptance_user_id_id` on `(user_id, id)` serves the one read the write path makes
+per request: a user's latest row, as a backwards index scan with no sort.
+
+**The latest row decides.** A user has accepted the current version only when their latest
+row names exactly that version (`nptc.terms.acceptance.has_accepted`). `id` finds the latest
+row because `accepted_at` could tie inside one transaction. Because the test is equality, a
+version rolled back to an earlier one asks for acceptance again.
+
+The row holds no personal data, so it survives account closure unchanged. Each acceptance
+emits a `terms_acceptance.created` audit event naming the version (NFR-08). The model
+classifies every column in its audit policy.
+
 ## Extensions
 
 `pg_trgm` and `unaccent` are created in `0001_extensions_and_app_role.py` - the public

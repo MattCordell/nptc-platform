@@ -17,6 +17,7 @@ from nptc.settings import (
     IndexerSettings,
     MigrationSettings,
 )
+from nptc.terms.documents import DEFAULT_TERMS_VERSION
 
 _APP_DSN = "postgresql+psycopg://nptc_app_login:pw@localhost/nptc"
 _MIGRATION_DSN = "postgresql+psycopg://nptc_owner:pw@localhost/nptc"
@@ -254,6 +255,30 @@ def test_api_settings_rejects_stripped_fsn_semantic_tag() -> None:
 def test_api_settings_rejects_an_unrecognised_fsn_semantic_tag_value() -> None:
     with pytest.raises(ValidationError):
         ApiSettings(fsn_semantic_tag="wat")
+
+
+@pytest.mark.req("NFR-47")
+def test_api_settings_defaults_the_current_terms_version_to_the_packaged_file() -> None:
+    assert hermetic_api_settings().terms_current_version == DEFAULT_TERMS_VERSION
+
+
+@pytest.mark.req("NFR-47")
+def test_api_settings_reads_the_current_terms_version_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPTC_TERMS_CURRENT_VERSION", "2027-01-15")
+
+    assert ApiSettings().terms_current_version == "2027-01-15"
+
+
+@pytest.mark.req("NFR-47")
+@pytest.mark.parametrize("value", ["", "   "])
+def test_api_settings_treats_a_blank_terms_version_env_as_the_default(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NPTC_TERMS_CURRENT_VERSION", value)
+
+    assert ApiSettings().terms_current_version == DEFAULT_TERMS_VERSION
 
 
 @pytest.mark.req("FR-86")
