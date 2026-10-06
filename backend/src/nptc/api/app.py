@@ -26,6 +26,7 @@ from nptc.api.routers import (
     terminology,
 )
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terms.documents import load_terms_document
 
 __all__ = ["API_PREFIX", "create_app"]
 
@@ -56,6 +57,10 @@ def create_app(
     # instance. `get_datatype_registry` cannot be called here: it is
     # request-scoped (FR-10).
     get_terminology_client()
+
+    # ADR-0043: a current version with no file leaves the gate nothing to show while every
+    # contribution is refused, so it is a start-up failure, as for the terminology setting above.
+    load_terms_document(api_settings.terms_current_version)
 
     # Exactly one origin, never "*": ADR-0021 has the browser hold the access
     # token and send it here, so a permissive policy would let any origin drive
