@@ -193,3 +193,11 @@ def test_findings_do_not_depend_on_the_order_the_sheets_are_read(tmp_path: Path)
 
     assert forward == backward
     assert [str(f.location) for f in forward] == ["B!A2"]
+
+
+@pytest.mark.req("FR-05")
+def test_blank_preferred_terms_are_not_reported_as_a_collision(tmp_path: Path) -> None:
+    """A blank cell is WHITESPACE_ONLY_CELL's to report, and it has no term to compare."""
+    sheets = _sheets(tmp_path, _rows(("   ", None), ("   ", None)))
+
+    assert check_collisions(sheets) == ()

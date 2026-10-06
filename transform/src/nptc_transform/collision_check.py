@@ -86,7 +86,7 @@ def check_collisions(sheets: Sequence[Sheet]) -> tuple[Finding, ...]:
         reported = {preferred_key}
 
         earlier = preferred_holders.get(preferred_key, []) + synonym_holders.get(preferred_key, [])
-        if earlier:
+        if preferred_key and earlier:
             findings.append(
                 _finding(source_row, ColumnRole.PREFERRED_TERM, _PREFERRED, preferred, earlier)
             )
@@ -106,9 +106,10 @@ def check_collisions(sheets: Sequence[Sheet]) -> tuple[Finding, ...]:
                     _finding(source_row, ColumnRole.SYNONYMS, _SYNONYM, synonym, earlier)
                 )
 
-        preferred_holders.setdefault(preferred_key, []).append(
-            _Holder(source_row.sheet, source_row.row, _PREFERRED, preferred)
-        )
+        if preferred_key:
+            preferred_holders.setdefault(preferred_key, []).append(
+                _Holder(source_row.sheet, source_row.row, _PREFERRED, preferred)
+            )
         for key, synonym in own_synonym_keys.items():
             synonym_holders.setdefault(key, []).append(
                 _Holder(source_row.sheet, source_row.row, _SYNONYM, synonym)
