@@ -32,6 +32,13 @@ describe("describeChange", () => {
     ).toBe("Preferred term, Status");
   });
 
+  it("spells out a field name that would otherwise be an unexplained acronym", () => {
+    expect(
+      describeChange(event({ changed_fields: ["code", "fsn", "au_preferred_term"] }))
+        .fields,
+    ).toBe("Code, Fully specified name, AU preferred term");
+  });
+
   it("leaves out bookkeeping columns and the internal entry key", () => {
     expect(
       describeChange(

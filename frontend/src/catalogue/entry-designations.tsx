@@ -1,7 +1,7 @@
 import type { components } from "../api/schema.ts";
 import { DataTable } from "../components/data-table.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
-import { EntrySection } from "./entry-section.tsx";
+import { EntrySection, ScrollRegion } from "./entry-section.tsx";
 import { statusLabelFor, statusToneFor } from "./status-options.ts";
 
 type Designation = components["schemas"]["Designation"];
@@ -19,7 +19,7 @@ const USE_LABELS: Record<string, string> = {
 export function EntryDesignations({ designations }: { designations: Designation[] }) {
   return (
     <EntrySection title="Terms">
-      <div className="overflow-x-auto">
+      <ScrollRegion label="Synonyms and other-language terms">
         <DataTable
           caption="Synonyms and other-language terms"
           columns={[
@@ -54,7 +54,7 @@ export function EntryDesignations({ designations }: { designations: Designation[
           getRowKey={(row) => `${row.use}:${row.language}:${row.term}`}
           emptyState="This entry has no synonyms or other-language terms."
         />
-      </div>
+      </ScrollRegion>
     </EntrySection>
   );
 }

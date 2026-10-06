@@ -2,7 +2,7 @@ import type { components } from "../api/schema.ts";
 import { CodeChip } from "../components/code-chip.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { StatusBadge, type StatusTone } from "../components/status-badge.tsx";
-import { EntrySection } from "./entry-section.tsx";
+import { EntrySection, ScrollRegion } from "./entry-section.tsx";
 
 type Binding = components["schemas"]["Binding"];
 
@@ -51,7 +51,7 @@ export function EntryBindings({ bindings }: { bindings: Binding[] }) {
   const rows = activeFirst(bindings);
   return (
     <EntrySection title="SNOMED CT codes">
-      <div className="overflow-x-auto">
+      <ScrollRegion label="Code bindings">
         <DataTable
           caption="Code bindings"
           columns={[
@@ -96,7 +96,7 @@ export function EntryBindings({ bindings }: { bindings: Binding[] }) {
           getRowKey={(row) => `${row.code}:${row.status}:${rows.indexOf(row)}`}
           emptyState="This entry has no SNOMED CT code."
         />
-      </div>
+      </ScrollRegion>
     </EntrySection>
   );
 }

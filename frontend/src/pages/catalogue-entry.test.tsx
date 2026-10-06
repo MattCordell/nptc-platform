@@ -718,6 +718,22 @@ describe("accessibility (NFR-31)", () => {
     await expectNoA11yViolations(container);
   });
 
+  // A table that scrolls at a narrow width must take focus, or a keyboard user
+  // cannot scroll it. jsdom has no layout, so axe cannot report this itself:
+  // the test checks the markup its `scrollable-region-focusable` rule needs.
+  it.each(["Synonyms and other-language terms", "Code bindings"])(
+    "makes the scrollable %s table a focusable, named region",
+    async (name) => {
+      await renderEntry();
+      await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+
+      const region = screen.getByRole("region", { name });
+      expect(region).toHaveAttribute("tabindex", "0");
+      expect(region.className).toContain("overflow-x-auto");
+      expect(within(region).getByRole("table")).toBeInTheDocument();
+    },
+  );
+
   it("keeps the shell's landmarks and adds none of its own", async () => {
     await renderEntry();
     await screen.findByRole("heading", { level: 1, name: "Ferritin" });

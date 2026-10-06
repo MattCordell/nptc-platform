@@ -6,10 +6,20 @@ type HistoryEvent = components["schemas"]["HistoryEvent"];
  * changes on every write, and the internal key that links a row to its entry. */
 const HIDDEN_FIELDS = new Set(["row_version", "updated_at", "entry_id", "id"]);
 
+/** Field names whose plain capitalised form would be an unexplained acronym. */
+const FIELD_LABELS: Record<string, string> = {
+  fsn: "Fully specified name",
+  au_preferred_term: "AU preferred term",
+};
+
 /** `preferred_term` -> `Preferred term`. */
 function humanise(name: string): string {
   const spaced = name.replaceAll("_", " ").trim();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function fieldLabel(name: string): string {
+  return FIELD_LABELS[name] ?? humanise(name);
 }
 
 export interface ChangeText {
@@ -28,7 +38,7 @@ export interface ChangeText {
 export function describeChange(event: HistoryEvent): ChangeText {
   const fields = event.changed_fields
     .filter((field) => !HIDDEN_FIELDS.has(field))
-    .map(humanise);
+    .map(fieldLabel);
   return {
     action: humanise(event.action.replaceAll(".", " ")),
     fields: fields.length > 0 ? fields.join(", ") : null,

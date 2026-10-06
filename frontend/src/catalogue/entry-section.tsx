@@ -20,3 +20,22 @@ export function EntrySection({
     </Card>
   );
 }
+
+/**
+ * Lets a wide table scroll inside the card at a narrow width, not widen the
+ * page. A scrollable area has to take focus, or a keyboard user cannot scroll
+ * it, so it is a focusable, named region.
+ */
+export function ScrollRegion({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="region" aria-label={label} tabIndex={0} className="overflow-x-auto">
+      {children}
+    </div>
+  );
+}
