@@ -73,8 +73,23 @@ function entry(overrides: Record<string, unknown> = {}) {
       }),
     ],
     properties: [
-      property({ key: "discipline", label: "Discipline", ordinal: 1, value: "haem" }),
-      property({ key: "discipline", label: "Discipline", ordinal: 0, value: "chem" }),
+      property({
+        key: "discipline",
+        label: "Discipline",
+        ordinal: 1,
+        value: coded("haematology", "Haematology", LOCAL_SYSTEM),
+      }),
+      property({
+        key: "discipline",
+        label: "Discipline",
+        ordinal: 0,
+        value: coded("chemical_pathology", "Chemical pathology", LOCAL_SYSTEM),
+      }),
+      property({
+        key: "specimen",
+        label: "Specimen",
+        value: coded(LONG_CODE, "Urine", "http://snomed.info/sct"),
+      }),
       property({
         key: "usage_guidance",
         label: "Usage guidance",
@@ -90,6 +105,13 @@ function entry(overrides: Record<string, unknown> = {}) {
     ],
     ...overrides,
   };
+}
+
+const LOCAL_SYSTEM = "https://nptc.example.org/CodeSystem/discipline";
+
+/** The shape a coded property value has on the wire. */
+function coded(code: string, display: string | null, system: string) {
+  return { code, system, display };
 }
 
 function binding(overrides: Record<string, unknown>) {
@@ -126,7 +148,7 @@ function historyEvent(overrides: Record<string, unknown> = {}) {
     occurred_at: "2026-09-01T12:00:00Z",
     action: "catalogue_entry.updated",
     changed_by: null,
-    changed_fields: ["preferred_term", "row_version", "updated_at"],
+    changed_fields: ["entry_id", "preferred_term", "row_version", "updated_at"],
     note: "Corrected the spelling.",
     release: null,
     ...overrides,
@@ -384,11 +406,35 @@ describe("properties", () => {
     const values = within(discipline.nextElementSibling as HTMLElement).getAllByRole(
       "listitem",
     );
-    expect(values.map((value) => value.textContent)).toEqual(["chem", "haem"]);
+    expect(values.map((value) => value.textContent)).toEqual([
+      "Chemical pathology",
+      "Haematology",
+    ]);
     expect(screen.getByText("Fasting is not required.")).toBeInTheDocument();
     expect(
       screen.getByText(/Justification: Agreed with the working group\./),
     ).toBeInTheDocument();
+  });
+
+  it("shows a coded value as its term, with a SNOMED CT code in mono beside it (FR-06)", async () => {
+    await renderEntry();
+    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+
+    const specimen = screen.getByText("Specimen", { selector: "dt" })
+      .nextElementSibling as HTMLElement;
+    expect(within(specimen).getByText("Urine")).toBeInTheDocument();
+    const chip = within(specimen).getByText(LONG_CODE, { selector: "code" });
+    expect(chip.textContent).toBe(LONG_CODE);
+    expect(chip.className).toContain("font-mono");
+  });
+
+  it("shows a local code by its term only, never as raw JSON", async () => {
+    const { container } = await renderEntry();
+    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+
+    expect(screen.getAllByText("Chemical pathology").length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain("chemical_pathology");
+    expect(container.textContent).not.toContain('{"code"');
   });
 
   it("marks a property whose definition is deprecated, keeping its value (FR-11)", async () => {
@@ -462,12 +508,15 @@ describe("recent changes", () => {
     const heading = await screen.findByRole("heading", { name: "Recent changes" });
     const section = heading.parentElement as HTMLElement;
     expect(
-      await within(section).findByText("Changed: Preferred term"),
+      await within(section).findByText("Catalogue entry updated"),
     ).toBeInTheDocument();
     expect(within(section).getByText("1 September 2026")).toBeInTheDocument();
+    expect(within(section).getByText("Fields: Preferred term")).toBeInTheDocument();
     expect(within(section).getByText("Corrected the spelling.")).toBeInTheDocument();
     expect(within(section).queryByText(/^By /)).toBeNull();
-    expect(section.textContent).not.toMatch(/row.?version|updated_at|catalogue_entry/i);
+    expect(section.textContent).not.toMatch(
+      /row.?version|updated_at|entry.?id|catalogue_entry/i,
+    );
   });
 
   it("names the author when the API sends one", async () => {
@@ -488,7 +537,7 @@ describe("recent changes", () => {
   it("asks for a short page of history", async () => {
     const { calls } = await renderEntry();
 
-    await screen.findByText("Changed: Preferred term");
+    await screen.findByText("Catalogue entry updated");
     const historyCall = calls.find((call) => call.path.endsWith("/history"));
     expect(historyCall?.searchParams.get("limit")).toBe("5");
   });
@@ -514,7 +563,7 @@ describe("recent changes", () => {
     expect(screen.getByRole("table", { name: "Code bindings" })).toBeInTheDocument();
 
     await act(async () => hold.release());
-    expect(await screen.findByText("Changed: Preferred term")).toBeInTheDocument();
+    expect(await screen.findByText("Catalogue entry updated")).toBeInTheDocument();
   });
 
   it("leaves the rest of the page usable when history fails", async () => {
@@ -643,7 +692,7 @@ describe("accessibility (NFR-31)", () => {
       { ...ENTRY_OK, body: entry({ has_open_finding: true }) },
       HISTORY_OK,
     ]);
-    await screen.findByText("Changed: Preferred term");
+    await screen.findByText("Catalogue entry updated");
 
     await expectNoA11yViolations(container);
   });

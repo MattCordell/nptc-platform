@@ -1,9 +1,10 @@
 import { Fragment } from "react";
 
 import type { components } from "../api/schema.ts";
+import { CodeChip } from "../components/code-chip.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { EntrySection } from "./entry-section.tsx";
-import { formatPropertyValue } from "./format-property-value.ts";
+import { describePropertyValue } from "./format-property-value.ts";
 import { statusLabelFor, statusToneFor } from "./status-options.ts";
 
 type PropertyValue = components["schemas"]["PropertyValue"];
@@ -39,9 +40,13 @@ function groupByKey(properties: PropertyValue[]): PropertyGroup[] {
 }
 
 function Value({ property }: { property: PropertyValue }) {
+  const { text, snomedCode } = describePropertyValue(property.value);
   return (
     <div className="flex flex-col gap-0.5">
-      <span>{formatPropertyValue(property.value)}</span>
+      <span className="flex flex-wrap items-center gap-2">
+        {text !== "" ? <span>{text}</span> : null}
+        {snomedCode !== null ? <CodeChip code={snomedCode} /> : null}
+      </span>
       {property.justification !== null ? (
         <span className="text-sm text-[var(--color-text-muted)]">
           Justification: {property.justification}
@@ -52,10 +57,10 @@ function Value({ property }: { property: PropertyValue }) {
 }
 
 /**
- * Every property the API serves for the entry, rendered the same way whatever
- * its type: `PropertyValue.value` is untyped, and a branch on `datatype` here
- * is what ADR-0013 forbids. A property whose definition is deprecated keeps its
- * recorded values (FR-11), marked as such.
+ * Every property the API serves for the entry. `PropertyValue.value` is
+ * untyped, so each value is read by its shape (`describePropertyValue`): a
+ * branch on `datatype` here is what ADR-0013 forbids. A property whose
+ * definition is deprecated keeps its recorded values (FR-11), marked as such.
  */
 export function EntryProperties({ properties }: { properties: PropertyValue[] }) {
   const groups = groupByKey(properties);

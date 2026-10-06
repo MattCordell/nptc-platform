@@ -2,9 +2,9 @@ import type { components } from "../api/schema.ts";
 
 type HistoryEvent = components["schemas"]["HistoryEvent"];
 
-/** Bookkeeping columns that change on every write. Naming them says nothing a
- * reader can use. */
-const HIDDEN_FIELDS = new Set(["row_version", "updated_at"]);
+/** Columns whose names say nothing a reader can use: the bookkeeping that
+ * changes on every write, and the internal key that links a row to its entry. */
+const HIDDEN_FIELDS = new Set(["row_version", "updated_at", "entry_id", "id"]);
 
 /** `preferred_term` -> `Preferred term`. */
 function humanise(name: string): string {
@@ -12,18 +12,25 @@ function humanise(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+export interface ChangeText {
+  /** What happened, from the internal action name: `designation.created` -> `Designation created`. */
+  action: string;
+  /** The field names that changed, in words, or `null` when none are worth naming. */
+  fields: string | null;
+}
+
 /**
- * What a reader is told changed at one event. The changed field names come
- * first, because they say what was touched. With none left, the verb at the end
- * of the internal action name (`catalogue_entry.updated` -> `Updated`) is the
- * fallback: it is never the only text when a field is named.
+ * What a reader is told about one history event. The action name is turned into
+ * a sentence rather than shown as stored, and the field names follow it as a
+ * second line, so the action is never the only text a reader has to go on when
+ * a field is named.
  */
-export function describeChange(event: HistoryEvent): string {
+export function describeChange(event: HistoryEvent): ChangeText {
   const fields = event.changed_fields
     .filter((field) => !HIDDEN_FIELDS.has(field))
     .map(humanise);
-  if (fields.length > 0) {
-    return `Changed: ${fields.join(", ")}`;
-  }
-  return humanise(event.action.split(".").at(-1) ?? event.action);
+  return {
+    action: humanise(event.action.replaceAll(".", " ")),
+    fields: fields.length > 0 ? fields.join(", ") : null,
+  };
 }

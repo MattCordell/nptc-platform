@@ -29,22 +29,28 @@ export function EntryHistoryList({ businessKey }: { businessKey: string }) {
         <p className="m-0 text-[var(--color-text-muted)]">No changes are recorded.</p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-3 p-0 text-sm">
-          {history.data.items.map((event, index) => (
-            <li key={`${event.occurred_at}:${index}`} className="flex flex-col gap-0.5">
-              <time dateTime={event.occurred_at} className="font-medium">
-                {formatDate(event.occurred_at)}
-              </time>
-              <span>{describeChange(event)}</span>
-              {event.note !== null && event.note !== "" ? (
-                <span className="text-[var(--color-text-muted)]">{event.note}</span>
-              ) : null}
-              {event.changed_by !== null ? (
-                <span className="text-[var(--color-text-muted)]">
-                  By {event.changed_by}
-                </span>
-              ) : null}
-            </li>
-          ))}
+          {history.data.items.map((event, index) => {
+            const { action, fields } = describeChange(event);
+            return (
+              <li key={`${event.occurred_at}:${index}`} className="flex flex-col gap-0.5">
+                <time dateTime={event.occurred_at} className="font-medium">
+                  {formatDate(event.occurred_at)}
+                </time>
+                <span>{action}</span>
+                {fields !== null ? (
+                  <span className="text-[var(--color-text-muted)]">Fields: {fields}</span>
+                ) : null}
+                {event.note !== null && event.note !== "" ? (
+                  <span className="text-[var(--color-text-muted)]">{event.note}</span>
+                ) : null}
+                {event.changed_by !== null ? (
+                  <span className="text-[var(--color-text-muted)]">
+                    By {event.changed_by}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       )}
     </EntrySection>

@@ -44,7 +44,9 @@ recognise a code you already hold and see what replaced it.
 ### Properties
 
 **Properties** lists every property recorded for the test, such as its disciplines or usage
-guidance. A property with several values lists them one under another. Where a reason was
+guidance. A value taken from a code list shows its term, such as **Urine**. When the code
+is a SNOMED CT code, the code follows in a grey box. A property with several values lists
+them one under another. Where a reason was
 recorded for a value, it appears below the value as **Justification**. A property marked
 **Deprecated** is no longer used for new entries, but its recorded value is kept.
 
@@ -64,8 +66,9 @@ Beside the main column, or below it on a narrow screen:
 ### Recent changes
 
 **Recent changes** lists the latest five changes, newest first. Each shows the date, what
-changed, and the note the editor wrote, if any. A change made by the system, not an editor,
-shows only what changed.
+happened, such as "Designation created", the fields it touched, and the note the editor
+wrote, if any. The list leaves out fields that change on every edit and have no meaning to
+a reader.
 
 The name of the person who made a change appears only when you are signed in. This page does
 not link to the full history yet.
