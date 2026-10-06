@@ -132,16 +132,6 @@ def resolve_specimen_term(value: str) -> SpecimenGroup | None:
     return _SPECIMEN_TERMS_TO_GROUP.get(value.strip().casefold())
 
 
-def resolves_code_column(sheet: Sheet) -> bool:
-    """True if ``sheet``'s header row resolves the code column.
-
-    The gate ``_scan_layout`` uses to decide a sheet gets cell-level scanning,
-    exported so ``dataset.py`` builds entries from the same set of sheets.
-    """
-    roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
-    return ColumnRole.CODE in roles
-
-
 def _digit_count(value: int) -> int:
     """Counts the digits in ``abs(value)``. Assumes a finite value; callers that
     may see a non-finite float (``_scan_numeric_precision_risk``) check first."""
@@ -362,7 +352,7 @@ def _row_has_code(row: SourceRow) -> bool:
 
     A code cell holding only empty or whitespace text does not count. This is the
     ``.strip()`` test ``terminology_check.collect_code_bindings`` and
-    ``dataset._has_code_binding`` apply, so every "has a code binding" question
+    ``rows.has_code_binding`` apply, so every "has a code binding" question
     agrees. Both row-level scans below share it, so for any row both fire or
     neither does.
     """

@@ -14,7 +14,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from nptc_transform.workbook import Cell, ColumnRole, Sheet
+from nptc_transform.workbook import Cell, ColumnRole, Sheet, column_role
 
 
 @dataclass(frozen=True)
@@ -46,4 +46,44 @@ def group_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
     return tuple(
         SourceRow(sheet=sheet_name, row=row, cells=dict(cells))
         for (sheet_name, row), cells in sorted(grouped.items())
+    )
+
+
+def resolves_code_column(sheet: Sheet) -> bool:
+    """True if ``sheet``'s header row resolves the code column.
+
+    The gate for a sheet to yield entries: ``dataset.py`` and ``collision_check.py``
+    both read rows through ``seedable_rows``, so they see the same sheets.
+    """
+    roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
+    return ColumnRole.CODE in roles
+
+
+def has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
+    """True if ``row_cells`` resolves a non-empty code binding.
+
+    A code cell holding only empty or whitespace text does not count. This is the
+    test ``cell_defects._row_has_code`` and ``terminology_check.collect_code_bindings``
+    apply, so all three agree on what "resolves a code binding" means.
+    """
+    code_cell = row_cells.get(ColumnRole.CODE)
+    return code_cell is not None and bool(code_cell.text.strip())
+
+
+def seedable_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
+    """The rows the baseline loader would seed, in the order it writes them.
+
+    A row qualifies when it has both a preferred term and a code binding, on a
+    sheet that resolves the code column, in ``(sheet name, row)`` order. A row
+    missing either is already a blocking finding (``MISSING_PREFERRED_TERM``,
+    ``MISSING_CODE_BINDING``), or is not a SPIA data row, so it never becomes an
+    entry. Order matters to the loader: an entry meets only the entries before it.
+    """
+    codeable = sorted(
+        (sheet for sheet in sheets if resolves_code_column(sheet)), key=lambda sheet: sheet.name
+    )
+    return tuple(
+        row
+        for row in group_rows(codeable)
+        if ColumnRole.PREFERRED_TERM in row.cells and has_code_binding(row.cells)
     )
