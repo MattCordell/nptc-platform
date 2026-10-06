@@ -92,6 +92,10 @@ function releasableRenewal() {
   const promise = new Promise<URLSearchParams>((_, rej) => {
     reject = rej;
   });
+  // On a slow runner `refuse()` can fire before the probe has awaited the
+  // promise; without this the early rejection is reported as unhandled even
+  // though the probe handles it moments later.
+  promise.catch(() => {});
   return {
     silentAuthorize: vi.fn(() => promise) as SilentAuthorize,
     refuse: () => reject(new InteractionRequiredError("login_required")),
