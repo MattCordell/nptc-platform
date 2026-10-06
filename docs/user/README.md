@@ -11,6 +11,7 @@
 - [Editing an entry's terms](editing-designations.md) — issue #149.
 - [Binding a SNOMED CT code](binding-a-code.md) — issue #150.
 - [Editing registry properties](editing-registry-properties.md) — issue #151.
+- [Browsing the property registry](browsing-the-property-registry.md) — issue #445.
 - [Bulk reclassify](bulk-reclassify.md) — issue #63.
 - [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, shown on
   the catalogue search page; the public entry page is still to come.

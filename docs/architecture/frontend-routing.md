@@ -36,7 +36,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/submissions`, `/submissions/new`, `/submissions/$submissionId` | FR-23–FR-31 |
 | `/interest`, `/account` | FR-32–FR-34 |
 | `/admin`, `/admin/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #267), `/admin/catalogue{/new,/$businessKey/edit}` | FR-36–FR-39 |
-| `/admin/properties{,/new,/$propertyKey}` | FR-08–FR-13 |
+| `/admin/properties` (+ `deprecated=show` search param), `/admin/properties/$propertyKey`, `/admin/properties/new` (still a stub) | FR-08–FR-13 |
 | `/admin/users{,/$userId}` | FR-40–FR-43 |
 | `/admin/validation{,/$findingId}` | FR-45–FR-55 |
 | `/admin/releases{,/new}`, `/admin/exports/config`, `/admin/audit` | FR-56–FR-61, FR-78, NFR-08–NFR-13 |
@@ -49,9 +49,10 @@ factory rather than one bespoke file per stub.
 A stub is one `createPlaceholderPage({ title, issue?, nearest? })` call in
 `router/route-tree.ts`. The factory renders a `NoticePage` with the title as the one `h1`,
 a text "Planned" status, the issue it lands with (when `issue` is set), a link back to the
-landing page and, when `nearest` is set, a link to the closest built screen. Only the
-admin stubs set `nearest` (to `/admin/catalogue`). The public stubs leave it unset: the
-landing page link already leads to `/catalogue`.
+landing page and, when `nearest` is set, a link to each built screen it names. `nearest`
+takes one link or a list. Only the admin stubs set it: most point to `/admin/catalogue`,
+and the admin home lists both `/admin/catalogue` and `/admin/properties`. The public stubs
+leave it unset: the landing page link already leads to `/catalogue`.
 
 To replace a stub with the real screen:
 
@@ -198,6 +199,12 @@ object — `stringifySearch` throws on exactly that shape, since a plain object 
 scalar or an array of scalars". Both validators normalise a facet's value to an array
 regardless of whether it appeared once or several times in the URL (`parseSearch` gives a
 bare string for the former). The admin validator adds an optional `sort`.
+`/admin/properties`'s only search param is `deprecated=show`, which reveals deprecated
+properties. It is a string flag, not a boolean, so it survives the `stringifySearch` and
+`parseSearch` round trip, and any other value reads as absent. The list always fetches the
+whole registry, deprecated included, and hides rows in the browser, so one cache entry
+serves every screen that reads the registry.
+
 `filterSelections`, `toggleFilterValue` and `clearAllFilters` (`search-params.ts`) serve both
 screens; the first two convert the flat validated
 search to and from a keyed `Record<string, string[]>` for the filter panel and the API
