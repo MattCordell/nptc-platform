@@ -60,6 +60,15 @@ const _conceptLookupCodeIsString: AssertString<
   components["schemas"]["ConceptLookup"]["code"]
 > = true;
 
+// `EntrySummary.code` and `SearchHit.code` - a row's active SNOMED CT code,
+// nullable when the entry has none. `EntryDetail` and the admin rows inherit it.
+const _entrySummaryCodeIsString: AssertString<
+  NonNullable<components["schemas"]["EntrySummary"]["code"]>
+> = true;
+const _searchHitCodeIsString: AssertString<
+  NonNullable<components["schemas"]["SearchHit"]["code"]>
+> = true;
+
 // Referenced only for their type-level effect; keeping a runtime reference
 // satisfies `noUnusedLocals` without disabling the rule for this file.
 export const fr06Assertions = {
@@ -71,4 +80,6 @@ export const fr06Assertions = {
   _bindCodeRequestCodeIsString,
   _replacementSuccessorCodeIsString,
   _conceptLookupCodeIsString,
+  _entrySummaryCodeIsString,
+  _searchHitCodeIsString,
 };

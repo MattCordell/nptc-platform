@@ -892,6 +892,16 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /**
+             * Code
+             * @description The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history.
+             */
+            code: string | null;
+            /**
+             * Disciplines
+             * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
+             */
+            disciplines: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -922,6 +932,16 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /**
+             * Code
+             * @description The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history.
+             */
+            code: string | null;
+            /**
+             * Disciplines
+             * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
+             */
+            disciplines: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -1645,6 +1665,16 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /**
+             * Code
+             * @description The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history.
+             */
+            code: string | null;
+            /**
+             * Disciplines
+             * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
+             */
+            disciplines: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -1702,6 +1732,16 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /**
+             * Code
+             * @description The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history.
+             */
+            code: string | null;
+            /**
+             * Disciplines
+             * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
+             */
+            disciplines: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -2272,6 +2312,16 @@ export interface components {
             updated_at: string;
             /** Has Open Finding */
             has_open_finding: boolean;
+            /**
+             * Code
+             * @description The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history.
+             */
+            code: string | null;
+            /**
+             * Disciplines
+             * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
+             */
+            disciplines: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
