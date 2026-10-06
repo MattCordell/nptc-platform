@@ -7,7 +7,7 @@ import type { AuthConfig } from "./config.ts";
 import { resetEndpointCache } from "./discovery.ts";
 import { InteractionRequiredError } from "./flow.ts";
 import { useAuth, type AuthContextValue } from "./session.ts";
-import type { SilentAuthorize } from "./silent-renew.ts";
+import { SilentRenewTimeoutError, type SilentAuthorize } from "./silent-renew.ts";
 import { clearTransactions } from "./transaction.ts";
 
 /**
@@ -92,6 +92,10 @@ function releasableRenewal() {
   const promise = new Promise<URLSearchParams>((_, rej) => {
     reject = rej;
   });
+  // On a slow runner `refuse()` can fire before the probe has awaited the
+  // promise; without this the early rejection is reported as unhandled even
+  // though the probe handles it moments later.
+  promise.catch(() => {});
   return {
     silentAuthorize: vi.fn(() => promise) as SilentAuthorize,
     refuse: () => reject(new InteractionRequiredError("login_required")),
@@ -128,6 +132,37 @@ function succeedingRenewal() {
     const state = new URL(url).searchParams.get("state") ?? "";
     return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
   });
+}
+
+/**
+ * The token endpoint hands back an already-expired token (`expires_in: -1`),
+ * so the next `getAccessToken` call must renew rather than reuse it - no fake
+ * timers needed.
+ */
+function stubExpiredTokens() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(".well-known")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(DISCOVERY), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "access-token",
+            id_token: "id-token",
+            expires_in: -1,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }),
+  );
 }
 
 beforeEach(() => {
@@ -334,6 +369,144 @@ describe("getAccessToken", () => {
     });
 
     expect(renewal).toHaveBeenCalledTimes(1);
+  });
+
+  // Where Keycloak forbids framing, every renewal waits out the iframe
+  // timeout, so an anonymous visitor must not start one per request.
+  describe("once the probe has settled signed out", () => {
+    it("answers null without another silent renewal", async () => {
+      const renewal = noSession();
+      renderProvider(renewal);
+      await waitFor(() => {
+        expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+      });
+      expect(renewal).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await expect(api().getAccessToken()).resolves.toBeNull();
+        await expect(api().getAccessToken()).resolves.toBeNull();
+        await expect(api().getAccessToken()).resolves.toBeNull();
+      });
+
+      expect(renewal).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats an anonymous visitor's timeout as signed out, as a blocked frame looks the same", async () => {
+      const renewal = vi.fn(() =>
+        Promise.reject(new SilentRenewTimeoutError("silent renewal timed out")),
+      );
+      renderProvider(renewal);
+      await waitFor(() => {
+        expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+      });
+
+      await act(async () => {
+        await expect(api().getAccessToken()).resolves.toBeNull();
+        await expect(api().getAccessToken()).resolves.toBeNull();
+      });
+
+      expect(renewal).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns the new token after a sign-in completes", async () => {
+      await renderSettledProvider();
+      await act(async () => {
+        await api().signIn({ redirect: "/submissions" });
+      });
+      const state = new URL(assigned[0]).searchParams.get("state") ?? "";
+      await act(async () => {
+        await api().completeCallback(new URLSearchParams({ code: "the-code", state }));
+      });
+
+      await act(async () => {
+        await expect(api().getAccessToken()).resolves.toBe("access-token");
+      });
+    });
+  });
+
+  it("still renews a signed-in session whose token is near expiry", async () => {
+    stubExpiredTokens();
+    const renewal = succeedingRenewal();
+    renderProvider(renewal);
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    });
+
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBe("access-token");
+    });
+
+    expect(renewal).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers null at once after a signed-in session's renewal is refused", async () => {
+    stubExpiredTokens();
+    let succeed = true;
+    const renewal = vi.fn((url: string) => {
+      if (succeed) {
+        const state = new URL(url).searchParams.get("state") ?? "";
+        return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+      }
+      return Promise.reject(new InteractionRequiredError("login_required"));
+    });
+    renderProvider(renewal);
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    });
+
+    succeed = false;
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBeNull();
+    });
+    expect(renewal).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBeNull();
+    });
+    expect(renewal).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries after a signed-in session's renewal times out, which may be a slow Keycloak", async () => {
+    stubExpiredTokens();
+    let outcome: "succeed" | "timeout" = "succeed";
+    const renewal = vi.fn((url: string) => {
+      if (outcome === "succeed") {
+        const state = new URL(url).searchParams.get("state") ?? "";
+        return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+      }
+      return Promise.reject(new SilentRenewTimeoutError("silent renewal timed out"));
+    });
+    renderProvider(renewal);
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    });
+
+    outcome = "timeout";
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBeNull();
+    });
+    expect(renewal).toHaveBeenCalledTimes(2);
+
+    outcome = "succeed";
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBe("access-token");
+    });
+    expect(renewal).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries after a renewal fault instead of staying signed out", async () => {
+    const renewal = vi.fn(() => Promise.reject(new Error("network down")));
+    renderProvider(renewal);
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("unavailable");
+    });
+    expect(renewal).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBeNull();
+    });
+
+    expect(renewal).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -591,29 +764,7 @@ describe("cold-load probe racing a concurrent sign-in (issue #216)", () => {
     // The token endpoint hands back an already-expired token (`expires_in:
     // -1`), so the next `getAccessToken` call triggers a real renewal
     // rather than reusing the cached token - no fake timers needed.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes(".well-known")) {
-          return Promise.resolve(
-            new Response(JSON.stringify(DISCOVERY), {
-              headers: { "Content-Type": "application/json" },
-            }),
-          );
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              access_token: "access-token",
-              id_token: "id-token",
-              expires_in: -1,
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          ),
-        );
-      }),
-    );
+    stubExpiredTokens();
     let succeed = true;
     const renewal = vi.fn((url: string) => {
       if (succeed) {

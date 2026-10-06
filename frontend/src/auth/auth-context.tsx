@@ -12,6 +12,7 @@ import {
 import { AuthContext, type AuthContextValue, type StepUpOutcome } from "./session.ts";
 import {
   silentAuthorize as defaultSilentAuthorize,
+  SilentRenewTimeoutError,
   type SilentAuthorize,
 } from "./silent-renew.ts";
 import { clearTransactions, takeTransaction } from "./transaction.ts";
@@ -65,6 +66,11 @@ export function AuthProvider({
   // without being re-created (and re-triggering effects) on every renewal.
   const tokensRef = useRef<TokenSet | null>(null);
   const renewal = useRef<Promise<TokenSet | null> | null>(null);
+  // True once a renewal has been refused with "the SSO session has ended".
+  // Without it every anonymous request opens a fresh hidden iframe, and where
+  // the framing is blocked each one waits out SILENT_RENEW_TIMEOUT_MS. A
+  // renewal *fault* deliberately leaves it false so a later call can retry.
+  const signedOut = useRef(false);
   // Keyed by `acrValues`, not a single slot like `renewal` above: a step-up
   // is always for a specific LoA, and two callers asking for the same one
   // concurrently (two admin queries 403ing at once) must share one iframe
@@ -124,6 +130,7 @@ export function AuthProvider({
     tokensRef.current = next;
     setTokens(next);
     if (next) {
+      signedOut.current = false;
       // Cleared on success, not only set on failure: `unavailable` was
       // otherwise permanent for the life of the tab, so one transient
       // network blip degraded the shell for a user who then signed in
@@ -205,6 +212,13 @@ export function AuthProvider({
           // signed out. This is the path a post-logout renewal takes.
           if (stillOurs) {
             store(null);
+            // A timeout for someone who held a session is likelier a slow
+            // Keycloak than an ended session, so the next request retries.
+            // An anonymous visitor's timeout is what a blocked frame looks
+            // like, and that is the case that must not repeat per request.
+            signedOut.current = !(
+              error instanceof SilentRenewTimeoutError && startedWith
+            );
           }
           return null;
         }
@@ -279,6 +293,9 @@ export function AuthProvider({
     const current = tokensRef.current;
     if (current && current.expiresAt - RENEW_SKEW_MS > Date.now()) {
       return current.accessToken;
+    }
+    if (!current && signedOut.current) {
+      return null;
     }
     const renewed = await renew();
     // `renew()`'s own return value can be a stale `null`: a refused renewal

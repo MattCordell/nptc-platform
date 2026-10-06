@@ -20,6 +20,13 @@ import { InteractionRequiredError } from "./flow.ts";
 /** The renewal must not hang the UI if Keycloak is slow or unreachable. */
 export const SILENT_RENEW_TIMEOUT_MS = 10_000;
 
+/**
+ * The iframe never reached our callback. Still an `InteractionRequiredError`
+ * so every caller treats it as signed out, but distinguishable: a timeout
+ * can be a slow Keycloak rather than an ended session.
+ */
+export class SilentRenewTimeoutError extends InteractionRequiredError {}
+
 export type SilentAuthorize = (
   url: string,
   redirectUri: string,
@@ -47,7 +54,7 @@ export const silentAuthorize: SilentAuthorize = (url, redirectUri) =>
     // ordinary "you are signed out", not a fault.
     const timer = window.setTimeout(() => {
       finish(() => {
-        reject(new InteractionRequiredError("silent renewal timed out"));
+        reject(new SilentRenewTimeoutError("silent renewal timed out"));
       });
     }, SILENT_RENEW_TIMEOUT_MS);
 

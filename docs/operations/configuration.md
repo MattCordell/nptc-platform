@@ -150,7 +150,10 @@ provides falls back to Keycloak's own look without an error
 an imported realm file from the container's environment; `deploy/compose.yml` passes the
 `NPTC_FRONTEND_BASE_URL` environment variable through for exactly this. It drives the
 `nptc-frontend` client's `rootUrl`, `redirectUris`, `webOrigins` and post-logout redirect URI
-— the one part of this realm that is genuinely per-deployment. The registration page also
+— the one part of this realm that is genuinely per-deployment. It also sets the
+`frame-ancestors` source in the realm's `Content-Security-Policy`, so the app may load
+Keycloak in its hidden session-renewal iframe (see
+[silent renewal](../architecture/authentication.md#silent-renewal-needs-keycloak-to-allow-framing)). The registration page also
 reads it, through the realm attribute `nptcFrontendBaseUrl`, to build its links to `/privacy` and
 `/terms`. Everything else in the file is static, which is what makes "identical realm on every clean clone" testable at all
 (`backend/tests/test_keycloak_realm.py`).

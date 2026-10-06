@@ -185,6 +185,58 @@ def test_frontend_client_has_no_wildcard_host_redirect_uri(realm: dict[str, Any]
         assert "://*" not in uri, f"wildcard-host redirect URI: {uri!r}"
 
 
+def _csp_directives(policy: str) -> dict[str, list[str]]:
+    directives: dict[str, list[str]] = {}
+    for part in policy.split(";"):
+        if part.strip():
+            name, *sources = part.split()
+            directives[name] = sources
+    return directives
+
+
+@pytest.mark.req("NFR-03")
+def test_login_pages_may_be_framed_by_the_frontend_origin_only(realm: dict[str, Any]) -> None:
+    """The SPA renews its session in a hidden iframe on Keycloak's login
+    endpoint. Keycloak's default `frame-ancestors 'self'` blocks that whenever
+    the SPA and Keycloak differ in port, so the frontend origin is added. The
+    principal failure mode is widening it past that one origin (clickjacking
+    the login page)."""
+    headers = realm["browserSecurityHeaders"]
+
+    ancestors = _csp_directives(headers["contentSecurityPolicy"])["frame-ancestors"]
+
+    assert ancestors == ["'self'", "${NPTC_FRONTEND_BASE_URL}"]
+
+
+#: Keycloak 26.7's own `browserSecurityHeaders`, read from a realm created
+#: without one. Everything but `contentSecurityPolicy` must stay as Keycloak
+#: ships it.
+_KEYCLOAK_DEFAULT_SECURITY_HEADERS = {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "referrerPolicy": "no-referrer",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+}
+
+
+@pytest.mark.req("NFR-03")
+def test_overriding_the_csp_keeps_every_other_browser_security_header(
+    realm: dict[str, Any],
+) -> None:
+    """Keycloak replaces the whole header map when the realm file supplies
+    one, so a map that leaves a key out silently drops that header from every
+    login page. Comparing the whole map, not a few keys, is what catches it."""
+    headers = dict(realm["browserSecurityHeaders"])
+
+    csp = headers.pop("contentSecurityPolicy")
+
+    assert headers == _KEYCLOAK_DEFAULT_SECURITY_HEADERS
+    assert _csp_directives(csp)["object-src"] == ["'none'"]
+    assert _csp_directives(csp)["frame-src"] == ["'self'"]
+
+
 @pytest.mark.req("NFR-07")
 def test_frontend_client_carries_the_api_audience_mapper(realm: dict[str, Any]) -> None:
     """No shared `nptc-api-audience` client scope: declaring a top-level
@@ -424,6 +476,32 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
         )
         realm_response.raise_for_status()
         assert realm_response.json()["browserFlow"] == "nptc browser"
+
+        # The offline test checks the placeholder is in the CSP; only a real
+        # login page shows that Keycloak substituted it inside a longer
+        # string and actually sends the header the browser enforces.
+        login_page = httpx.get(
+            f"{base_url}/realms/nptc/protocol/openid-connect/auth",
+            params={
+                "client_id": "nptc-frontend",
+                "response_type": "code",
+                "scope": "openid",
+                "redirect_uri": f"{frontend_base_url}/auth/callback",
+                "code_challenge": "x" * 43,
+                "code_challenge_method": "S256",
+            },
+            follow_redirects=True,
+            timeout=30,
+        )
+        login_page.raise_for_status()
+        framing_policy = _csp_directives(login_page.headers["content-security-policy"])
+        assert framing_policy["frame-ancestors"] == ["'self'", frontend_base_url]
+        # The other headers Keycloak sends only when their key is in the map.
+        assert login_page.headers["referrer-policy"] == "no-referrer"
+        assert login_page.headers["x-content-type-options"] == "nosniff"
+        assert login_page.headers["x-frame-options"] == "SAMEORIGIN"
+        assert login_page.headers["x-robots-tag"] == "none"
+        assert "max-age=" in login_page.headers["strict-transport-security"]
 
         executions_response = httpx.get(
             f"{base_url}/admin/realms/nptc/authentication/flows/"

@@ -77,6 +77,43 @@ thrown probe cannot strand the app in a status nothing would move it out of. It 
 on `/auth/callback`, where the code exchange about to run is what establishes the session
 and a concurrent renewal would only race it.
 
+### Silent renewal needs Keycloak to allow framing
+
+Renewal and the cold-load probe load Keycloak's authorize endpoint in a hidden iframe. Two
+conditions must hold, or every renewal waits out `SILENT_RENEW_TIMEOUT_MS` (10 s) and then
+counts as "signed out".
+
+- **Keycloak must allow the app to frame it.** Keycloak's default policy is
+  `frame-ancestors 'self'`. A browser treats the app and Keycloak as different origins
+  whenever their ports differ (`:5173` or `:8081` against `:8080`), so it blocks the frame.
+  The realm file sets `browserSecurityHeaders.contentSecurityPolicy` to add
+  `${NPTC_FRONTEND_BASE_URL}` to `frame-ancestors`. It repeats Keycloak's other defaults,
+  because Keycloak replaces the whole header map when the realm file supplies one. Keycloak
+  still sends `X-Frame-Options: SAMEORIGIN`; Chromium ignores it when `frame-ancestors` is
+  present, and the silent renewal succeeds there.
+- **The browser must send Keycloak's session cookie in the iframe.** That holds when the app
+  and Keycloak share a registrable domain, as with `localhost` on any port, or
+  `app.example.org` and `sso.example.org`. **Known limitation:** if a deployment serves them
+  from different registrable domains, browsers that block third-party cookies refuse the
+  cookie. Silent renewal then cannot succeed, so a reload or an expired token ends the
+  session. The production overlay (P5) should keep both on one registrable domain.
+
+Once a renewal has been refused with "the SSO session has ended", `getAccessToken` answers
+`null` at once instead of opening another iframe for each request. A renewal *fault*, such
+as an unreachable discovery document, does not set this, so a later request can still retry.
+Signing in or completing the callback clears it.
+
+Two consequences follow, and neither is a bug.
+
+- **A timeout counts as a refusal for an anonymous visitor.** From inside the page, a
+  blocked frame and a slow Keycloak look the same (`SilentRenewTimeoutError`). Treating the
+  timeout as "signed out" is what stops a blocked frame costing 10 s per request. The price
+  is that one slow answer on a cold load leaves the tab anonymous until it reloads. A
+  signed-in user's timeout does not set the flag, so their next request retries.
+- **An anonymous tab does not notice a sign-in made in another tab.** Before, each request
+  would renew, find the new SSO session and switch the tab to signed in. Now the tab stays
+  anonymous until it reloads or the visitor signs in from it.
+
 ## Server side (`backend/src/nptc/api/`)
 
 | Module | Responsibility |
