@@ -1,18 +1,13 @@
 """The canonical OpenAPI document build and its on-disk serialisation.
 
 `app.openapi()` is a pure function of the route table, so this module has no state. It
-fixes the two things that would otherwise make "the document" ambiguous between callers:
+fixes two things that would otherwise make "the document" ambiguous between callers:
 
-  * which `ApiSettings` produced it - `frontend_base_url` only affects the CORS
-    middleware, never a field in the document, so a fixed placeholder keeps generation
-    independent of the machine it runs on. The settings come from `model_construct`, which
-    reads no `NPTC_*` variable and runs no validator, so no `ApiSettings` variable can
-    break generation. `create_app` still reads `AuthSettings` and the `NPTC_TX_*`
-    terminology settings from the environment; and
+  * which `ApiSettings` produced it - built with `model_construct`, which reads no
+    `NPTC_*` variable and runs no validator, so no `ApiSettings` variable can break
+    generation. `create_app` still reads `AuthSettings` and the `NPTC_TX_*` settings; and
   * the exact committed bytes of `docs/api/openapi.json` - `indent=2, ensure_ascii=False`
-    plus a single trailing newline, so `scripts/generate_openapi.py`, the drift test in
-    `backend/tests/test_openapi_document.py` and the frontend's `generate:api` all read
-    the same file the same way.
+    plus a single trailing newline, so every reader gets the same file.
 """
 
 from __future__ import annotations
@@ -23,11 +18,9 @@ from typing import Any
 from nptc.api.app import create_app
 from nptc.settings import ApiSettings
 
-#: Not a real deployment target: `create_app` requires some origin for CORS, and it
-#: never appears in the document. Public so that
-#: `test_served_document_matches_the_committed_document` builds its own app from this
-#: constant rather than a second copy of the literal. `model_construct` skips
-#: `ApiSettings`' origin validator, so this must already be a bare origin; a test pins it.
+#: Not a real deployment target: `create_app` requires an origin for CORS, and it never
+#: appears in the document. Public so the drift test builds its app from this constant.
+#: `model_construct` skips the origin validator, so this must be a bare origin.
 GENERATION_FRONTEND_BASE_URL = "http://localhost:5173"
 
 
