@@ -910,8 +910,8 @@
   priority: MUST
   phase: p1
   title: "Terms of use MUST be presented at registration and MUST require positive acceptance"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "ADR-0043 reads registration as before the user's first contribution. The API half is built: the platform records each acceptance with its version (terms_acceptance, append-only), refuses a contribution from a user who has not accepted the current version, and serves the text by version. backend/tests/test_api_terms.py covers the gate, the stale-version refusal and the exempt route. The requirement stays in-progress until the SPA terms page and gate land (issue #435)."
 - id: "NFR-46"
   priority: MUST
   phase: p1
@@ -922,5 +922,5 @@
   priority: SHOULD
   phase: p1
   title: "The terms MUST be versioned in the repository and rendered from a single source, so that the text a user accepted can be reproduced exactly"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "One immutable Markdown file per version under backend/src/nptc/terms/versions, one setting names the current version, and the API serves any version by its id. The first file is temporary placeholder text. The requirement stays in-progress until the SPA renders the terms from the API (issue #435)."

@@ -65,6 +65,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0017_code_binding_system_code_index.py`](../../backend/migrations/versions/0017_code_binding_system_code_index.py) | `ix_code_binding_system_code` (see [`data-model.md`](../architecture/data-model.md#code_binding-issue-48-fr-06-fr-08-fr-82-fr-83)) | None |
 | [`0018_validation_finding.py`](../../backend/migrations/versions/0018_validation_finding.py) | `validation_finding`, `ix_audit_event_entity_type_entity_id_sequence` on `audit_event` (see [`data-model.md`](../architecture/data-model.md#validation_finding-fr-18-fr-45-fr-55-issue-141)) | See [below](#0018_validation_findingpy) - the new `audit_event` index is a blocking build |
 | [`0021_seed_import_provenance.py`](../../backend/migrations/versions/0021_seed_import_provenance.py) | `seed_import`, `entry_seed_provenance` (see [`data-model.md`](../architecture/data-model.md#seeded-baseline-provenance-issue-329-fr-76-adr-0010-adr-0042)) | None to upgrade. To populate them, run the [seed baseline runbook](runbooks/seed-baseline.md) once on a new deployment |
+| [`0022_terms_acceptance.py`](../../backend/migrations/versions/0022_terms_acceptance.py) | `terms_acceptance` (see [`data-model.md`](../architecture/data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043)) | See [below](#0022_terms_acceptancepy) - every existing user must accept the current terms before their next contribution |
 
 ## Provisioning the app role's login
 
@@ -382,6 +383,24 @@ holds a lock that blocks every write to `audit_event`, and therefore every state
 write path in the application (NFR-08), for as long as the build takes. Size the maintenance
 window against `audit_event`'s current row count before upgrading a deployment with real
 traffic history; on an empty or freshly-seeded database this is seconds.
+
+## `0022_terms_acceptance.py`
+
+Adds `terms_acceptance` (NFR-45, ADR-0043 - see
+[`data-model.md`](../architecture/data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043)). It
+creates an empty table, so the upgrade itself is instant and needs no data step.
+
+**Every existing user must accept the current terms before their next contribution.** None has
+an acceptance row, so once the API at this revision runs, it refuses every contribution with a
+403 whose body carries `code: terms_acceptance_required` until that user accepts. Reads,
+sign-in, and the accept request itself stay open. The terms page and gate that ask users to
+accept belong to the SPA; until the SPA has them, a user can accept only by calling
+`POST /api/v1/auth/terms/acceptance` with the current `version` from `GET /api/v1/auth/terms`.
+
+The API reads the terms files named by `NPTC_TERMS_CURRENT_VERSION` and refuses to start if
+that version has no file. See [`configuration.md`](configuration.md).
+
+The downgrade drops the table, which discards every recorded acceptance.
 
 ## Testcontainers and Docker
 
