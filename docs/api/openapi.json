@@ -4053,6 +4053,26 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
+          },
+          "disciplines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disciplines",
+            "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
           "label_provenance": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LabelProvenance"
@@ -4074,6 +4094,8 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "code",
+          "disciplines",
           "label_provenance",
           "row_version"
         ],
@@ -4111,6 +4133,26 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
+          },
+          "disciplines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disciplines",
+            "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
           "label_provenance": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LabelProvenance"
@@ -4137,6 +4179,8 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "code",
+          "disciplines",
           "label_provenance",
           "row_version",
           "score"
@@ -5372,6 +5416,26 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
+          },
+          "disciplines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disciplines",
+            "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
           "label_provenance": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LabelProvenance"
@@ -5414,6 +5478,8 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "code",
+          "disciplines",
           "label_provenance",
           "row_version",
           "designations",
@@ -5483,6 +5549,26 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
+          },
+          "disciplines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disciplines",
+            "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
           "label_provenance": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LabelProvenance"
@@ -5500,6 +5586,8 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "code",
+          "disciplines",
           "label_provenance"
         ],
         "title": "EntrySummary",
@@ -6500,6 +6588,26 @@
             "type": "boolean",
             "title": "Has Open Finding"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
+          },
+          "disciplines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disciplines",
+            "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
           "label_provenance": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LabelProvenance"
@@ -6522,6 +6630,8 @@
           "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
+          "code",
+          "disciplines",
           "label_provenance",
           "score"
         ],

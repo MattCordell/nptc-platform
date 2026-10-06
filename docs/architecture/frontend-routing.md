@@ -25,7 +25,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | URL | Driving FRs |
 |---|---|
 | `/` | landing (its search box navigates to `/catalogue` with the trimmed `q`) |
-| `/catalogue` (+ `q`, `page`, `sort` search params) | FR-14, FR-15, FR-16, FR-18 |
+| `/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #439) | FR-14, FR-15, FR-16, FR-18 |
 | `/catalogue/$businessKey` | FR-17, FR-19 |
 | `/catalogue/$businessKey/history` | FR-19, FR-35 |
 | `/catalogue/code/$systemToken/$code` | FR-17 |
@@ -50,8 +50,8 @@ A stub is one `createPlaceholderPage({ title, issue?, nearest? })` call in
 `router/route-tree.ts`. The factory renders a `NoticePage` with the title as the one `h1`,
 a text "Planned" status, the issue it lands with (when `issue` is set), a link back to the
 landing page and, when `nearest` is set, a link to the closest built screen. Only the
-admin stubs set `nearest` (to `/admin/catalogue`), because the public `/catalogue` is
-itself a stub.
+admin stubs set `nearest` (to `/admin/catalogue`). The public stubs leave it unset: the
+landing page link already leads to `/catalogue`.
 
 To replace a stub with the real screen:
 
@@ -78,15 +78,16 @@ Three forms resolve the same entry:
   `http://snomed.info/sct`.
 - `/catalogue/lookup?system={uri}&code={code}` — for callers holding the full system URI.
 
-Search result state (`q`, `page`, `sort`) is encoded entirely in `/catalogue`'s URL, so a
-pasted search link reproduces the identical result set and filter state.
+Search result state (`q`, `after`, `filter.<key>`) is encoded entirely in `/catalogue`'s
+URL, so a pasted search link reproduces the identical result set and filter state. The
+public endpoints offer no sort and no page number (ADR-0024), so the route has neither.
 
 The API half of this contract - `GET /catalogue/entries/{business_key}`,
 `GET /catalogue/code/{system_token}/{code}` and `GET /catalogue/lookup`, all serving the
 identical `EntryDetail` body - is documented in
 [public-api.md](public-api.md#exact-code-lookup-fr-17). All three routes above still
-mount `createPlaceholderPage` today; the public search/entry UI issue is what will call
-this API and swap the placeholders for real screens.
+mount `createPlaceholderPage` today; the public entry and lookup screens will call this
+API and swap the placeholders for real screens.
 
 ## Codes are strings, always
 
@@ -108,11 +109,10 @@ an 18-digit SCTID) guard this file; do not "simplify" it back to
 A second, related trap: TanStack Router calls each route's `validateSearch` more than once
 per navigation (once during its lightweight route matching, again while committing the
 location), and the *second* call receives the validator's own previously-validated output
-— `page` arrives back as the number the validator itself returned, not a string.
-`validateSearch` must therefore be idempotent. `search-params.ts`'s `asPage` accepts an
-already-valid number as well as a numeric string for exactly this reason;
-`search-params.test.ts`'s idempotency test is the regression guard (this failed silently
-during development, defaulting a valid `page=3` back to `page=1` on the second pass).
+— a `filter.<key>` arrives back as the array the validator itself returned, not a string.
+`validateSearch` must therefore be idempotent. `search-params.test.ts`'s idempotency tests
+are the regression guard (an earlier `page` parameter failed this silently during
+development, defaulting a valid `page=3` back to `page=1` on the second pass).
 
 Path params never need this treatment — `params.parse` is opt-in and unused here, so
 `/catalogue/code/sct/000123` is a plain string by default.
@@ -183,25 +183,23 @@ type-only cast in `route-tree.ts`) so `<Link to="/catalogue">` needs no `search`
 all, while the validator functions in `search-params.ts` keep a plain
 `Record<string, unknown>` parameter and stay trivially unit-testable.
 
-`/catalogue`'s route also attaches a `stripSearchParams` search middleware for its
-defaults (`q: ""`, `page: 1`, `sort: "relevance"`). `validateCatalogueSearch` always
-returns all three fields — so consuming code never has to fall back on an absent one —
-but without stripping, every link into `/catalogue` would commit as
-`/catalogue?q=&page=1&sort=relevance` even when nothing was asked for, which is noisier
-than the "pasted link reproduces the identical state" contract implies. The middleware
-only affects what gets written to the URL bar; it does not change `validateCatalogueSearch`
-itself.
+`/catalogue`'s and `/admin/catalogue`'s routes also attach a `stripSearchParams` search
+middleware for `q: ""`. Each validator always returns `q`, so consuming code never has to
+fall back on an absent one, but without stripping every link into `/catalogue` would commit
+as `/catalogue?q=`. The middleware only affects what gets written to the URL bar. A
+`filter.<key>` has no default to strip: its presence is the selection.
 
 No schema library (zod/valibot) is used for search validation — see ADR-0020.
 
-`/admin/catalogue`'s search state (issue #267, ADR-0032) is the one search shape in this
-file with a dynamic set of keys: each selected facet is its own top-level `filter.<key>`
+`/catalogue`'s and `/admin/catalogue`'s search state (ADR-0032) share one shape,
+`FilteredListSearch`, with a dynamic set of keys: each selected facet is its own top-level `filter.<key>`
 key (`filter.status=draft`, `filter.discipline=chemistry`), never nested under a `filters`
 object — `stringifySearch` throws on exactly that shape, since a plain object is not "a
-scalar or an array of scalars". `validateAdminCatalogueSearch` normalises a facet's value
-to an array regardless of whether it appeared once or several times in the URL (`parseSearch`
-gives a bare string for the former), and stays idempotent the same way `asPage` does.
-`filterSelections`/`toggleFilterValue` (`search-params.ts`) convert the flat validated
+scalar or an array of scalars". Both validators normalise a facet's value to an array
+regardless of whether it appeared once or several times in the URL (`parseSearch` gives a
+bare string for the former). The admin validator adds an optional `sort`.
+`filterSelections`, `toggleFilterValue` and `clearAllFilters` (`search-params.ts`) serve both
+screens; the first two convert the flat validated
 search to and from a keyed `Record<string, string[]>` for the filter panel and the API
 client's own query params (`api/filter-params.ts` - the one place a `filter.<key>`
 parameter name is built by hand for the generated client, since the OpenAPI document can

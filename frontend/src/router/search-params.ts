@@ -13,7 +13,7 @@ import type { SearchSchemaInput } from "@tanstack/react-router";
  * ADR-0020.
  *
  * Every validator degrades to a safe default instead of throwing: a mistyped
- * `page=` or `sort=` should show the first page, not an error screen.
+ * `sort=` should show the default order, not an error screen.
  */
 
 /**
@@ -26,83 +26,6 @@ import type { SearchSchemaInput } from "@tanstack/react-router";
  */
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
-}
-
-/**
- * Search results are not paginated anywhere near this deep; an upper bound
- * this generous exists only to reject the pathological input
- * (`?page=99999999999999999999`), not to model a real result set.
- */
-const MAX_PAGE = 100_000;
-
-/**
- * TanStack Router re-runs `validateSearch` more than once per navigation
- * (e.g. once inside its lightweight route matching, again while building the
- * committed location), and the second call receives this function's own
- * *already-validated* output, not the raw URL string - `page` arrives back
- * as the NUMBER this function itself returned. `validateSearch` must be
- * idempotent (`asPage(asPage(x)) === asPage(x)`), so a real number already in
- * valid range is accepted as-is; only a genuine (string) parse failure falls
- * back to page 1.
- *
- * The string branch requires the *entire* value to be digits
- * (`Number.parseInt` would accept `"3drop"` as `3`, silently swallowing the
- * rest) and rejects anything past `MAX_PAGE` (`Number.parseInt` has no
- * ceiling, so `"99999999999999999999"` would otherwise pass through as a
- * huge, meaningless page number).
- */
-function asPage(value: unknown): number {
-  if (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 1 &&
-    value <= MAX_PAGE
-  ) {
-    return value;
-  }
-  const str = asString(value);
-  if (!/^\d+$/.test(str)) {
-    return 1;
-  }
-  const parsed = Number(str);
-  return parsed >= 1 && parsed <= MAX_PAGE ? parsed : 1;
-}
-
-const CATALOGUE_SORTS = ["relevance", "code", "term", "updated"] as const;
-export type CatalogueSort = (typeof CATALOGUE_SORTS)[number];
-
-function asSort(value: unknown): CatalogueSort {
-  const candidate = asString(value);
-  return (CATALOGUE_SORTS as readonly string[]).includes(candidate)
-    ? (candidate as CatalogueSort)
-    : "relevance";
-}
-
-/**
- * Search state for `/catalogue`. Encoded entirely in the URL so a pasted
- * search link reproduces the identical result set and filter state (#140).
- */
-export interface CatalogueSearch {
-  q: string;
-  page: number;
-  sort: CatalogueSort;
-}
-
-/**
- * What a caller may supply when navigating *to* `/catalogue` - every field
- * optional, so `<Link to="/catalogue">` needs no search prop at all. The
- * `SearchSchemaInput` brand is TanStack Router's mechanism for giving a
- * route a narrower input type than its validated output type; `route-tree.ts`
- * applies it with a type-only cast on `validateCatalogueSearch` when
- * registering the route, so the validator itself keeps a plain, easily
- * unit-tested `Record<string, unknown>` parameter.
- */
-export type CatalogueSearchInput = Partial<CatalogueSearch> & SearchSchemaInput;
-
-export function validateCatalogueSearch(
-  search: Record<string, unknown>,
-): CatalogueSearch {
-  return { q: asString(search.q), page: asPage(search.page), sort: asSort(search.sort) };
 }
 
 /**
@@ -172,7 +95,7 @@ export function validateSignInSearch(search: Record<string, unknown>): SignInSea
   return redirect ? { redirect } : {};
 }
 
-// --- admin catalogue list (issue #267) --------------------------------------
+// --- catalogue lists: public and admin -----------------------------------
 
 /**
  * The `filter.<key>` parameter name prefix (ADR-0032, matching the backend's
@@ -203,9 +126,7 @@ function asStringArray(value: unknown): string[] {
  * The `sort` values `GET /catalogue/admin/entries` accepts (issue #287),
  * matching `nptc.catalogue.maintenance.SortName` on the backend. Only the
  * *browse* surface is sortable - `GET /catalogue/admin/search` stays
- * relevance-ranked, matching the backend's own scope for this issue - so
- * this is a separate list from `CATALOGUE_SORTS` above rather than a shared
- * one a search-mode caller could otherwise send.
+ * relevance-ranked, and the public endpoints offer no sort at all.
  */
 const ADMIN_LISTING_SORTS = [
   "business_key",
@@ -223,55 +144,49 @@ function asAdminListingSort(value: unknown): AdminListingSort {
 }
 
 /**
- * Search state for `/admin/catalogue/` (issue #267, FR-16, FR-36).
+ * The URL state both catalogue list screens share: `q`, a keyset cursor and
+ * the `filter.<key>` selections (ADR-0024, ADR-0032).
  *
  * Deliberately flat, not `{ q, after, filters: Record<string, string[]> }`:
- * `router.tsx`'s own `stringifySearch` throws for a non-scalar value (a
- * nested object is not "a scalar or an array of scalars"), so a `filters`
- * key holding a record would break the URL round trip the moment there was
- * more than one active facet. Each `filter.<key>` stays its own top-level
- * key, exactly as it appears on the wire (ADR-0032) - `filterSelections`
- * below is what turns this back into a keyed record for a caller that wants
- * one.
+ * `router.tsx`'s own `stringifySearch` throws for a non-scalar value, so a
+ * nested record would break the URL round trip. Each `filter.<key>` stays its
+ * own top-level key, exactly as it appears on the wire - `filterSelections`
+ * below turns it back into a keyed record.
  *
- * `after` is a cursor, not a page number (unlike `CatalogueSearch.page`):
- * both `/catalogue/admin/entries` and `/catalogue/admin/search` are
- * keyset-paginated (ADR-0024), so there is no page number to restore, only
- * "the cursor from the last page the caller saw" - see `docs/adr/
- * 0024-catalogue-search-and-pagination.md`.
- *
- * `sort` (issue #287) is optional, like `after`, and for the identical
- * reason: `business_key` is the default both here and on the backend, so
- * there is nothing to gain from always writing it into the URL - unlike
- * `CatalogueSearch.sort` above, which has no such backend default to fall
- * back to.
+ * `after` is a cursor, not a page number: both list endpoints are
+ * keyset-paginated, so there is no page number to restore, only the cursor
+ * from the last page the caller saw.
  */
-export type AdminCatalogueSearch = {
+export type FilteredListSearch = {
   q: string;
   after?: string;
-  sort?: AdminListingSort;
 } & {
   [key: `${typeof FILTER_PARAM_PREFIX}${string}`]: string[] | undefined;
 };
 
 /**
- * What a caller may supply when navigating *to* `/admin/catalogue/` -
- * matching `CatalogueSearchInput`'s own reasoning (every field optional, a
- * `SearchSchemaInput` brand for TanStack Router's narrower-input mechanism).
+ * Search state for the public `/catalogue` screen (FR-14..16).
+ * Encoded entirely in the URL, so a pasted link reproduces the same results.
+ * It has no `sort`: the public endpoints offer none.
  */
-export type AdminCatalogueSearchInput = Partial<AdminCatalogueSearch> & SearchSchemaInput;
+export type CatalogueSearch = FilteredListSearch;
 
-export function validateAdminCatalogueSearch(
-  search: Record<string, unknown>,
-): AdminCatalogueSearch {
-  const validated: AdminCatalogueSearch = { q: asString(search.q) };
+/**
+ * What a caller may supply when navigating *to* `/catalogue` - every field
+ * optional, so `<Link to="/catalogue">` needs no search prop at all. The
+ * `SearchSchemaInput` brand is TanStack Router's mechanism for giving a
+ * route a narrower input type than its validated output type; `route-tree.ts`
+ * applies it with a type-only cast on the validator when registering the
+ * route, so the validator itself keeps a plain, easily unit-tested
+ * `Record<string, unknown>` parameter.
+ */
+export type CatalogueSearchInput = Partial<CatalogueSearch> & SearchSchemaInput;
+
+function validateFilteredListSearch(search: Record<string, unknown>): FilteredListSearch {
+  const validated: FilteredListSearch = { q: asString(search.q) };
   const after = asString(search.after);
   if (after.length > 0) {
     validated.after = after;
-  }
-  const sort = asAdminListingSort(search.sort);
-  if (sort !== "business_key") {
-    validated.sort = sort;
   }
   for (const [key, value] of Object.entries(search)) {
     if (!key.startsWith(FILTER_PARAM_PREFIX)) {
@@ -285,13 +200,46 @@ export function validateAdminCatalogueSearch(
   return validated;
 }
 
+export function validateCatalogueSearch(
+  search: Record<string, unknown>,
+): CatalogueSearch {
+  return validateFilteredListSearch(search);
+}
+
 /**
- * The `filter.*` entries of a validated admin catalogue search, keyed by
+ * Search state for `/admin/catalogue/` (issue #267, FR-16, FR-36): the shared
+ * list state plus an optional `sort` (issue #287). `sort` is optional, like
+ * `after`, because `business_key` is the default both here and on the
+ * backend, so there is nothing to gain from always writing it into the URL.
+ */
+export type AdminCatalogueSearch = FilteredListSearch & {
+  sort?: AdminListingSort;
+};
+
+/**
+ * What a caller may supply when navigating *to* `/admin/catalogue/` -
+ * matching `CatalogueSearchInput`'s own reasoning.
+ */
+export type AdminCatalogueSearchInput = Partial<AdminCatalogueSearch> & SearchSchemaInput;
+
+export function validateAdminCatalogueSearch(
+  search: Record<string, unknown>,
+): AdminCatalogueSearch {
+  const validated: AdminCatalogueSearch = validateFilteredListSearch(search);
+  const sort = asAdminListingSort(search.sort);
+  if (sort !== "business_key") {
+    validated.sort = sort;
+  }
+  return validated;
+}
+
+/**
+ * The `filter.*` entries of a validated catalogue list search, keyed by
  * facet alone (the `filter.` prefix stripped) - the shape the filter panel
  * and `api/filter-params.ts`'s `filterQueryParams` both want, so neither
  * re-derives it from the flat validated search object by hand.
  */
-export function filterSelections(search: AdminCatalogueSearch): Record<string, string[]> {
+export function filterSelections(search: FilteredListSearch): Record<string, string[]> {
   const selections: Record<string, string[]> = {};
   for (const [key, value] of Object.entries(search)) {
     if (key.startsWith(FILTER_PARAM_PREFIX) && Array.isArray(value)) {
@@ -318,7 +266,7 @@ export function filterSelections(search: AdminCatalogueSearch): Record<string, s
  * could ever clear it.
  */
 export function activeFilterEntries(
-  search: AdminCatalogueSearch,
+  search: FilteredListSearch,
 ): { facetKey: string; value: string }[] {
   return Object.entries(filterSelections(search)).flatMap(([facetKey, values]) =>
     values.map((value) => ({ facetKey, value })),
@@ -326,20 +274,24 @@ export function activeFilterEntries(
 }
 
 /**
- * Drops every `filter.*` selection and the `after` cursor, keeping `q`
- * unchanged (PR #285 review finding 1) - the "Clear all filters" control's
+ * Drops every `filter.*` selection and the `after` cursor, keeping every other
+ * key (`q`, and the admin screen's `sort`) - the "Clear all filters" control's
  * own handler, for the same reason `toggleFilterValue` drops `after`: the
  * population being paged over no longer exists once the filter set changes
  * underneath it.
  *
- * `sort` (issue #287) is kept, not dropped: changing the filter set does not
- * invalidate an ordering the way changing `sort` itself does (the backend's
- * cursor digest agrees - it binds to `sort` and the filter set
- * independently, and a filter change alone does not need a fresh cursor for
- * keyset *correctness*, only because this control also drops `after`).
+ * `sort` (issue #287) is kept: changing the filter set does not invalidate an
+ * ordering the way changing `sort` itself does.
  */
-export function clearAllFilters(search: AdminCatalogueSearch): AdminCatalogueSearch {
-  return search.sort === undefined ? { q: search.q } : { q: search.q, sort: search.sort };
+export function clearAllFilters<S extends FilteredListSearch>(search: S): S {
+  const cleared: FilteredListSearch = { ...search };
+  delete cleared.after;
+  for (const key of Object.keys(cleared)) {
+    if (key.startsWith(FILTER_PARAM_PREFIX)) {
+      delete cleared[key as `${typeof FILTER_PARAM_PREFIX}${string}`];
+    }
+  }
+  return cleared as S;
 }
 
 /**
@@ -379,11 +331,11 @@ export function changeSort(
  * subclass refuses server-side for a search cursor (ADR-0024), applied here
  * before a stale cursor is ever sent.
  */
-export function toggleFilterValue(
-  search: AdminCatalogueSearch,
+export function toggleFilterValue<S extends FilteredListSearch>(
+  search: S,
   facetKey: string,
   value: string,
-): AdminCatalogueSearch {
+): S {
   const paramKey =
     `${FILTER_PARAM_PREFIX}${facetKey}` as `${typeof FILTER_PARAM_PREFIX}${string}`;
   const current = search[paramKey] ?? [];
@@ -391,12 +343,12 @@ export function toggleFilterValue(
     ? current.filter((existing) => existing !== value)
     : [...current, value];
 
-  const updated: AdminCatalogueSearch = { ...search };
+  const updated: FilteredListSearch = { ...search };
   delete updated.after;
   if (next.length > 0) {
     updated[paramKey] = next;
   } else {
     delete updated[paramKey];
   }
-  return updated;
+  return updated as S;
 }

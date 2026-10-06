@@ -46,6 +46,15 @@ every list row, every search hit, and the detail response alike - see
 [What is published, and what is not](#what-is-published-and-what-is-not) below for
 exactly what it does and does not expose.
 
+`code` and `disciplines` (issue #439) are also on `EntrySummary`, so a list screen can show
+them without a request per row. `code` is the entry's one active SNOMED CT binding, as a
+string, or `null` when it has none. A retired binding never appears there, only in the
+detail's `bindings`. `disciplines` is the stored display text of each `discipline` value,
+in `ordinal` order, falling back to the code where a value carries no display. One loader,
+`nptc.catalogue.queries.row_facts`, fills these fields and `has_open_finding` in three
+statements per page, whatever its size. It is keyed on `business_key`, because a search
+hit carries no entry id.
+
 `row_version` (issue #227) is FR-38's optimistic-locking token. It is not an identifier
 and a read-only consumer can ignore it: `business_key` is still the only thing that
 names an entry, and this counter addresses nothing - it exists so an *editing* client
@@ -121,7 +130,8 @@ a 422 - not a 404, which would imply a UUID is a kind of identifier this API acc
 **Every SNOMED CT code is a JSON string** (FR-06). This is the defect class the platform
 exists to eliminate: an SCTID that reached a client as a JSON number would have passed
 through a JavaScript `number` before anyone noticed. The only numbers these endpoints
-serve are `length`, `ordinal`, `score` and numeric property values.
+serve are `length`, `ordinal`, `score` and numeric property values. A row's `code` is
+`null` or a string, never a number.
 
 Both no-leak invariants are asserted whole-body against raw response text - not field by
 field against a parsed model - for every route under the prefix, in

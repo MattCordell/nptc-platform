@@ -219,7 +219,7 @@ class AdminSearchPage(BaseModel):
 
 
 def _admin_summary_from_row(
-    row: maintenance.ListingRow, has_open_finding: bool
+    row: maintenance.ListingRow, facts: queries.RowFacts
 ) -> AdminEntrySummary:
     """The admin counterpart of `summary_from_entry`, over a `maintenance.ListingRow`
     because the listing statement selects explicit columns, not a mapped entity."""
@@ -231,7 +231,7 @@ def _admin_summary_from_row(
             row.status,
             row.specimen_unconstrained,
             row.updated_at,
-            has_open_finding,
+            facts,
         ),
         row_version=row.row_version,
     )
@@ -323,13 +323,9 @@ def list_entries_any_status(
     page = maintenance.list_entries_any_status(
         session, sort=sort, limit=limit, after=after, filters=filters.selections
     )
-    open_findings = queries.open_finding_business_keys(
-        session, (row.business_key for row in page.rows)
-    )
+    facts = queries.row_facts(session, (row.business_key for row in page.rows))
     return AdminEntryPage(
-        items=[
-            _admin_summary_from_row(row, row.business_key in open_findings) for row in page.rows
-        ],
+        items=[_admin_summary_from_row(row, facts[row.business_key]) for row in page.rows],
         next_cursor=page.next_cursor,
     )
 
@@ -389,9 +385,7 @@ def search_any_status(
         filters=filters.selections,
         statuses=maintenance.MAINTENANCE_STATUSES,
     )
-    open_findings = queries.open_finding_business_keys(
-        session, (hit.business_key for hit in page.hits)
-    )
+    facts = queries.row_facts(session, (hit.business_key for hit in page.hits))
     return AdminSearchPage(
         items=[
             AdminSearchHit(
@@ -402,7 +396,7 @@ def search_any_status(
                     hit.status,
                     hit.specimen_unconstrained,
                     hit.updated_at,
-                    hit.business_key in open_findings,
+                    facts[hit.business_key],
                 ),
                 row_version=hit.row_version,
                 score=hit.score,
@@ -447,7 +441,6 @@ def read_entry_any_status(
     state before the write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
-    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,
@@ -456,7 +449,7 @@ def read_entry_any_status(
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
-            has_open_finding,
+            queries.row_facts_for(session, entry.business_key),
         ),
         row_version=entry.row_version,
         designations=[

@@ -51,13 +51,13 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, aliased
 
 from nptc.catalogue.errors import CodeLookupNotFoundError, EntryNotFoundError
 from nptc.catalogue.facets import FilterSelection, filter_predicates
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
-from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
+from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBinding, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
@@ -69,9 +69,9 @@ __all__ = [
     "DesignationRow",
     "EntryPage",
     "PropertyValueRow",
+    "RowFacts",
     "get_entry",
     "get_entry_by_code",
-    "has_open_finding",
     "list_entries",
     "load_bindings",
     "load_designation_by_id",
@@ -79,11 +79,16 @@ __all__ = [
     "load_designations_any_status",
     "load_property_values",
     "open_finding_business_keys",
+    "row_facts",
+    "row_facts_for",
 ]
 
 #: The one status filter every public read applies (module docstring). A tuple
 #: rather than a set, so the SQL parameter order is stable.
 PUBLIC_STATUSES: Final[tuple[str, ...]] = (CatalogueEntryStatus.ACTIVE.value,)
+
+#: The system property `nptc.db.bootstrap` seeds, which `row_facts` shows on every row.
+DISCIPLINE_PROPERTY_KEY: Final = "discipline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,8 +557,68 @@ def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -
     return frozenset(rows)
 
 
-def has_open_finding(session: Session, business_key: str) -> bool:
-    """The single-entry case of `open_finding_business_keys`, shared by
-    `catalogue_shared.build_entry_detail` and
-    `catalogue_admin.read_entry_any_status`."""
-    return business_key in open_finding_business_keys(session, (business_key,))
+@dataclass(frozen=True, slots=True)
+class RowFacts:
+    """What a list or search row shows beyond the entry's own columns.
+
+    `code` is the entry's one active SNOMED CT binding, or `None`. A retired
+    binding never appears here: a row names the code to use now, and the
+    detail's `bindings` carries the history.
+    """
+
+    has_open_finding: bool
+    code: str | None
+    disciplines: tuple[str, ...]
+
+
+def row_facts(session: Session, business_keys: Iterable[str]) -> dict[str, RowFacts]:
+    """`RowFacts` for each business key, in three statements whatever the page
+    size. Every key given is a key of the result.
+
+    A discipline is its stored `display`, falling back to the code where the
+    value carries none - the same generic JSON handling as a facet bucket's
+    label (`nptc.catalogue.facets`), and for the same reason: no terminology
+    call on a read path (FR-54).
+    """
+    keys = tuple(dict.fromkeys(business_keys))
+    if not keys:
+        return {}
+    open_findings = open_finding_business_keys(session, keys)
+    codes = dict(
+        session.execute(
+            select(CatalogueEntry.business_key, CodeBinding.code)
+            .join(CodeBinding, CodeBinding.entry_id == CatalogueEntry.id)
+            .where(CatalogueEntry.business_key.in_(keys))
+            .where(CodeBinding.status == CodeBindingStatus.ACTIVE.value)
+            .where(CodeBinding.system == SNOMED_CT_SYSTEM)
+        ).all()
+    )
+    disciplines: dict[str, list[str]] = {}
+    for business_key, label in session.execute(
+        select(
+            CatalogueEntry.business_key,
+            func.coalesce(
+                func.jsonb_extract_path_text(PropertyValue.value, "display"),
+                func.jsonb_extract_path_text(PropertyValue.value, "code"),
+            ),
+        )
+        .join(PropertyValue, PropertyValue.entry_id == CatalogueEntry.id)
+        .where(CatalogueEntry.business_key.in_(keys))
+        .where(PropertyValue.property_key == DISCIPLINE_PROPERTY_KEY)
+        .order_by(CatalogueEntry.business_key, PropertyValue.ordinal)
+    ):
+        if label is not None:
+            disciplines.setdefault(business_key, []).append(label)
+    return {
+        key: RowFacts(
+            has_open_finding=key in open_findings,
+            code=codes.get(key),
+            disciplines=tuple(disciplines.get(key, ())),
+        )
+        for key in keys
+    }
+
+
+def row_facts_for(session: Session, business_key: str) -> RowFacts:
+    """The single-entry case of `row_facts`, for the detail routes."""
+    return row_facts(session, (business_key,))[business_key]

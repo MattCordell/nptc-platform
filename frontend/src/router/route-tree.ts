@@ -4,6 +4,7 @@ import { HomePage } from "../pages/home.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
+import { CatalogueSearchPage } from "../pages/catalogue-search.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
 import { SignInPage } from "../pages/sign-in.tsx";
@@ -63,8 +64,8 @@ const catalogueRoute = createRoute({
   path: "catalogue",
 });
 
-// FR-14..16, FR-18. Search result state (query, filters, page) lives
-// entirely in the URL, so a pasted link restores it (#140).
+// FR-14..16, FR-18. Search, filter and cursor state lives entirely in the
+// URL, so a pasted link restores the same results.
 const catalogueSearchRoute = createRoute({
   getParentRoute: () => catalogueRoute,
   path: "/",
@@ -76,17 +77,13 @@ const catalogueSearchRoute = createRoute({
   validateSearch: validateCatalogueSearch as (
     search: CatalogueSearchInput,
   ) => CatalogueSearch,
-  // validateCatalogueSearch always returns all three fields (consuming code
-  // shouldn't have to fall back on an absent one), which would otherwise
-  // make every link into `/catalogue` commit as
-  // `/catalogue?q=&page=1&sort=relevance` even when nothing was asked for -
-  // noisier than the "pasted link" contract implies. stripSearchParams omits
-  // a value from the *committed URL* when it equals its default, without
-  // touching validateCatalogueSearch's return type.
+  // `q` is always returned, so stripping its default keeps a bare link to
+  // `/catalogue` from committing as `/catalogue?q=`. A `filter.<key>` has no
+  // default to strip: its presence is the selection.
   search: {
-    middlewares: [stripSearchParams({ q: "", page: 1, sort: "relevance" })],
+    middlewares: [stripSearchParams({ q: "" })],
   },
-  component: createPlaceholderPage({ title: "Search the catalogue", issue: 138 }),
+  component: CatalogueSearchPage,
   head: titled("Search"),
 });
 
@@ -324,10 +321,7 @@ const adminCatalogueListRoute = createRoute({
   validateSearch: validateAdminCatalogueSearch as (
     search: AdminCatalogueSearchInput,
   ) => AdminCatalogueSearch,
-  // Only `q`'s default is worth stripping from the committed URL - unlike
-  // `catalogueSearchRoute`'s `page`/`sort`, there is no fixed default value
-  // for a `filter.<key>` key to compare against (its very presence *is* the
-  // selection), so `stripSearchParams` only ever names `q` here.
+  // Only `q`'s default is stripped, for `catalogueSearchRoute`'s reason.
   search: {
     middlewares: [stripSearchParams({ q: "" })],
   },

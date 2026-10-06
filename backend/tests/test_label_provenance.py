@@ -380,7 +380,7 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
             status="active",
             specimen_unconstrained=False,
             updated_at=datetime.now(UTC),
-            has_open_finding=False,
+            facts=queries.RowFacts(has_open_finding=False, code=None, disciplines=()),
         )
     )
     assert {k: v.model_dump() for k, v in summary.label_provenance.items()} == {

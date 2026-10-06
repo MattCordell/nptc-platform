@@ -104,7 +104,8 @@ reason "Entry read, any status" gives for its own gate.
 **Rows also carry `row_version` (issue #267).** `AdminEntrySummary`/`AdminSearchHit` -
 `EntrySummary`/`SearchHit` plus FR-38's optimistic-locking token - are what these two
 routes actually return, not the public shapes: `AdminEntryPage.items: [AdminEntrySummary]`,
-`AdminSearchPage.items: [AdminSearchHit]`. Defined in `catalogue_admin.py`, not
+`AdminSearchPage.items: [AdminSearchHit]`. They inherit `EntrySummary`'s `code` and
+`disciplines` row fields, filled by the same loader as the public rows. Defined in `catalogue_admin.py`, not
 `catalogue_shared.py` (which the public router also imports), so the public
 `/catalogue/entries`/`/catalogue/search` stay byte-identical by construction -
 `test_api_public_response_hygiene.py` asserts they still omit the field. The admin

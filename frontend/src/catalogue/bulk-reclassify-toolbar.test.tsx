@@ -33,6 +33,8 @@ function entrySummary(overrides: Record<string, unknown>) {
     specimen_unconstrained: false,
     updated_at: "2026-09-01T04:30:00Z",
     has_open_finding: false,
+    code: null,
+    disciplines: [],
     label_provenance: { preferred_term: { source: "catalogue" } },
     row_version: 1,
     ...overrides,

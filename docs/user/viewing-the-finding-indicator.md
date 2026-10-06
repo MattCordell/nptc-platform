@@ -3,10 +3,10 @@
 When you look up a test in the catalogue, you may see a flag next to it saying there is an
 **open finding**. This page explains what that means and what it does not mean.
 
-> **This page describes API behaviour, not a screen yet.** The public catalogue pages
-> (`/catalogue`, `/catalogue/{businessKey}`) are still placeholders — this indicator is
-> visible today to a developer reading the API directly, and lands on the public pages
-> themselves with the public search and entry UI. See issue #141.
+> **Where you see it.** The catalogue search page shows **Open finding** in a row's
+> **Validation** column (see [Searching the catalogue](searching-the-catalogue.md)). The
+> public entry page (`/catalogue/{businessKey}`) is still a placeholder, so the flag is not
+> on it yet. The API carries it on every list row, search result and entry.
 
 ## What it tells you
 

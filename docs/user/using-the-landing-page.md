@@ -17,9 +17,7 @@ the catalogue search page with your words already entered. Spaces at the start a
 what you typed are ignored. If you leave the box empty, you go to the catalogue search page
 with nothing entered.
 
-> **Not yet implemented.** The catalogue search page is still a placeholder, so it does
-> not list results yet. The landing page hands your words over correctly, and the results
-> appear there when that screen lands.
+See [Searching the catalogue](searching-the-catalogue.md) for what that page shows.
 
 You can also choose **Search the catalogue**, below the search box, to open the catalogue
 search page without a query.

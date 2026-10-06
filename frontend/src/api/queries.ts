@@ -1,4 +1,10 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { useAuth } from "../auth/session.ts";
 import type { AdminListingSort } from "../router/search-params.ts";
@@ -88,6 +94,9 @@ export interface EntriesListParams {
    * `filter.<key>` pairs by `filterQueryParams`. */
   filters?: Record<string, string[]>;
   enabled?: boolean;
+  /** Keep the previous page on screen while the next one loads, so a paging
+   * control a keyboard user has focused is not unmounted mid-load. */
+  keepPreviousPage?: boolean;
 }
 
 /**
@@ -100,10 +109,11 @@ export interface EntriesListParams {
  */
 export function useEntriesList(params: EntriesListParams = {}) {
   const client = useApiClient();
-  const { limit, after, filters = {}, enabled = true } = params;
+  const { limit, after, filters = {}, enabled = true, keepPreviousPage = false } = params;
   const query = { limit, after, ...filterQueryParams(filters) };
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/entries", query],
+    placeholderData: keepPreviousPage ? keepPreviousData : undefined,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/entries", {
@@ -124,6 +134,8 @@ export interface CatalogueSearchParams {
   after?: string | null;
   filters?: Record<string, string[]>;
   enabled?: boolean;
+  /** As `EntriesListParams.keepPreviousPage`. */
+  keepPreviousPage?: boolean;
 }
 
 /**
@@ -133,10 +145,18 @@ export interface CatalogueSearchParams {
  */
 export function useCatalogueSearch(params: CatalogueSearchParams) {
   const client = useApiClient();
-  const { q, limit, after, filters = {}, enabled = true } = params;
+  const {
+    q,
+    limit,
+    after,
+    filters = {},
+    enabled = true,
+    keepPreviousPage = false,
+  } = params;
   const query = { q, limit, after, ...filterQueryParams(filters) };
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/search", query],
+    placeholderData: keepPreviousPage ? keepPreviousData : undefined,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/search", {

@@ -124,22 +124,20 @@ describe("route table", () => {
     ).toBeInTheDocument();
   });
 
-  it("restores search state from a pasted URL (#140)", async () => {
-    const { router } = await renderRoute("/catalogue?q=glucose&page=3&sort=code");
+  it("restores search, filter and cursor state from a pasted URL", async () => {
+    const { router } = await renderRoute(
+      "/catalogue?q=glucose&filter.discipline=chem&filter.discipline=haem&after=NPTC-000123",
+    );
     expect(router.state.matches.at(-1)?.search).toEqual({
       q: "glucose",
-      page: 3,
-      sort: "code",
+      after: "NPTC-000123",
+      "filter.discipline": ["chem", "haem"],
     });
   });
 
-  it("falls back to safe defaults for a malformed search param rather than erroring", async () => {
+  it("renders the screen for an older link carrying page and sort, rather than erroring", async () => {
     const { router } = await renderRoute("/catalogue?page=not-a-number&sort=nonsense");
-    expect(router.state.matches.at(-1)?.search).toEqual({
-      q: "",
-      page: 1,
-      sort: "relevance",
-    });
+    expect(router.state.matches.at(-1)?.search).toMatchObject({ q: "" });
     expect(
       screen.getByRole("heading", { level: 1, name: /Search the catalogue/i }),
     ).toBeInTheDocument();

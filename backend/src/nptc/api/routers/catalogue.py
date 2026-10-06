@@ -289,13 +289,9 @@ def list_entries(
     (ADR-0032).
     """
     page = queries.list_entries(session, limit=limit, after=after, filters=filters.selections)
-    open_findings = queries.open_finding_business_keys(
-        session, (entry.business_key for entry in page.entries)
-    )
+    facts = queries.row_facts(session, (entry.business_key for entry in page.entries))
     return EntryPage(
-        items=[
-            summary_from_entry(entry, entry.business_key in open_findings) for entry in page.entries
-        ],
+        items=[summary_from_entry(entry, facts[entry.business_key]) for entry in page.entries],
         next_cursor=page.next_cursor,
     )
 
@@ -350,9 +346,7 @@ def search(
     """
     page = search_entries(session, q=q, limit=limit, after=after, filters=filters.selections)
     facets = search_facets(session, q=q, context=filters.context, filters=filters.selections)
-    open_findings = queries.open_finding_business_keys(
-        session, (hit.business_key for hit in page.hits)
-    )
+    facts = queries.row_facts(session, (hit.business_key for hit in page.hits))
     return SearchPage(
         items=[
             SearchHit(
@@ -368,7 +362,7 @@ def search(
                     hit.status,
                     hit.specimen_unconstrained,
                     hit.updated_at,
-                    hit.business_key in open_findings,
+                    facts[hit.business_key],
                 ),
                 score=hit.score,
             )
