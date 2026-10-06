@@ -13,7 +13,7 @@ To load the real workbook, follow the end-to-end guide in [`load-baseline.md`](l
 This page is the reference for the loader itself.
 
 To seed a development stack from the 50-row sample workbook, use `scripts/dev-seed.ps1`
-instead. It filters out the entries this loader refuses and then calls it. See
+instead. It filters out the entries this loader refuses and then calls it. The transform reports a collision itself (`DESIGNATION_COLLISION`), so the script first drops the colliding rows from a temporary copy of the workbook. See
 [`deployment.md`](../deployment.md#load-sample-data-for-evaluation). Never filter a real
 baseline: the refusals below are the point.
 
@@ -106,7 +106,7 @@ Each fix is a data change followed by a new transform run. The loader never repa
 | `discipline '...' is not a code in the 'discipline' local code system` | The workbook names a discipline the governed code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
 | `... matches only a deprecated code` | A discipline or subgroup label matches a code that has been deprecated. | Correct the workbook, or have an administrator add an active code. |
 | `... matches N active codes` | A label matches more than one active code, by display or code, ignoring case. | An administrator removes the ambiguity in the code system. |
-| `... DesignationCollisionError: ... collision(s) against NPTC-nnnnnn (FR-05)` | A term collides with another entry's designation at error severity. The baseline cannot exist until RCPA-QAP resolves it editorially (PRD 6.3). | Resolve it in the workbook, then run the transform again. The message names the entry that failed, and the entry it collided with. |
+| `... DesignationCollisionError: ... collision(s) against NPTC-nnnnnn (FR-05)` | A term collides with another entry's designation at error severity. The baseline cannot exist until RCPA-QAP resolves it editorially (PRD 6.3). | Resolve it in the workbook, then run the transform again. The message names the entry that failed, and the entry it collided with. The transform reports the same pair as `DESIGNATION_COLLISION` and blocks `--emit-dataset`, so you meet this refusal only if you skipped the transform or built the dataset another way. |
 | `the catalogue already holds entries` | Not a data problem. See "Reseeding". | |
 
 ## Reseeding

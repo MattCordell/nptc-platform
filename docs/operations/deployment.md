@@ -108,19 +108,24 @@ Run it from the repository root, with the stack up and `migrate` finished:
 powershell -File scripts/dev-seed.ps1
 ```
 
-The script runs the transform on `transform/tests/fixtures/spia-requesting-sample.xlsx`,
-drops the entries the loader would refuse, then loads the rest with a dry run first. It makes
-no network calls to a terminology server.
+The script copies `transform/tests/fixtures/spia-requesting-sample.xlsx` without the row that
+collides under FR-05, runs the transform on the copy, drops the entries the loader would still
+refuse, then loads the rest with a dry run first. It makes no network calls to a terminology
+server. The committed workbook is never changed.
 
 - **What loads:** 41 of the 50 entries, all `active`, so they appear at
   <http://localhost:8081/api/v1/catalogue/entries> without signing in. They cover six
   disciplines (some entries have two), five subgroups, and entries with and without synonyms.
-- **What is dropped, and why:** eight entries have a specimen with no SNOMED CT code, and the
-  loader refuses those. One more, NPTC-000045 "Adrenal Ab", collides with a synonym on
-  NPTC-000009 (FR-05), which RCPA-QAP must resolve (PRD 6.3). The script prints each dropped
-  entry and its reason. The filter also drops a later entry whose SNOMED CT code an earlier
-  entry already holds, which the sample does not need today. The kept entries keep their
-  business keys, so the keys have gaps.
+- **What is dropped, and why:** the "Adrenal Ab" entry on workbook row 46 collides with a
+  synonym on row 10 (FR-05). The transform reports it as `DESIGNATION_COLLISION` and would block
+  the dataset, so the script blanks that row in a temporary copy before the transform runs.
+  RCPA-QAP must resolve a real collision (PRD 6.3). Eight entries have a specimen with no SNOMED CT
+  code, and the loader refuses those, so the script drops them from the dataset. The script prints
+  each dropped row or entry and its reason. The dataset filter also drops a later entry whose
+  SNOMED CT code an earlier entry already holds, which the sample does not need today.
+- **Business keys:** the transform numbers entries after the collision row is blanked, so entries
+  from row 47 on get a key one lower than the unfiltered sample gives them. The eight uncoded
+  entries leave gaps in the keys. Each entry's seed record still names its original workbook row.
 - **What it cannot show:** every sample row has a SNOMED CT code, so the sample has no entry
   without one. The transform treats a missing code as a blocking finding.
 - **Running it twice:** the second run exits `4`, says the catalogue already holds data, and

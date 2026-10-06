@@ -677,8 +677,9 @@ produces, but not the guarantees above:
   `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
   workbook has eight such entries. It also has one FR-05 collision, which the transform now reports as `DESIGNATION_COLLISION` and which blocks `--emit-dataset`.
   [`load-baseline.md`](load-baseline.md) walks through loading the real workbook.
-  The development stack seeds it through `scripts/dev-seed.ps1`, which drops those nine
-  entries (see "Load sample data for evaluation" in
+  The development stack seeds it through `scripts/dev-seed.ps1`, which drops the colliding
+  row from a copy of the workbook first and the eight uncoded entries afterwards (see
+  "Load sample data for evaluation" in
   [`deployment.md`](../deployment.md#load-sample-data-for-evaluation)).
 - Terminology-served enrichment of `import-dataset.json`'s `edition_hint`,
   `fsn` and `au_preferred_term` from a live `--check-terminology` sweep (see
