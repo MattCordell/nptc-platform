@@ -146,6 +146,17 @@ describe("CatalogueSearchPage", () => {
     );
   });
 
+  it("lets the table scroll inside its own container on a narrow screen", async () => {
+    stubApi([ENTRIES_OK]);
+
+    await renderRoute("/catalogue");
+    await screen.findByRole("link", { name: "Ferritin" });
+
+    const scroller = screen.getByTestId("results-scroll");
+    expect(scroller).toHaveClass("overflow-x-auto");
+    expect(within(scroller).getByRole("table")).toBeInTheDocument();
+  });
+
   it("shows the code in mono, the disciplines and the finding as text", async () => {
     stubApi([ENTRIES_OK]);
 
@@ -221,7 +232,7 @@ describe("CatalogueSearchPage", () => {
   });
 
   it("drops the cursor when a filter is toggled", async () => {
-    stubApi([ENTRIES_OK, SEARCH_OK]);
+    const calls = stubApi([ENTRIES_OK, SEARCH_OK]);
     const user = userEvent.setup();
 
     const { router } = await renderRoute(
@@ -236,6 +247,14 @@ describe("CatalogueSearchPage", () => {
         q: "ferritin",
         "filter.discipline": ["haem"],
       }),
+    );
+    // The new filter set must reach the server, not only the URL.
+    await waitFor(() =>
+      expect(
+        calledPath(calls, "/catalogue/search").some(
+          (call) => call.searchParams.get("filter.discipline") === "haem",
+        ),
+      ).toBe(true),
     );
   });
 

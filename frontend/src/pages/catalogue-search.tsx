@@ -352,55 +352,61 @@ export function CatalogueSearchPage() {
 
         {active.data && (
           <>
-            <DataTable
-              caption={mode === "search" ? "Search results" : "Catalogue entries"}
-              columns={[
-                {
-                  key: "preferred_term",
-                  header: "Requesting term",
-                  isRowHeader: true,
-                  render: (row: Row) => (
-                    <Link
-                      to="/catalogue/$businessKey"
-                      params={{ businessKey: row.business_key }}
-                      className="text-[var(--color-accent)] hover:underline"
-                    >
-                      {row.preferred_term}
-                    </Link>
-                  ),
-                },
-                {
-                  key: "code",
-                  header: "SNOMED CT code",
-                  render: (row: Row) =>
-                    row.code === null ? (
-                      <span className="text-[var(--color-text-muted)]">No code</span>
-                    ) : (
-                      <span className="font-mono">{row.code}</span>
+            {/* Scrolls on its own at narrow widths rather than widening the
+                page. Its row links are what a keyboard user scrolls it by. */}
+            <div data-testid="results-scroll" className="overflow-x-auto">
+              <DataTable
+                caption={mode === "search" ? "Search results" : "Catalogue entries"}
+                columns={[
+                  {
+                    key: "preferred_term",
+                    header: "Requesting term",
+                    isRowHeader: true,
+                    render: (row: Row) => (
+                      <Link
+                        to="/catalogue/$businessKey"
+                        params={{ businessKey: row.business_key }}
+                        className="text-[var(--color-accent)] hover:underline"
+                      >
+                        {row.preferred_term}
+                      </Link>
                     ),
-                },
-                {
-                  key: "disciplines",
-                  header: "Discipline",
-                  render: (row: Row) =>
-                    row.disciplines.length > 0 ? (
-                      row.disciplines.join(", ")
-                    ) : (
-                      <span className="text-[var(--color-text-muted)]">
-                        None recorded
-                      </span>
+                  },
+                  {
+                    key: "code",
+                    header: "SNOMED CT code",
+                    render: (row: Row) =>
+                      row.code === null ? (
+                        <span className="text-[var(--color-text-muted)]">No code</span>
+                      ) : (
+                        <span className="font-mono">{row.code}</span>
+                      ),
+                  },
+                  {
+                    key: "disciplines",
+                    header: "Discipline",
+                    render: (row: Row) =>
+                      row.disciplines.length > 0 ? (
+                        row.disciplines.join(", ")
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">
+                          None recorded
+                        </span>
+                      ),
+                  },
+                  {
+                    key: "has_open_finding",
+                    header: "Validation",
+                    render: (row: Row) => (
+                      <FindingIndicator open={row.has_open_finding} />
                     ),
-                },
-                {
-                  key: "has_open_finding",
-                  header: "Validation",
-                  render: (row: Row) => <FindingIndicator open={row.has_open_finding} />,
-                },
-              ]}
-              rows={items}
-              getRowKey={(row) => row.business_key}
-              emptyState={emptyState}
-            />
+                  },
+                ]}
+                rows={items}
+                getRowKey={(row) => row.business_key}
+                emptyState={emptyState}
+              />
+            </div>
 
             {(items.length > 0 || paging.stack.length > 0) && (
               <Pagination
