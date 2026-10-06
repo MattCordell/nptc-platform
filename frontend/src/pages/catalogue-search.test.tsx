@@ -102,6 +102,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * Wraps the stubbed `fetch` so a test can hold back the requests it picks
+ * until `release()`, and look at the screen while they load. Install it
+ * before rendering: the API client keeps the `fetch` it was created with.
+ */
+function holdableFetch() {
+  const inner = globalThis.fetch;
+  let matches: (url: URL) => boolean = () => false;
+  let release: () => void = () => {};
+  let gate = Promise.resolve();
+  vi.stubGlobal("fetch", async (request: Request) => {
+    if (matches(new URL(request.url))) {
+      await gate;
+    }
+    return inner(request);
+  });
+  return {
+    hold(picks: (url: URL) => boolean) {
+      matches = picks;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    release: () => release(),
+  };
+}
+
 /** The route's validated search, where a filter is always an array; the raw
  * `location.search` holds a lone value as a bare string. */
 function validatedSearch(router: { state: { matches: { search: unknown }[] } }): unknown {
@@ -318,7 +345,7 @@ describe("CatalogueSearchPage", () => {
     const { router } = await renderRoute("/catalogue?q=zzz&filter.discipline=chem");
 
     expect(
-      await screen.findByText('No catalogue entries match "zzz".'),
+      await screen.findByText('No catalogue entries match "zzz" with these filters.'),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("No results."),
@@ -410,6 +437,143 @@ describe("CatalogueSearchPage", () => {
       ),
     ).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Ferritin" })).toBeInTheDocument();
+  });
+
+  describe("results from a different search are never shown as current", () => {
+    const ACID_ROW = entrySummary({
+      business_key: "NPTC-000310",
+      preferred_term: "Acid phosphatase",
+    });
+    const IRON_ROW = entrySummary({
+      business_key: "NPTC-000320",
+      preferred_term: "Iron studies",
+    });
+
+    function stubSearches() {
+      return stubApi([ENTRIES_OK], {
+        vary: (call) => {
+          if (!call.path.endsWith("/catalogue/search")) {
+            return null;
+          }
+          const row = call.searchParams.get("q") === "iron" ? IRON_ROW : ACID_ROW;
+          return {
+            method: "GET",
+            path: call.path,
+            status: 200,
+            body: searchPage({ items: [{ ...row, score: 0.9 }] }),
+          };
+        },
+      });
+    }
+
+    async function submitQuery(user: ReturnType<typeof userEvent.setup>, q: string) {
+      const box = screen.getByLabelText("Search term or SNOMED CT code");
+      await user.clear(box);
+      if (q !== "") {
+        await user.type(box, q);
+      }
+      await user.keyboard("{Enter}");
+    }
+
+    function expectNothingFromAcid() {
+      expect(
+        screen.queryByRole("link", { name: "Acid phosphatase" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Discipline" })).not.toBeInTheDocument();
+      expect(screen.getByText("Loading catalogue entries…")).toBeInTheDocument();
+    }
+
+    it("after a return to browse mode", async () => {
+      stubSearches();
+      const held = holdableFetch();
+      const user = userEvent.setup();
+
+      await renderRoute("/catalogue?q=acid");
+      await screen.findByRole("link", { name: "Acid phosphatase" });
+      await submitQuery(user, "");
+      await screen.findByRole("link", { name: "Full blood count" });
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("2 results on this page."),
+      );
+
+      held.hold((url) => url.searchParams.get("q") === "iron");
+      await submitQuery(user, "iron");
+
+      await waitFor(expectNothingFromAcid);
+      // Still the browse announcement: the acid page was not re-announced.
+      expect(screen.getByRole("status")).toHaveTextContent("2 results on this page.");
+      held.release();
+      await screen.findByRole("link", { name: "Iron studies" });
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("1 result on this page."),
+      );
+    });
+
+    it("when a new query replaces the current one", async () => {
+      stubSearches();
+      const held = holdableFetch();
+      const user = userEvent.setup();
+
+      await renderRoute("/catalogue?q=acid");
+      await screen.findByRole("link", { name: "Acid phosphatase" });
+
+      held.hold((url) => url.searchParams.get("q") === "iron");
+      await submitQuery(user, "iron");
+
+      await waitFor(expectNothingFromAcid);
+      held.release();
+      await screen.findByRole("link", { name: "Iron studies" });
+    });
+
+    // The same query with a new filter is the one case worth keeping the
+    // previous page for: its facets are still the right ones, and the pill
+    // the user just pressed must stay mounted to keep focus.
+    it("but keeps the facets of the same query while a filter change loads", async () => {
+      stubSearches();
+      const held = holdableFetch();
+      const user = userEvent.setup();
+
+      await renderRoute("/catalogue?q=acid");
+      const group = await screen.findByRole("group", { name: "Discipline" });
+
+      held.hold((url) => url.searchParams.has("filter.discipline"));
+      const pill = within(group).getByRole("button", { name: "Haematology (1)" });
+      await user.click(pill);
+
+      await waitFor(() => expect(pill).toHaveAttribute("aria-pressed", "true"));
+      expect(pill).toHaveFocus();
+      held.release();
+    });
+  });
+
+  describe("empty state names the actual reason", () => {
+    const EMPTY_PAGE = { items: [], next_cursor: null };
+
+    it.each([
+      ["/catalogue?after=NPTC-999999", "No more catalogue entries."],
+      ["/catalogue", "The catalogue has no published entries yet."],
+      ["/catalogue?filter.discipline=chem", "No catalogue entries match these filters."],
+    ])("while browsing %s", async (url, text) => {
+      stubApi([{ ...ENTRIES_OK, body: EMPTY_PAGE }]);
+
+      await renderRoute(url);
+
+      expect(await screen.findByText(text)).toBeInTheDocument();
+    });
+
+    it.each([
+      ["/catalogue?q=zzz", 'No catalogue entries match "zzz".'],
+      [
+        "/catalogue?q=zzz&filter.discipline=chem",
+        'No catalogue entries match "zzz" with these filters.',
+      ],
+    ])("while searching %s", async (url, text) => {
+      stubApi([{ ...SEARCH_OK, body: searchPage({ items: [] }) }]);
+
+      await renderRoute(url);
+
+      expect(await screen.findByText(text)).toBeInTheDocument();
+    });
   });
 
   describe("paging", () => {

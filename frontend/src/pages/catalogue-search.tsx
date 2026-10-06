@@ -115,6 +115,25 @@ function facetControls(
   return { toggleGroups, dropdowns };
 }
 
+function emptyStateText(
+  mode: "browse" | "search",
+  q: string,
+  hasFilters: boolean,
+  hasCursor: boolean,
+): string {
+  if (mode === "search") {
+    return hasFilters
+      ? `No catalogue entries match "${q}" with these filters.`
+      : `No catalogue entries match "${q}".`;
+  }
+  if (hasFilters) {
+    return "No catalogue entries match these filters.";
+  }
+  return hasCursor
+    ? "No more catalogue entries."
+    : "The catalogue has no published entries yet.";
+}
+
 function FindingIndicator({ open }: { open: boolean }) {
   if (!open) {
     return <span className="text-[var(--color-text-muted)]">None</span>;
@@ -152,12 +171,24 @@ export function CatalogueSearchPage() {
     keepPreviousPage: true,
   });
   const active = mode === "browse" ? listQuery : searchQuery;
-  const items: Row[] = active.data?.items ?? [];
-  const nextCursor = active.data?.next_cursor ?? null;
-  const facets = useMemo(
-    () => (mode === "search" ? offeredFacets(searchQuery.data?.facets ?? []) : []),
-    [mode, searchQuery.data],
-  );
+
+  // Placeholder data is the previous page, kept so a focused paging control
+  // or facet pill stays mounted while the next page loads. It is only that
+  // when it answers the same mode and query; otherwise it is another
+  // search's results, and is neither shown nor announced.
+  const population = `${mode}:${search.q}`;
+  const [freshPopulation, setFreshPopulation] = useState<string | null>(null);
+  if (active.data && !active.isPlaceholderData && freshPopulation !== population) {
+    setFreshPopulation(population);
+  }
+  const data =
+    active.isPlaceholderData && freshPopulation !== population ? undefined : active.data;
+  const searchData =
+    mode === "search" && data !== undefined ? searchQuery.data : undefined;
+
+  const items: Row[] = data?.items ?? [];
+  const nextCursor = data?.next_cursor ?? null;
+  const facets = useMemo(() => offeredFacets(searchData?.facets ?? []), [searchData]);
   const truncatedFacets = facets.filter((facet) => facet.truncated);
 
   // The draft mirrors `search.q`, so Back, Forward or a pasted link shows its
@@ -190,14 +221,14 @@ export function CatalogueSearchPage() {
 
   const labelsByFacet = useMemo(() => {
     const map = new Map<string, { label: string; values: Map<string, string> }>();
-    for (const facet of searchQuery.data?.facets ?? []) {
+    for (const facet of searchData?.facets ?? []) {
       map.set(facet.key, {
         label: facet.label,
         values: new Map(facet.buckets.map((bucket) => [bucket.value, bucket.label])),
       });
     }
     return map;
-  }, [searchQuery.data]);
+  }, [searchData]);
 
   // The chip key only has to be unique; removal maps it back through
   // `filterByChipKey`, not by parsing it.
@@ -206,7 +237,7 @@ export function CatalogueSearchPage() {
     const built: ActiveFilter[] = activeFilters.map(({ facetKey, value }) => {
       const key = JSON.stringify([facetKey, value]);
       byKey.set(key, { facetKey, value });
-      const known = mode === "search" ? labelsByFacet.get(facetKey) : undefined;
+      const known = labelsByFacet.get(facetKey);
       return {
         key,
         facetLabel: known?.label ?? facetKey,
@@ -214,7 +245,7 @@ export function CatalogueSearchPage() {
       };
     });
     return { chips: built, filterByChipKey: byKey };
-  }, [activeFilters, labelsByFacet, mode]);
+  }, [activeFilters, labelsByFacet]);
 
   function handleSearchSubmit(trimmed: string) {
     void navigate({ search: (prev) => ({ ...prev, q: trimmed, after: undefined }) });
@@ -256,21 +287,22 @@ export function CatalogueSearchPage() {
     void navigate({ search: (prev) => ({ ...prev, after: previousAfter }) });
   }
 
-  const staleData = active.isError && active.data !== undefined;
-  const hardFailure = active.isError && active.data === undefined;
+  const staleData = active.isError && data !== undefined;
+  const hardFailure = active.isError && data === undefined;
   const hardFailureMessage = refusalDetail(active.error) ?? LOAD_FAILURE;
 
-  // `active.data` keeps its identity across a refetch that returns the same
-  // page (structural sharing), so this speaks once per new result set.
+  // `data` keeps its identity across a refetch that returns the same page
+  // (structural sharing), so this speaks once per new result set. A
+  // placeholder is never announced: it is the page being replaced.
   const resultMessage =
-    active.data && !active.isError
-      ? resultAnnouncement(active.data.items.length, active.data.next_cursor !== null)
+    data && !active.isError && !active.isPlaceholderData
+      ? resultAnnouncement(data.items.length, data.next_cursor !== null)
       : null;
   useEffect(() => {
     if (resultMessage !== null) {
       announce(resultMessage);
     }
-  }, [active.data, resultMessage, announce]);
+  }, [data, resultMessage, announce]);
 
   useEffect(() => {
     if (staleData) {
@@ -289,9 +321,12 @@ export function CatalogueSearchPage() {
   const emptyState = (
     <div className="flex flex-col items-start gap-2">
       <p className="m-0">
-        {mode === "search"
-          ? `No catalogue entries match "${search.q}".`
-          : "No catalogue entries match these filters."}
+        {emptyStateText(
+          mode,
+          search.q,
+          activeFilters.length > 0,
+          search.after !== undefined,
+        )}
       </p>
       {activeFilters.length > 0 ? (
         <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
@@ -322,7 +357,7 @@ export function CatalogueSearchPage() {
           </p>
         ) : null}
 
-        {/* Outside the `active.data` gate: removing a filter is the way out
+        {/* Outside the `data` gate: removing a filter is the way out
             of a refused request, so it stays reachable on failure. */}
         <FilterBar
           aria-label="Filters"
@@ -350,7 +385,7 @@ export function CatalogueSearchPage() {
 
         {staleData && <p className="m-0">{STALE_DATA_WARNING}</p>}
 
-        {active.data && (
+        {data && (
           <>
             {/* Scrolls on its own at narrow widths rather than widening the
                 page. Its row links are what a keyboard user scrolls it by. */}
