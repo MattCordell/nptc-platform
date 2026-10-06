@@ -233,6 +233,26 @@ export function validateAdminCatalogueSearch(
   return validated;
 }
 
+// --- property registry list ------------------------------------------------
+
+/**
+ * Search state for `/admin/properties/`: `deprecated=show` reveals deprecated
+ * properties, and its absence hides them. A string flag rather than a boolean,
+ * so the URL round trip through `stringifySearch` and `parseSearch` stays
+ * lossless.
+ */
+export type PropertyListSearch = {
+  deprecated?: "show";
+};
+
+export type PropertyListSearchInput = Partial<PropertyListSearch> & SearchSchemaInput;
+
+export function validatePropertyListSearch(
+  search: Record<string, unknown>,
+): PropertyListSearch {
+  return asString(search.deprecated) === "show" ? { deprecated: "show" } : {};
+}
+
 /**
  * The `filter.*` entries of a validated catalogue list search, keyed by
  * facet alone (the `filter.` prefix stripped) - the shape the filter panel

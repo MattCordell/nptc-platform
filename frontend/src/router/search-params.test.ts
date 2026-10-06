@@ -9,10 +9,25 @@ import {
   validateAdminCatalogueSearch,
   validateCatalogueSearch,
   validateLookupSearch,
+  validatePropertyListSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
   type AdminCatalogueSearch,
 } from "./search-params.ts";
+
+describe("validatePropertyListSearch", () => {
+  it("hides deprecated properties by default", () => {
+    expect(validatePropertyListSearch({})).toEqual({});
+  });
+
+  it("keeps only the exact value that reveals them", () => {
+    expect(validatePropertyListSearch({ deprecated: "show" })).toEqual({
+      deprecated: "show",
+    });
+    expect(validatePropertyListSearch({ deprecated: "true" })).toEqual({});
+    expect(validatePropertyListSearch({ deprecated: ["show", "show"] })).toEqual({});
+  });
+});
 
 describe("validateCatalogueSearch", () => {
   it("defaults to an empty query with no cursor or filters", () => {
