@@ -21,6 +21,8 @@ to compose: a form field, a button, a modal dialog, a data table, and a live reg
 async announcements. Issue #210 completes the set the entry-edit screens need — a select,
 the choice controls, a form wrapper and an error summary. The layout primitives (a page
 container, a page header and a card) round out the set; see "Layout primitives" below.
+A search input, a filter bar and keyset pagination follow; see "Search and paging
+primitives" below.
 
 Three properties below are not yet confirmed in a real browser or with a screen reader:
 colour contrast (the token pairs are checked arithmetically, but not as rendered), a
@@ -230,6 +232,35 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
   replaces the page the user asked for.
 - **`back-to-landing-link.tsx` — `BackToLandingLink`.** The "Back to the landing page" link,
   styled as a button, so the wording is the same on every such screen.
+
+## Search and paging primitives
+
+Issue #438. The search box, filter controls and keyset paging that listings share, so the
+public catalogue browser, the audit log and the admin list compose one version of each.
+Same rules as above: a co-located test with an `expectNoA11yViolations` call and a keyboard
+test, design tokens only (`expectTokenClassesOnly`), and every target at least 24px
+(`min-h-10` on inputs and buttons, `min-h-8` on pills). None holds state; the caller owns
+the value, the selection and the cursor, usually in the URL.
+
+- **`search-input.tsx` — `SearchInput`.** A labelled search field and a submit button in
+  a `role="search"` form, so it is a landmark. Controlled: it takes `value` and
+  `onValueChange`, and calls `onSubmit` with the trimmed value from the button or Enter.
+  The input is `type="search"`, so its role is `searchbox`.
+- **`filter-bar.tsx` — `FilterBar`.** Pill toggles (`aria-pressed`, 20px radius) in named
+  groups, labelled dropdowns, and one removable chip per active filter with a "Clear all
+  filters" button. Each option takes an optional result count (FR-16), shown in the name
+  as "Label (n)". A pressed toggle adds a check mark and a heavier weight, so the state
+  never rests on colour alone. Each part renders only when given something, so a screen
+  with its own facet panel can use the chip row alone, as the admin list does.
+- **`pagination.tsx` — `Pagination`.** Previous and Next for keyset paging: no page
+  numbers and no total, because the API returns neither (ADR-0024). It takes `hasNext`,
+  `onNext` and an optional `onPrevious`, and names no URL parameter, so a screen paging by
+  `after` and one paging by `before` both use it. When `hasNext` is false it says "No more
+  results" in text and the Next button points to that text with `aria-describedby`. An
+  unavailable button uses `aria-disabled`, so it stays focusable, and the component
+  ignores its clicks. The server returns no previous cursor, so the caller decides how to
+  go back; the admin list keeps a stack of the cursors it has visited. Do not render
+  `Pagination` for an empty result set.
 
 ## Known limits of the automated check
 
