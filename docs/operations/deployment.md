@@ -162,7 +162,10 @@ docker compose -f deploy/compose.yml down -v
   Vite writes these values into the built files, so a restart is not enough.
 - **After changing `NPTC_FRONTEND_BASE_URL`**, recreate `keycloak` as well
   (`up -d --force-recreate keycloak`). The realm import reads it only at start. The privacy
-  and terms links on the registration page use the same address.
+  and terms links on the registration page use the same address, and so does the realm's
+  `frame-ancestors` policy. Recreate `keycloak` after you pull a change to the realm file
+  too, for the same reason. Recreating it discards registered users, because the stack
+  keeps no Keycloak volume.
 - **After editing the login theme** in `deploy/keycloak/themes/nptc/`, reload the browser
   page. `start-dev` does not cache themes, so the next page load shows the change and no
   restart is needed. A change to `loginTheme` in the realm file is different: recreate
