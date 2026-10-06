@@ -2,6 +2,7 @@
 
 - [Signing in, registering, and signing out](signing-in.md) — issue #41.
 - [Using the landing page](using-the-landing-page.md) — issue #428.
+- [Searching the catalogue](searching-the-catalogue.md) — issue #439.
 - [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
   the screens shipped so far.
 - [Finding and filtering entries for editing](finding-entries.md) — issue #267.
@@ -11,8 +12,8 @@
 - [Binding a SNOMED CT code](binding-a-code.md) — issue #150.
 - [Editing registry properties](editing-registry-properties.md) — issue #151.
 - [Bulk reclassify](bulk-reclassify.md) — issue #63.
-- [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, API-only
-  until the public entry pages land.
+- [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, shown on
+  the catalogue search page; the public entry page is still to come.
 - [Searching the audit log](searching-the-audit-log.md) — issue #286, API-only until the
   audit log screen lands.
 - [Reading the preferred-term length distribution report](reading-the-length-distribution-report.md)
