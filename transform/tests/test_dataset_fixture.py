@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from nptc_transform.bands import FindingCode, blocks_import
 from nptc_transform.dataset import build_dataset
 from nptc_transform.pipeline import Mode, run_transform
 from nptc_transform.workbook import read_workbook
@@ -20,23 +21,28 @@ FIXTURE = Path(__file__).parent / "fixtures" / "spia-requesting-sample.xlsx"
 
 #: Recorded once, from a real ``--report-only`` run against the fixture, per
 #: the plan's Step 0: "the first thing I do after the file lands is run
-#: --report-only against it and record the real band counts". All findings
-#: are auto-correctable or informational - no blocking finding - so
-#: --emit-dataset succeeds end to end.
+#: --report-only against it and record the real band counts". The one blocking
+#: finding is a real FR-05 collision the excerpt carries (issue #455), so
+#: --emit-dataset stops on it. The tests below that need a dataset build one
+#: directly with ``build_dataset``, which the CLI would not reach.
 EXPECTED_ENTRY_COUNT = 50
 EXPECTED_AUTO_CORRECTABLE = 154
 EXPECTED_REQUIRES_HUMAN_DECISION = 0
-EXPECTED_DATA_DEFECT = 0
+EXPECTED_DATA_DEFECT = 1
 EXPECTED_INFORMATIONAL = 13
 
 
+@pytest.mark.req("FR-05")
 @pytest.mark.req("FR-70")
-@pytest.mark.req("FR-76")
-def test_the_real_excerpt_has_no_blocking_finding() -> None:
+def test_the_real_excerpt_is_blocked_only_by_its_designation_collision() -> None:
     result = run_transform(FIXTURE, mode=Mode.EMIT_DATASET)
 
     counts = result.band_counts
-    assert not result.has_blocking_findings, result.findings
+    blocking = [f for f in result.findings if blocks_import(f.band)]
+    assert [f.code for f in blocking] == [FindingCode.DESIGNATION_COLLISION], result.findings
+    assert "'Adrenal Ab'" in blocking[0].message
+    assert "row 46" in blocking[0].message
+    assert "row 10" in blocking[0].message
     assert counts["auto-correctable"] == EXPECTED_AUTO_CORRECTABLE
     assert counts["requires-human-decision"] == EXPECTED_REQUIRES_HUMAN_DECISION
     assert counts["data-defect"] == EXPECTED_DATA_DEFECT

@@ -4,8 +4,8 @@
 file (ADR-0009). Call it only once the caller has confirmed ``result`` carries no
 blocking finding (``RunResult.has_blocking_findings``). A caller that doesn't is
 at fault; this module does not re-check, in the "true by construction" style
-``Finding`` uses. FR-05 takes the same stance: the seeded baseline cannot be
-created until RCPA-QAP resolves designation collisions editorially.
+``Finding`` uses. That includes FR-05: ``collision_check.py`` blocks a dataset
+whose designations the loader would refuse, until RCPA-QAP resolves them.
 
 One file, ``import-dataset.json``, goes into the same ``--report-dir`` as
 ``report.json``/``report.md``, so the CLI's "no file outside --report-dir is

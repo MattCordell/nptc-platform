@@ -147,6 +147,7 @@ corrected, and each defect is reported under one of two codes chosen by
 | `SPECIMEN_VALUE_UNMAPPED` | - | A `Specimen` cell value matches no entry in `specimen_table.SPECIMEN_TABLE` by exact surface form (FR-88). It is seeded verbatim as a provisional property value with no specimen code - informational, never blocking; the table is an allowlist, not a finding generator. |
 | `MISSING_PREFERRED_TERM` | - | A row resolves a code binding but carries no `RCPA Preferred term` value (P0-9/#31). Row-level, not cell-level - the defect is the absence of a cell, so nothing can be recovered or coerced; the row would otherwise be silently omitted from the seeded baseline. |
 | `MISSING_CODE_BINDING` | - | A row carries a `RCPA Preferred term` value but resolves no code binding at all (FR-100/#132). Mirror of `MISSING_PREFERRED_TERM` for the opposite column - reported against the preferred-term cell's reference. Unlike that code, the row is never seeded once flagged: a code-less row is judged more likely to be layout (a heading, a continuation line) than a genuine entry, so `build_dataset` omits it entirely rather than seeding an empty `code_bindings` list. |
+| `DESIGNATION_COLLISION` | - | A preferred term or synonym that the seed loader would refuse under FR-05: a preferred term equal to an earlier entry's preferred term or synonym, or a synonym equal to an earlier entry's preferred term, compared with `nptc_shared.similarity.collision_key`. Reported against the later entry's cell and naming the earlier entries by sheet and row. Only rows the loader would seed are compared. A synonym shared by two entries is a warning in the backend and is not reported. |
 | `UNRECOGNISED_LAYOUT` | - | A sheet's header row doesn't resolve the code column - whether it resolves some other SPIA columns (genuine header drift) or none at all (for example, a banner row inserted above the real FR-63 headers). Reported once per sheet, naming every header actually found and how many data rows went unscanned as a result, rather than silently skipping A.2/A.3 detection on a drifted workbook. |
 | `SHEET_NOT_SPIA_DATA` | - | A sheet named in FR-63's own documented non-SPIA-data list (currently just `Rev History`) resolves no SPIA column - it isn't SPIA data to begin with. Gated on the sheet's *name*, not merely on resolving zero columns: a genuine data sheet whose header row has drifted completely produces the identical "no column resolved" signal and must still be `UNRECOGNISED_LAYOUT`, not this. |
 
@@ -177,7 +178,7 @@ and this one together are the complete classification.
 |---|---|---|---|
 | `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT`, `EMPTY_SYNONYM_REMOVED`, `SPECIMEN_UNCONSTRAINED_RESOLVED`, `COMPOUND_VALUE_SPLIT` | The defect has one deterministic repair. Applied when `--emit-dataset` writes `import-dataset.json` (P0-9); the report itemises each one either way. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
-| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION`, `MISSING_PREFERRED_TERM`, `MISSING_CODE_BINDING` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION`, `MISSING_PREFERRED_TERM`, `MISSING_CODE_BINDING`, `DESIGNATION_COLLISION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
 | `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING`, `TERM_SPECIMEN_NOT_MODELLED`, `TERM_SPECIMEN_DIFFERS`, `TERM_TIMING_NOT_MODELLED`, `SPECIMEN_VALUE_UNMAPPED` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
@@ -292,6 +293,7 @@ action:
 | `LABEL_MATCHES_NO_DESIGNATION` | data-defect | RCPA-QAP must correct the published label at source; it matches no designation of the bound code, or of any other code bound elsewhere in this workbook (FR-97). The import is blocked until it is corrected. |
 | `MISSING_PREFERRED_TERM` | data-defect | RCPA-QAP must supply the 'RCPA Preferred term' value for this row at source; no entry can be seeded without one. The import is blocked until it is corrected. |
 | `MISSING_CODE_BINDING` | data-defect | RCPA-QAP must supply a 'Terminology binding (SNOMED CT-AU)' value for this row at source, or confirm the row is layout (for example a heading) and remove it. No entry is seeded for this row until it is corrected. |
+| `DESIGNATION_COLLISION` | data-defect | RCPA-QAP must decide which entry changes: reword the term on one of the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). The import is blocked until it is resolved. |
 | `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
 | `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
 | `LABEL_DESIGNATION_DRIFT` | informational | No action required. Server-sourced FSN seeding is deferred (ADR-0010); the published label is seeded as-is, and the drift is recorded for editorial review only if unexpected (FR-97). The import is not blocked. |
@@ -520,6 +522,31 @@ preferred term differs from the column value, for every row the four-outcome
 check found benign - never for a row already reported as one of the two
 defects, so a single cell is never on both lists at once.
 
+### Interpreting a designation collision (FR-05)
+
+The seed loader refuses an entry whose term clashes with one it has already written
+(`nptc.catalogue.collisions`). The transform runs the same comparison on every run, with or
+without `--check-terminology`, so you meet the clash before `--emit-dataset` writes a dataset.
+Two terms clash when `nptc_shared.similarity.collision_key` gives them the same key. The key
+ignores case and punctuation but keeps token boundaries, so `17-OHP` and `17 OHP` clash and
+`AntiDNA` and `Anti-DNA` do not.
+
+| Pair | Reported |
+|---|---|
+| A preferred term equals an earlier entry's preferred term | Yes, on the later entry's preferred term cell |
+| A preferred term equals an earlier entry's synonym | Yes, on the later entry's preferred term cell |
+| A synonym equals an earlier entry's preferred term | Yes, on the later entry's synonyms cell |
+| A synonym equals another entry's synonym | No. The backend treats it as a warning |
+| A term equals another term in the same entry | No |
+
+"Earlier" follows the loader's order: sheet name, then row. The finding sits on the later
+row and names every earlier row that holds the same term. A third entry with the same term
+gets its own finding that names the first two. A finding that names an entry already
+reported may clear when that entry's term changes, so re-run the transform after each fix.
+
+Only rows the loader would seed are compared. A row with no code binding is reported as
+`MISSING_CODE_BINDING` and never collides. RCPA-QAP decides which term changes (PRD 6.3). The
+transform never picks one.
 ### Interpreting a misspelling finding (FR-79)
 
 The pass reads only the `RCPA Preferred term` and `RCPA Synonyms` columns, tokenises each
@@ -648,7 +675,7 @@ produces, but not the guarantees above:
   (see [`seed-baseline.md`](seed-baseline.md)), which records the baseline as a seed record
   until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
   `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
-  workbook has eight such entries and one FR-05 collision, so it does not load as emitted.
+  workbook has eight such entries. It also has one FR-05 collision, which the transform now reports as `DESIGNATION_COLLISION` and which blocks `--emit-dataset`.
   [`load-baseline.md`](load-baseline.md) walks through loading the real workbook.
   The development stack seeds it through `scripts/dev-seed.ps1`, which drops those nine
   entries (see "Load sample data for evaluation" in
