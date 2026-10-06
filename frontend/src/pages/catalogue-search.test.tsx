@@ -430,6 +430,22 @@ describe("CatalogueSearchPage", () => {
       expect(validatedSearch(router)).toEqual({ q: "" });
     });
 
+    // The controls must stay mounted while the next page loads, or focus
+    // falls to the document body and a keyboard user starts again at the top.
+    it("keeps focus on the paging control across a page change", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      await renderRoute("/catalogue");
+      await screen.findByRole("link", { name: "Ferritin" });
+
+      screen.getByRole("button", { name: "Next page" }).focus();
+      await user.keyboard("{Enter}");
+      await screen.findByRole("link", { name: "Full blood count" });
+
+      expect(screen.getByRole("button", { name: "Next page" })).toHaveFocus();
+    });
+
     it("is operable by keyboard alone", async () => {
       stubTwoPages();
       const user = userEvent.setup();

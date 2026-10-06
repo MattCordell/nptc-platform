@@ -141,6 +141,7 @@ export function CatalogueSearchPage() {
     after: search.after,
     filters,
     enabled: mode === "browse",
+    keepPreviousPage: true,
   });
   const searchQuery = useCatalogueSearch({
     q: search.q,
@@ -148,6 +149,7 @@ export function CatalogueSearchPage() {
     after: search.after,
     filters,
     enabled: mode === "search",
+    keepPreviousPage: true,
   });
   const active = mode === "browse" ? listQuery : searchQuery;
   const items: Row[] = active.data?.items ?? [];
@@ -338,7 +340,9 @@ export function CatalogueSearchPage() {
           </p>
         ))}
 
-        {active.isPending && <p className="m-0">Loading catalogue entries…</p>}
+        {(active.isPending || active.isPlaceholderData) && (
+          <p className="m-0">Loading catalogue entries…</p>
+        )}
 
         {hardFailure && (
           <p className="m-0 text-[var(--color-danger)]">{hardFailureMessage}</p>
