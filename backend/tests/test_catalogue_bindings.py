@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
-from nptc.catalogue import bindings
+from nptc.catalogue import bindings, queries
 from nptc.catalogue.bindings import (
     CodeBindingAlreadyActiveError,
     CodeBindingAlreadyRetiredError,
@@ -117,6 +117,44 @@ def test_retire_binding_emits_a_retired_audit_event(app_session: Session) -> Non
         select(AuditEvent).order_by(AuditEvent.sequence.desc()).limit(1)
     ).scalar_one()
     assert event.action == "code_binding.retired"
+
+
+@pytest.mark.req("FR-08")
+@pytest.mark.integration
+def test_load_bindings_orders_repeated_retired_codes_deterministically(
+    app_session: Session,
+) -> None:
+    """Both partial unique indexes cover only `status = 'active'`, so a code
+    bound, retired and re-bound leaves retired rows sharing `(status, code)`.
+
+    The active code sorts after the retired one, so a query with no `status`
+    in its `ORDER BY` would put the active row last and fail. Four retired
+    rows make an unordered result match ascending `id` by chance 1 time in
+    24, not 1 in 2. The oracle is a Python-side sort: `id` is a random UUID,
+    and Postgres and `UUID.__lt__` both compare it bytewise."""
+    entry = _new_entry(app_session)
+    retired_ids: list[uuid.UUID] = []
+    for cycle in range(4):
+        retired = _new_binding(app_session, entry, reason=f"Binding cycle {cycle}")
+        app_session.flush()
+        retire_binding(
+            app_session,
+            AuditContext.system(),
+            binding=retired,
+            reason=f"Retiring binding cycle {cycle}",
+        )
+        app_session.flush()
+        retired_ids.append(retired.id)
+    active = _new_binding(app_session, entry, code="71388002", reason="Binding the later code")
+    app_session.flush()
+
+    rows = queries.load_bindings(app_session, (entry.id,))
+
+    assert [row.status for row in rows] == ["active"] + ["retired"] * 4
+    assert rows[0].id == active.id
+    returned_retired_ids = [row.id for row in rows[1:]]
+    assert returned_retired_ids == sorted(returned_retired_ids)
+    assert set(returned_retired_ids) == set(retired_ids)
 
 
 @pytest.mark.req("FR-08")
