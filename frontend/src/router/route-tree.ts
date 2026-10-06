@@ -3,6 +3,8 @@ import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react
 import { HomePage } from "../pages/home.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
+import { AdminPropertyDetailPage } from "../pages/admin-property-detail.tsx";
+import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { CatalogueSearchPage } from "../pages/catalogue-search.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
@@ -16,6 +18,7 @@ import {
   validateAdminCatalogueSearch,
   validateCatalogueSearch,
   validateLookupSearch,
+  validatePropertyListSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
   type AdminCatalogueSearch,
@@ -24,6 +27,8 @@ import {
   type CatalogueSearchInput,
   type LookupSearch,
   type LookupSearchInput,
+  type PropertyListSearch,
+  type PropertyListSearchInput,
   type ReleaseCompareSearch,
   type ReleaseCompareSearchInput,
   type SignInSearch,
@@ -284,10 +289,16 @@ const accountRoute = createRoute({
 // Deliberately no `/admin/submissions`: the reviewer queue is `/submissions`
 // above, and what a given user sees there is decided server-side (NFR-20).
 
-// The one built admin screen, offered from every admin stub as a way on.
+// The built admin screen offered from every admin stub as a way on. The
+// property registry is built too, but only the admin home links to it.
 const ADMIN_NEAREST = {
   to: "/admin/catalogue",
   label: "Catalogue administration",
+} as const;
+
+const ADMIN_PROPERTY_REGISTRY = {
+  to: "/admin/properties",
+  label: "Property registry",
 } as const;
 
 const adminRoute = createRoute({
@@ -301,7 +312,7 @@ const adminHomeRoute = createRoute({
   path: "/",
   component: createPlaceholderPage({
     title: "Administration",
-    nearest: ADMIN_NEAREST,
+    nearest: [ADMIN_NEAREST, ADMIN_PROPERTY_REGISTRY],
   }),
   head: titled("Administration"),
 });
@@ -355,10 +366,10 @@ const adminPropertiesRoute = createRoute({
 const adminPropertyListRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "/",
-  component: createPlaceholderPage({
-    title: "Property registry",
-    nearest: ADMIN_NEAREST,
-  }),
+  validateSearch: validatePropertyListSearch as (
+    search: PropertyListSearchInput,
+  ) => PropertyListSearch,
+  component: AdminPropertyListPage,
   head: titled("Property registry"),
 });
 
@@ -376,11 +387,7 @@ const adminPropertyNewRoute = createRoute({
 const adminPropertyDetailRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "$propertyKey",
-  component: createPlaceholderPage({
-    title: "Property",
-    issue: 151,
-    nearest: ADMIN_NEAREST,
-  }),
+  component: AdminPropertyDetailPage,
   head: titled("Property"),
 });
 

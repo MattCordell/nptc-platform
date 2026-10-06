@@ -60,18 +60,31 @@ describe("placeholder screens", () => {
   });
 
   it("offers the built catalogue administration screen from an admin stub", async () => {
-    await renderRoute("/admin/properties", { auth: { status: "signed-in" } });
+    await renderRoute("/admin/users", { auth: { status: "signed-in" } });
 
-    await screen.findByRole("heading", { level: 1, name: "Property registry" });
+    await screen.findByRole("heading", { level: 1, name: "User administration" });
     expect(
       main().getByRole("link", { name: "Catalogue administration" }),
     ).toHaveAttribute("href", "/admin/catalogue");
   });
 
+  it("offers both built admin screens from the admin home", async () => {
+    await renderRoute("/admin", { auth: { status: "signed-in" } });
+
+    await screen.findByRole("heading", { level: 1, name: "Administration" });
+    expect(
+      main().getByRole("link", { name: "Catalogue administration" }),
+    ).toHaveAttribute("href", "/admin/catalogue");
+    expect(main().getByRole("link", { name: "Property registry" })).toHaveAttribute(
+      "href",
+      "/admin/properties",
+    );
+  });
+
   it("reaches the landing link, then the nearest link, in reading order from the keyboard", async () => {
     const user = userEvent.setup();
-    await renderRoute("/admin/properties", { auth: { status: "signed-in" } });
-    await screen.findByRole("heading", { level: 1, name: "Property registry" });
+    await renderRoute("/admin/users", { auth: { status: "signed-in" } });
+    await screen.findByRole("heading", { level: 1, name: "User administration" });
 
     const landing = main().getByRole("link", { name: "Back to the landing page" });
     const nearest = main().getByRole("link", { name: "Catalogue administration" });
