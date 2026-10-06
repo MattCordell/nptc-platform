@@ -1,6 +1,6 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import {
@@ -17,13 +17,13 @@ import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary
 import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
 import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
-import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
-import { Field } from "../components/field.tsx";
-import { INPUT_CLASSES } from "../components/input-classes.ts";
+import { FilterBar } from "../components/filter-bar.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
+import { Pagination } from "../components/pagination.tsx";
+import { SearchInput } from "../components/search-input.tsx";
 import { Select } from "../components/select.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
@@ -53,8 +53,10 @@ import type { AdminListingSort } from "../router/search-params.ts";
  * **No page number, a forward-only cursor** (ADR-0024): both admin
  * collection routes are keyset-paginated, so there is no "page 3" to
  * restore, only "the cursor from the last page seen". "Next page" pushes a
- * new `after` into the URL; there is no "previous page" control - the
- * browser Back button already restores the prior `after` from history.
+ * new `after` into the URL. The server returns no previous cursor, so
+ * "Previous page" is driven by a stack of the cursors this screen has
+ * visited; it is empty after a reload or a pasted link, where the browser
+ * Back button is the way back.
  *
  * **Selection persists across a page change but not across a new
  * population** (issue #267 plan, open question 1): paging forward keeps
@@ -118,9 +120,6 @@ function sortLabel(sort: AdminListingSort): string {
  * says what is true without adding a fifth real sort value anywhere.
  */
 const SEARCH_MODE_SORT_VALUE = "relevance";
-
-const CHIP_CLASSES =
-  "cursor-pointer rounded-[var(--radius-pill)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-sm text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]";
 
 /**
  * A facet's display name for the active-filter chip row (issue #289). `status`
@@ -305,6 +304,27 @@ export function AdminCatalogueListPage() {
     return map;
   }, [pagedValueLabelByFacetKey, unresolvedFacetKeys, resolveQueries]);
 
+  // The chip key only has to be unique; `handleFilterChipRemove` maps it back
+  // to the filter through `activeFilterByChipKey`, not by parsing it.
+  const { activeFilterChips, activeFilterByChipKey } = useMemo(() => {
+    const byKey = new Map<string, { facetKey: string; value: string }>();
+    const chips = activeFilters.map(({ facetKey, value }) => {
+      const key = JSON.stringify([facetKey, value]);
+      byKey.set(key, { facetKey, value });
+      return {
+        key,
+        facetLabel: resolveFacetLabel(facetKey, definitionByKey),
+        valueLabel: resolveValueLabel(
+          facetKey,
+          value,
+          definitionByKey,
+          valueLabelByFacetKey,
+        ),
+      };
+    });
+    return { activeFilterChips: chips, activeFilterByChipKey: byKey };
+  }, [activeFilters, definitionByKey, valueLabelByFacetKey]);
+
   const listQuery = useAdminEntriesList({
     limit: 50,
     after: search.after,
@@ -406,22 +426,48 @@ export function AdminCatalogueListPage() {
     setQueryDraft(search.q);
   }
 
-  function handleSearchSubmit(event: FormEvent) {
-    event.preventDefault();
-    // Trimmed before it ever reaches the URL (PR #285 review finding 5): a
-    // whitespace-only value used to land in `q` untrimmed while `mode` (and,
-    // below, `useAdminSearch`'s own guard) is computed with `.trim()` -
-    // agreeing that this is browse, while a stray `q=%20` sat in the address
-    // bar claiming otherwise.
-    const trimmed = queryDraft.trim();
+  // The cursors of the pages already visited, so "Previous page" can return
+  // to one. `target` is the `after` a Next or Previous click is about to
+  // navigate to: when `search.after` changes, the stack survives only if it
+  // changed to that target. Any other change (a new query, filter or sort
+  // drops `after`; Back or Forward moves it) makes the stack describe a
+  // route this screen no longer holds, so it is emptied.
+  const [paging, setPaging] = useState<{
+    stack: (string | undefined)[];
+    seen: string | undefined;
+    target: { after: string | undefined } | null;
+  }>({ stack: [], seen: search.after, target: null });
+  if (search.after !== paging.seen) {
+    setPaging({
+      stack:
+        paging.target !== null && paging.target.after === search.after
+          ? paging.stack
+          : [],
+      seen: search.after,
+      target: null,
+    });
+  }
+
+  // `SearchInput` hands over the trimmed value: a whitespace-only value must
+  // not land in `q` untrimmed while `mode` (and `useAdminSearch`'s own guard)
+  // is computed with `.trim()`, or a stray `q=%20` would sit in the address
+  // bar claiming a search.
+  function handleSearchSubmit(trimmed: string) {
     void navigate({ search: (prev) => ({ ...prev, q: trimmed, after: undefined }) });
   }
 
-  // Also the chip list's own "remove" handler below - toggling off an
+  // Also the chip row's remove handler below - toggling off an
   // already-selected value is exactly "remove it" (`toggleFilterValue`
   // add/removes by whether `value` is already present).
   function handleFilterToggle(facetKey: string, value: string) {
     void navigate({ search: (prev) => toggleFilterValue(prev, facetKey, value) });
+  }
+
+  function handleFilterChipRemove(chipKey: string) {
+    const filter = activeFilterByChipKey.get(chipKey);
+    if (filter) {
+      handleFilterToggle(filter.facetKey, filter.value);
+    }
   }
 
   // Issue #287. Only meaningful in browse mode - the `<select>` itself is
@@ -438,8 +484,23 @@ export function AdminCatalogueListPage() {
 
   function handleNextPage() {
     if (nextCursor !== null) {
+      setPaging({
+        ...paging,
+        stack: [...paging.stack, search.after],
+        target: { after: nextCursor },
+      });
       void navigate({ search: (prev) => ({ ...prev, after: nextCursor }) });
     }
+  }
+
+  function handlePreviousPage() {
+    const previousAfter = paging.stack[paging.stack.length - 1];
+    setPaging({
+      ...paging,
+      stack: paging.stack.slice(0, -1),
+      target: { after: previousAfter },
+    });
+    void navigate({ search: (prev) => ({ ...prev, after: previousAfter }) });
   }
 
   const staleData = active.isError && active.data !== undefined;
@@ -472,30 +533,14 @@ export function AdminCatalogueListPage() {
         <PageHeader id="catalogue-list-heading" title="Catalogue administration" />
 
         <div className="flex flex-wrap items-end gap-4">
-          <form
-            role="search"
+          <SearchInput
+            id="catalogue-list-query"
+            label="Search term or SNOMED CT code"
+            value={queryDraft}
+            onValueChange={setQueryDraft}
             onSubmit={handleSearchSubmit}
-            className="flex min-w-64 flex-1 items-end gap-3"
-          >
-            <Field
-              id="catalogue-list-query"
-              label="Search term or SNOMED CT code"
-              className="flex-1"
-            >
-              {(controlProps) => (
-                <input
-                  {...controlProps}
-                  type="text"
-                  value={queryDraft}
-                  onChange={(event) => setQueryDraft(event.target.value)}
-                  className={INPUT_CLASSES}
-                />
-              )}
-            </Field>
-            <Button type="submit" className="min-h-10">
-              Search
-            </Button>
-          </form>
+            className="min-w-64 flex-1"
+          />
 
           {/* Issue #287. Disabled in search mode: `GET /catalogue/admin/search`
               stays relevance-ranked, matching the backend's own scope for this
@@ -526,38 +571,11 @@ export function AdminCatalogueListPage() {
             itself is refused (e.g. a filter the server no longer recognises),
             since it is the only way out of that state (PR #285 review
             finding 1). */}
-        {activeFilters.length > 0 && (
-          <div
-            role="group"
-            aria-label="Active filters"
-            className="flex flex-wrap items-center gap-2"
-          >
-            {activeFilters.map(({ facetKey, value }) => {
-              const facetLabel = resolveFacetLabel(facetKey, definitionByKey);
-              const valueLabel = resolveValueLabel(
-                facetKey,
-                value,
-                definitionByKey,
-                valueLabelByFacetKey,
-              );
-              return (
-                <button
-                  key={`${facetKey}:${value}`}
-                  type="button"
-                  aria-label={`Remove filter ${facetLabel}: ${valueLabel}`}
-                  onClick={() => handleFilterToggle(facetKey, value)}
-                  className={CHIP_CLASSES}
-                >
-                  {facetLabel}: {valueLabel}
-                  <span aria-hidden="true"> ✕</span>
-                </button>
-              );
-            })}
-            <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
-              Clear all filters
-            </Button>
-          </div>
-        )}
+        <FilterBar
+          activeFilters={activeFilterChips}
+          onRemove={handleFilterChipRemove}
+          onClearAll={handleClearAllFilters}
+        />
 
         {active.isPending && <p>Loading catalogue entries…</p>}
 
@@ -668,15 +686,13 @@ export function AdminCatalogueListPage() {
               }}
             />
 
-            {nextCursor !== null && (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleNextPage}
+            {(items.length > 0 || paging.stack.length > 0) && (
+              <Pagination
+                hasNext={nextCursor !== null}
+                onNext={handleNextPage}
+                onPrevious={paging.stack.length > 0 ? handlePreviousPage : undefined}
                 className="self-start"
-              >
-                Next page
-              </Button>
+              />
             )}
           </>
         )}

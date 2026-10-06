@@ -10,9 +10,11 @@ row-hover/`align`, and the new `StatusBadge`) that consume this vocabulary — s
 app shell (issue #426: header with a user menu, and footer) and the landing page
 (issue #428: a flat serif hero at `text-4xl` with a search box, then three cards; it
 writes its own `h1` because `PageHeader` has one fixed title size) are implemented, as is
-the sign-in and registration treatment in the Keycloak login theme (issue #432). The filter
-bar is implemented on the admin catalogue list (issue #325), which also shows status as a
-`StatusBadge`, codes in monospace and dates in tabular figures; the admin edit screen uses
+the sign-in and registration treatment in the Keycloak login theme (issue #432). The search
+input, filter bar and pagination exist as shared components (issue #438). The admin
+catalogue list uses the search input, the filter bar's active-filter chips and pagination,
+with a checkbox facet panel in place of pill toggles; it also shows status as a
+`StatusBadge`, codes in monospace and dates in tabular figures. The admin edit screen uses
 the same page header, `Card` and status treatment. The detail-page two-column body and the
 audit trail described under "Layout patterns" below are not yet implemented on any screen.
 Read this as the destination, not a description of what exists today.
@@ -63,7 +65,13 @@ Sizes in use: headings 26–38px, body/UI 13–15px, helper/meta text 12–12.5p
 - **Page header**: serif title + secondary meta line (counts, version, status) left;
   primary action button right.
 - **Filter bar**: search input + pill-style toggle buttons (rounded, 20px radius) for
-  status filters, plus dropdown filters, all on one row.
+  status filters, plus dropdown filters, all on one row. Active filters follow as
+  removable chips with a "Clear all filters" button. A pressed pill carries a check mark
+  and a heavier weight as well as its fill.
+- **Search field**: a labelled input with a submit button, 40px tall, in a search
+  landmark. The label stays visible; the field never relies on a placeholder to name it.
+- **Pagination**: Previous and Next buttons, no page numbers and no total. On the last
+  page it states "No more results" in text.
 - **Dense data table**: uppercase 12px column headers (letter-spaced, muted), 1px row
   dividers, row hover fill `#F1EDE2`, code columns in mono left-aligned, numeric/date
   columns tabular-numeric right-aligned, status shown as pill (never colour alone).

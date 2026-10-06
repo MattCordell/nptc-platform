@@ -733,7 +733,7 @@ describe("AdminCatalogueListPage", () => {
       await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
       expect(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` })).toBeChecked();
 
-      const searchBox = screen.getByRole("textbox", {
+      const searchBox = screen.getByRole("searchbox", {
         name: "Search term or SNOMED CT code",
       });
       await user.type(searchBox, "glucose");
@@ -827,10 +827,165 @@ describe("AdminCatalogueListPage", () => {
       await screen.findByRole("link", { name: ACTIVE_KEY });
       expect(router.state.location.href).toContain(`after=${DRAFT_KEY}`);
       expect(screen.queryByRole("link", { name: DRAFT_KEY })).not.toBeInTheDocument();
-      // Keyset-paginated (ADR-0024): no "previous page" control exists.
+    });
+
+    it("(d) says there are no more results on the last page, and disables Previous on the first", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      expect(screen.queryByText("No more results")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      expect(screen.getByText("No more results")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Next page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
+    it("(e) returns to the first page from Previous, dropping the cursor from the URL", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      expect(router.state.location.href).not.toContain("after=");
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
+    it("(f) walks back through every page visited, in reverse order", async () => {
+      const THIRD_KEY = "NPTC-000500";
+      stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
+            const after = call.searchParams.get("after");
+            const pages: Record<string, unknown> = {
+              "": { ...PAGE_1, next_cursor: "cursor-1" },
+              "cursor-1": { ...PAGE_2, next_cursor: "cursor-2" },
+              "cursor-2": {
+                items: [entrySummary({ business_key: THIRD_KEY })],
+                next_cursor: null,
+              },
+            };
+            return {
+              method: "GET",
+              path: call.path,
+              status: 200,
+              body: pages[after ?? ""],
+            };
+          }
+          return null;
+        },
+      });
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: THIRD_KEY });
+
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+      expect(router.state.location.href).toContain("after=cursor-1");
+
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      expect(router.state.location.href).not.toContain("after=");
+    });
+
+    it("(g) empties the Previous history once a filter is toggled from a later page", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "false",
+      );
+
+      await user.click(screen.getByRole("checkbox", { name: "Active" }));
+      await waitFor(() =>
+        expect(router.state.location.href).toContain("filter.status=active"),
+      );
+
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
+    it("(h) disables Previous on a page opened straight from a link", async () => {
+      stubTwoPages();
+
+      await renderRoute(`${LIST_URL}?after=${DRAFT_KEY}`, SIGNED_IN);
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
+    it("(j) keeps Previous when a later page comes back empty", async () => {
+      stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
+            const body =
+              call.searchParams.get("after") === null
+                ? PAGE_1
+                : { items: [], next_cursor: null };
+            return { method: "GET", path: call.path, status: 200, body };
+          }
+          return null;
+        },
+      });
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+
       expect(
-        screen.queryByRole("button", { name: /previous page/i }),
-      ).not.toBeInTheDocument();
+        await screen.findByText("No catalogue entries match this filter."),
+      ).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+      expect(await screen.findByRole("link", { name: DRAFT_KEY })).toBeVisible();
+    });
+
+    it("(i) has no automated accessibility violations with the paging controls shown", async () => {
+      stubTwoPages();
+      const user = userEvent.setup();
+
+      const { container } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: ACTIVE_KEY });
+
+      await expectNoA11yViolations(container);
     });
 
     it("(b) keeps a row checked on an earlier page selected after paging forward", async () => {
