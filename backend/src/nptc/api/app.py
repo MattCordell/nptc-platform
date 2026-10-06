@@ -28,12 +28,16 @@ from nptc.api.routers import (
 from nptc.api.terms_gate import declare_terms_refusal, require_current_terms
 from nptc.settings import ApiSettings, AuthSettings
 from nptc.terms.documents import load_terms_document
+from nptc_shared.terminology import TerminologyClient
 
 __all__ = ["API_PREFIX", "create_app"]
 
 
 def create_app(
-    *, settings: ApiSettings | None = None, auth_settings: AuthSettings | None = None
+    *,
+    settings: ApiSettings | None = None,
+    auth_settings: AuthSettings | None = None,
+    terminology_client: TerminologyClient | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="NPTC Catalogue Maintenance Platform",
@@ -58,8 +62,12 @@ def create_app(
     # every request to a public read endpoint (FR-20). Built here, it is a
     # start-up failure, and the `lru_cache` then hands every request this
     # instance. `get_datatype_registry` cannot be called here: it is
-    # request-scoped (FR-10).
-    get_terminology_client()
+    # request-scoped (FR-10). An explicit `terminology_client` reads no
+    # environment, so it replaces the build.
+    if terminology_client is None:
+        get_terminology_client()
+    else:
+        app.dependency_overrides[get_terminology_client] = lambda: terminology_client
 
     # A current version with no file would refuse every contribution with nothing to show.
     load_terms_document(api_settings.terms_current_version)
