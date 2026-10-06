@@ -356,7 +356,7 @@ def load_designations_any_status(
     which Postgres could return in either order between calls. `status`
     comes first, as in `load_bindings`, so `active` precedes `retired` and
     matches `sortedTermRows` in `designations-panel.tsx`. `id` is the final
-    tie-break. `load_bindings` has the same gap and is not fixed here.
+    tie-break, as in `load_bindings`.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -420,13 +420,11 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
     binding and every retirement without a successor, and an inner join would
     drop those rows.
 
-    `(status, code)` order puts `active` before `retired` and is total among
-    an entry's *active* bindings, since at most one is active. It is **not**
-    total among retired ones: the same code can be bound, retired, bound
-    again and retired again (`getRowKey` in `designations-panel.tsx` names
-    the same case for `Binding`), so two retired rows can share a `code` and
-    this query does not order between them. `load_designations_any_status`
-    closes the same gap with an `id` tiebreaker; it is left open here.
+    `(status, code, id)` order puts `active` before `retired`. `(status,
+    code)` is total only among an entry's *active* bindings, since at most
+    one is active. The same code can be bound, retired, bound again and
+    retired again, so two retired rows can share a `code`; `id` is the
+    tiebreaker nothing else can supply.
     """
     ids = tuple(entry_ids)
     if not ids:
@@ -447,7 +445,7 @@ def load_bindings(session: Session, entry_ids: Iterable[uuid.UUID]) -> tuple[Bin
         )
         .outerjoin(successor, CodeBinding.replaced_by_binding_id == successor.id)
         .where(CodeBinding.entry_id.in_(ids))
-        .order_by(CodeBinding.status, CodeBinding.code)
+        .order_by(CodeBinding.status, CodeBinding.code, CodeBinding.id)
     ).all()
     return tuple(
         BindingRow(
