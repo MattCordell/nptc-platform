@@ -315,6 +315,19 @@ class EntrySummary(BaseModel):
     #: leak through it. An `acknowledged`, `resolved` or `superseded` finding does
     #: not set it.
     has_open_finding: bool
+    code: str | None = Field(
+        description=(
+            "The entry's active SNOMED CT code, as a string (FR-06), or `null` "
+            "when it has none. A retired code never appears here; the entry's "
+            "`bindings` carry the history."
+        )
+    )
+    disciplines: list[str] = Field(
+        description=(
+            "The display text of each of the entry's discipline values, in "
+            "recorded order. Empty when none is recorded."
+        )
+    )
     #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
     #: (ADR-0022), never an FSN - fixed, not configuration-driven, so this
     #: is the same constant on every row.
@@ -522,7 +535,7 @@ def entry_summary_fields(
     status: str,
     specimen_unconstrained: bool,
     updated_at: datetime,
-    has_open_finding: bool,
+    facts: queries.RowFacts,
 ) -> dict[str, Any]:
     return {
         "business_key": business_key,
@@ -531,12 +544,14 @@ def entry_summary_fields(
         "status": status,
         "specimen_unconstrained": specimen_unconstrained,
         "updated_at": updated_at,
-        "has_open_finding": has_open_finding,
+        "has_open_finding": facts.has_open_finding,
+        "code": facts.code,
+        "disciplines": list(facts.disciplines),
         "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }
 
 
-def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySummary:
+def summary_from_entry(entry: CatalogueEntry, facts: queries.RowFacts) -> EntrySummary:
     """The `EntrySummary` for one loaded `CatalogueEntry` row, used by
     `catalogue.py`'s `list_entries`."""
     return EntrySummary(
@@ -547,7 +562,7 @@ def summary_from_entry(entry: CatalogueEntry, has_open_finding: bool) -> EntrySu
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
-            has_open_finding,
+            facts,
         )
     )
 
@@ -559,7 +574,6 @@ def build_entry_detail(
     entry. `catalogue.py`'s business-key route and its two code-lookup routes share
     it, so one edit cannot update only some copies."""
     entry_ids = (entry.id,)
-    has_open_finding = queries.has_open_finding(session, entry.business_key)
     return EntryDetail(
         **entry_summary_fields(
             entry.business_key,
@@ -568,7 +582,7 @@ def build_entry_detail(
             entry.status,
             entry.specimen_unconstrained,
             entry.updated_at,
-            has_open_finding,
+            queries.row_facts_for(session, entry.business_key),
         ),
         row_version=entry.row_version,
         designations=[
