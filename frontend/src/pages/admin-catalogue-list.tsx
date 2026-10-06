@@ -304,10 +304,15 @@ export function AdminCatalogueListPage() {
     return map;
   }, [pagedValueLabelByFacetKey, unresolvedFacetKeys, resolveQueries]);
 
-  const activeFilterChips = useMemo(
-    () =>
-      activeFilters.map(({ facetKey, value }) => ({
-        key: JSON.stringify([facetKey, value]),
+  // The chip key only has to be unique; `handleFilterChipRemove` maps it back
+  // to the filter through `activeFilterByChipKey`, not by parsing it.
+  const { activeFilterChips, activeFilterByChipKey } = useMemo(() => {
+    const byKey = new Map<string, { facetKey: string; value: string }>();
+    const chips = activeFilters.map(({ facetKey, value }) => {
+      const key = JSON.stringify([facetKey, value]);
+      byKey.set(key, { facetKey, value });
+      return {
+        key,
         facetLabel: resolveFacetLabel(facetKey, definitionByKey),
         valueLabel: resolveValueLabel(
           facetKey,
@@ -315,9 +320,10 @@ export function AdminCatalogueListPage() {
           definitionByKey,
           valueLabelByFacetKey,
         ),
-      })),
-    [activeFilters, definitionByKey, valueLabelByFacetKey],
-  );
+      };
+    });
+    return { activeFilterChips: chips, activeFilterByChipKey: byKey };
+  }, [activeFilters, definitionByKey, valueLabelByFacetKey]);
 
   const listQuery = useAdminEntriesList({
     limit: 50,
@@ -458,8 +464,10 @@ export function AdminCatalogueListPage() {
   }
 
   function handleFilterChipRemove(chipKey: string) {
-    const [facetKey, value] = JSON.parse(chipKey) as [string, string];
-    handleFilterToggle(facetKey, value);
+    const filter = activeFilterByChipKey.get(chipKey);
+    if (filter) {
+      handleFilterToggle(filter.facetKey, filter.value);
+    }
   }
 
   // Issue #287. Only meaningful in browse mode - the `<select>` itself is
@@ -678,7 +686,7 @@ export function AdminCatalogueListPage() {
               }}
             />
 
-            {items.length > 0 && (
+            {(items.length > 0 || paging.stack.length > 0) && (
               <Pagination
                 hasNext={nextCursor !== null}
                 onNext={handleNextPage}

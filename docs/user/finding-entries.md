@@ -14,8 +14,9 @@ entries alone.
 The list has no "page 3" to jump to. **Next page** moves forward from where you are, and
 **Previous page** goes back through the pages you have just viewed. On the last page the
 list says "No more results" and **Next page** is unavailable. If you open the list from a
-link or reload it part-way through, **Previous page** is unavailable until you move forward
-again; use your browser's Back button to return from there.
+link, reload it part-way through, or use your browser's Back or Forward button,
+**Previous page** is unavailable until you move forward again; use your browser's Back
+button to return from there.
 
 ## Filtering
 

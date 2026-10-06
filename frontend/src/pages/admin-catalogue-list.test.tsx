@@ -950,6 +950,32 @@ describe("AdminCatalogueListPage", () => {
       );
     });
 
+    it("(j) keeps Previous when a later page comes back empty", async () => {
+      stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
+        vary: (call) => {
+          if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
+            const body =
+              call.searchParams.get("after") === null
+                ? PAGE_1
+                : { items: [], next_cursor: null };
+            return { method: "GET", path: call.path, status: 200, body };
+          }
+          return null;
+        },
+      });
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_KEY });
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+
+      expect(
+        await screen.findByText("No catalogue entries match this filter."),
+      ).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+      expect(await screen.findByRole("link", { name: DRAFT_KEY })).toBeVisible();
+    });
+
     it("(i) has no automated accessibility violations with the paging controls shown", async () => {
       stubTwoPages();
       const user = userEvent.setup();
