@@ -17,6 +17,7 @@ import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
+import { formatPropertyValue } from "./format-property-value.ts";
 import { propertyValidationFieldErrors } from "./property-form-errors.ts";
 import {
   CONTROLS,
@@ -109,28 +110,11 @@ function buildRows(
     });
 }
 
-/**
- * `PropertyValue.value` is `unknown` in the schema - every control today
- * emits a string, number or boolean, but `String({})` reading
- * `"[object Object]"` for a future object-valued datatype would be a worse
- * failure than an explicit JSON fallback.
- */
-function formatValue(value: unknown): string {
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return String(value);
-  }
-  return JSON.stringify(value);
-}
-
 function formatValues(values: PropertyValue[]): string {
   if (values.length === 0) {
     return "No value recorded.";
   }
-  return values.map((value) => formatValue(value.value)).join(", ");
+  return values.map((value) => formatPropertyValue(value.value)).join(", ");
 }
 
 /** The indexes into `slots` that `isEmptySlotValue` keeps for a save - see

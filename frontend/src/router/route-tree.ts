@@ -6,6 +6,7 @@ import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AdminPropertyDetailPage } from "../pages/admin-property-detail.tsx";
 import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
+import { CatalogueEntryPage } from "../pages/catalogue-entry.tsx";
 import { CatalogueSearchPage } from "../pages/catalogue-search.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
@@ -124,7 +125,7 @@ const catalogueEntryRoute = createRoute({
 const catalogueEntryDetailRoute = createRoute({
   getParentRoute: () => catalogueEntryRoute,
   path: "/",
-  component: createPlaceholderPage({ title: "Catalogue entry", issue: 142 }),
+  component: CatalogueEntryPage,
   head: titled("Catalogue entry"),
 });
 
