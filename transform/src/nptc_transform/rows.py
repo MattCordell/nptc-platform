@@ -50,34 +50,21 @@ def group_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
 
 
 def resolves_code_column(sheet: Sheet) -> bool:
-    """True if ``sheet``'s header row resolves the code column.
-
-    The gate for a sheet to yield entries: ``dataset.py`` and ``collision_check.py``
-    both read rows through ``seedable_rows``, so they see the same sheets.
-    """
+    """True if ``sheet``'s header row resolves the code column."""
     roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
     return ColumnRole.CODE in roles
 
 
 def has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
-    """True if ``row_cells`` resolves a non-empty code binding.
-
-    A code cell holding only empty or whitespace text does not count. This is the
-    test ``cell_defects._row_has_code`` and ``terminology_check.collect_code_bindings``
-    apply, so all three agree on what "resolves a code binding" means.
-    """
+    """True if ``row_cells`` holds a code that is not blank, as ``cell_defects`` judges it."""
     code_cell = row_cells.get(ColumnRole.CODE)
     return code_cell is not None and bool(code_cell.text.strip())
 
 
 def seedable_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
-    """The rows the baseline loader would seed, in the order it writes them.
+    """The rows the loader would seed, in ``(sheet name, row)`` order, which is its write order.
 
-    A row qualifies when it has both a preferred term and a code binding, on a
-    sheet that resolves the code column, in ``(sheet name, row)`` order. A row
-    missing either is already a blocking finding (``MISSING_PREFERRED_TERM``,
-    ``MISSING_CODE_BINDING``), or is not a SPIA data row, so it never becomes an
-    entry. Order matters to the loader: an entry meets only the entries before it.
+    A row with no preferred term or no code binding is already a finding, never an entry.
     """
     codeable = sorted(
         (sheet for sheet in sheets if resolves_code_column(sheet)), key=lambda sheet: sheet.name

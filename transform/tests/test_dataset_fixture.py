@@ -22,7 +22,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "spia-requesting-sample.xlsx"
 #: Recorded once, from a real ``--report-only`` run against the fixture, per
 #: the plan's Step 0: "the first thing I do after the file lands is run
 #: --report-only against it and record the real band counts". The one blocking
-#: finding is a real FR-05 collision the excerpt carries (issue #455), so
+#: finding is a real FR-05 collision the excerpt carries, so
 #: --emit-dataset stops on it. The tests below that need a dataset build one
 #: directly with ``build_dataset``, which the CLI would not reach.
 EXPECTED_ENTRY_COUNT = 50

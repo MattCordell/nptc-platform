@@ -1,4 +1,4 @@
-"""``collision_check.check_collisions`` (FR-05, issue #455).
+"""``collision_check.check_collisions`` (FR-05).
 
 The loader writes entries in ``(sheet, row)`` order and refuses an entry that collides at
 error severity with one already written. These tests pin each error rule, the cases that

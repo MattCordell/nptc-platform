@@ -5,10 +5,9 @@ reader, cell-level defect detection and band classification (FR-71), batch
 terminology validation over the ``nptc_shared.terminology`` client and sweep,
 designation reconciliation (FR-97, over the sweep's results; see
 ``designation_check.py``), the FR-79 misspelling heuristics (over the sweep's
-results when available; see ``misspelling.py``) and the FR-75 semantic-drift
-check (``semantic_drift.py``). FR-05 designation collisions need no network and are
-found for every run (``collision_check.py``). Report content grouped by defect class with
-required actions (FR-72) is ``report_writer.py``'s.
+results when available; see ``misspelling.py``), the FR-75 semantic-drift check
+(``semantic_drift.py``) and the FR-05 collision check (``collision_check.py``). Report
+content grouped by defect class with required actions (FR-72) is ``report_writer.py``'s.
 """
 
 from __future__ import annotations
