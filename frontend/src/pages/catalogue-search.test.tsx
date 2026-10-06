@@ -629,6 +629,34 @@ describe("CatalogueSearchPage", () => {
       expect(screen.getByRole("button", { name: "Next page" })).toHaveFocus();
     });
 
+    // While page 2 loads, the placeholder is page 1, whose `next_cursor` is
+    // the `after` already in the URL. A second press must not push it again.
+    it("ignores Next while the next page is still loading", async () => {
+      stubTwoPages();
+      const held = holdableFetch();
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute("/catalogue");
+      await screen.findByRole("link", { name: "Ferritin" });
+
+      held.hold((url) => url.searchParams.get("after") === BOUND_KEY);
+      const next = screen.getByRole("button", { name: "Next page" });
+      await user.click(next);
+      await screen.findByText("Loading catalogue entries…");
+      await user.click(next);
+      held.release();
+      await screen.findByRole("link", { name: "Full blood count" });
+
+      await user.click(screen.getByRole("button", { name: "Previous page" }));
+
+      await screen.findByRole("link", { name: "Ferritin" });
+      expect(validatedSearch(router)).toEqual({ q: "" });
+      expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
     it("is operable by keyboard alone", async () => {
       stubTwoPages();
       const user = userEvent.setup();

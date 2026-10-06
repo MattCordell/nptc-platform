@@ -267,7 +267,9 @@ export function CatalogueSearchPage() {
   }
 
   function handleNextPage() {
-    if (nextCursor !== null) {
+    // A placeholder's `next_cursor` points at the page already loading, so
+    // acting on it would push a duplicate onto the Previous stack.
+    if (nextCursor !== null && !active.isPlaceholderData) {
       setPaging({
         ...paging,
         stack: [...paging.stack, search.after],
