@@ -103,6 +103,17 @@ Once a renewal has been refused with "the SSO session has ended", `getAccessToke
 as an unreachable discovery document, does not set this, so a later request can still retry.
 Signing in or completing the callback clears it.
 
+Two consequences follow, and neither is a bug.
+
+- **A timeout counts as a refusal for an anonymous visitor.** From inside the page, a
+  blocked frame and a slow Keycloak look the same (`SilentRenewTimeoutError`). Treating the
+  timeout as "signed out" is what stops a blocked frame costing 10 s per request. The price
+  is that one slow answer on a cold load leaves the tab anonymous until it reloads. A
+  signed-in user's timeout does not set the flag, so their next request retries.
+- **An anonymous tab does not notice a sign-in made in another tab.** Before, each request
+  would renew, find the new SSO session and switch the tab to signed in. Now the tab stays
+  anonymous until it reloads or the visitor signs in from it.
+
 ## Server side (`backend/src/nptc/api/`)
 
 | Module | Responsibility |

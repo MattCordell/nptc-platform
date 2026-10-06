@@ -7,7 +7,7 @@ import type { AuthConfig } from "./config.ts";
 import { resetEndpointCache } from "./discovery.ts";
 import { InteractionRequiredError } from "./flow.ts";
 import { useAuth, type AuthContextValue } from "./session.ts";
-import type { SilentAuthorize } from "./silent-renew.ts";
+import { SilentRenewTimeoutError, type SilentAuthorize } from "./silent-renew.ts";
 import { clearTransactions } from "./transaction.ts";
 
 /**
@@ -391,6 +391,23 @@ describe("getAccessToken", () => {
       expect(renewal).toHaveBeenCalledTimes(1);
     });
 
+    it("treats an anonymous visitor's timeout as signed out, as a blocked frame looks the same", async () => {
+      const renewal = vi.fn(() =>
+        Promise.reject(new SilentRenewTimeoutError("silent renewal timed out")),
+      );
+      renderProvider(renewal);
+      await waitFor(() => {
+        expect(screen.getByTestId("status")).toHaveTextContent("signed-out");
+      });
+
+      await act(async () => {
+        await expect(api().getAccessToken()).resolves.toBeNull();
+        await expect(api().getAccessToken()).resolves.toBeNull();
+      });
+
+      expect(renewal).toHaveBeenCalledTimes(1);
+    });
+
     it("returns the new token after a sign-in completes", async () => {
       await renderSettledProvider();
       await act(async () => {
@@ -447,6 +464,34 @@ describe("getAccessToken", () => {
       await expect(api().getAccessToken()).resolves.toBeNull();
     });
     expect(renewal).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries after a signed-in session's renewal times out, which may be a slow Keycloak", async () => {
+    stubExpiredTokens();
+    let outcome: "succeed" | "timeout" = "succeed";
+    const renewal = vi.fn((url: string) => {
+      if (outcome === "succeed") {
+        const state = new URL(url).searchParams.get("state") ?? "";
+        return Promise.resolve(new URLSearchParams({ code: "silent-code", state }));
+      }
+      return Promise.reject(new SilentRenewTimeoutError("silent renewal timed out"));
+    });
+    renderProvider(renewal);
+    await waitFor(() => {
+      expect(screen.getByTestId("status")).toHaveTextContent("signed-in");
+    });
+
+    outcome = "timeout";
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBeNull();
+    });
+    expect(renewal).toHaveBeenCalledTimes(2);
+
+    outcome = "succeed";
+    await act(async () => {
+      await expect(api().getAccessToken()).resolves.toBe("access-token");
+    });
+    expect(renewal).toHaveBeenCalledTimes(3);
   });
 
   it("retries after a renewal fault instead of staying signed out", async () => {

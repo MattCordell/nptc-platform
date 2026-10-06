@@ -12,6 +12,7 @@ import {
 import { AuthContext, type AuthContextValue, type StepUpOutcome } from "./session.ts";
 import {
   silentAuthorize as defaultSilentAuthorize,
+  SilentRenewTimeoutError,
   type SilentAuthorize,
 } from "./silent-renew.ts";
 import { clearTransactions, takeTransaction } from "./transaction.ts";
@@ -211,7 +212,13 @@ export function AuthProvider({
           // signed out. This is the path a post-logout renewal takes.
           if (stillOurs) {
             store(null);
-            signedOut.current = true;
+            // A timeout for someone who held a session is likelier a slow
+            // Keycloak than an ended session, so the next request retries.
+            // An anonymous visitor's timeout is what a blocked frame looks
+            // like, and that is the case that must not repeat per request.
+            signedOut.current = !(
+              error instanceof SilentRenewTimeoutError && startedWith
+            );
           }
           return null;
         }
