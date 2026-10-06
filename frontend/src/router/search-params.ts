@@ -200,7 +200,9 @@ function validateFilteredListSearch(search: Record<string, unknown>): FilteredLi
   return validated;
 }
 
-export function validateCatalogueSearch(search: Record<string, unknown>): CatalogueSearch {
+export function validateCatalogueSearch(
+  search: Record<string, unknown>,
+): CatalogueSearch {
   return validateFilteredListSearch(search);
 }
 

@@ -341,9 +341,7 @@ export function CatalogueSearchPage() {
         {active.isPending && <p className="m-0">Loading catalogue entries…</p>}
 
         {hardFailure && (
-          <p className="m-0 text-[var(--color-danger)]">
-            {hardFailureMessage}
-          </p>
+          <p className="m-0 text-[var(--color-danger)]">{hardFailureMessage}</p>
         )}
 
         {staleData && <p className="m-0">{STALE_DATA_WARNING}</p>}
