@@ -164,6 +164,10 @@ COVERED_WRITE_ROUTES = frozenset(
         # specimen_unconstrained. Negative-auth coverage lives in
         # `test_api_catalogue_entries.py`.
         RouteKey(method="PATCH", path="/catalogue/entries/{business_key}"),
+        # The terms acceptance route (NFR-45). It needs a signed-in user and no permission, and
+        # is the one route the terms gate exempts. Its negative case, an anonymous caller getting
+        # a 401, lives in `test_api_terms.py`.
+        RouteKey(method="POST", path="/auth/terms/acceptance"),
     }
 )
 

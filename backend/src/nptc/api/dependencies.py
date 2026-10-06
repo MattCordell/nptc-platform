@@ -246,6 +246,13 @@ def current_principal(
     make "presented a bad token" indistinguishable from "presented none"
     in both the response and any log built from it.
     """
+    # One resolution per request. `nptc.api.terms_gate.require_current_terms` calls this function
+    # directly, on mutating methods only, so the route's own `CurrentPrincipal` must not verify
+    # the token and resolve the identity a second time.
+    resolved: Principal | None = getattr(request.state, "principal", None)
+    if resolved is not None:
+        return resolved
+
     token = bearer_token(request)
     if token is None:
         return ANONYMOUS
@@ -264,6 +271,7 @@ def current_principal(
         claims=identity.claims,
         mfa_acr_values=settings.mfa_acr_values,
     )
+    request.state.principal = principal
     return principal
 
 

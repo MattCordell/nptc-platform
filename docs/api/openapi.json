@@ -57,6 +57,221 @@
         }
       }
     },
+    "/api/v1/auth/terms": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The current terms of use, and whether the caller has accepted them",
+        "description": "Open to an anonymous caller, who is shown the text and told `accepted: false`.",
+        "operationId": "read_current_terms_api_v1_auth_terms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentTermsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential was presented where one is required, or the token could not be verified. Carries `WWW-Authenticate: Bearer`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not permitted. When the permission would have been granted by a role suppressed for want of MFA, this carries an RFC 9470 `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"` challenge instead of a bare denial (NFR-06).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token resolved to more than one candidate account, or to an untrusted auto-link candidate. A human must resolve it (NFR-05).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/terms/{version}": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "One version of the terms of use, current or earlier",
+        "description": "Serves any published version by its id, so the text behind an earlier acceptance can be\nreproduced (NFR-47). Needs no credential: the terms are public text.",
+        "operationId": "read_terms_version_api_v1_auth_terms__version__get",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermsDocumentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential was presented where one is required, or the token could not be verified. Carries `WWW-Authenticate: Bearer`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not permitted. When the permission would have been granted by a role suppressed for want of MFA, this carries an RFC 9470 `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"` challenge instead of a bare denial (NFR-06).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The token resolved to more than one candidate account, or to an untrusted auto-link candidate. A human must resolve it (NFR-05).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No terms of use exist for the given version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/terms/acceptance": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Record that the caller accepted a version of the terms of use",
+        "description": "Requires a signed-in user and no permission: accepting the terms is the step that precedes\nholding any contribution right. Repeating an acceptance of the version the caller's latest\nrecord already names changes nothing.",
+        "operationId": "accept_current_terms_api_v1_auth_terms_acceptance_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermsAcceptanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermsAcceptanceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential was presented where one is required, or the token could not be verified. Carries `WWW-Authenticate: Bearer`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not permitted. When the permission would have been granted by a role suppressed for want of MFA, this carries an RFC 9470 `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"` challenge instead of a bare denial (NFR-06).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The named version is no longer the current one. The body carries `code: terms_version_stale` and the `current_version`, so the SPA can show the current text and ask again. The other 409 is the one every authenticated route shares: the token resolved to more than one candidate account (NFR-05).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsVersionStaleResponse"
+                    }
+                  ],
+                  "title": "Response 409 Accept Current Terms Api V1 Auth Terms Acceptance Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/entries": {
       "get": {
         "tags": [
@@ -372,11 +587,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -716,11 +938,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -907,11 +1136,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1203,11 +1439,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1329,11 +1572,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1446,11 +1696,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1562,11 +1819,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1676,11 +1940,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1792,11 +2063,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `validation.acknowledge`.",
+            "description": "The caller is authenticated but does not hold `validation.acknowledge`. The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -1906,11 +2184,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -2027,11 +2312,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -2558,11 +2850,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `registry.manage`. The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -2737,11 +3036,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `registry.manage`. The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -2835,11 +3141,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `registry.manage`. The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -2907,11 +3220,18 @@
             }
           },
           "403": {
-            "description": "The caller is authenticated but does not hold `registry.manage`.",
+            "description": "The caller is authenticated but does not hold `registry.manage`. The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -4825,6 +5145,36 @@
         "title": "CreatePropertyDefinitionRequest",
         "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API.\n\n`cardinality`/`scope`/`strength`/`binding_target` are typed against the\nexact `StrEnum`s `property_definition`'s own database `CHECK`\nconstraints close over - an invalid value is a pydantic 422 before the\nrequest reaches the ORM, not a database `CHECK` violation surfacing as\na 500. `datatype` stays a bare `str` deliberately - FR-77's own\nextension point, so admitting a new datatype never touches this router -\nand is instead validated by `create_definition` itself, against the live\n`DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422\nrather than a broken row that only misbehaves at the first value write."
       },
+      "CurrentTermsResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "effective_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Effective Date"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "effective_date",
+          "text",
+          "accepted"
+        ],
+        "title": "CurrentTermsResponse",
+        "description": "The current terms, and whether the caller has accepted this version. `accepted` is\n`false` for an anonymous caller, who has accepted nothing."
+      },
       "DeprecatePropertyDefinitionRequest": {
         "properties": {
           "expected_row_version": {
@@ -6272,6 +6622,89 @@
         "title": "SessionResponse",
         "description": "What the browser is allowed to know about its own session.\n\n`user` is `nptc.auth.identity.UserRef`, reused rather than redefined:\nit is this codebase's existing NFR-04 serialisation boundary and\nstructurally excludes `app_user.id`. Defining a second response model\nwith the same fields is exactly how that internal id eventually leaks.\n\n`permissions` is present because the shell needs to decide what to\n*render*, and rendering is presentation, not access control (NFR-20) -\nevery one of these permissions is re-checked server-side at the\nendpoint that uses it. `roles` is included for the account screen\n(FR-40), which shows a user their own roles."
       },
+      "TermsAcceptanceRequest": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "TermsAcceptanceRequest",
+        "description": "`version` is the version the user was shown. The server refuses it when it is no longer\nthe current one (ADR-0043)."
+      },
+      "TermsAcceptanceResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Accepted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "accepted_at"
+        ],
+        "title": "TermsAcceptanceResponse"
+      },
+      "TermsDocumentResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "effective_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Effective Date"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "effective_date",
+          "text"
+        ],
+        "title": "TermsDocumentResponse",
+        "description": "One version of the terms. `text` is Markdown, served exactly as the version's file holds\nit, so the text a user accepted can be reproduced from the deployed service (NFR-47)."
+      },
+      "TermsVersionStaleResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "code": {
+            "type": "string",
+            "const": "terms_version_stale",
+            "title": "Code"
+          },
+          "current_version": {
+            "type": "string",
+            "title": "Current Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "code",
+          "current_version"
+        ],
+        "title": "TermsVersionStaleResponse",
+        "description": "The 409 for an accept request that names a version other than the current one. It\nreports the current version so the SPA can show the gate again under that text (NFR-47)."
+      },
       "UserRef": {
         "properties": {
           "username": {
@@ -6423,6 +6856,26 @@
         ],
         "title": "VersionConflictResponse",
         "description": "FR-38's 409 body: a stale `expected_row_version` on an entry-level\nwrite.\n\nFR-38's rationale rejects silent last-write-wins \"because it produces an\naudit trail that records a change that was immediately and invisibly\ndiscarded\", so the refusal has to let the caller *reconcile* rather than\nretry blind. `conflicts` is empty where the caller's submitted values do\nnot themselves overlap what moved - still a refusal, because the version\nis the contract regardless - which is why `current_row_version` and\n`changed_by`/`changed_at` are populated even then.\n\n`changed_by` is a display name, never the actor's internal id\n(NFR-04/NFR-26), and is `null` for a system-initiated change or an\naccount since pseudonymised on closure (NFR-17)."
+      },
+      "TermsAcceptanceRequiredResponse": {
+        "description": "The 403 for a contribution from a user who has not accepted the current terms (NFR-45).\n\nIt carries no `WWW-Authenticate` header: RFC 9470 defines that for authentication strength,\nand terms acceptance is not an authentication matter (ADR-0043).",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "code": {
+            "const": "terms_acceptance_required",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "code"
+        ],
+        "title": "TermsAcceptanceRequiredResponse",
+        "type": "object"
       }
     }
   }

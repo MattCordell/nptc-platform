@@ -17,6 +17,7 @@ import re
 from datetime import date
 from functools import cache
 from importlib import resources
+from importlib.resources.abc import Traversable
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict
@@ -73,6 +74,10 @@ def _parse(version: str, raw: str) -> TermsDocument:
     )
 
 
+def _versions_dir() -> Traversable:
+    return resources.files("nptc.terms").joinpath("versions")
+
+
 @cache
 def load_terms_document(version: str) -> TermsDocument:
     """The terms document for `version`.
@@ -82,7 +87,7 @@ def load_terms_document(version: str) -> TermsDocument:
     """
     if _VERSION_PATTERN.fullmatch(version) is None:
         raise TermsVersionNotFoundError(f"{version!r} is not a terms version")
-    resource = resources.files("nptc.terms").joinpath("versions", f"{version}.md")
+    resource = _versions_dir().joinpath(f"{version}.md")
     if not resource.is_file():
         raise TermsVersionNotFoundError(f"no terms file for version {version!r}")
     return _parse(version, resource.read_text(encoding="utf-8"))
