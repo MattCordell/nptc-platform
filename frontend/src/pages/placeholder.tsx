@@ -15,11 +15,16 @@ export interface PlaceholderPageOptions {
    */
   issue?: number;
   /**
-   * The nearest screen that is already built, offered as a way on. Only
+   * The nearest screens that are already built, offered as ways on. Only
    * worth setting where a built sibling exists: the admin stubs have
    * `/admin/catalogue`, while the public `/catalogue` is itself a stub.
    */
-  nearest?: { to: string; label: string };
+  nearest?: NearestLink | readonly NearestLink[];
+}
+
+interface NearestLink {
+  to: string;
+  label: string;
 }
 
 /**
@@ -32,6 +37,8 @@ export interface PlaceholderPageOptions {
  * treated as a component export by `react-refresh/only-export-components`.
  */
 export function createPlaceholderPage({ title, issue, nearest }: PlaceholderPageOptions) {
+  const nearestLinks: readonly NearestLink[] =
+    nearest === undefined ? [] : "to" in nearest ? [nearest] : nearest;
   return function PlaceholderPage() {
     return (
       <NoticePage
@@ -40,11 +47,11 @@ export function createPlaceholderPage({ title, issue, nearest }: PlaceholderPage
         actions={
           <>
             <BackToLandingLink variant="primary" />
-            {nearest === undefined ? null : (
-              <Link to={nearest.to} className={buttonClassName("secondary")}>
-                {nearest.label}
+            {nearestLinks.map((link) => (
+              <Link key={link.to} to={link.to} className={buttonClassName("secondary")}>
+                {link.label}
               </Link>
-            )}
+            ))}
           </>
         }
       >

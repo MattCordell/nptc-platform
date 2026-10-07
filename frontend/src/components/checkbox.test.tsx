@@ -67,6 +67,16 @@ describe("Checkbox", () => {
     await expectNoA11yViolations(container);
   });
 
+  it("gives a visible label a 24px minimum height, since the box alone is smaller", () => {
+    render(<Checkbox label="Published" />);
+
+    const label = screen
+      .getByLabelText("Published")
+      .parentElement?.querySelector("label");
+    expect(label).toHaveClass("min-h-6");
+    expect(label).not.toHaveClass("visually-hidden");
+  });
+
   it("keeps a visually-hidden label in the accessible name (issue #267)", () => {
     render(<Checkbox label="Select NPTC-000123" labelHidden />);
 

@@ -15,7 +15,9 @@ input, filter bar and pagination exist as shared components (issue #438). The ad
 catalogue list uses the search input, the filter bar's active-filter chips and pagination,
 with a checkbox facet panel in place of pill toggles; it also shows status as a
 `StatusBadge`, codes in monospace and dates in tabular figures. The admin edit screen uses
-the same page header, `Card` and status treatment. The detail-page two-column body and the
+the same page header, `Card` and status treatment. The property registry list and detail
+screens use the page header, `DataTable`, `Card` and `StatusBadge`, with the key and
+datatype in monospace. The detail-page two-column body and the
 audit trail described under "Layout patterns" below are not yet implemented on any screen.
 Read this as the destination, not a description of what exists today.
 

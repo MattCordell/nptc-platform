@@ -784,6 +784,26 @@ export function usePropertyDefinitions() {
 }
 
 /**
+ * One property definition by key, deprecated or not, for the registry detail
+ * screen. Fetched on its own rather than picked out of the cached list so a
+ * key that does not exist answers 404 instead of silently finding nothing.
+ */
+export function usePropertyDefinition(key: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/registry/properties/{key}", key],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties/{key}", {
+          params: { path: { key } },
+          signal,
+        }),
+      ),
+    enabled: key.length > 0,
+  });
+}
+
+/**
  * The query key/query-fn pair behind `usePropertyValueOptions`, factored out
  * (issue #289) so a caller needing a dynamic, per-render *set* of these
  * queries (`usePropertyValueOptionsQueries` below) can build each one as a

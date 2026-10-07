@@ -7,6 +7,9 @@ with. This guide covers recording, changing and retiring those values, and the e
 
 You need the Administrator role to change registry properties.
 
+To see how a property itself is defined, such as its datatype, scope and binding, see
+[Browsing the property registry](browsing-the-property-registry.md).
+
 Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
 `/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
 published yet can be edited the same way as published ones.

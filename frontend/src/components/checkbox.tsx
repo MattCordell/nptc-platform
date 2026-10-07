@@ -83,7 +83,9 @@ export function Checkbox({
           htmlFor={id}
           className={[
             "text-sm font-medium text-[var(--color-text)]",
-            labelHidden ? "visually-hidden" : "",
+            // The 16px box is too small a target alone (WCAG 2.5.8), so the
+            // label, which toggles it, carries the 24px minimum.
+            labelHidden ? "visually-hidden" : "flex min-h-6 items-center",
           ]
             .filter(Boolean)
             .join(" ")}
