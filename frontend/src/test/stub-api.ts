@@ -23,6 +23,12 @@ export interface Route {
    * stubbed 403 to carry its own `WWW-Authenticate` challenge.
    */
   headers?: Record<string, string>;
+  /**
+   * When true the request is recorded but never answered, so the caller's
+   * query stays pending for the rest of the test. For asserting a "still
+   * checking" state without racing a timer; `status` and `body` are ignored.
+   */
+  neverSettles?: boolean;
 }
 
 export interface StubOptions {
@@ -93,6 +99,9 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
       routes.find((r) => r.method === method && path.endsWith(r.path));
     if (route === undefined) {
       return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
+    }
+    if (route.neverSettles === true) {
+      return new Promise<Response>(() => {});
     }
     return new Response(JSON.stringify(route.body), {
       status: route.status,

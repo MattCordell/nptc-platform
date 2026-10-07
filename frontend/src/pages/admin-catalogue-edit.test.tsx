@@ -2060,21 +2060,23 @@ describe("code bindings", () => {
     // would otherwise read identically - submitting right after pasting a
     // code, before the 400ms debounce fires, is a realistic sequence.
     //
-    // A single `paste`, not `type`: typing nine characters races real
-    // keystroke delays against the 400ms debounce, and on a loaded CI
-    // runner enough of it could land inside that window for the lookup to
-    // resolve before the click below, turning this into a flake rather than
-    // a deterministic check of the still-checking state (review finding).
-    // One paste is one state update, so nothing here waits on wall-clock
-    // timing except the assertion itself.
+    // The lookup never answers, so the message does not depend on how long
+    // the typing takes. If the click lands before the 400ms debounce fires,
+    // the code differs from its debounced value; if it lands after, the
+    // lookup is pending. Both read as "still checking". With a lookup that
+    // answers, a slow run (coverage, a loaded runner) lets the debounce fire
+    // and the lookup resolve before the click, and the message never shows.
     const user = userEvent.setup();
-    const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
+    const calls = stubApi([
+      READ_OK,
+      { ...terminologyRoute(FSN_CODE), neverSettles: true },
+    ]);
     await renderLoaded();
 
     await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
     await user.paste(FSN_CODE);
-    // A valid changelog note, so the FR-37 gate (issue #62) does not
-    // intercept the submit before the code's own validation runs.
+    // A valid changelog note, so the FR-37 gate does not intercept the
+    // submit before the code's own validation runs.
     await user.type(
       inBindingsPanel().getByLabelText("Changelog note"),
       "Bind the new code",
