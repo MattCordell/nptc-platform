@@ -78,13 +78,10 @@ def test_status_is_constrained_to_the_lifecycle_values(db: Connection) -> None:
 def test_default_row_shape(db: Connection) -> None:
     entry_id = db.execute(_INSERT_ENTRY, {"business_key": "NPTC-000003", "preferred_term": "X"})
     row = db.execute(
-        text(
-            "SELECT status, specimen_unconstrained, row_version FROM catalogue_entry WHERE id = :id"
-        ),
+        text("SELECT status, row_version FROM catalogue_entry WHERE id = :id"),
         {"id": entry_id.scalar_one()},
     ).one()
     assert row.status == "draft"
-    assert row.specimen_unconstrained is False
     assert row.row_version == 1
 
 

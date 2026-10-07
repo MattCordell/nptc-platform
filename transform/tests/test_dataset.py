@@ -8,6 +8,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 from nptc_transform.dataset import (
     DATASET_JSON_NAME,
     ImportDataset,
@@ -162,63 +163,86 @@ def test_the_three_auto_correctable_repairs_change_the_emitted_value(tmp_path: P
     assert isinstance(entry.code_bindings[0].code, str)
 
 
-@pytest.mark.req("FR-89")
-def test_any_specimen_yields_unconstrained_and_zero_specimen_values(tmp_path: Path) -> None:
-    workbook_path = _workbook(
-        tmp_path, [["A term", "", "", 11, "Chemical", "", "Any", "12345678", "A term", 4, ""]]
+def _specimen_workbook(tmp_path: Path, specimen: str) -> Path:
+    return _workbook(
+        tmp_path, [["A term", "", "", 11, "Chemical", "", specimen, "12345678", "A term", 4, ""]]
     )
-
-    dataset = _build(workbook_path)
-
-    entry = dataset.entries[0]
-    assert entry.specimen_unconstrained is True
-    assert entry.properties.specimen == ()
 
 
 @pytest.mark.req("FR-89")
-def test_a_named_specimen_never_sets_unconstrained(tmp_path: Path) -> None:
-    workbook_path = _workbook(
-        tmp_path, [["A term", "", "", 11, "Chemical", "", "Serum", "12345678", "A term", 4, ""]]
+def test_any_specimen_is_seeded_as_the_specimen_root(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Any"))
+
+    assert dataset.entries[0].properties.specimen == (
+        PropertyValue(value="Any", code=SPECIMEN_ROOT_CODE),
     )
-
-    dataset = _build(workbook_path)
-
-    entry = dataset.entries[0]
-    assert entry.specimen_unconstrained is False
-    assert entry.properties.specimen == (PropertyValue(value="Serum", code="119364003"),)
-
-
-@pytest.mark.req("FR-89")
-def test_any_specimen_does_not_drop_a_co_occurring_named_specimen(tmp_path: Path) -> None:
-    """'Any' sets specimen_unconstrained, but must never discard another
-    value the same cell asserts - the published data is not guaranteed to
-    keep the two from co-occurring on one row, and dropping the named value
-    silently (with no finding anywhere) is exactly the data-loss hazard this
-    regression guards against."""
-    workbook_path = _workbook(
-        tmp_path,
-        [["A term", "", "", 11, "Chemical", "", "Any; Serum", "12345678", "A term", 4, ""]],
-    )
-
-    dataset = _build(workbook_path)
-
-    entry = dataset.entries[0]
-    assert entry.specimen_unconstrained is True
-    assert entry.properties.specimen == (PropertyValue(value="Serum", code="119364003"),)
 
 
 @pytest.mark.req("FR-88")
-def test_an_unmapped_specimen_value_is_seeded_verbatim_with_no_code(tmp_path: Path) -> None:
-    workbook_path = _workbook(
-        tmp_path,
-        [["A term", "", "", 11, "Chemical", "", "Nasal swab thing", "12345678", "x", 4, ""]],
+def test_a_named_specimen_takes_its_code_from_the_reviewed_map(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Serum"))
+
+    assert dataset.entries[0].properties.specimen == (
+        PropertyValue(value="Serum", code="119364003"),
     )
 
-    dataset = _build(workbook_path)
 
-    entry = dataset.entries[0]
-    assert entry.specimen_unconstrained is False
-    assert entry.properties.specimen == (PropertyValue(value="Nasal swab thing", code=None),)
+@pytest.mark.req("FR-88")
+def test_every_specimen_in_a_multi_value_cell_is_coded_in_order(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Serum; plasma ;  URINE"))
+
+    assert dataset.entries[0].properties.specimen == (
+        PropertyValue(value="Serum", code="119364003"),
+        PropertyValue(value="plasma", code="119361006"),
+        PropertyValue(value="URINE", code="122575003"),
+    )
+
+
+@pytest.mark.req("FR-88")
+def test_a_no_map_specimen_yields_no_specimen_value_and_the_entry_is_still_seeded(
+    tmp_path: Path,
+) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "N/A"))
+
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].properties.specimen == ()
+
+
+@pytest.mark.req("FR-88")
+def test_an_unmapped_specimen_blocks_the_run_and_names_the_row_and_the_string(
+    tmp_path: Path,
+) -> None:
+    result = run_transform(_specimen_workbook(tmp_path, "Nasal swab thing"), mode=Mode.EMIT_DATASET)
+
+    assert result.has_blocking_findings
+    (finding,) = [f for f in result.findings if f.code == "SPECIMEN_VALUE_UNMAPPED"]
+    assert str(finding.location) == "Requesting!G2"
+    assert "Nasal swab thing" in finding.message
+
+
+@pytest.mark.req("FR-88")
+def test_building_a_dataset_over_an_unmapped_specimen_fails_rather_than_seeding_it_uncoded(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="Nasal swab thing"):
+        _build(_specimen_workbook(tmp_path, "Nasal swab thing"))
+
+
+@pytest.mark.req("FR-89")
+def test_any_beside_a_named_specimen_blocks_the_run(tmp_path: Path) -> None:
+    result = run_transform(_specimen_workbook(tmp_path, "Any; Serum"), mode=Mode.EMIT_DATASET)
+
+    assert result.has_blocking_findings
+    (finding,) = [f for f in result.findings if f.code == "SPECIMEN_ROOT_WITH_OTHERS"]
+    assert "'Any'" in finding.message and "'Serum'" in finding.message
+
+
+@pytest.mark.req("FR-89")
+def test_a_no_map_string_beside_any_neither_blocks_nor_adds_a_value(tmp_path: Path) -> None:
+    result = run_transform(_specimen_workbook(tmp_path, "Any; Breath"), mode=Mode.EMIT_DATASET)
+
+    specimen_codes = {f.code for f in result.findings if f.code.startswith("SPECIMEN_")}
+    assert specimen_codes == {"SPECIMEN_VALUE_NO_EQUIVALENT"}
 
 
 @pytest.mark.req("FR-04")
@@ -310,6 +334,7 @@ def test_write_dataset_writes_the_json_file(tmp_path: Path) -> None:
     write_dataset(dataset, report_dir)
 
     payload = _dataset_payload(report_dir)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["baseline_release"]["name"] == "2026-06"
     assert len(payload["entries"]) == 1
+    assert "specimen_unconstrained" not in payload["entries"][0]

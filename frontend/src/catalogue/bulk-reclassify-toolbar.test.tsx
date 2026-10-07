@@ -30,7 +30,6 @@ function entrySummary(overrides: Record<string, unknown>) {
     preferred_term: "Placeholder",
     length: 11,
     status: "active",
-    specimen_unconstrained: false,
     updated_at: "2026-09-01T04:30:00Z",
     has_open_finding: false,
     code: null,

@@ -1,0 +1,88 @@
+Source code	Source display	Target code	Target display	Relationship type code	Relationship type display	No map flag	Status
+a54a31d68326e10c673c3844039d6aa3	Urine	122575003	Urine specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d9ffdb0df79e1c518dfea12dabe65ef2	12 hr urine	732211001	Twelve hour urine specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+885e592c5c72b1a3498dcf995ec7927b	24 hr urine	276833005	24 hour urine specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+b534346f1ff0dea4a68689406cf92767	Amniotic fluid	119373006	Amniotic fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+ed36a1ef76a59ee3f15180e0441188ad	Any	123038009	Specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+36bcb1e9133328a40c47a18b7408407a	Arterial blood	122552005	Arterial blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d25478d4cf5f105659481481ac62e360	Arterial cord blood	703430008	Arterial cord blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+697f9bff5821e9fea86a25df9df91319	aspirate	119295008	Specimen obtained by aspiration (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+6049a05f7a3b31a10d06a72bffce1bd3	BAL	258607008	Bronchoalveolar lavage fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+50ffd84bcf316dea7dfb8b1f23f1db5e	Bile	119341000	Bile specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d8a0b920776976efad99f6d5865993d3	Biopsy	258415003	Biopsy specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+747f992097b9e5c9df7585931537150a	Blood	119297000	Blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+af7f07d8ddce77c5457a0dd0ef8c67d5	Blood product	119300005	Specimen from blood product (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+ac101b32dda4448cf13a93fe283dddd8	Body	371784004	Body parts for identification (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+bed75b3eacf165394bca567360869d88	Body fluid	309051001	Body fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+be62468bc018e7e1b5dacaf93b37938b	Bone marrow	119359002	Bone marrow specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+382f1d7e8d99f3ee29d872432b560c16	Breath					true	MAPPED
+802ac8b911409405387789cd1f0352e4	Buccal cells	733104004	Swab from buccal mucosa (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+223ca5df47edeeeb7c65a09d52a9cfcf	Capillary	122554006	Capillary blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+6d78e4bd77e0e5c8f78c57b25d2fb1eb	Capillary blood	122554006	Capillary blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+f4a70c91c60b6709ecd044677a607269	Central venous	703431007	Venous cord blood specimen (specimen)	TARGET_BROADER	Target is broader than source	false	MAPPED
+a25611dedcfb732108a6624d4e9d808b	Cervical smear	276446009	Cervical smear specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d4901b9adf98cb5e1e4881287fa5def5	Cervix	119395005	Specimen from uterine cervix (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+e9978fc33c5b730f532edd4b0a1b8f3e	Conjunctival fluid	446235003	Specimen from conjunctiva obtained by lavage (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+312c38a887477a60ddbdbe3732b798b2	Conjunctival swab	258498002	Conjunctival swab (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+eec1ddbc29b9752fc2190f2f1e61d8eb	Cord blood	122556008	Cord blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+626040629010a72a85b6208c907cd830	Corneal biopsy	128161005	Tissue specimen from cornea (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+7a4edf93e5e51e9cc77533c4977f7d01	Corneal scraping	258485006	Corneal scraping specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d503c7a840c12fb508b98df4c072f6e4	Corneal swab	472894002	Swab from cornea (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+dcefe433a91a9c0b2c160007a1ab5941	CSF	258450006	Cerebrospinal fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+6926f2fd88f899a22a561f0e808aa8a9	Culture					true	MAPPED
+51332b8fec73c1f1aeb5259d61fabb3a	CVS	258565009	Chorionic villi specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+32ec1f6a7b91a8ea988b91a4cb86bea9	Dialysate fluid	258454002	Dialysate specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+396c983d4290901e4060ffe25e7c0eb3	DNA	258566005	Deoxyribonucleic acid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+c45446f4bf250d7f48040905f8061c5d	Drain fluid	258455001	Drainage fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d44ee8c835aa61b14257abdf427dae91	Dried blood spot	440500007	Dried blood spot specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+62aa0127b448722723cfe7510a3f0214	Ear swab	309166000	Ear swab specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+79d1e410931d4cd78078f54f9d345f59	Ear washing	733056005	Fluid specimen from ear (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+40c410912a6583a73316085803f10339	Eye swab	445160003	Swab of eye (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+2766e7a2bdb254a183c6c336719f9991	Faeces	119339001	Stool specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+7ae34456a2568c3ab2153c09a123de30	Fetal scalp	1308031000168102	Fetal tissue specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+eb4248c09ea875ddf5ed0bde6ad38a19	Fetus	309502007	Fetus specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+c2e7db5ac7ab74ea4bb9a7a89d251f3a	Fluid	309051001	Body fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+c599fed935b3a2ee517b414d36b027a1	Fluids	309051001	Body fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+6b6bb3cfe2b1ce7803297225a8bfa2ba	FNA	122550002	Specimen obtained by fine needle aspiration procedure (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+0a38e7286ebbb560354992b3ce62be67	Food	119320006	Food specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+b39727074b1f4bf339ccbe49fb9503bf	Gallstone	258492001	Gallstone specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+6384f0bd85eb0c29acbc69f27fa2401f	Gastric biopsy	309211008	Gastric biopsy specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+93d443375be58e4ff72cc4562a94d857	Gastric fluid	258459007	Gastric fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+35d541f82d1c661605897d46f9cf3335	Gynaecological smear	312494007	Vaginal vault smear specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+c2ad21c07984f2ba47de12b7e88766e3	Hair	119326000	Hair specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d78dd2a3cc57953f6b89129893d67e1e	Hair follicle	258423001	Hair bulb specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+645933dae40fc89090091b66aa9219c4	Kidney stone	258495004	Renal stone specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+1ce8eaa22b2f4529a22272a4d50a189c	Leukocytes	258591005	White blood cell specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+50186a01be45983bcc734e76be9bf60d	Lymph node	258589002	Lymph node specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+f046c7fbc0a77240f6218cd95b37c015	Meconium	119340004	Meconium specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+082a64d5eaed33dac3bc4b0a72e2722d	Mixed venous	119298005	Mixed venous blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+382b0f5185773fa0f67a8ed8056c7759	N/A					true	MAPPED
+c63e24292f2fe4e015f26e4284895d5f	Nails	119327009	Nail specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+fc00eef1babc4ffcc77c62a586dfd300	Nasal smear	447339001	Nasal smear specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+df9bce3687dbd926119bfb0271d52f89	Nasopharyngeal aspirate	258411007	Nasopharyngeal aspirate (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+61ebb83afd7d857c2917511877d30ff3	Peripheral stem cells	57731000052104	Stem cell specimen (specimen)	TARGET_BROADER	Target is broader than source	false	MAPPED
+c06e871eaa4ec91eaef8d1d9fee29a1f	Peritoneal fluid	168139001	Peritoneal fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+b20a4217acaf4316739c6a5f6679ef60	Plasma	119361006	Plasma specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+d8315bc4f7afdb9feddf24a4c25efa04	Platelet poor plasma	119362004	Platelet poor plasma specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+256c186205d1ac223fd8b34c40206eb5	Platelets	119358005	Platelet specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+df494b0316d811615d6d7cb84822ba8c	Pleural fluid	418564007	Pleural fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+dde7f10459e2d8478cb66e46e06dbb15	Pus	119323008	Pus specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+c9c6587c8ac206ac532f3abb6b89de37	Random urine	278020009	Spot urine specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+3898a63b3938ab7da099d8a8d6d42a18	Red cells	119351004	Erythrocyte specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+f68930019be5f64cc66ed16fd0dadccd	Respiratory secretions	415293009	Respiratory secretion (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+1d5aef782b3bcb079e6f78060cc42e97	Saliva	119342007	Saliva specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+acb6e5d50382f43d6f062cfdab4ee82d	Semen	119347001	Seminal fluid specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+c1a60e80292af494b88cb01761053b72	Serum	119364003	Serum specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+9313566fe19aca293daefe4ce37942bf	Skin	608969007	Specimen from skin (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+b15aeda887ca6bcea2956b69af227b95	Skin lesion	309068002	Skin lesion specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+df75b0e6b461f92f0d3faaa716b4626b	Spinal fluid	258450006	Cerebrospinal fluid specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+13992dd4b16a8f9d615b7acdb67a0641	Sputum	119334006	Sputum specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+679bcb0375c784e9e43b83f03c3346e7	swab	257261003	Swab (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+1cd9777637a41b52e596fe858c0899ef	Swabs	257261003	Swab (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+1bfb48de2d90e9c234705ca466ae03bb	Sweat	122569007	Sweat specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+f571cba807e0538aab3e61de577df6ca	Synovial fluid	119332005	Synovial fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+e7a497240efc4daa1dfa04f1fb11fa69	Tissue	119376003	Tissue specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+923a6f2c68c6b450c1cdc88cad9d6c2a	Tumour cells	258435002	Tumor tissue specimen (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
+9ced9d8ed039603aefb62ed2eb5f94f3	Urine timed	409821005	Timed urine specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+4d56bb38b80541dce640ffec0ffcb8fe	Venous	122555007	Venous blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
+1e76466d8189219410dbdc103f0d8c9a	Venous cord	703431007	Venous cord blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED

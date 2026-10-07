@@ -15,6 +15,7 @@ from nptc_shared.terminology.models import PROCEDURE_ROOT_CODE, Operation
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_transform import __version__
 from nptc_transform.cli import app
+from nptc_transform.specimen_map import SPECIMEN_MAP
 
 runner = CliRunner()
 
@@ -634,7 +635,10 @@ def test_unreadable_workbook_is_a_usage_error_not_a_traceback(
 
 @pytest.mark.req("FR-74")
 def test_check_terminology_validates_the_bindings_and_records_the_run(
-    tmp_path: Path, clean_bindings_workbook: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    clean_bindings_workbook: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    specimen_map_concepts: tuple[StubConcept, ...],
 ) -> None:
     report_dir = tmp_path / "report"
     _install_stub(
@@ -645,7 +649,8 @@ def test_check_terminology_validates_the_bindings_and_records_the_run(
                     code=CLEAN_CODE,
                     fsn="Acanthamoeba culture (procedure)",
                     parents=(PROCEDURE_ROOT_CODE,),
-                )
+                ),
+                *specimen_map_concepts,
             ],
             resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
         ),
@@ -667,6 +672,13 @@ def test_check_terminology_validates_the_bindings_and_records_the_run(
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
     assert payload["terminology"]["codes_checked"] == 1
     assert payload["finding_count"] == 0
+    assert payload["specimen_map"] == {
+        "codes_checked": len(SPECIMEN_MAP.codes),
+        "resolved_versions": ["http://snomed.info/sct/32506021000036107/version/20260531"],
+    }
+    assert f"Specimen map check: {len(SPECIMEN_MAP.codes)} code(s) checked" in (
+        report_dir / "report.md"
+    ).read_text(encoding="utf-8")
     # No "SNOMED CT Fully Specified Name" column on this fixture - every
     # checkable code cell is a row FR-97 could not reconcile, not zero rows.
     assert payload["designations"] == {
@@ -678,7 +690,9 @@ def test_check_terminology_validates_the_bindings_and_records_the_run(
 
 @pytest.mark.req("FR-79")
 def test_check_terminology_run_reports_sweep_backed_misspellings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    specimen_map_concepts: tuple[StubConcept, ...],
 ) -> None:
     """End to end through the CLI, not just via ``check_misspellings`` called
     directly (``test_misspelling.py``'s own helper reimplements
@@ -725,6 +739,7 @@ def test_check_terminology_run_reports_sweep_backed_misspellings(
                     fsn="Amylose (substance)",
                     parents=(PROCEDURE_ROOT_CODE,),
                 ),
+                *specimen_map_concepts,
             ],
             resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
         ),

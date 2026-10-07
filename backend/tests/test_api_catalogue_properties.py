@@ -47,7 +47,7 @@ ApiTestApp = _api_support.ApiTestApp
 latest_audit_event = _load("audit_support").latest_audit_event
 
 _REASON = "Created for issue #248 property-value write route test."
-_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
 _SPECIMEN_EDITION = Edition(module_id="au", label="au")
 _SPECIMEN_SYSTEM = "http://example.org/specimen-test"
 
@@ -542,25 +542,101 @@ def test_specimen_accepts_the_samples_seven_specimen_worst_case(api: ApiTestApp)
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_specimen_rejects_the_literal_value_any(api: ApiTestApp) -> None:
+def test_specimen_rejects_the_literal_text_any_because_it_is_not_a_code(api: ApiTestApp) -> None:
+    """`Any` is the code `123038009`, never the text (ADR-0044)."""
     from nptc.db.bootstrap import seed_system_properties
 
     token = api.admin_token(subject="sub-specimen-any")
     seed_system_properties(api.session)
     api.session.flush()
     entry = _new_entry(api)
+    api.terminology.seed_validate_code(
+        "Any",
+        ValidationResult(code="Any", result=False),
+        value_set_url=_SPECIMEN_VALUE_SET_URI,
+        edition=_SPECIMEN_EDITION,
+    )
 
     response = _put_values(
         api,
         token,
         business_key=entry.business_key,
         property_key="specimen",
-        values=[{"value": {"system": _SPECIMEN_SYSTEM, "code": "Any"}}],
+        values=[{"value": {"system": "http://snomed.info/sct", "code": "Any"}}],
         expected_row_version=entry.row_version,
     )
 
     assert response.status_code == 422, response.text
-    assert response.json()["issues"][0]["code"] == "forbidden-code"
+    assert "invalid-sctid-format" in [issue["code"] for issue in response.json()["issues"]]
+
+
+def _seed_specimen_codes(api: ApiTestApp, *codes: str) -> None:
+    for code in codes:
+        api.terminology.seed_validate_code(
+            code,
+            ValidationResult(code=code, result=True),
+            value_set_url=_SPECIMEN_VALUE_SET_URI,
+            edition=_SPECIMEN_EDITION,
+        )
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_specimen_root_alone_is_accepted_as_any_specimen(api: ApiTestApp) -> None:
+    from nptc.db.bootstrap import seed_system_properties
+
+    token = api.admin_token(subject="sub-specimen-root-alone")
+    seed_system_properties(api.session)
+    api.session.flush()
+    entry = _new_entry(api)
+    _seed_specimen_codes(api, "123038009")
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key="specimen",
+        values=[{"value": {"system": "http://snomed.info/sct", "code": "123038009"}}],
+        expected_row_version=entry.row_version,
+    )
+
+    assert response.status_code == 200, response.text
+    assert [v["value"]["code"] for v in response.json()["values"]] == ["123038009"]
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_specimen_root_beside_a_named_specimen_is_422_and_names_the_root(
+    api: ApiTestApp,
+) -> None:
+    from nptc.db.bootstrap import seed_system_properties
+
+    token = api.admin_token(subject="sub-specimen-root-conflict")
+    seed_system_properties(api.session)
+    api.session.flush()
+    entry = _new_entry(api)
+    _seed_specimen_codes(api, "123038009", "119364003")
+    before = _audit_event_count(api)
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key="specimen",
+        values=[
+            {"value": {"system": "http://snomed.info/sct", "code": "119364003"}},
+            {"value": {"system": "http://snomed.info/sct", "code": "123038009"}},
+        ],
+        expected_row_version=entry.row_version,
+    )
+
+    assert response.status_code == 422, response.text
+    (issue,) = response.json()["issues"]
+    assert issue["code"] == "specimen-root-conflict"
+    assert issue["property_key"] == "specimen"
+    assert issue["ordinal"] == 1
+    assert _property_value_count(api, entry_id=entry.id, property_key="specimen") == 0
+    assert _audit_event_count(api) == before
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------
@@ -967,70 +1043,41 @@ def test_bulk_save_emits_no_batch_header_when_nothing_applied(api: ApiTestApp) -
 @pytest.mark.req("FR-89")
 @pytest.mark.req("FR-39")
 @pytest.mark.integration
-def test_bulk_specimen_conflict_rolls_back_an_earlier_entry_already_applied_in_the_same_request(
+def test_bulk_specimen_root_beside_a_named_specimen_is_refused_before_any_entry_is_written(
     api: ApiTestApp,
 ) -> None:
-    """The request-granularity half of "a batch that fails partway leaves
-    no entry half-applied" (ADR-0035): unlike a per-entry conflict (caught
-    by that entry's own savepoint, the rest of the batch still commits),
-    FR-89's specimen check aborts the whole request - `get_session`'s own
-    `session_scope` rolls back everything, including `entry_ok`'s write,
-    which reached (and committed) its own per-entry savepoint *before* the
-    loop ever reached the entry that triggers the abort. The service-layer
-    equivalent of this test cannot prove this half on its own - it never
-    goes through `session_scope`, only through this route."""
+    """The root-alone rule depends on the submitted values only, so a bulk write checks it once,
+    up front, with the other whole-request checks. No entry is touched and no audit event is
+    written, whatever the entries' own states."""
     from nptc.db.bootstrap import seed_system_properties
 
-    token = api.admin_token(subject="sub-bulk-specimen-abort")
-    key = _unique_key("bulk_specimen_abort")
-    _create_string_property(api, token, key=key)
-    entry_ok = _new_entry(api, "Bulk HTTP specimen ok")
-    entry_unconstrained = _new_entry(api, "Bulk HTTP specimen unconstrained")
+    token = api.admin_token(subject="sub-bulk-specimen-root")
+    entry_a = _new_entry(api, "Bulk HTTP specimen root a")
+    entry_b = _new_entry(api, "Bulk HTTP specimen root b")
     seed_system_properties(api.session)
     api.session.flush()
-    api.terminology.seed_validate_code(
-        "specimen-1",
-        ValidationResult(code="specimen-1", result=True),
-        value_set_url=_SPECIMEN_VALUE_SET_URI,
-        edition=_SPECIMEN_EDITION,
-    )
-    patch_unconstrained = api.request(
-        "PATCH",
-        f"/catalogue/entries/{entry_unconstrained.business_key}",
-        token=token,
-        json={
-            "specimen_unconstrained": True,
-            "reason": _REASON,
-            "expected_row_version": entry_unconstrained.row_version,
-        },
-    )
-    assert patch_unconstrained.status_code == 200, patch_unconstrained.text
+    _seed_specimen_codes(api, "123038009", "119364003")
     before = _audit_event_count(api)
 
     response = _post_bulk_values(
         api,
         token,
         property_key="specimen",
-        values=[{"value": {"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}}],
+        values=[
+            {"value": {"system": "http://snomed.info/sct", "code": "123038009"}},
+            {"value": {"system": "http://snomed.info/sct", "code": "119364003"}},
+        ],
         entries=[
-            {"business_key": entry_ok.business_key, "expected_row_version": entry_ok.row_version},
-            {
-                "business_key": entry_unconstrained.business_key,
-                "expected_row_version": patch_unconstrained.json()["row_version"],
-            },
+            {"business_key": entry_a.business_key, "expected_row_version": entry_a.row_version},
+            {"business_key": entry_b.business_key, "expected_row_version": entry_b.row_version},
         ],
     )
 
     assert response.status_code == 422, response.text
-    assert any(
-        issue["code"] == "specimen-unconstrained-conflict" for issue in response.json()["issues"]
-    )
-    # entry_ok's own write reached and committed its per-entry savepoint
-    # before the loop reached entry_unconstrained - proving this requires
-    # a fresh read, since api.session's own identity map would otherwise
-    # show the pre-rollback in-memory state.
+    assert any(issue["code"] == "specimen-root-conflict" for issue in response.json()["issues"])
     api.session.expire_all()
-    assert _property_value_count(api, entry_id=entry_ok.id, property_key="specimen") == 0
+    assert _property_value_count(api, entry_id=entry_a.id, property_key="specimen") == 0
+    assert _property_value_count(api, entry_id=entry_b.id, property_key="specimen") == 0
     assert _audit_event_count(api) == before
 
 

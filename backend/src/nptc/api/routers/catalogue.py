@@ -360,7 +360,6 @@ def search(
                     # figure for a term carrying a non-breaking space.
                     preferred_term_length(hit.preferred_term),
                     hit.status,
-                    hit.specimen_unconstrained,
                     hit.updated_at,
                     facts[hit.business_key],
                 ),

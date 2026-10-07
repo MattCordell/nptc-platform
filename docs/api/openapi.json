@@ -536,7 +536,7 @@
         "tags": [
           "catalogue-admin"
         ],
-        "summary": "Set a catalogue entry's status and/or specimen_unconstrained flag",
+        "summary": "Set a catalogue entry's status",
         "operationId": "patch_entry_api_v1_catalogue_entries__business_key__patch",
         "parameters": [
           {
@@ -632,22 +632,16 @@
             }
           },
           "422": {
-            "description": "The `reason` is missing or low-information (FR-37), the body names neither `status` nor `specimen_unconstrained`, `status` is not one of `draft`, `active`, `deprecated` or `withdrawn`, or setting `specimen_unconstrained` to `true` conflicts with one or more specimen values already recorded on this entry (FR-89) - `issues[]` then names each blocking value by `ordinal`.",
+            "description": "The `reason` is missing or low-information (FR-37), or `status` is missing or not one of `draft`, `active`, `deprecated` or `withdrawn`.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/HTTPValidationError"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ErrorResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/PropertyValidationResponse"
                     }
                   ],
-                  "title": "Response 422 Patch Entry Api V1 Catalogue Entries  Business Key  Patch"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -4040,10 +4034,6 @@
             "type": "string",
             "title": "Status"
           },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -4091,7 +4081,6 @@
           "preferred_term",
           "length",
           "status",
-          "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
           "code",
@@ -4119,10 +4108,6 @@
           "status": {
             "type": "string",
             "title": "Status"
-          },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
           },
           "updated_at": {
             "type": "string",
@@ -4176,7 +4161,6 @@
           "preferred_term",
           "length",
           "status",
-          "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
           "code",
@@ -5367,10 +5351,6 @@
           "status": {
             "$ref": "#/components/schemas/CatalogueEntryStatus"
           },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
-          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -5379,7 +5359,6 @@
         "type": "object",
         "required": [
           "status",
-          "specimen_unconstrained",
           "row_version"
         ],
         "title": "EntryCoreWriteResult",
@@ -5402,10 +5381,6 @@
           "status": {
             "type": "string",
             "title": "Status"
-          },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
           },
           "updated_at": {
             "type": "string",
@@ -5475,7 +5450,6 @@
           "preferred_term",
           "length",
           "status",
-          "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
           "code",
@@ -5536,10 +5510,6 @@
             "type": "string",
             "title": "Status"
           },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -5583,7 +5553,6 @@
           "preferred_term",
           "length",
           "status",
-          "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
           "code",
@@ -5911,25 +5880,7 @@
       "PatchEntryRequest": {
         "properties": {
           "status": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CatalogueEntryStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "specimen_unconstrained": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Specimen Unconstrained"
+            "$ref": "#/components/schemas/CatalogueEntryStatus"
           },
           "reason": {
             "type": "string",
@@ -5940,13 +5891,15 @@
             "title": "Expected Row Version"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
+          "status",
           "reason",
           "expected_row_version"
         ],
         "title": "PatchEntryRequest",
-        "description": "The body of `PATCH /catalogue/entries/{business_key}`.\n\n`status`/`specimen_unconstrained` are both optional so a caller can set\neither or both in one save - `None` means \"leave this field alone\",\nmatching `EntryChanges`' own contract - but a body naming neither is\nrefused rather than silently treated as a no-op write."
+        "description": "The body of `PATCH /catalogue/entries/{business_key}`. Unknown fields are refused, so a\nclient that still sends the retired `specimen_unconstrained` fails loudly (ADR-0044)."
       },
       "PropertyCardinality": {
         "type": "string",
@@ -6575,10 +6528,6 @@
             "type": "string",
             "title": "Status"
           },
-          "specimen_unconstrained": {
-            "type": "boolean",
-            "title": "Specimen Unconstrained"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -6627,7 +6576,6 @@
           "preferred_term",
           "length",
           "status",
-          "specimen_unconstrained",
           "updated_at",
           "has_open_finding",
           "code",

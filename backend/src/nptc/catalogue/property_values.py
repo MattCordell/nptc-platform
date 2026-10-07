@@ -18,14 +18,10 @@ cardinality's upper bound (ADR-0012, `validate_values`) meaningful: a caller
 cannot bypass it by adding one row at a time. ADR-0035 records why the bulk
 seam does not diff either.
 
-**FR-89, enforced from both sides.** `specimen_unconstrained = true` asserts
-"this test accepts any specimen". That is a fact about the entry, not the
-property, so `validate_values`, which sees one property's values, cannot hold
-it. `_validate_specimen_cross_field` checks it when a `specimen` value is
-saved. `assert_specimen_flag_allowed` is the reverse direction, called by
-`save_entry` when a caller sets the flag. Both raise `PropertyValidationError`
-with `_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE`, so one invariant has one
-wording. Every other property's validation is generic.
+**FR-89 (ADR-0044).** The specimen root `123038009` means "any specimen", so it stands
+alone in the `specimen` value set. That is a rule about one property's whole set, not about an
+entry, so `_validate_specimen_root_alone` runs with the other whole-request checks in the
+preflight, before any entry is loaded. Every other property's validation is generic.
 
 **FR-10's binding-strength override lives here, not in `CodeHandler`.**
 `CodeHandler.validate` never sees a `justification`: that is the sibling
@@ -65,6 +61,7 @@ from nptc.audit.policy import AuditFieldPolicy
 from nptc.audit.recording import record_batch_summary, record_snapshot_change
 from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
+from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
 from nptc.catalogue.errors import ConflictReport, EntryNotFoundError, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
@@ -73,6 +70,7 @@ from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry, PropertyDefinitionSpec, ValidationIssue
 from nptc.registry.schema import validate_constraints, validate_values
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 
 __all__ = [
     "BulkPropertyOutcome",
@@ -81,7 +79,6 @@ __all__ = [
     "PropertyValidationError",
     "PropertyValueInput",
     "PropertyWriteIssue",
-    "assert_specimen_flag_allowed",
     "save_property_values",
     "save_property_values_for_entries",
     "tally_bulk_outcomes",
@@ -100,11 +97,9 @@ _NOT_IN_VALUE_SET = "not-in-value-set"
 #: The one property this module knows by name (FR-89); see the module docstring.
 _SPECIMEN_KEY = "specimen"
 
-#: FR-89's refusal, in the one wording both directions share.
-_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE: Final[str] = (
-    "this entry is marked as accepting any specimen "
-    "(specimen_unconstrained) - clear that flag before recording "
-    "a specimen value, or remove the specimen value before setting it"
+_SPECIMEN_ROOT_CONFLICT_MESSAGE: Final[str] = (
+    f"the specimen root ({SPECIMEN_ROOT_CODE}) means any specimen and must be the only specimen "
+    "value on an entry - remove it, or remove the named specimens"
 )
 
 #: A synthetic policy for the whole-set audit snapshot, not
@@ -183,62 +178,28 @@ class PropertyValidationError(ValueError):
         )
 
 
-def _validate_specimen_cross_field(
-    entry: CatalogueEntry, property_key: str, values: Sequence[Any]
+def _validate_specimen_root_alone(
+    property_key: str, values: Sequence[Any]
 ) -> Sequence[PropertyWriteIssue]:
-    """FR-89: an entry flagged `specimen_unconstrained` ("accepts any specimen")
-    cannot also carry specimen values. The facts are mutually exclusive, not merely
-    redundant. PRD S6.2 distinguishes the flag from "nobody has filled this in
-    yet"."""
-    if property_key != _SPECIMEN_KEY or not entry.specimen_unconstrained or not values:
+    """FR-89: the specimen root means "any specimen", so it cannot sit beside a named
+    specimen. The issue names the root's `ordinal`."""
+    if property_key != _SPECIMEN_KEY:
+        return ()
+    codes = [
+        value["code"] if isinstance(value, dict) and isinstance(value.get("code"), str) else None
+        for value in values
+    ]
+    named = [code for code in codes if code is not None and code != SPECIMEN_ROOT_CODE]
+    if SPECIMEN_ROOT_CODE not in codes or not named:
         return ()
     return (
         PropertyWriteIssue(
             property_key=property_key,
             label="Specimen",
-            code="specimen-unconstrained-conflict",
-            message=_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE,
+            code="specimen-root-conflict",
+            message=_SPECIMEN_ROOT_CONFLICT_MESSAGE,
+            ordinal=codes.index(SPECIMEN_ROOT_CODE),
         ),
-    )
-
-
-def assert_specimen_flag_allowed(session: Session, entry: CatalogueEntry) -> None:
-    """FR-89's invariant in the other direction: refuses setting
-    `entry.specimen_unconstrained = True` while the entry holds `specimen` values.
-    Does nothing if it holds none, and `save_entry` never calls it when the flag is
-    being cleared.
-
-    Raises `PropertyValidationError` with one `PropertyWriteIssue` per blocking
-    value, named by `ordinal`, in the shape `_validate_specimen_cross_field` uses.
-    Both share one message (see the module docstring).
-    """
-    # Selects only `ordinal` instead of hydrating every specimen row: this runs
-    # on every flag-set.
-    ordinals = (
-        session.execute(
-            select(PropertyValue.ordinal)
-            .where(
-                PropertyValue.entry_id == entry.id,
-                PropertyValue.property_key == _SPECIMEN_KEY,
-            )
-            .order_by(PropertyValue.ordinal)
-        )
-        .scalars()
-        .all()
-    )
-    if not ordinals:
-        return
-    raise PropertyValidationError(
-        tuple(
-            PropertyWriteIssue(
-                property_key=_SPECIMEN_KEY,
-                label="Specimen",
-                code="specimen-unconstrained-conflict",
-                message=_SPECIMEN_UNCONSTRAINED_CONFLICT_MESSAGE,
-                ordinal=ordinal,
-            )
-            for ordinal in ordinals
-        )
     )
 
 
@@ -287,11 +248,9 @@ def _apply_binding_strength(
 class _PropertyWritePreflight:
     """The whole-request part of a write: everything derivable from the property
     definition and the shared `values` alone, with no dependency on any entry's
-    state. `raw_values` is returned so `_validate_specimen_cross_field`, the one
-    entry-dependent check, reuses the list instead of rebuilding it."""
+    state."""
 
     definition: PropertyDefinition
-    raw_values: tuple[Any, ...]
     write_issues: tuple[PropertyWriteIssue, ...]
 
 
@@ -318,10 +277,9 @@ def _preflight_property_write(
     registry: DatatypeRegistry,
 ) -> _PropertyWritePreflight:
     """Validates `values` against `definition`'s spec, independent of any
-    entry: schema shape, cardinality, and FR-10's binding-strength override. Never
-    raises: a bad value is a `PropertyWriteIssue`, not an exception, so a caller
-    can combine these with an entry-dependent issue (FR-89) before deciding whether
-    to raise `PropertyValidationError`."""
+    entry: schema shape, cardinality, FR-10's binding-strength override and FR-89's
+    specimen root. Never raises: a bad value is a `PropertyWriteIssue`, not an
+    exception, so a caller decides whether to raise `PropertyValidationError`."""
     spec = spec_for(definition)
     handler = registry.get(definition.datatype)
     # A malformed `constraints` document is a defect in the definition, not
@@ -332,19 +290,20 @@ def _preflight_property_write(
 
     schema_issues = validate_values(raw_values, spec, handler, row_version=definition.row_version)
     schema_issues = _apply_binding_strength(schema_issues, spec, values)
-    write_issues = tuple(
-        PropertyWriteIssue(
-            property_key=definition.key,
-            label=definition.label,
-            code=issue.code,
-            message=issue.message,
-            ordinal=int(issue.path) if issue.path is not None else None,
-        )
-        for issue in schema_issues
+    write_issues = (
+        *(
+            PropertyWriteIssue(
+                property_key=definition.key,
+                label=definition.label,
+                code=issue.code,
+                message=issue.message,
+                ordinal=int(issue.path) if issue.path is not None else None,
+            )
+            for issue in schema_issues
+        ),
+        *_validate_specimen_root_alone(definition.key, raw_values),
     )
-    return _PropertyWritePreflight(
-        definition=definition, raw_values=raw_values, write_issues=write_issues
-    )
+    return _PropertyWritePreflight(definition=definition, write_issues=write_issues)
 
 
 def save_property_values(
@@ -408,12 +367,8 @@ def save_property_values(
 
     definition = _load_active_property_definition(session, property_key)
     preflight = _preflight_property_write(definition, values, registry)
-    write_issues = [
-        *preflight.write_issues,
-        *_validate_specimen_cross_field(entry, property_key, preflight.raw_values),
-    ]
-    if write_issues:
-        raise PropertyValidationError(tuple(write_issues))
+    if preflight.write_issues:
+        raise PropertyValidationError(preflight.write_issues)
 
     existing = (
         session.execute(
@@ -541,15 +496,13 @@ def save_property_values_for_entries(
     cardinality and binding-strength validation. That keeps the batch
     order-independent: a batch whose first targets all conflict must still refuse a
     bad `values` or `reason`. A stale `expected_row_version` and a missing entry
-    depend on one entry and are per-entry outcomes. FR-89's specimen conflict also
-    depends on one entry, but it is deliberately not caught per entry: it aborts the
-    whole batch rather than skip an entry the operator selected (ADR-0035).
+    depend on one entry and are per-entry outcomes.
 
     Raises `PropertyDefinitionNotFoundError`, `DeprecatedPropertyWriteError`,
     `nptc.catalogue.changelog.ChangelogNoteError` or `PropertyValidationError` for
-    a whole-request problem. A raise here, or an FR-89 conflict from one target,
-    leaves no write and no audit event: `session_scope` rolls back the whole
-    transaction, discarding entries already applied.
+    a whole-request problem. A raise here leaves no write and no audit event:
+    `session_scope` rolls back the whole transaction, discarding entries already
+    applied.
 
     `reason` is validated first, then `acquire_append_lock` runs before any
     session-touching statement. Taking it once here, not leaving it to the first
@@ -568,11 +521,6 @@ def save_property_values_for_entries(
     """
     validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
-
-    # Deferred: `nptc.catalogue.entries` imports `assert_specimen_flag_allowed`
-    # from this module at top level, so a top-level import here would hit a
-    # partially initialised module.
-    from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
 
     definition = _load_active_property_definition(session, property_key)
     preflight = _preflight_property_write(definition, values, registry)

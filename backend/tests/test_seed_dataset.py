@@ -36,8 +36,8 @@ def test_a_valid_dataset_is_read(make_dataset_document: MakeDocument, write_data
 
 
 @pytest.mark.req("FR-76")
-@pytest.mark.parametrize("version", [2, 0, "1", None, 1.5, True])
-def test_a_schema_version_other_than_one_is_refused(
+@pytest.mark.parametrize("version", [1, 3, 0, "2", None, 2.5, True])
+def test_a_schema_version_other_than_two_is_refused(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset, version: object
 ) -> None:
     document = make_dataset_document()
@@ -60,7 +60,7 @@ def test_a_missing_schema_version_is_refused(
 def test_the_version_is_checked_before_the_shape(write_dataset: WriteDataset) -> None:
     """A later transform's file must say 'unsupported version', not list shape errors."""
     with pytest.raises(UnsupportedSchemaVersionError):
-        read_import_dataset(write_dataset({"schema_version": 2, "something": "new"}))
+        read_import_dataset(write_dataset({"schema_version": 3, "something": "new"}))
 
 
 def test_a_missing_file_is_unreadable(tmp_path: Path) -> None:
@@ -198,27 +198,71 @@ def test_a_binding_without_an_fsn_is_refused(
     assert "no FSN" in exc_info.value.problems[0]
 
 
-@pytest.mark.req("FR-89")
-def test_a_named_specimen_on_an_unconstrained_entry_is_refused(
+def test_a_version_1_file_is_refused_with_a_message_that_names_the_version(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document()
-    document["entries"][0]["specimen_unconstrained"] = True
+    document["schema_version"] = 1
+    document["entries"][0]["specimen_unconstrained"] = False
+
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
+        read_import_dataset(write_dataset(document))
+
+    assert "schema_version is 1" in str(exc_info.value)
+
+
+@pytest.mark.req("FR-89")
+def test_the_specimen_root_beside_a_named_specimen_is_refused(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document()
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Any", "code": "123038009"},
+        {"value": "Serum", "code": "119364003"},
+    ]
 
     with pytest.raises(DatasetNotSeedableError) as exc_info:
         read_import_dataset(write_dataset(document))
 
     assert "FR-89" in exc_info.value.problems[0]
+    assert "NPTC-500000" in exc_info.value.problems[0]
 
 
-def test_an_unconstrained_entry_with_no_specimens_is_accepted(
+@pytest.mark.req("FR-89")
+def test_the_specimen_root_alone_is_accepted(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document()
-    document["entries"][0]["specimen_unconstrained"] = True
-    document["entries"][0]["properties"]["specimen"] = []
+    document["entries"][0]["properties"]["specimen"] = [{"value": "Any", "code": "123038009"}]
 
-    assert read_import_dataset(write_dataset(document)).entries[0].specimen_unconstrained is True
+    entry = read_import_dataset(write_dataset(document)).entries[0]
+
+    assert [value.code for value in entry.properties.specimen] == ["123038009"]
+
+
+@pytest.mark.req("FR-89")
+def test_the_root_under_two_displays_is_not_a_root_beside_another_specimen(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document()
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Any", "code": "123038009"},
+        {"value": "Specimen", "code": "123038009"},
+    ]
+
+    entry = read_import_dataset(write_dataset(document)).entries[0]
+
+    assert {value.code for value in entry.properties.specimen} == {"123038009"}
+
+
+def test_a_dataset_that_still_carries_the_retired_flag_is_refused(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document()
+    document["entries"][0]["specimen_unconstrained"] = False
+
+    with pytest.raises(DatasetInvalidError):
+        read_import_dataset(write_dataset(document))
 
 
 def test_a_duplicate_business_key_is_refused(

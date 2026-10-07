@@ -21,16 +21,12 @@ provenance, so they are kept verbatim under ``source.legacy_version`` and
 ``legacy_history``: immutable seeding provenance, not editable fields, so cutover
 destroys no information.
 
-**Specimen: verbatim always, code only where certain** (FR-88, FR-92). A
-specimen value's ``code`` is set only on an *exact* ``SPECIMEN_TABLE``
-surface-form match (``cell_defects.resolve_specimen_term``), never the
-word-boundary substring heuristic ``semantic_drift.py`` uses for lower-stakes
-review. An unmapped value is still seeded verbatim with no code
-(``SPECIMEN_VALUE_UNMAPPED``, informational). ``'Any'`` sets
-``specimen_unconstrained: true`` and yields no value itself (FR-89), but keeps
-any other value the cell asserts. The published data can put 'Any' beside a named
-specimen, and this module must seed exactly what the report describes for that
-cell.
+**Specimen: the reviewed map decides** (FR-88, FR-89, ADR-0044). A specimen value
+keeps the workbook string and takes its code from the reviewed specimen map
+(``cell_defects.resolve_specimen_term``). A value the map marks as needing no
+specimen yields no value. An unmapped value never reaches this module: it is a
+blocking finding (``SPECIMEN_VALUE_UNMAPPED``), so ``build_dataset`` is not called.
+``'Any'`` is coded as the specimen root like any other string.
 
 **Terminology-served enrichment is not done here.** Without
 ``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
@@ -60,11 +56,10 @@ from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SNOMED_SYSTEM = "http://snomed.info/sct"
 _LANGUAGE_EN_AU = "en-AU"
-_SPECIMEN_ANY = "any"
 
 
 @dataclass(frozen=True)
@@ -94,8 +89,7 @@ class CodeBinding:
 @dataclass(frozen=True)
 class PropertyValue:
     """One property value - a discipline, subgroup or specimen assertion.
-    ``code`` is ``None`` for discipline/subgroup always, and for a specimen
-    value with no exact ``SPECIMEN_TABLE`` match (FR-88)."""
+    ``code`` is ``None`` for discipline/subgroup always, and never for a specimen."""
 
     value: str
     code: str | None = None
@@ -127,7 +121,6 @@ class ImportEntry:
     source: EntrySource
     preferred_term: str
     status: str
-    specimen_unconstrained: bool
     designations: tuple[Designation, ...]
     code_bindings: tuple[CodeBinding, ...]
     properties: EntryProperties
@@ -198,25 +191,22 @@ def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBind
     )
 
 
-def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[tuple[PropertyValue, ...], bool]:
-    """Mirrors ``cell_defects._scan_specimen``: 'Any' sets
-    ``specimen_unconstrained`` but does not short-circuit the cell's remaining
-    values. A named value beside 'Any' is seeded, not discarded, because the
-    report has a finding for every value in the cell and this must seed what it
-    describes.
+def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[PropertyValue, ...]:
+    """Mirrors ``cell_defects._scan_specimen``. A value the reviewed map does not
+    cover is a caller error (the run was blocked), so it raises rather than seeding
+    a specimen with no code.
     """
     specimen_cell = row_cells.get(ColumnRole.SPECIMEN)
     if specimen_cell is None:
-        return (), False
+        return ()
     values: list[PropertyValue] = []
-    unconstrained = False
     for value in split_specimen_values(_cell_text(specimen_cell)):
-        if value.casefold() == _SPECIMEN_ANY:
-            unconstrained = True
-            continue
-        group = resolve_specimen_term(value)
-        values.append(PropertyValue(value=value, code=group.specimen_code if group else None))
-    return tuple(values), unconstrained
+        entry = resolve_specimen_term(value)
+        if entry is None:
+            raise ValueError(f"specimen {value!r} is not in the specimen map; the run was blocked")
+        if entry.code is not None:
+            values.append(PropertyValue(value=value, code=entry.code))
+    return tuple(values)
 
 
 def _build_compound_property(
@@ -248,7 +238,7 @@ def build_dataset(
     for sequence, source_row in enumerate(seedable_rows(sheets), start=1):
         row_cells = source_row.cells
         preferred_cell = row_cells[ColumnRole.PREFERRED_TERM]
-        specimen, unconstrained = _build_specimen(row_cells)
+        specimen = _build_specimen(row_cells)
         entries.append(
             ImportEntry(
                 business_key=_business_key(sequence),
@@ -260,7 +250,6 @@ def build_dataset(
                 ),
                 preferred_term=_cell_text(preferred_cell),
                 status="active",
-                specimen_unconstrained=unconstrained,
                 designations=_build_designations(row_cells),
                 code_bindings=_build_code_bindings(row_cells),
                 properties=EntryProperties(
@@ -317,7 +306,6 @@ def _entry_payload(entry: ImportEntry) -> dict[str, object]:
         },
         "preferred_term": entry.preferred_term,
         "status": entry.status,
-        "specimen_unconstrained": entry.specimen_unconstrained,
         "designations": [_designation_payload(d) for d in entry.designations],
         "code_bindings": [_code_binding_payload(b) for b in entry.code_bindings],
         "properties": {

@@ -403,7 +403,6 @@ def _write_entry(
         preferred_term=entry.preferred_term,
         reason=SEED_IMPORT_NOTE,
         status=entry.status,
-        specimen_unconstrained=entry.specimen_unconstrained,
         business_key=entry.business_key,
     )
 

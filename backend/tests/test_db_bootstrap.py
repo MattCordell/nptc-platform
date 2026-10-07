@@ -75,7 +75,8 @@ def test_specimen_is_bound_to_the_snomed_value_set(app_session: Session) -> None
     assert specimen is not None
     assert specimen.datatype == "code"
     assert specimen.binding_target == "value_set"
-    assert specimen.value_set_uri == "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+    assert specimen.value_set_uri == "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
+    assert "forbidden_codes" not in specimen.constraints
 
 
 @pytest.mark.req("FR-09")

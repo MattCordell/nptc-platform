@@ -91,9 +91,15 @@ GRANT_CATALOGUE_ENTRY_SQL = "GRANT SELECT, INSERT ON TABLE catalogue_entry TO np
 #: `version_id_col` issues `UPDATE ... SET row_version = ... WHERE row_version =
 #: ...` on every mapped update, and omitting it would turn every optimistic
 #: write into a permission error.
+#: Migration 0006's statement, replayed as written. Migration 0024 drops
+#: `specimen_unconstrained`, and its grant goes with it.
 GRANT_CATALOGUE_ENTRY_UPDATE_SQL = (
     "GRANT UPDATE (preferred_term, status, specimen_unconstrained, updated_at, row_version) "
     "ON TABLE catalogue_entry TO nptc_app;"
+)
+#: Re-grants the one column migration 0024's downgrade puts back.
+GRANT_CATALOGUE_ENTRY_SPECIMEN_UNCONSTRAINED_UPDATE_SQL = (
+    "GRANT UPDATE (specimen_unconstrained) ON TABLE catalogue_entry TO nptc_app;"
 )
 #: An entry is deprecated or withdrawn through `status`, never removed. With
 #: `UNIQUE (business_key)` and a monotonic minting sequence, that is what

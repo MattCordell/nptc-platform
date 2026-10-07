@@ -24,7 +24,6 @@ import {
   useEntryDetail,
   useEntryHistory,
   useEntryProperties,
-  usePatchEntryCore,
   usePropertyDefinition,
   usePropertyDefinitions,
   usePropertyValueOptions,
@@ -482,7 +481,7 @@ describe("useAmendDesignation", () => {
 describe("useRetireDesignation", () => {
   it("posts the term and its mandatory reason to the retirement route", async () => {
     const fetchMock = stubFetch(200, {
-      designation: { term: "Cyclir", status: "retired" },
+      designation: { term: "Cyclir", status: "withdrawn" },
       row_version: 2,
     });
     const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
@@ -772,55 +771,6 @@ describe("useSavePropertyValues", () => {
     result.current.mutate({
       values: [{ value: "HAEM" }],
       reason: "Record the discipline",
-      expected_row_version: 3,
-    });
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(4);
-  });
-});
-
-describe("usePatchEntryCore", () => {
-  it("PATCHes the entry's own status/specimen_unconstrained columns", async () => {
-    const fetchMock = stubFetch(200, {
-      status: "active",
-      specimen_unconstrained: true,
-      row_version: 4,
-    });
-    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
-
-    result.current.mutate({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
-      expected_row_version: 3,
-    });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    const request = requestFor(fetchMock);
-    expect(new URL(request.url).pathname).toBe("/api/v1/catalogue/entries/NPTC-000247");
-    expect(request.method).toBe("PATCH");
-    expect(await bodyOf(request)).toEqual({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
-      expected_row_version: 3,
-    });
-  });
-
-  it("refetches the entry on a version conflict", async () => {
-    stubFetch(409, {
-      detail: "This entry was changed by someone else since you loaded it.",
-      business_key: "NPTC-000247",
-      expected_row_version: 3,
-      current_row_version: 4,
-      conflicts: [],
-      changed_by: "A Curator",
-      changed_at: "2026-09-02T00:00:00Z",
-    });
-    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
-
-    result.current.mutate({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
       expected_row_version: 3,
     });
 

@@ -63,7 +63,7 @@ from nptc_shared.terminology import (
 #: `specimen` binding) - `_SPECIMEN_VALUE_SET_URI` there is itself a
 #: literal, not derived, so this test file follows the same precedent
 #: rather than importing that private module constant.
-_SPECIMEN_ECL = "<123038009"
+_SPECIMEN_ECL = "<<123038009"
 
 
 def _seed(session: Session) -> None:
@@ -541,7 +541,7 @@ def test_resolve_property_values_resolves_a_code_the_stored_binding_would_exclud
     app_session: Session,
 ) -> None:
     """Not intersected with the property's own bound ECL (module docstring):
-    `specimen`'s real binding is `<123038009` (descendants of Specimen), but
+    `specimen`'s real binding is `<<123038009` (Specimen and its descendants), but
     a code outside that hierarchy - already recorded on an entry before the
     RCPA narrowed the value set - still resolves here, unlike
     `list_property_values`."""

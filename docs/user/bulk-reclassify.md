@@ -53,11 +53,12 @@ Your selection is cleared once the batch completes, whether or not everything su
 
 ## If something goes wrong
 
-**A message naming what stopped the whole batch, with the dialog still open.** One kind
-of check depends on an individual entry's own setting (whether it accepts any specimen)
-and cannot be resolved per entry — if it fails, nothing in the batch is saved, including
-entries that would otherwise have succeeded. Your chosen property, values and changelog
-note are kept exactly as you left them; adjust what you are setting and try again.
+**A message naming what stopped the whole batch, with the dialog still open.** Some
+checks look only at the values you chose, such as the rule that the specimen root
+(**Specimen**, code `123038009`, meaning any specimen) cannot sit beside another specimen.
+They run before any entry is touched, so if one fails nothing in the batch is saved. Your
+chosen property, values and changelog note are kept exactly as you left them; adjust what
+you are setting and try again.
 
 **Save stays unavailable, with a message under the changelog note.** Same as
 [editing a property directly](editing-registry-properties.md#if-something-goes-wrong) —

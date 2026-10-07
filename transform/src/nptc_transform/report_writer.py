@@ -44,7 +44,7 @@ from nptc_transform.pipeline import RunResult
 
 #: Bumped when a new ``FindingCode`` can appear in ``defect_classes`` as well as
 #: when the shape changes, so a consumer pinned to the old vocabulary can tell.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"
@@ -174,9 +174,19 @@ def _drift_payload(result: RunResult) -> object:
         "term_specimen_differs_count": run.term_specimen_differs_count,
         "term_timing_not_modelled_count": run.term_timing_not_modelled_count,
         "specimen_table_entries_unresolved": run.specimen_table_entries_unresolved,
-        "specimen_column_values_unmapped": run.specimen_column_values_unmapped,
         "describe_requests": run.describe_requests,
         "classification_requests": run.classification_requests,
+        "resolved_versions": list(run.resolved_versions),
+    }
+
+
+def _specimen_map_payload(result: RunResult) -> object:
+    """The specimen map check's provenance block, or ``null`` if it never ran."""
+    run = result.specimen_map
+    if run is None:
+        return None
+    return {
+        "codes_checked": run.codes_checked,
         "resolved_versions": list(run.resolved_versions),
     }
 
@@ -228,6 +238,7 @@ def _report_payload(result: RunResult) -> dict[str, object]:
         "designations": _designations_payload(result),
         "misspellings": _misspellings_payload(result),
         "drift": _drift_payload(result),
+        "specimen_map": _specimen_map_payload(result),
         "defect_classes": [
             _defect_class_payload(defect_class) for defect_class in _group_findings(result.findings)
         ],
@@ -381,13 +392,20 @@ def _render_drift(result: RunResult) -> list[str]:
             f"- {run.specimen_table_entries_unresolved} specimen-table concept(s) could not be "
             "resolved against the server; those group(s) fall back to their hand-typed terms only"
         )
-    if run.specimen_column_values_unmapped:
-        lines.append(
-            f"- {run.specimen_column_values_unmapped} distinct `Specimen` column value(s) map to "
-            "no group in the specimen table - a coverage gap, never fed back into classification"
-        )
     lines.append("")
     return lines
+
+
+def _render_specimen_map(result: RunResult) -> list[str]:
+    """The human-readable half of the specimen map check's provenance block."""
+    run = result.specimen_map
+    if run is None:
+        return ["- Specimen map check: `not run`", ""]
+    return [
+        f"- Specimen map check: {run.codes_checked} code(s) checked against "
+        "`<<123038009` in SNOMED CT-AU (FR-88)",
+        "",
+    ]
 
 
 def _render_defect_classes(classes: tuple[_DefectClass, ...]) -> list[str]:
@@ -461,6 +479,7 @@ def _render_markdown(result: RunResult) -> str:
     lines.extend(_render_designations(result))
     lines.extend(_render_misspellings(result))
     lines.extend(_render_drift(result))
+    lines.extend(_render_specimen_map(result))
     lines.extend(_render_defect_classes(_group_findings(result.findings)))
     return "\n".join(lines)
 

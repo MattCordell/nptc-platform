@@ -33,9 +33,9 @@ Field values follow PRD SS6.5/6.6:
   system (`binding_target = 'local_code_system'`, `local_code_system_key = 'discipline'` or
   `'subgroup'`). Neither has a `value_set_uri`: that column is `value_set`-only (see
   `_VALUE_SET_URI_REQUIRED_CHECK_SQL` on the model).
-- **Specimen** (FR-88, FR-89): coded, `0..*`, bound to the SNOMED CT-AU value set rooted at
-  `123038009` |Specimen|, as PRD S6.6 verifies (`<123038009` resolves every sampled specimen).
-  `'Any'` is never a specimen value; `catalogue_entry.specimen_unconstrained` holds that flag.
+- **Specimen** (FR-88, FR-89): coded, `0..*`, bound to the SNOMED CT-AU value set `<<123038009`
+  |Specimen|, the root and its descendants (ADR-0044). The root is the "any specimen" value and
+  stands alone on an entry.
 - **Usage guidance** (OI-12): free text, `0..1`, no binding, not filterable. It stays an editorial
   field, never structured.
 
@@ -63,9 +63,9 @@ from nptc.db.models.property_definition import (
 #: module docstring.
 _UNIQUE_VIOLATION = "23505"
 
-#: PRD S6.6: SNOMED CT-AU, `<123038009` |Specimen (specimen)|, URL-encoded
-#: per the PRD's own worked example.
-_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+#: SNOMED CT-AU, `<<123038009` |Specimen (specimen)|, URL-encoded as PRD S6.6's own worked
+#: example is. `<<` includes the root, which is the value `Any` takes (ADR-0044).
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
 
 
 def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
@@ -115,11 +115,6 @@ def _build_system_property_definitions() -> tuple[PropertyDefinition, ...]:
             value_set_uri=_SPECIMEN_VALUE_SET_URI,
             strength=BindingStrength.REQUIRED,
             edition="au",
-            # FR-89: 'Any' is never a specimen code. No specimen constraint is
-            # `catalogue_entry.specimen_unconstrained` plus zero specimen values.
-            # `CodeHandler.validate()` checks this through its `constraints_schema()` seam, not a
-            # hardcoded property key.
-            constraints={"forbidden_codes": ["Any"]},
             filterable=True,
             origin=PropertyOrigin.SYSTEM,
             display_order=30,

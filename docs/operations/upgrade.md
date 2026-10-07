@@ -66,6 +66,8 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0018_validation_finding.py`](../../backend/migrations/versions/0018_validation_finding.py) | `validation_finding`, `ix_audit_event_entity_type_entity_id_sequence` on `audit_event` (see [`data-model.md`](../architecture/data-model.md#validation_finding-fr-18-fr-45-fr-55-issue-141)) | See [below](#0018_validation_findingpy) - the new `audit_event` index is a blocking build |
 | [`0021_seed_import_provenance.py`](../../backend/migrations/versions/0021_seed_import_provenance.py) | `seed_import`, `entry_seed_provenance` (see [`data-model.md`](../architecture/data-model.md#seeded-baseline-provenance-issue-329-fr-76-adr-0010-adr-0042)) | None to upgrade. To populate them, run the [seed baseline runbook](runbooks/seed-baseline.md) once on a new deployment |
 | [`0022_terms_acceptance.py`](../../backend/migrations/versions/0022_terms_acceptance.py) | `terms_acceptance` (see [`data-model.md`](../architecture/data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043)) | See [below](#0022_terms_acceptancepy) - every existing user must accept the current terms before their next contribution |
+| [`0023_specimen_binding_includes_root.py`](../../backend/migrations/versions/0023_specimen_binding_includes_root.py) | The `specimen` binding `<<123038009` (see [`data-model.md`](../architecture/data-model.md)) | See [below](#0023_specimen_binding_includes_rootpy) - re-emit any dataset made before this release |
+| [`0024_retire_specimen_unconstrained.py`](../../backend/migrations/versions/0024_retire_specimen_unconstrained.py) | Drops `catalogue_entry.specimen_unconstrained` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | See [below](#0024_retire_specimen_unconstrainedpy) - converts the flag to the specimen root first |
 
 ## Provisioning the app role's login
 
@@ -401,6 +403,54 @@ The API reads the terms files named by `NPTC_TERMS_CURRENT_VERSION` and refuses 
 that version has no file. See [`configuration.md`](configuration.md).
 
 The downgrade drops the table, which discards every recorded acceptance.
+
+## `0023_specimen_binding_includes_root.py`
+
+Widens the system `specimen` property's binding from `<123038009` to `<<123038009`, and
+removes its `forbidden_codes: ["Any"]` constraint (FR-88, FR-89, ADR-0044). `Any` is now the
+specimen code `123038009`, which `<123038009` refuses because it selects descendants only. The
+migration updates one row and is instant.
+
+**The update is guarded.** It matches the system `specimen` definition only while it still holds
+the old binding, so a binding that an administrator changed is kept. If you changed it, set the
+new binding by hand. The migration leaves `row_version` alone and writes no audit event, as
+migration 0013's backfill did.
+
+**Re-emit any import dataset made before this release.** The dataset format moves to
+`schema_version` 2 and loses the `specimen_unconstrained` field, so the loader refuses a version 1
+file and names the version. Run the current transform again (see
+[`runbooks/transform.md`](runbooks/transform.md)).
+
+The downgrade restores the old binding and constraint. It does not remove the root from an entry
+that already holds it, so downgrade only an empty catalogue or a rehearsal database.
+
+## `0024_retire_specimen_unconstrained.py`
+
+Drops `catalogue_entry.specimen_unconstrained` (FR-89, ADR-0044). "Accepts any specimen" is now
+the `specimen` value `123038009`, held alone.
+
+**The flag converts before the column goes.** Each entry marked `true` that holds no specimen
+value gets one: `{"system": "http://snomed.info/sct", "code": "123038009", "display": "Any"}`.
+An entry that holds named specimens and the flag (the old rule refused that pair, but a seeded or
+direct-SQL row could hold it) keeps its named specimens, and the flag is lost. The upgrade logs a
+warning that gives the count and the business keys (the first 50) before it drops the column, so
+read the migrate output and review those entries. The conversion is raw SQL, so it writes **no audit event** and leaves `row_version`
+alone, as migrations 0009, 0013 and 0023 do. The entry's history shows no event for it. Run the
+migration with the backend stopped, which the compose `migrate` service already guarantees.
+
+**The upgrade stops with a message** if an entry needs the conversion and the `specimen`
+property definition does not exist. The seed loader creates that definition before it writes any
+entry, so a catalogue that holds entries has it.
+
+**The API changes with it.** Entry responses lose `specimen_unconstrained`, and `PATCH
+/catalogue/entries/{business_key}` takes `{status, reason, expected_row_version}` and refuses any
+other field. A client built for the old shape must change. Entries edited through the API now
+record "any specimen" by writing the root as the one specimen value.
+
+The downgrade re-adds the column and re-grants `nptc_app` its `UPDATE` on it. An entry whose only
+specimen is the root becomes flagged again, and that value is removed, which restores the old
+rule that an entry holds the flag or specimens, never both. An entry that holds the root beside
+named specimens (the new rule refuses that pair) is left as it is.
 
 ## Testcontainers and Docker
 

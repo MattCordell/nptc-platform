@@ -142,3 +142,13 @@ design.
   is a provisional migration step, not the governed value set/code system those requirements
   actually ask for. Each requirement's `notes` records what this issue's seeding-time treatment
   does and does not cover.
+
+## Amendment (2026-10-07, ADR-0044)
+
+- `import-dataset.json`'s `schema_version` moved from 1 to 2. The `specimen_unconstrained` entry
+  field is gone: `Any` is now the specimen code `123038009`, held alone. The loader refuses a
+  version 1 file and names the version. `report.json`'s `schema_version` moved from 8 to 9 for
+  the changed finding vocabulary.
+- `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
+  data defect, not informational, because the loader refuses a specimen with no code. The
+  decisions above that say otherwise record what was decided at the time.

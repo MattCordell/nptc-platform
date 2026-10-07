@@ -28,7 +28,6 @@ from nptc.catalogue.property_values import (
     PropertyDefinitionNotFoundError,
     PropertyValidationError,
     PropertyValueInput,
-    assert_specimen_flag_allowed,
     save_property_values,
     save_property_values_for_entries,
 )
@@ -50,7 +49,7 @@ from nptc.registry.schema import MalformedConstraintsError
 from nptc_shared.terminology.models import Edition, ValidationResult
 from nptc_shared.terminology.stub import StubTerminologyClient
 
-_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
 _SPECIMEN_EDITION = Edition(module_id="au", label="au")
 _SPECIMEN_SYSTEM = "http://example.org/specimen-test"
 
@@ -431,37 +430,19 @@ def test_specimen_accepts_the_samples_seven_specimen_case(app_session: Session) 
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_specimen_rejects_the_literal_value_any(app_session: Session) -> None:
-    entry = _new_entry(app_session)
-    _specimen_seeded(app_session)
-
-    with pytest.raises(PropertyValidationError) as excinfo:
-        save_property_values(
-            app_session,
-            AuditContext.system(),
-            entry=entry,
-            expected_row_version=entry.row_version,
-            property_key="specimen",
-            values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "Any"}),
-            reason="Should be rejected",
-            registry=_registry(app_session),
-        )
-
-    assert excinfo.value.issues[0].code == "forbidden-code"
-    assert _property_value_count(app_session, entry_id=entry.id, property_key="specimen") == 0
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.integration
-def test_specimen_value_is_rejected_when_the_entry_is_marked_unconstrained(
+def test_specimen_rejects_the_literal_text_any_because_it_is_not_a_code(
     app_session: Session,
 ) -> None:
+    """`Any` is the code `123038009`, never the text (ADR-0044)."""
     entry = _new_entry(app_session)
-    entry.specimen_unconstrained = True
-    app_session.flush()
     _specimen_seeded(app_session)
     terminology = StubTerminologyClient()
-    _seed_specimen_stub(terminology, ["specimen-1"])
+    terminology.seed_validate_code(
+        "Any",
+        ValidationResult(code="Any", result=False),
+        value_set_url=_SPECIMEN_VALUE_SET_URI,
+        edition=_SPECIMEN_EDITION,
+    )
 
     with pytest.raises(PropertyValidationError) as excinfo:
         save_property_values(
@@ -470,23 +451,27 @@ def test_specimen_value_is_rejected_when_the_entry_is_marked_unconstrained(
             entry=entry,
             expected_row_version=entry.row_version,
             property_key="specimen",
-            values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
-            reason="Should be rejected - entry is specimen_unconstrained",
+            values=_inputs({"system": "http://snomed.info/sct", "code": "Any"}),
+            reason="Should be rejected",
             registry=_registry(app_session, terminology),
         )
 
-    assert any(issue.code == "specimen-unconstrained-conflict" for issue in excinfo.value.issues)
+    assert "invalid-sctid-format" in [issue.code for issue in excinfo.value.issues]
+    assert _property_value_count(app_session, entry_id=entry.id, property_key="specimen") == 0
+
+
+_SNOMED = "http://snomed.info/sct"
+_ROOT = "123038009"
+_SERUM = "119364003"
 
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_specimen_unconstrained_entry_accepts_zero_specimen_values(
-    app_session: Session,
-) -> None:
+def test_the_specimen_root_alone_is_stored_as_any_specimen(app_session: Session) -> None:
     entry = _new_entry(app_session)
-    entry.specimen_unconstrained = True
-    app_session.flush()
     _specimen_seeded(app_session)
+    terminology = StubTerminologyClient()
+    _seed_specimen_stub(terminology, [_ROOT])
 
     rows = save_property_values(
         app_session,
@@ -494,55 +479,48 @@ def test_specimen_unconstrained_entry_accepts_zero_specimen_values(
         entry=entry,
         expected_row_version=entry.row_version,
         property_key="specimen",
-        values=[],
-        reason="No specimen values - the entry is unconstrained",
-        registry=_registry(app_session),
+        values=_inputs({"system": _SNOMED, "code": _ROOT}),
+        reason="Any specimen",
+        registry=_registry(app_session, terminology),
     )
 
-    assert rows == []
-
-
-# --- FR-89: the reverse direction (issue #249) ------------------------------
+    assert [row.value["code"] for row in rows] == [_ROOT]
 
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_assert_specimen_flag_allowed_refuses_when_specimen_values_exist(
+def test_the_specimen_root_beside_a_named_specimen_is_rejected_and_names_the_root(
     app_session: Session,
 ) -> None:
     entry = _new_entry(app_session)
     _specimen_seeded(app_session)
     terminology = StubTerminologyClient()
-    _seed_specimen_stub(terminology, ["specimen-1"])
-    save_property_values(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        expected_row_version=entry.row_version,
-        property_key="specimen",
-        values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
-        reason="Recorded a specimen value before flagging unconstrained",
-        registry=_registry(app_session, terminology),
-    )
+    _seed_specimen_stub(terminology, [_ROOT, _SERUM])
+    events_before = app_session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
 
     with pytest.raises(PropertyValidationError) as excinfo:
-        assert_specimen_flag_allowed(app_session, entry)
+        save_property_values(
+            app_session,
+            AuditContext.system(),
+            entry=entry,
+            expected_row_version=entry.row_version,
+            property_key="specimen",
+            values=_inputs({"system": _SNOMED, "code": _SERUM}, {"system": _SNOMED, "code": _ROOT}),
+            reason="Should be rejected",
+            registry=_registry(app_session, terminology),
+        )
 
-    issue = excinfo.value.issues[0]
-    assert issue.code == "specimen-unconstrained-conflict"
-    assert issue.property_key == "specimen"
-    assert issue.ordinal == 0
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.integration
-def test_assert_specimen_flag_allowed_permits_an_entry_with_no_specimen_values(
-    app_session: Session,
-) -> None:
-    entry = _new_entry(app_session)
-    _specimen_seeded(app_session)
-
-    assert_specimen_flag_allowed(app_session, entry)  # must not raise
+    (issue,) = excinfo.value.issues
+    assert (issue.code, issue.property_key, issue.ordinal) == (
+        "specimen-root-conflict",
+        "specimen",
+        1,
+    )
+    assert _property_value_count(app_session, entry_id=entry.id, property_key="specimen") == 0
+    assert (
+        app_session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
+        == events_before
+    )
 
 
 # --- FR-10: local code system binding, no terminology call ------------------
@@ -1200,21 +1178,16 @@ def test_bulk_an_entry_already_holding_the_target_value_is_unchanged_not_an_erro
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_bulk_a_specimen_cross_field_conflict_aborts_the_whole_batch(
+def test_bulk_a_specimen_root_conflict_is_refused_before_any_entry_is_touched(
     app_session: Session,
 ) -> None:
-    """FR-89's specimen cross-field check is deliberately whole-request, not
-    per-entry (ADR-0035): the operator explicitly selected this entry, so a
-    violation refuses the whole batch rather than silently skipping it. The
-    conflicting entry is targeted first, so a valid entry later in the list
-    is never reached."""
-    entry_unconstrained = _new_entry(app_session, "Bulk specimen unconstrained")
-    entry_unconstrained.specimen_unconstrained = True
-    app_session.flush()
-    entry_ok = _new_entry(app_session, "Bulk specimen ok")
+    """The root-alone rule reads the submitted values only, so a bulk write checks it once, up
+    front, with the other whole-request checks (ADR-0035)."""
+    entry_a = _new_entry(app_session, "Bulk specimen root a")
+    entry_b = _new_entry(app_session, "Bulk specimen root b")
     _specimen_seeded(app_session)
     terminology = StubTerminologyClient()
-    _seed_specimen_stub(terminology, ["specimen-1"])
+    _seed_specimen_stub(terminology, [_ROOT, _SERUM])
 
     with pytest.raises(PropertyValidationError) as excinfo:
         save_property_values_for_entries(
@@ -1222,21 +1195,21 @@ def test_bulk_a_specimen_cross_field_conflict_aborts_the_whole_batch(
             AuditContext.system(),
             targets=[
                 EntryPropertyTarget(
-                    business_key=entry_unconstrained.business_key,
-                    expected_row_version=entry_unconstrained.row_version,
+                    business_key=entry_a.business_key, expected_row_version=entry_a.row_version
                 ),
                 EntryPropertyTarget(
-                    business_key=entry_ok.business_key, expected_row_version=entry_ok.row_version
+                    business_key=entry_b.business_key, expected_row_version=entry_b.row_version
                 ),
             ],
             property_key="specimen",
-            values=_inputs({"system": _SPECIMEN_SYSTEM, "code": "specimen-1"}),
+            values=_inputs({"system": _SNOMED, "code": _ROOT}, {"system": _SNOMED, "code": _SERUM}),
             reason="Should abort the whole batch",
             registry=_registry(app_session, terminology),
         )
 
-    assert any(issue.code == "specimen-unconstrained-conflict" for issue in excinfo.value.issues)
-    assert _property_value_count(app_session, entry_id=entry_ok.id, property_key="specimen") == 0
+    assert any(issue.code == "specimen-root-conflict" for issue in excinfo.value.issues)
+    for entry in (entry_a, entry_b):
+        assert _property_value_count(app_session, entry_id=entry.id, property_key="specimen") == 0
 
 
 @pytest.mark.req("FR-39")

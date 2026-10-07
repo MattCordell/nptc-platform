@@ -564,6 +564,28 @@ class TerminologySweep:
             versions.update(local_versions)
         return result
 
+    def codes_subsumed_by(
+        self,
+        codes: Sequence[str],
+        *,
+        root: str,
+        edition: Edition,
+        versions: set[str] | None = None,
+    ) -> tuple[str, ...]:
+        """Which of ``codes`` are active concepts equal to, or descended from, ``root``.
+
+        Chunked ``(chunk) AND <<root``. A code that is absent or inactive in
+        ``edition`` is not returned either, so a caller reads every code missing from
+        the result as failing the check, whatever the reason.
+        """
+        local_versions: set[str] = set()
+        result = self._expand_combined(
+            codes, operator="AND", rhs=f"<<{root}", edition=edition, versions=local_versions
+        )
+        if versions is not None:
+            versions.update(local_versions)
+        return result
+
     def describe(
         self, codes: Sequence[str], *, edition: Edition, versions: set[str] | None = None
     ) -> tuple[ConceptDesignations, ...]:

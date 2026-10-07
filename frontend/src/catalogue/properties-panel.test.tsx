@@ -121,7 +121,7 @@ const DEFINITIONS = {
       required_for_submission: false,
       required_for_publication: false,
       binding_target: "value_set",
-      value_set_uri: "http://snomed.info/sct?fhir_vs=ecl/%3C123038009",
+      value_set_uri: "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009",
       strength: "required",
       edition: null,
       local_code_system_key: null,
@@ -129,7 +129,7 @@ const DEFINITIONS = {
       origin: "system",
       status: "active",
       display_order: 30,
-      constraints: { forbidden_codes: ["Any"] },
+      constraints: {},
       row_version: 1,
       form_control: { control: "concept_picker", params: { allowJustification: false } },
     },
@@ -141,7 +141,6 @@ const ENTRY = {
   preferred_term: "Full blood count",
   length: 17,
   status: "active",
-  specimen_unconstrained: false,
   updated_at: "2026-09-01T04:30:00Z",
   row_version: 4,
   designations: [],
@@ -283,15 +282,6 @@ describe("generated rows", () => {
     await renderLoaded();
 
     await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
-    await expectNoA11yViolations(await screen.findByRole("dialog"));
-  });
-
-  it("has no accessibility violations in the specimen_unconstrained dialog", async () => {
-    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
-    const user = userEvent.setup();
-    await renderLoaded();
-
-    await user.click(panel().getByRole("button", { name: "Edit" }));
     await expectNoA11yViolations(await screen.findByRole("dialog"));
   });
 });
@@ -547,10 +537,10 @@ describe("editing a property's values", () => {
     expect(dialog.getAllByLabelText(/^Specimen \d$/)).toHaveLength(7);
   });
 
-  // FR-89: the literal "Any" is refused server-side (a forbidden code on the
-  // specimen definition's own constraints), and the refusal must land on the
-  // specimen value it names rather than as a generic sentence.
-  it("shows the literal-Any refusal against the specimen value it names", async () => {
+  // FR-89, ADR-0044: the specimen root means "any specimen" and is refused
+  // beside another specimen. The refusal must land on the value it names
+  // rather than as a generic sentence.
+  it("shows the specimen-root refusal against the specimen value it names", async () => {
     stubApi([
       READ_OK,
       PROPERTIES_OK,
@@ -566,9 +556,9 @@ describe("editing a property's values", () => {
             {
               property_key: "specimen",
               label: "Specimen",
-              code: "forbidden-code",
+              code: "specimen-root-conflict",
               message:
-                "Any is not a valid specimen code (FR-89). Use the Any setting instead.",
+                "the specimen root (123038009) means any specimen and must be the only specimen value on an entry - remove it, or remove the named specimens",
               ordinal: 0,
             },
           ],
@@ -580,75 +570,106 @@ describe("editing a property's values", () => {
 
     await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
     const dialog = within(screen.getByRole("dialog"));
-    await user.type(dialog.getByLabelText("Changelog note"), "Try the literal Any code");
+    await user.type(
+      dialog.getByLabelText("Changelog note"),
+      "Record any specimen beside a named one",
+    );
     await user.click(dialog.getByRole("button", { name: "Save" }));
 
     expect(
-      await dialog.findAllByText(/Any is not a valid specimen code/),
+      await dialog.findAllByText(/means any specimen and must be the only/),
     ).not.toHaveLength(0);
   });
 });
 
-describe("specimen_unconstrained", () => {
-  it("is shown as a core entry setting, separate from any property row", async () => {
-    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
+describe("accepting any specimen (FR-89, ADR-0044)", () => {
+  it("tells an editor, in the specimen dialog, which single value means any specimen", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
+
+    const hint = within(screen.getByRole("dialog")).getByText(/any specimen/i);
+    expect(hint).toHaveTextContent("Specimen (123038009)");
+    expect(hint).toHaveTextContent("on its own");
+    expect(hint).toHaveTextContent("Any");
+  });
+
+  it("shows no any-specimen hint in another property's dialog", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
+
+    expect(within(screen.getByRole("dialog")).queryByText(/any specimen/i)).toBeNull();
+  });
+
+  it("offers no separate any-specimen setting beside the property rows", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
 
     await renderLoaded();
 
-    expect(panel().getByText(/Accepts any specimen/)).toBeInTheDocument();
+    expect(panel().queryByText(/Accepts any specimen/)).not.toBeInTheDocument();
+    // Every Edit button belongs to a property row and is named for it.
+    expect(panel().queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(panel().getByRole("button", { name: "Edit Specimen" })).toBeInTheDocument();
   });
 
-  it("PATCHes the entry's own core route, not a property route", async () => {
+  it("records the root code through the specimen property's own route", async () => {
     const calls = stubApi([
       READ_OK,
       PROPERTIES_OK,
       VALUE_OPTIONS_OK,
       {
-        method: "PATCH",
-        path: `/catalogue/entries/${BUSINESS_KEY}`,
+        method: "GET",
+        path: "/registry/properties/specimen/values",
         status: 200,
-        body: { status: "active", specimen_unconstrained: true, row_version: 5 },
+        body: { items: [{ code: "123038009", display: "Specimen" }], total: 1 },
+      },
+      {
+        method: "PUT",
+        path: `/catalogue/entries/${BUSINESS_KEY}/properties/specimen`,
+        status: 200,
+        body: {
+          values: [
+            {
+              key: "specimen",
+              label: "Specimen",
+              datatype: "code",
+              cardinality: "0..*",
+              status: "active",
+              ordinal: 0,
+              value: "123038009",
+              justification: null,
+            },
+          ],
+          row_version: 5,
+        },
       },
     ]);
     const user = userEvent.setup();
     await renderLoaded();
 
-    await user.click(panel().getByRole("button", { name: "Edit" }));
+    await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
     const dialog = within(screen.getByRole("dialog"));
-    await user.click(dialog.getByLabelText("This entry accepts any specimen (Any)"));
-    await user.type(
-      dialog.getByLabelText("Changelog note"),
-      "This entry accepts any specimen",
-    );
+    await dialog.findByRole("option", { name: /123038009/ });
+    await user.selectOptions(dialog.getByLabelText("Specimen 1"), "123038009");
+    await user.type(dialog.getByLabelText("Changelog note"), "Accept any specimen");
     await user.click(dialog.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const write = calls.find(
       (call) =>
-        call.method === "PATCH" &&
-        call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}`,
+        call.method === "PUT" &&
+        call.path === `/api/v1/catalogue/entries/${BUSINESS_KEY}/properties/specimen`,
     );
     expect(write?.body).toEqual({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
+      values: [{ value: "123038009", justification: null }],
+      reason: "Accept any specimen",
       expected_row_version: 4,
     });
-  });
-
-  it("gates Save on a changelog note (FR-37, issue #62)", async () => {
-    const calls = stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK]);
-    const user = userEvent.setup();
-    await renderLoaded();
-
-    await user.click(panel().getByRole("button", { name: "Edit" }));
-    const dialog = within(screen.getByRole("dialog"));
-    await user.click(dialog.getByLabelText("This entry accepts any specimen (Any)"));
-    expect(dialog.getByRole("button", { name: "Save" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-
-    await user.click(dialog.getByRole("button", { name: "Save" }));
     expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
   });
 });

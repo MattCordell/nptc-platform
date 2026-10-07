@@ -14,7 +14,6 @@ const ENTRY_STUB = {
   preferred_term: "Ferritin",
   length: 8,
   status: "active",
-  specimen_unconstrained: false,
   updated_at: "2026-09-01T12:00:00Z",
   has_open_finding: false,
   code: null,

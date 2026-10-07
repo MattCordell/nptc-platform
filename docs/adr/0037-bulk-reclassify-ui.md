@@ -21,7 +21,7 @@ itself, recorded here so a future change to this area does not relitigate them.
 ### `useBulkSavePropertyValues` never throws a version conflict — there is no `onError` branch
 
 Every other write hook in `frontend/src/api/queries.ts` (`useSavePropertyValues`,
-`useAmendDesignation`, `usePatchEntryCore`) narrows a thrown `ApiError` via
+`useAmendDesignation`) narrows a thrown `ApiError` via
 `asVersionConflict` and refetches the cached entry on a 409. The bulk route never
 produces that shape — a stale `expected_row_version` is a `conflict` outcome inside the
 *success* body (ADR-0035) — so `useBulkSavePropertyValues` has nothing to catch. The

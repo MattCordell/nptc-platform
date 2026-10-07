@@ -142,7 +142,6 @@ class ListingRow:
     business_key: str
     preferred_term: str
     status: str
-    specimen_unconstrained: bool
     updated_at: datetime
     row_version: int
 
@@ -270,7 +269,6 @@ def build_listing_statement(
             CatalogueEntry.business_key,
             CatalogueEntry.preferred_term,
             CatalogueEntry.status,
-            CatalogueEntry.specimen_unconstrained,
             CatalogueEntry.updated_at,
             CatalogueEntry.row_version,
             sort_column.label("sort_value"),
@@ -328,7 +326,6 @@ def list_entries_any_status(
             business_key=row.business_key,
             preferred_term=row.preferred_term,
             status=row.status,
-            specimen_unconstrained=row.specimen_unconstrained,
             updated_at=row.updated_at,
             row_version=row.row_version,
         )

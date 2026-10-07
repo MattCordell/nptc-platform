@@ -38,6 +38,11 @@ PROCEDURE_ROOT_CODE = "71388002"
 #: wording.
 HAS_SPECIMEN_ATTRIBUTE = "116686009"
 
+#: |Specimen (specimen)| - the root of the specimen hierarchy. The specimen
+#: binding is ``<<`` this code (FR-88), and the value `Any` is this code alone
+#: (FR-89).
+SPECIMEN_ROOT_CODE = "123038009"
+
 
 class Operation(StrEnum):
     """A FHIR terminology operation. The value doubles as its request path,

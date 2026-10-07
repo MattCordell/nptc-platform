@@ -442,7 +442,6 @@ type BindCodeBody = components["schemas"]["BindCodeRequest"];
 type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
 type ReplaceBindingBody = components["schemas"]["ReplaceBindingRequest"];
 type SavePropertyValuesBody = components["schemas"]["SavePropertyValuesRequest"];
-type PatchEntryBody = components["schemas"]["PatchEntryRequest"];
 
 /**
  * Add one or more terms to an entry (FR-04).
@@ -1023,36 +1022,6 @@ export function useBulkSavePropertyValues(key: string) {
       void queryClient.invalidateQueries({
         queryKey: ["api", "/api/v1/catalogue/admin/entries/{business_key}"],
       });
-    },
-  });
-}
-
-/**
- * Set an entry's core `status` and/or `specimen_unconstrained` flag (issue
- * #249, FR-36, FR-89) - the one write this screen needs that is not a
- * property value at all, since both columns live on `catalogue_entry`
- * itself. `Any` (FR-89) is this flag turned on with zero specimen values,
- * never a value the `specimen` property itself can hold.
- */
-export function usePatchEntryCore(businessKey: string) {
-  const client = useApiClient();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: PatchEntryBody) =>
-      unwrap(
-        await client.PATCH("/api/v1/catalogue/entries/{business_key}", {
-          params: { path: { business_key: businessKey } },
-          body,
-        }),
-      ),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
-    onError: (error: unknown) => {
-      if (asVersionConflict(error) !== null) {
-        void queryClient.invalidateQueries({
-          queryKey: adminEntryDetailKey(businessKey),
-        });
-      }
     },
   });
 }

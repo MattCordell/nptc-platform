@@ -1,14 +1,9 @@
 import { useState } from "react";
 
 import { asPropertyValidationError, refusalDetail } from "../api/conflicts.ts";
-import {
-  usePatchEntryCore,
-  usePropertyDefinitions,
-  useSavePropertyValues,
-} from "../api/queries.ts";
+import { usePropertyDefinitions, useSavePropertyValues } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { Button } from "../components/button.tsx";
-import { Checkbox } from "../components/checkbox.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { Dialog } from "../components/dialog.tsx";
 import type { FormError } from "../components/error-summary.tsx";
@@ -54,13 +49,15 @@ import type { PropertyValueSlot } from "./property-controls/index.ts";
  * recorded, not about surfacing every deprecated definition that ever
  * existed.
  *
- * **`specimen_unconstrained` is not a property value.** It lives on
- * `catalogue_entry` itself (issue #249) and is edited through its own small
- * dialog and its own write route (`usePatchEntryCore`), never through
- * `useSavePropertyValues` - FR-89's whole point is that "Any" and "no
- * specimen values recorded" are different states, and conflating their
- * writes would reintroduce exactly that ambiguity.
+ * **`specimen` is an ordinary coded property here.** "Accepts any specimen"
+ * is the root code `123038009` held alone, edited through the same dialog as
+ * every other property (FR-89, ADR-0044). The write API refuses the root
+ * beside another specimen, and that refusal shows as a field error. The
+ * picker shows the server's display for the root, "Specimen", where a loaded
+ * workbook stores "Any", so the specimen dialog says which value to pick.
  */
+
+const SPECIMEN_KEY = "specimen";
 
 type EntryDetail = components["schemas"]["EntryDetail"];
 type PropertyDefinitionResponse = components["schemas"]["PropertyDefinitionResponse"];
@@ -133,7 +130,6 @@ export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
   const businessKey = entry.business_key;
   const definitions = usePropertyDefinitions();
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editingSpecimenFlag, setEditingSpecimenFlag] = useState(false);
   const { message, politeness, announce } = useAnnounce();
 
   const rows = definitions.data
@@ -207,11 +203,6 @@ export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
         />
       )}
 
-      <SpecimenUnconstrainedSummary
-        entry={entry}
-        onEdit={() => setEditingSpecimenFlag(true)}
-      />
-
       {editingRow && (
         <PropertyEditDialog
           businessKey={businessKey}
@@ -226,42 +217,7 @@ export function PropertiesPanel({ entry }: { entry: EntryDetail }) {
           }}
         />
       )}
-
-      {editingSpecimenFlag && (
-        <SpecimenUnconstrainedDialog
-          businessKey={businessKey}
-          rowVersion={entry.row_version}
-          current={entry.specimen_unconstrained}
-          onClose={() => setEditingSpecimenFlag(false)}
-          onSaved={() => {
-            setEditingSpecimenFlag(false);
-            announce("Specimen setting saved.");
-          }}
-        />
-      )}
     </section>
-  );
-}
-
-function SpecimenUnconstrainedSummary({
-  entry,
-  onEdit,
-}: {
-  entry: EntryDetail;
-  onEdit: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <p>
-        Accepts any specimen (<strong>Any</strong>):{" "}
-        {entry.specimen_unconstrained ? "Yes" : "No"}. This is a core entry setting, not a
-        property value (FR-89) - an entry cannot both hold recorded specimen codes and
-        accept any.
-      </p>
-      <Button type="button" variant="secondary" onClick={onEdit}>
-        Edit
-      </Button>
-    </div>
   );
 }
 
@@ -348,6 +304,12 @@ function PropertyEditDialog({
           );
         }}
       >
+        {definition.key === SPECIMEN_KEY ? (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            To record that a test accepts any specimen, choose Specimen (123038009) on its
+            own. A workbook import stores the same value as Any.
+          </p>
+        ) : null}
         <RepeatableValues
           propertyKey={definition.key}
           label={definition.label}
@@ -368,64 +330,6 @@ function PropertyEditDialog({
             }
           }}
           errors={errors}
-        />
-        <ChangelogNoteField id={noteFieldId} changelogNote={changelogNote} />
-      </Form>
-    </Dialog>
-  );
-}
-
-function SpecimenUnconstrainedDialog({
-  businessKey,
-  rowVersion,
-  current,
-  onClose,
-  onSaved,
-}: {
-  businessKey: string;
-  rowVersion: number;
-  current: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [checked, setChecked] = useState(current);
-  const noteFieldId = "specimen-unconstrained-note";
-  const changelogNote = useChangelogNote(noteFieldId);
-  const patch = usePatchEntryCore(businessKey);
-
-  return (
-    <Dialog open onClose={onClose} title="Accepts any specimen (Any)">
-      <Form
-        submitLabel="Save"
-        pendingLabel="Saving"
-        pending={patch.isPending}
-        formError={patch.isError ? <RefusalNotice error={patch.error} /> : undefined}
-        submitBlocked={changelogNote.blocked}
-        blockedReason={changelogNote.blockedReason}
-        blockedFieldId={changelogNote.fieldId}
-        onSubmitBlocked={changelogNote.markSubmitAttempted}
-        errorSummaryHeadingLevel={3}
-        secondaryActions={
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-        }
-        onSubmit={() => {
-          patch.mutate(
-            {
-              specimen_unconstrained: checked,
-              reason: changelogNote.note,
-              expected_row_version: rowVersion,
-            },
-            { onSuccess: () => onSaved() },
-          );
-        }}
-      >
-        <Checkbox
-          label="This entry accepts any specimen (Any)"
-          checked={checked}
-          onChange={(event) => setChecked(event.target.checked)}
-          hint="Turning this on while specimen codes are already recorded on this entry will be refused - clear them first."
         />
         <ChangelogNoteField id={noteFieldId} changelogNote={changelogNote} />
       </Form>

@@ -25,12 +25,9 @@ unresolved row, classify the delta the visibility filter left. The total is
 
 **The specimen table is an allowlist, never a finding generator.** A term
 asserting a specimen no ``specimen_table.SPECIMEN_TABLE`` group covers is never
-inspected for that aspect: this module's principal failure mode. The mitigation
-is a coverage *audit*, never an assertion source. The workbook's free-text
-``Specimen`` column (ADR-0008's rejected alternatives) is checked only for how
-many distinct values map to no group, reported as
-``DriftRun.specimen_column_values_unmapped``, so an uncovered specimen cannot
-hide as a silent zero findings.
+inspected for that aspect: this module's principal failure mode. The workbook's
+``Specimen`` column is never an assertion source. It is coded through the reviewed
+specimen map, and a string the map does not cover blocks the run (ADR-0044).
 """
 
 from __future__ import annotations
@@ -45,18 +42,12 @@ from nptc_shared.terminology.models import HAS_SPECIMEN_ATTRIBUTE, SNOMED_CT_AU
 from nptc_shared.terminology.sweep import ConceptDesignations, SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible, normalise_for_comparison
 from nptc_transform.bands import FindingCode
-from nptc_transform.cell_defects import split_specimen_values
 from nptc_transform.cellref import CellRef
 from nptc_transform.findings import Finding
 from nptc_transform.rows import group_rows
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup, all_specimen_codes
 from nptc_transform.terminology_check import CodeBinding
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
-
-#: Excluded from the ``Specimen`` column coverage audit: FR-75 gives these
-#: separate findings elsewhere, so counting them as "unmapped" would
-#: double-count a gap this module does not own.
-_EXCLUDED_SPECIMEN_COLUMN_VALUES = frozenset({"any", "fluids"})
 
 #: A timing assertion in a free-text label: 1-3 digits, optional dash or space,
 #: then an hour or day unit word at a word boundary. ``(?<![\w.])`` keeps it from
@@ -91,11 +82,6 @@ class DriftRun:
     #: ``TerminologyRun.unresolved_fsn_count``). The group still works on its
     #: hand-typed terms, without server augmentation.
     specimen_table_entries_unresolved: int = 0
-    #: Distinct non-empty ``Specimen`` column values that map to no
-    #: ``specimen_table.SPECIMEN_TABLE`` group (excluding ``Any``/``Fluids``): the
-    #: coverage audit for this module's allowlist blind spot. Never fed back
-    #: into classification.
-    specimen_column_values_unmapped: int = 0
     #: ``$expand``-style requests resolving the specimen table's designations
     #: (``TerminologySweep.describe``): at most ``ceil(len(specimen table) /
     #: chunk_size)``, never catalogue-scale.
@@ -262,23 +248,6 @@ def _timing_not_modelled_finding(candidate: _Candidate) -> Finding:
     )
 
 
-def _specimen_column_unmapped_count(sheets: Sequence[Sheet], table: Sequence[SpecimenGroup]) -> int:
-    """FR-75's principal-failure-mode mitigation: how many distinct, non-empty
-    ``Specimen`` column values map to no group. A coverage audit only (see the
-    module docstring)."""
-    distinct_values: set[str] = set()
-    for sheet in sheets:
-        for cell in sheet.cells:
-            if cell.role is not ColumnRole.SPECIMEN:
-                continue
-            for value in split_specimen_values(cell.text):
-                folded = _fold(value)
-                if not folded or folded in _EXCLUDED_SPECIMEN_COLUMN_VALUES:
-                    continue
-                distinct_values.add(folded)
-    return sum(1 for value in distinct_values if _longest_match(value, table) is None)
-
-
 def check_semantic_drift(
     sheets: Sequence[Sheet],
     *,
@@ -341,8 +310,6 @@ def check_semantic_drift(
                     timing=timing,
                 )
             )
-
-    specimen_column_values_unmapped = _specimen_column_unmapped_count(sheets, SPECIMEN_TABLE)
 
     resolved_versions: set[str] = set()
 
@@ -460,7 +427,6 @@ def check_semantic_drift(
             term_specimen_differs_count=term_specimen_differs_count,
             term_timing_not_modelled_count=term_timing_not_modelled_count,
             specimen_table_entries_unresolved=specimen_table_entries_unresolved,
-            specimen_column_values_unmapped=specimen_column_values_unmapped,
             describe_requests=describe_requests,
             classification_requests=classification_requests,
             resolved_versions=tuple(sorted(resolved_versions)),

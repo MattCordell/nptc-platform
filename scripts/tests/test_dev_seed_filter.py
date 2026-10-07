@@ -16,10 +16,7 @@ from typing import Any
 
 import pytest
 
-from nptc.catalogue.seed_dataset import (
-    DatasetNotSeedableError,
-    read_import_dataset,
-)
+from nptc.catalogue.seed_dataset import read_import_dataset
 from nptc_shared.similarity import collision_key
 from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
 from nptc_transform.pipeline import Mode, run_transform
@@ -36,9 +33,9 @@ FIXTURE = (
     / "spia-requesting-sample.xlsx"
 )
 
-#: Recorded from a real run: the specimens with no code in the excerpt, and the Adrenal Ab pair
-#: (NPTC-000045's preferred term is a synonym on NPTC-000009).
-UNCODED_SPECIMEN_KEYS = {f"NPTC-{n:06d}" for n in (19, 27, 35, 36, 37, 38, 41, 49)}
+#: Recorded from a real run: the Adrenal Ab pair (NPTC-000045's preferred term is a synonym on
+#: NPTC-000009). The excerpt once held eight entries with an uncoded specimen; the reviewed specimen
+#: map covers them all now.
 COLLIDING_KEYS = {"NPTC-000045"}
 
 
@@ -79,13 +76,18 @@ def _entry(
 
 
 def _document(*entries: dict[str, Any]) -> dict[str, Any]:
-    return {"schema_version": 1, "source": {"filename": "x.xlsx"}, "entries": list(entries)}
+    return {"schema_version": 2, "source": {"filename": "x.xlsx"}, "entries": list(entries)}
 
 
-@pytest.mark.req("FR-76")
-def test_the_unfiltered_excerpt_is_refused_by_the_loader(emitted_dataset: Path) -> None:
-    with pytest.raises(DatasetNotSeedableError):
-        read_import_dataset(emitted_dataset)
+@pytest.mark.req("FR-88")
+def test_the_unfiltered_excerpt_holds_no_specimen_the_loader_refuses(
+    emitted_dataset: Path,
+) -> None:
+    dataset = read_import_dataset(emitted_dataset)
+
+    specimens = [v for entry in dataset.entries for v in entry.properties.specimen]
+    assert specimens
+    assert all(v.code is not None for v in specimens)
 
 
 @pytest.mark.req("FR-70")
@@ -100,8 +102,8 @@ def test_the_filtered_excerpt_is_accepted_by_the_loader_reader(
     assert code == cli.EXIT_OK
     dataset = read_import_dataset(output)
     kept = {entry.business_key for entry in dataset.entries}
-    assert len(kept) == 50 - len(UNCODED_SPECIMEN_KEYS) - len(COLLIDING_KEYS)
-    assert kept.isdisjoint(UNCODED_SPECIMEN_KEYS | COLLIDING_KEYS)
+    assert len(kept) == 50 - len(COLLIDING_KEYS)
+    assert kept.isdisjoint(COLLIDING_KEYS)
 
 
 @pytest.mark.req("FR-06")

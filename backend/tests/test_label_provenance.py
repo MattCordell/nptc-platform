@@ -378,7 +378,6 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
             preferred_term="Full blood count",
             length=17,
             status="active",
-            specimen_unconstrained=False,
             updated_at=datetime.now(UTC),
             facts=queries.RowFacts(has_open_finding=False, code=None, disciplines=()),
         )

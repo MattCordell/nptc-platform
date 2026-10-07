@@ -6,7 +6,8 @@ terminology validation over the ``nptc_shared.terminology`` client and sweep,
 designation reconciliation (FR-97, over the sweep's results; see
 ``designation_check.py``), the FR-79 misspelling heuristics (over the sweep's
 results when available; see ``misspelling.py``), the FR-75 semantic-drift check
-(``semantic_drift.py``) and the FR-05 collision check (``collision_check.py``). Report
+(``semantic_drift.py``), the specimen map's code check (``specimen_map_check.py``) and
+the FR-05 collision check (``collision_check.py``). Report
 content grouped by defect class with required actions (FR-72) is ``report_writer.py``'s.
 """
 
@@ -27,6 +28,7 @@ from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.misspelling import MisspellingRun, check_misspellings
 from nptc_transform.semantic_drift import DriftRun, check_semantic_drift
+from nptc_transform.specimen_map_check import SpecimenMapRun, check_specimen_map
 from nptc_transform.terminology_check import (
     DEFAULT_EDITIONS,
     TerminologyRun,
@@ -77,6 +79,9 @@ class RunResult:
     #: semantic-drift check needs a live ``sweep`` for its own requests
     #: (``describe``, ``codes_without_attribute``, ``codes_with_attribute_value``).
     drift: DriftRun | None = None
+    #: ``None`` under the same condition as ``terminology``: the specimen map's
+    #: codes are checked against the server (ADR-0044).
+    specimen_map: SpecimenMapRun | None = None
 
     def __post_init__(self) -> None:
         sorted_findings = tuple(sorted(self.findings, key=Finding.sort_key))
@@ -162,6 +167,7 @@ def run_transform_sheets(
         bindings=outcome.bindings,
         results=outcome.results,
     )
+    specimen_map = check_specimen_map(sweep)
     return RunResult(
         source=source,
         mode=mode,
@@ -171,11 +177,13 @@ def run_transform_sheets(
             *designations.findings,
             *misspellings.findings,
             *drift.findings,
+            *specimen_map.findings,
         ),
         terminology=outcome.run,
         designations=designations.run,
         misspellings=misspellings.run,
         drift=drift.run,
+        specimen_map=specimen_map.run,
     )
 
 

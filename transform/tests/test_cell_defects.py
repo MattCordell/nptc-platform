@@ -589,26 +589,70 @@ def test_a_fully_populated_row_is_not_flagged_missing_binding_or_term(tmp_path: 
     assert "MISSING_CODE_BINDING" not in codes
 
 
-@pytest.mark.req("FR-89")
-def test_any_specimen_does_not_suppress_findings_for_a_co_occurring_named_value(
-    tmp_path: Path,
-) -> None:
-    """cell_defects._scan_specimen must not short-circuit on 'Any': the
-    published data is not guaranteed to keep 'Any' from co-occurring with a
-    named specimen on one row, and every value in the cell needs a finding
-    (or none) reported for it independently, matching what dataset.py seeds."""
+def _specimen_findings(tmp_path: Path, specimen: str) -> list[Finding]:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["10000006", "Any; Nasal swab thing"])
-    path = tmp_path / "any_and_named.xlsx"
+    sheet.append(["10000006", specimen])
+    path = tmp_path / "specimen.xlsx"
     workbook.save(path)
+    return [f for f in scan_workbook(read_workbook(path)) if f.code.startswith("SPECIMEN_")]
 
-    sheets = read_workbook(path)
-    codes = [f.code for f in scan_workbook(sheets)]
-    assert "SPECIMEN_UNCONSTRAINED_RESOLVED" in codes
-    assert "SPECIMEN_VALUE_UNMAPPED" in codes
+
+@pytest.mark.req("FR-88")
+def test_a_specimen_string_the_map_does_not_cover_is_a_blocking_data_defect(
+    tmp_path: Path,
+) -> None:
+    (finding,) = _specimen_findings(tmp_path, "Nasal swab thing")
+    assert finding.code == "SPECIMEN_VALUE_UNMAPPED"
+    assert finding.band is Band.DATA_DEFECT
+    assert str(finding.location) == "Requesting!B2"
+    assert "Nasal swab thing" in finding.message
+
+
+@pytest.mark.req("FR-88")
+def test_only_the_uncovered_string_in_a_multi_value_cell_is_reported(tmp_path: Path) -> None:
+    findings = _specimen_findings(tmp_path, "Serum; Nasal swab thing; Plasma")
+    assert [f.code for f in findings] == ["SPECIMEN_VALUE_UNMAPPED"]
+    assert "Nasal swab thing" in findings[0].message
+
+
+@pytest.mark.req("FR-88")
+@pytest.mark.parametrize("specimen", ["N/A", "Culture", "Breath"])
+def test_a_no_map_string_is_informational_and_blocks_nothing(tmp_path: Path, specimen: str) -> None:
+    (finding,) = _specimen_findings(tmp_path, specimen)
+    assert finding.code == "SPECIMEN_VALUE_NO_EQUIVALENT"
+    assert finding.band is Band.INFORMATIONAL
+
+
+@pytest.mark.req("FR-88")
+@pytest.mark.parametrize("specimen", ["Serum", "Any", " serum ;PLASMA"])
+def test_a_covered_specimen_cell_produces_no_finding(tmp_path: Path, specimen: str) -> None:
+    assert _specimen_findings(tmp_path, specimen) == []
+
+
+@pytest.mark.req("FR-89")
+def test_any_beside_a_named_specimen_is_a_blocking_data_defect(tmp_path: Path) -> None:
+    (finding,) = _specimen_findings(tmp_path, "Any; Serum")
+    assert finding.code == "SPECIMEN_ROOT_WITH_OTHERS"
+    assert finding.band is Band.DATA_DEFECT
+    assert "'Any'" in finding.message and "'Serum'" in finding.message
+
+
+@pytest.mark.req("FR-89")
+def test_a_no_map_string_beside_a_named_specimen_is_not_read_as_any(tmp_path: Path) -> None:
+    (finding,) = _specimen_findings(tmp_path, "Breath; Serum")
+    assert finding.code == "SPECIMEN_VALUE_NO_EQUIVALENT"
+    assert finding.band is Band.INFORMATIONAL
+
+
+@pytest.mark.req("FR-89")
+def test_any_does_not_suppress_the_finding_for_a_co_occurring_uncovered_value(
+    tmp_path: Path,
+) -> None:
+    findings = _specimen_findings(tmp_path, "Any; Nasal swab thing")
+    assert [f.code for f in findings] == ["SPECIMEN_VALUE_UNMAPPED"]
 
 
 @pytest.mark.req("FR-04")
@@ -668,7 +712,7 @@ def test_specimen_detection_agrees_with_emission_on_an_interior_invisible_charac
     sheet = workbook.active
     sheet.title = "Requesting"
     sheet.append(["Terminology binding (SNOMED CT-AU)", "Specimen"])
-    sheet.append(["10000006", f"whole{nbsp}blood"])
+    sheet.append(["10000006", f"24{nbsp}hr urine"])
     path = tmp_path / "specimen_nbsp.xlsx"
     workbook.save(path)
 
