@@ -2717,6 +2717,48 @@
         }
       }
     },
+    "/api/v1/registry/datatypes": {
+      "get": {
+        "tags": [
+          "registry"
+        ],
+        "summary": "List the registered property datatypes",
+        "description": "The live `DatatypeRegistry`, so a datatype added to it appears here with no edit to this\nroute (FR-77). Ordered by name.",
+        "operationId": "list_datatypes_api_v1_registry_datatypes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatatypeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `registry.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/registry/properties": {
       "get": {
         "tags": [
@@ -5202,6 +5244,47 @@
         ],
         "title": "CurrentTermsResponse",
         "description": "The current terms, and whether the caller has accepted this version. `accepted` is\n`false` for an anonymous caller, who has accepted nothing."
+      },
+      "DatatypeDescription": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "constraints_schema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Constraints Schema"
+          },
+          "uses_binding": {
+            "type": "boolean",
+            "title": "Uses Binding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "constraints_schema",
+          "uses_binding"
+        ],
+        "title": "DatatypeDescription",
+        "description": "One registered datatype, as a create form needs it: the name to offer, the JSON Schema\nits `constraints` must satisfy, and whether a property of it takes a terminology binding\n(`DatatypeHandler.uses_binding`). A client offers the binding fields from the flag, never\nfrom the name (FR-77)."
+      },
+      "DatatypeList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DatatypeDescription"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "DatatypeList"
       },
       "DeprecatePropertyDefinitionRequest": {
         "properties": {

@@ -3,7 +3,7 @@
 The one handler with constructor arguments beyond the Protocol: a `TerminologyClient` for
 FR-10's live binding check, and an optional `LocalCodeLookup` for
 `binding_target == "local_code_system"` (FR-90). `__init__` belongs to the concrete class, not
-to the ten-member contract every handler satisfies structurally.
+to the eleven-member contract every handler satisfies structurally.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ class CodeHandler:
     """
 
     datatype = "code"
+    uses_binding = True
 
     def __init__(
         self,

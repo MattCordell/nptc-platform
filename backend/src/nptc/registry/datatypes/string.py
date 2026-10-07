@@ -30,6 +30,7 @@ class StringHandler:
     handler-owned interior)."""
 
     datatype = "string"
+    uses_binding = False
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]:
         fragment: dict[str, Any] = {"type": "string"}

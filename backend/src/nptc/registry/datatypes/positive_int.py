@@ -35,6 +35,7 @@ class PositiveIntHandler:
     """A positive integer (>= 1)."""
 
     datatype = "positiveInt"
+    uses_binding = False
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]:
         return {"type": "integer", "minimum": 1}
