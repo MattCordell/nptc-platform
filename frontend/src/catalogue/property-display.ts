@@ -37,6 +37,18 @@ const STRENGTH_LABELS: Record<string, string> = {
   example: "Example",
 };
 
+type LabelledOption = { value: string; label: string };
+
+function optionsFrom(labels: Record<string, string>): LabelledOption[] {
+  return Object.entries(labels).map(([value, label]) => ({ value, label }));
+}
+
+/** The closed sets the create form offers, in the order the labels above list them. */
+export const SCOPE_OPTIONS = optionsFrom(SCOPE_LABELS);
+export const CARDINALITY_OPTIONS = optionsFrom(CARDINALITY_LABELS);
+export const BINDING_TARGET_OPTIONS = optionsFrom(BINDING_TARGET_LABELS);
+export const BINDING_STRENGTH_OPTIONS = optionsFrom(STRENGTH_LABELS);
+
 export function scopeLabelFor(scope: string): string {
   return SCOPE_LABELS[scope] ?? scope;
 }

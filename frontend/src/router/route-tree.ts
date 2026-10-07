@@ -3,6 +3,7 @@ import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react
 import { HomePage } from "../pages/home.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
+import { AdminPropertyCreatePage } from "../pages/admin-property-create.tsx";
 import { AdminPropertyDetailPage } from "../pages/admin-property-detail.tsx";
 import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
@@ -377,11 +378,7 @@ const adminPropertyListRoute = createRoute({
 const adminPropertyNewRoute = createRoute({
   getParentRoute: () => adminPropertiesRoute,
   path: "new",
-  component: createPlaceholderPage({
-    title: "New property",
-    issue: 151,
-    nearest: ADMIN_NEAREST,
-  }),
+  component: AdminPropertyCreatePage,
   head: titled("New property"),
 });
 

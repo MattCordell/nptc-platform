@@ -7,6 +7,7 @@ import { usePropertyDefinitions } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { scopeLabelFor } from "../catalogue/property-display.ts";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import { buttonClassName } from "../components/button-class-name.ts";
 import { Checkbox } from "../components/checkbox.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
@@ -107,6 +108,11 @@ export function AdminPropertyListPage() {
           id="property-list-heading"
           title="Property registry"
           meta={definitions.data ? summaryText(allRows) : undefined}
+          actions={
+            <Link to="/admin/properties/new" className={buttonClassName("primary")}>
+              New property
+            </Link>
+          }
         />
 
         {definitions.isPending && <p>Loading the property registry…</p>}
