@@ -105,9 +105,10 @@ over rule configuration).
   calls `announce()` when an async result (a save, a search) arrives.
 - **`markdown.tsx` — `Markdown`.** Renders the small subset the terms of use are written
   in (NFR-47): headings, paragraphs, bulleted and numbered lists, `**bold**`, `*italic*`,
-  `` `code` `` and `http:`, `https:` and `mailto:` links. It builds elements and never sets
-  inner HTML, so raw HTML in the text shows as text, and any other link target shows as plain
-  text. `headingOffset` (default 1) pushes headings below the page's one `h1`. It is not a
+  `` `code` `` and `http:`, `https:` and `mailto:` links. A list may have blank lines
+  between its items, and a numbered list starts at the number its first item carries. It
+  builds elements and never sets inner HTML, so raw HTML in the text shows as text, and any
+  other link target shows as plain text. `headingOffset` (default 1) pushes headings below the page's one `h1`. It is not a
   general Markdown engine: tables, images, nested lists and reference links are not
   supported, so a new terms version must stay within the subset.
 

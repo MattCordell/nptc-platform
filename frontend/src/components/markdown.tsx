@@ -18,16 +18,17 @@ import type { ReactNode } from "react";
 type Block =
   | { kind: "heading"; level: number; text: string }
   | { kind: "paragraph"; text: string }
-  | { kind: "list"; ordered: boolean; items: string[] };
+  | { kind: "list"; ordered: boolean; start: number; items: string[] };
 
 const HEADING = /^(#{1,6})\s+(.*\S)\s*$/;
 const BULLET = /^[-*]\s+(.*)$/;
-const NUMBERED = /^\d+[.)]\s+(.*)$/;
+const NUMBERED = /^(\d+)[.)]\s+(.*)$/;
 
 function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   let paragraph: string[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
+  let list: { ordered: boolean; start: number; items: string[] } | null = null;
+  let blankSinceItem = false;
 
   const flushParagraph = () => {
     if (paragraph.length > 0) {
@@ -40,13 +41,16 @@ function parseBlocks(text: string): Block[] {
       blocks.push({ kind: "list", ...list });
       list = null;
     }
+    blankSinceItem = false;
   };
 
   for (const rawLine of text.replace(/\r\n?/g, "\n").split("\n")) {
     const line = rawLine.trim();
     if (line === "") {
       flushParagraph();
-      flushList();
+      // Items may be separated by blank lines, so the next line decides
+      // whether the list goes on.
+      blankSinceItem = list !== null;
       continue;
     }
     const heading = HEADING.exec(line);
@@ -58,16 +62,19 @@ function parseBlocks(text: string): Block[] {
     }
     const bullet = BULLET.exec(line);
     const numbered = bullet === null ? NUMBERED.exec(line) : null;
-    const item = bullet ?? numbered;
-    if (item !== null) {
+    if (bullet !== null || numbered !== null) {
       flushParagraph();
       const ordered = numbered !== null;
       if (list !== null && list.ordered !== ordered) {
         flushList();
       }
-      list ??= { ordered, items: [] };
-      list.items.push(item[1]!);
+      list ??= { ordered, start: numbered === null ? 1 : Number(numbered[1]), items: [] };
+      list.items.push(bullet === null ? numbered![2]! : bullet[1]!);
+      blankSinceItem = false;
       continue;
+    }
+    if (blankSinceItem) {
+      flushList();
     }
     // A wrapped line after a list item continues that item, not a new block.
     if (list !== null) {
@@ -153,13 +160,22 @@ export function Markdown({
           );
         }
         if (block.kind === "list") {
-          const Tag = block.ordered ? "ol" : "ul";
-          return (
-            <Tag key={index} className="m-0 flex flex-col gap-1 pl-6">
-              {block.items.map((item, itemIndex) => (
-                <li key={itemIndex}>{renderInline(item)}</li>
-              ))}
-            </Tag>
+          const items = block.items.map((item, itemIndex) => (
+            <li key={itemIndex}>{renderInline(item)}</li>
+          ));
+          const className = "m-0 flex flex-col gap-1 pl-6";
+          return block.ordered ? (
+            <ol
+              key={index}
+              className={className}
+              start={block.start === 1 ? undefined : block.start}
+            >
+              {items}
+            </ol>
+          ) : (
+            <ul key={index} className={className}>
+              {items}
+            </ul>
           );
         }
         return (

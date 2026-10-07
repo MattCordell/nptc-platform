@@ -50,6 +50,43 @@ describe("Markdown", () => {
     expect(items).toEqual(["first", "second continued", "one", "two"]);
   });
 
+  // Legal text often separates numbered items with blank lines. One list that
+  // restarts at "1." for every item changes what the clause numbers say.
+  it("keeps one list across blank lines between items of the same kind", () => {
+    const { container } = render(
+      <Markdown text={"1. one\n\n2. two\n\n3. three\n\n- a\n\n- b"} />,
+    );
+
+    const lists = screen.getAllByRole("list");
+    expect(lists.map((list) => list.tagName)).toEqual(["OL", "UL"]);
+    expect(
+      [...container.querySelectorAll("ol > li")].map((item) => item.textContent),
+    ).toEqual(["one", "two", "three"]);
+    expect(
+      [...container.querySelectorAll("ul > li")].map((item) => item.textContent),
+    ).toEqual(["a", "b"]);
+  });
+
+  it("ends a list at a blank line followed by anything but another item", () => {
+    const { container } = render(
+      <Markdown text={"- first\n\nNot part of the list.\n\n- second"} />,
+    );
+
+    expect(container.querySelectorAll("ul")).toHaveLength(2);
+    expect(container.querySelector("p")).toHaveTextContent("Not part of the list.");
+  });
+
+  it("starts a numbered list at the number its first item carries", () => {
+    const { container } = render(
+      <Markdown text={"1. one\n\nA paragraph between.\n\n2. two\n3. three"} />,
+    );
+
+    const lists = container.querySelectorAll("ol");
+    expect(lists).toHaveLength(2);
+    expect(lists[0]).not.toHaveAttribute("start");
+    expect(lists[1]).toHaveAttribute("start", "2");
+  });
+
   it("renders bold, italic and code inline", () => {
     const { container } = render(
       <Markdown text={"**Temporary text.** Some *emphasis* and `code`."} />,
