@@ -33,6 +33,7 @@ from openapi_spec_validator import validate
 from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 
 from nptc.api.app import create_app
+from nptc.api.dependencies import get_auth_settings, get_terminology_client
 from nptc.api.openapi_document import GENERATION_FRONTEND_BASE_URL, build_document, render
 
 _hermetic_spec = importlib.util.spec_from_file_location(
@@ -62,6 +63,17 @@ def test_committed_openapi_document_matches_the_app() -> None:
     )
 
 
+@pytest.fixture
+def uncached_process_settings() -> Iterator[None]:
+    """Both lookups are process-wide `lru_cache`s, so a value another test cached
+    would hide the variable the test sets."""
+    get_auth_settings.cache_clear()
+    get_terminology_client.cache_clear()
+    yield
+    get_auth_settings.cache_clear()
+    get_terminology_client.cache_clear()
+
+
 @pytest.mark.req("FR-20")
 @pytest.mark.parametrize(
     ("variable", "value"),
@@ -69,13 +81,15 @@ def test_committed_openapi_document_matches_the_app() -> None:
         ("NPTC_FSN_SEMANTIC_TAG", "stripped"),
         ("NPTC_MAX_PREFERRED_TERM_LENGTH", "0"),
         ("NPTC_TERMS_CURRENT_VERSION", "2099-01-01"),
+        ("NPTC_MFA_ACR_VALUES", ","),
+        ("NPTC_TX_TIMEOUT_SECONDS", "not-a-number"),
     ],
 )
-def test_document_build_ignores_api_settings_variables(
-    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+def test_document_build_ignores_environment_variables(
+    monkeypatch: pytest.MonkeyPatch, uncached_process_settings: None, variable: str, value: str
 ) -> None:
-    """Each value is one `ApiSettings` refuses, so a build that read `NPTC_*`
-    into `ApiSettings` would raise here instead of producing the document."""
+    """Each value is one the settings class that owns it refuses, so a build that
+    read it would raise here instead of producing the document."""
     committed = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
     monkeypatch.setenv(variable, value)
 
