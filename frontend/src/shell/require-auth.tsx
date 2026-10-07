@@ -5,6 +5,7 @@ import { useAuthStatus } from "../auth/auth-status.ts";
 import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { NoticePage } from "../components/notice-page.tsx";
+import { TermsGate } from "./terms-gate.tsx";
 
 /**
  * Structural only. This is presentation, not access control: NFR-20 requires
@@ -47,7 +48,11 @@ export function RequireAuth() {
   }, [status, navigate]);
 
   if (status === "signed-in") {
-    return <Outlet />;
+    return (
+      <TermsGate>
+        <Outlet />
+      </TermsGate>
+    );
   }
 
   if (status === "restoring") {
