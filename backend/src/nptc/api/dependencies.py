@@ -75,9 +75,9 @@ def get_terminology_client() -> TerminologyClient:
 
     **Called once by `nptc.api.app.create_app`, deliberately**, so a
     malformed `NPTC_TX_*` value fails at start-up; the comment there gives
-    the reason. `create_app` skips the call when given an explicit client. `nptc.api.errors` still maps `TerminologyConfigError` to a
-    500 for paths that bypass the factory (a test app, a dependency
-    override).
+    the reason. `create_app` skips the call when given an explicit client.
+    `nptc.api.errors` still maps `TerminologyConfigError` to a 500 for paths
+    that bypass the factory (a test app, a dependency override).
     """
     return OntoserverClient(TerminologyConfig.from_env())
 
