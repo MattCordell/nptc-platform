@@ -1,8 +1,7 @@
 """The datatype handler contract (FR-77, ADR-0013).
 
-The Protocol has eleven members: the ten ADR-0013 settled on once ``sort_key`` was dropped (its
-open question 5), plus ``uses_binding``, which lets a client form learn which datatypes carry a
-binding without naming one.
+The Protocol has eleven members: ADR-0013's ten (``sort_key`` was dropped, its open question 5)
+and ``uses_binding``.
 
 ``nptc.registry`` is a leaf (ADR-0013 SS2): it may import ``nptc_shared``, SQLAlchemy,
 ``jsonschema`` and the stdlib, and nothing else from ``nptc``. A handler's input is therefore
@@ -160,17 +159,15 @@ def jsonb_root_as_text(column: ColumnElement[Any]) -> ColumnElement[Any]:
 
 class DatatypeHandler(Protocol):
     """Eleven members. Four are FR-77's own sentence (`json_schema_fragment`, `validate`,
-    `form_control`, `serialise`); six are forced by the seams ADR-0012 left open; `uses_binding`
-    exposes the database's binding rule to a form."""
+    `form_control`, `serialise`); six are forced by the seams ADR-0012 left open; one is `uses_binding`."""
 
     @property
     def datatype(self) -> str: ...
 
     @property
     def uses_binding(self) -> bool:
-        """True where a property of this datatype carries a terminology binding, and False where
-        it must carry none. `property_definition`'s `CHECK` rejects either mismatch, so a client
-        form reads this to know which to offer rather than naming a datatype."""
+        """Whether a property of this datatype takes a terminology binding. The database
+        refuses a mismatch either way."""
         ...
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]: ...
@@ -265,7 +262,6 @@ class DatatypeRegistry:
         return frozenset(self._by_datatype)
 
     def handlers(self) -> tuple[DatatypeHandler, ...]:
-        """Every registered handler, ordered by datatype so a listing is stable."""
         return tuple(self._by_datatype[name] for name in sorted(self._by_datatype))
 
 

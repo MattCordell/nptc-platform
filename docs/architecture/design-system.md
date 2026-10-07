@@ -17,7 +17,9 @@ with a checkbox facet panel in place of pill toggles; it also shows status as a
 `StatusBadge`, codes in monospace and dates in tabular figures. The admin edit screen uses
 the same page header, `Card` and status treatment. The property registry list and detail
 screens use the page header, `DataTable`, `Card` and `StatusBadge`, with the key and
-datatype in monospace. The public entry page (issue #440) builds the detail layout
+datatype in monospace. The create and amend screens put `Form`, `Field`, `Select` and
+`Checkbox` in a `Card`, and the deprecate action is a danger `Button` that opens a `Dialog`.
+The public entry page (issue #440) builds the detail layout
 described under "Layout patterns" below: a breadcrumb, a title with a code chip and status
 pill, and a two-column body. Its sidebar is a fixed 20rem wide, not one third of the page,
 and it has no action buttons because a reader cannot edit. The audit trail pattern is not

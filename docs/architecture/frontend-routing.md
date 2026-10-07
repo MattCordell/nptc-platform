@@ -36,7 +36,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/submissions`, `/submissions/new`, `/submissions/$submissionId` | FR-23–FR-31 |
 | `/interest`, `/account` | FR-32–FR-34 |
 | `/admin`, `/admin/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #267), `/admin/catalogue{/new,/$businessKey/edit}` | FR-36–FR-39 |
-| `/admin/properties` (+ `deprecated=show` search param), `/admin/properties/$propertyKey`, `/admin/properties/new` (still a stub) | FR-08–FR-13 |
+| `/admin/properties` (+ `deprecated=show` search param), `/admin/properties/$propertyKey`, `/admin/properties/$propertyKey/edit`, `/admin/properties/new` | FR-08–FR-13 |
 | `/admin/users{,/$userId}` | FR-40–FR-43 |
 | `/admin/validation{,/$findingId}` | FR-45–FR-55 |
 | `/admin/releases{,/new}`, `/admin/exports/config`, `/admin/audit` | FR-56–FR-61, FR-78, NFR-08–NFR-13 |

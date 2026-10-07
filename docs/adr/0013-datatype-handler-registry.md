@@ -704,6 +704,14 @@ Following ADR-0012's precedent of naming the deciding issue rather than guessing
    as accepted) and are not edited to match, per this ADR's own practice of naming a resolution
    rather than rewriting the decision it resolves.
 
+   **Addendum, issue #446: `DatatypeHandler` now has eleven members.** The property create
+   form needs the datatype list and to know which datatypes take a terminology binding, and
+   SS3 forbids it from naming a datatype to find out. `uses_binding` states the binding rule
+   that `property_definition`'s `CHECK`s enforce, and `GET /registry/datatypes` serves it
+   with each handler's `constraints_schema()`. Deriving the flag from `binding_target` or
+   from the name `code` would be the proxy switch SS5 names as limit 1, so it is a handler
+   member instead. This adds a member rather than reversing the dropped `sort_key`.
+
 ## Verification
 
 Documentation-only, so verification is the repo's own gates plus a read-through against

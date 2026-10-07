@@ -8,7 +8,10 @@ record that a test accepts any specimen.
 You need the Administrator role to change registry properties.
 
 To see how a property itself is defined, such as its datatype, scope and binding, see
-[Browsing the property registry](browsing-the-property-registry.md).
+[Browsing the property registry](browsing-the-property-registry.md). To add a property,
+change its label or flags, or retire it, see
+[Managing registry properties](managing-registry-properties.md). This guide covers values
+on an entry, not the property definitions themselves.
 
 Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
 `/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
