@@ -18,7 +18,7 @@ export type DatatypeDescription = components["schemas"]["DatatypeDescription"];
 /** The key rule `property_definition`'s database `CHECK` enforces. */
 export const PROPERTY_KEY_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
 
-export const CREATE_FIELD_IDS = {
+export const PROPERTY_FIELD_IDS = {
   key: "property-key",
   label: "property-label",
   datatype: "property-datatype",
@@ -145,15 +145,15 @@ function bindingFor(
     const valueSetUri = values.valueSetUri.trim();
     const edition = values.edition.trim();
     if (valueSetUri.length === 0) {
-      errors.push(problem(CREATE_FIELD_IDS.valueSetUri, "Enter the value set URI."));
+      errors.push(problem(PROPERTY_FIELD_IDS.valueSetUri, "Enter the value set URI."));
     }
     if (values.strength.length === 0) {
-      errors.push(problem(CREATE_FIELD_IDS.strength, "Choose the binding strength."));
+      errors.push(problem(PROPERTY_FIELD_IDS.strength, "Choose the binding strength."));
     }
     if (edition.length === 0) {
       errors.push(
         problem(
-          CREATE_FIELD_IDS.edition,
+          PROPERTY_FIELD_IDS.edition,
           "Enter the SNOMED CT edition the value set belongs to, for example au.",
         ),
       );
@@ -170,7 +170,7 @@ function bindingFor(
     if (systemKey.length === 0) {
       errors.push(
         problem(
-          CREATE_FIELD_IDS.localCodeSystemKey,
+          PROPERTY_FIELD_IDS.localCodeSystemKey,
           "Enter the key of the local code system.",
         ),
       );
@@ -178,7 +178,7 @@ function bindingFor(
     return { binding_target: target, local_code_system_key: systemKey };
   }
   errors.push(
-    problem(CREATE_FIELD_IDS.bindingTarget, "Choose what the property is bound to."),
+    problem(PROPERTY_FIELD_IDS.bindingTarget, "Choose what the property is bound to."),
   );
   return {};
 }
@@ -201,43 +201,46 @@ export function buildCreateRequest(
   if (!PROPERTY_KEY_PATTERN.test(key)) {
     errors.push(
       problem(
-        CREATE_FIELD_IDS.key,
+        PROPERTY_FIELD_IDS.key,
         "Enter a key of lowercase letters, digits and underscores, starting with a letter, up to 63 characters.",
       ),
     );
   }
   if (label.length === 0) {
-    errors.push(problem(CREATE_FIELD_IDS.label, "Enter a label."));
+    errors.push(problem(PROPERTY_FIELD_IDS.label, "Enter a label."));
   }
   if (datatype === undefined) {
-    errors.push(problem(CREATE_FIELD_IDS.datatype, "Choose a datatype."));
+    errors.push(problem(PROPERTY_FIELD_IDS.datatype, "Choose a datatype."));
   }
   if (values.cardinality.length === 0) {
     errors.push(
-      problem(CREATE_FIELD_IDS.cardinality, "Choose how many values an entry can hold."),
+      problem(
+        PROPERTY_FIELD_IDS.cardinality,
+        "Choose how many values an entry can hold.",
+      ),
     );
   }
   if (values.scope.length === 0) {
-    errors.push(problem(CREATE_FIELD_IDS.scope, "Choose where the property applies."));
+    errors.push(problem(PROPERTY_FIELD_IDS.scope, "Choose where the property applies."));
   }
   const displayOrder = parseDisplayOrder(values.displayOrder);
   if (displayOrder === null) {
     errors.push(
       problem(
-        CREATE_FIELD_IDS.displayOrder,
+        PROPERTY_FIELD_IDS.displayOrder,
         "Enter the display order as a whole number, or leave it empty for 0.",
       ),
     );
   }
   const constraints = parseConstraints(values.constraintsText);
   if (!constraints.ok) {
-    errors.push(problem(CREATE_FIELD_IDS.constraints, constraints.message));
+    errors.push(problem(PROPERTY_FIELD_IDS.constraints, constraints.message));
   }
   const binding = datatype?.uses_binding ? bindingFor(values, errors) : {};
   const reason = values.reason.trim();
   const missingReason = reasonProblem(values.reason, "creating this property");
   if (missingReason !== null) {
-    errors.push(problem(CREATE_FIELD_IDS.reason, missingReason));
+    errors.push(problem(PROPERTY_FIELD_IDS.reason, missingReason));
   }
 
   if (

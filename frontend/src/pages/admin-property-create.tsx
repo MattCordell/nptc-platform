@@ -1,7 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { refusalDetail } from "../api/conflicts.ts";
 import { useCreateProperty, useDatatypes } from "../api/queries.ts";
 import {
   BINDING_STRENGTH_OPTIONS,
@@ -23,13 +22,15 @@ import { useAnnounce } from "../components/use-announce.ts";
 import {
   buildCreateRequest,
   constraintKeysOf,
-  CREATE_FIELD_IDS,
+  PROPERTY_FIELD_IDS,
   type CreateValues,
   EMPTY_CREATE_VALUES,
   LOCAL_CODE_SYSTEM_TARGET,
   VALUE_SET_TARGET,
 } from "../registry/property-form.ts";
 import { ReasonField } from "../registry/reason-field.tsx";
+import { PropertyRefusalNotice } from "../registry/refusal-notice.tsx";
+import { releaseFocus } from "../registry/release-focus.ts";
 
 /**
  * The create-property screen (FR-09, FR-12, NFR-31). The datatype options, and
@@ -106,7 +107,10 @@ export function AdminPropertyCreatePage() {
               errors={errors}
               formError={
                 create.isError ? (
-                  <p>{refusalDetail(create.error) ?? FALLBACK_REFUSAL}</p>
+                  <PropertyRefusalNotice
+                    error={create.error}
+                    fallback={FALLBACK_REFUSAL}
+                  />
                 ) : undefined
               }
               onSubmit={() => {
@@ -117,13 +121,7 @@ export function AdminPropertyCreatePage() {
                 }
                 return create.mutateAsync(result.body).then(
                   (created) => {
-                    // The submit button still holds focus when the route changes, so
-                    // the app's focus-main-on-navigation rule leaves focus alone and
-                    // it then falls to <body> as the button unmounts. Blurring first
-                    // lets that rule move focus to <main>.
-                    if (document.activeElement instanceof HTMLElement) {
-                      document.activeElement.blur();
-                    }
+                    releaseFocus();
                     void navigate({
                       to: "/admin/properties/$propertyKey",
                       params: { propertyKey: created.key },
@@ -140,10 +138,10 @@ export function AdminPropertyCreatePage() {
               }
             >
               <Field
-                id={CREATE_FIELD_IDS.key}
+                id={PROPERTY_FIELD_IDS.key}
                 label="Key"
                 hint="Lowercase letters, digits and underscores, starting with a letter. It identifies the property in exports and cannot be changed later."
-                error={errorFor(CREATE_FIELD_IDS.key)}
+                error={errorFor(PROPERTY_FIELD_IDS.key)}
               >
                 {(controlProps) => (
                   <input
@@ -157,10 +155,10 @@ export function AdminPropertyCreatePage() {
               </Field>
 
               <Field
-                id={CREATE_FIELD_IDS.label}
+                id={PROPERTY_FIELD_IDS.label}
                 label="Label"
                 hint="The name people see. You can change it later."
-                error={errorFor(CREATE_FIELD_IDS.label)}
+                error={errorFor(PROPERTY_FIELD_IDS.label)}
               >
                 {(controlProps) => (
                   <input
@@ -173,43 +171,43 @@ export function AdminPropertyCreatePage() {
               </Field>
 
               <Select
-                id={CREATE_FIELD_IDS.datatype}
+                id={PROPERTY_FIELD_IDS.datatype}
                 label="Datatype"
                 hint="What kind of value the property holds. You cannot change it later."
                 placeholder="Choose a datatype"
                 options={items.map((item) => ({ value: item.name, label: item.name }))}
                 value={values.datatype}
                 onChange={(event) => set("datatype", event.target.value)}
-                error={errorFor(CREATE_FIELD_IDS.datatype)}
+                error={errorFor(PROPERTY_FIELD_IDS.datatype)}
               />
 
               <Select
-                id={CREATE_FIELD_IDS.cardinality}
+                id={PROPERTY_FIELD_IDS.cardinality}
                 label="Cardinality"
                 hint="How many values an entry can hold. You cannot change it later."
                 placeholder="Choose a cardinality"
                 options={CARDINALITY_OPTIONS}
                 value={values.cardinality}
                 onChange={(event) => set("cardinality", event.target.value)}
-                error={errorFor(CREATE_FIELD_IDS.cardinality)}
+                error={errorFor(PROPERTY_FIELD_IDS.cardinality)}
               />
 
               <Select
-                id={CREATE_FIELD_IDS.scope}
+                id={PROPERTY_FIELD_IDS.scope}
                 label="Scope"
                 hint="Whether the property appears when proposing a test, when maintaining one, or both. You cannot change it later."
                 placeholder="Choose a scope"
                 options={SCOPE_OPTIONS}
                 value={values.scope}
                 onChange={(event) => set("scope", event.target.value)}
-                error={errorFor(CREATE_FIELD_IDS.scope)}
+                error={errorFor(PROPERTY_FIELD_IDS.scope)}
               />
 
               <Field
-                id={CREATE_FIELD_IDS.displayOrder}
+                id={PROPERTY_FIELD_IDS.displayOrder}
                 label="Display order"
                 hint="Lower numbers come first. Leave empty for 0."
-                error={errorFor(CREATE_FIELD_IDS.displayOrder)}
+                error={errorFor(PROPERTY_FIELD_IDS.displayOrder)}
               >
                 {(controlProps) => (
                   <input
@@ -244,21 +242,21 @@ export function AdminPropertyCreatePage() {
                     Terminology binding
                   </legend>
                   <Select
-                    id={CREATE_FIELD_IDS.bindingTarget}
+                    id={PROPERTY_FIELD_IDS.bindingTarget}
                     label="Bound to"
                     placeholder="Choose what the property is bound to"
                     options={BINDING_TARGET_OPTIONS}
                     value={bindingTarget}
                     onChange={(event) => set("bindingTarget", event.target.value)}
-                    error={errorFor(CREATE_FIELD_IDS.bindingTarget)}
+                    error={errorFor(PROPERTY_FIELD_IDS.bindingTarget)}
                   />
 
                   {bindingTarget === VALUE_SET_TARGET && (
                     <>
                       <Field
-                        id={CREATE_FIELD_IDS.valueSetUri}
+                        id={PROPERTY_FIELD_IDS.valueSetUri}
                         label="Value set URI"
-                        error={errorFor(CREATE_FIELD_IDS.valueSetUri)}
+                        error={errorFor(PROPERTY_FIELD_IDS.valueSetUri)}
                       >
                         {(controlProps) => (
                           <input
@@ -271,19 +269,19 @@ export function AdminPropertyCreatePage() {
                         )}
                       </Field>
                       <Select
-                        id={CREATE_FIELD_IDS.strength}
+                        id={PROPERTY_FIELD_IDS.strength}
                         label="Binding strength"
                         placeholder="Choose a strength"
                         options={BINDING_STRENGTH_OPTIONS}
                         value={values.strength}
                         onChange={(event) => set("strength", event.target.value)}
-                        error={errorFor(CREATE_FIELD_IDS.strength)}
+                        error={errorFor(PROPERTY_FIELD_IDS.strength)}
                       />
                       <Field
-                        id={CREATE_FIELD_IDS.edition}
+                        id={PROPERTY_FIELD_IDS.edition}
                         label="Edition"
                         hint="The SNOMED CT edition the value set belongs to, for example au."
-                        error={errorFor(CREATE_FIELD_IDS.edition)}
+                        error={errorFor(PROPERTY_FIELD_IDS.edition)}
                       >
                         {(controlProps) => (
                           <input
@@ -300,9 +298,9 @@ export function AdminPropertyCreatePage() {
 
                   {bindingTarget === LOCAL_CODE_SYSTEM_TARGET && (
                     <Field
-                      id={CREATE_FIELD_IDS.localCodeSystemKey}
+                      id={PROPERTY_FIELD_IDS.localCodeSystemKey}
                       label="Local code system key"
-                      error={errorFor(CREATE_FIELD_IDS.localCodeSystemKey)}
+                      error={errorFor(PROPERTY_FIELD_IDS.localCodeSystemKey)}
                     >
                       {(controlProps) => (
                         <input
@@ -321,7 +319,7 @@ export function AdminPropertyCreatePage() {
               )}
 
               <Field
-                id={CREATE_FIELD_IDS.constraints}
+                id={PROPERTY_FIELD_IDS.constraints}
                 label="Constraints"
                 hint={
                   selected
@@ -330,7 +328,7 @@ export function AdminPropertyCreatePage() {
                       : "Optional. This datatype takes no constraints, so leave it empty."
                     : "Optional. A JSON object. Choose a datatype to see which names it accepts."
                 }
-                error={errorFor(CREATE_FIELD_IDS.constraints)}
+                error={errorFor(PROPERTY_FIELD_IDS.constraints)}
               >
                 {(controlProps) => (
                   <textarea
@@ -344,10 +342,10 @@ export function AdminPropertyCreatePage() {
               </Field>
 
               <ReasonField
-                id={CREATE_FIELD_IDS.reason}
+                id={PROPERTY_FIELD_IDS.reason}
                 value={values.reason}
                 onChange={(reason) => set("reason", reason)}
-                error={errorFor(CREATE_FIELD_IDS.reason)}
+                error={errorFor(PROPERTY_FIELD_IDS.reason)}
               />
             </Form>
           </Card>

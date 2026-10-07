@@ -185,6 +185,28 @@ describe("AdminPropertyDetailPage", () => {
     expect(termValue("minimum")).toHaveTextContent("1");
   });
 
+  it("offers Edit property once the definition has loaded, and not before or on a 404", async () => {
+    stubDefinition("specimen", SPECIMEN);
+    await renderRoute("/admin/properties/specimen", SIGNED_IN);
+
+    expect(await screen.findByRole("link", { name: "Edit property" })).toHaveAttribute(
+      "href",
+      "/admin/properties/specimen/edit",
+    );
+  });
+
+  it("offers no Edit property link for a property that does not exist", async () => {
+    stubDefinition(
+      "missing",
+      { detail: "No property definition matches the given key." },
+      404,
+    );
+    await renderRoute("/admin/properties/missing", SIGNED_IN);
+
+    await screen.findByText("No property was found for missing. Check the key.");
+    expect(screen.queryByRole("link", { name: "Edit property" })).not.toBeInTheDocument();
+  });
+
   it("links back to the registry list, reachable by keyboard", async () => {
     stubApi([
       {

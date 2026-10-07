@@ -2,10 +2,8 @@ import { Link, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 
-import { refusalDetail } from "../api/conflicts.ts";
 import { usePropertyDefinition } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
-import { ApiError } from "../api/unwrap.ts";
 import {
   bindingStrengthLabelFor,
   bindingTargetLabelFor,
@@ -22,6 +20,10 @@ import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import {
+  propertyLoadFailureMessage,
+  propertyStaleWarning,
+} from "../registry/property-load.ts";
 
 /**
  * The property registry detail screen (FR-08..13, NFR-31): one property's
@@ -36,23 +38,6 @@ import { useAnnounce } from "../components/use-announce.ts";
 type Definition = components["schemas"]["PropertyDefinitionResponse"];
 
 const LABEL_CLASS = "text-[var(--color-text-muted)]";
-
-function staleWarning(key: string): string {
-  return (
-    `${key} could not be refreshed just now, so what follows may be out of date. ` +
-    "Reload the page to try again."
-  );
-}
-
-function loadFailureMessage(key: string, error: unknown): string {
-  if (error instanceof ApiError && error.status === 404) {
-    return `No property was found for ${key}. Check the key.`;
-  }
-  return (
-    refusalDetail(error) ??
-    `${key} could not be loaded. Try again, or contact an administrator if the problem persists.`
-  );
-}
 
 function yesNo(value: boolean): string {
   return value ? "Yes" : "No";
@@ -180,7 +165,7 @@ export function AdminPropertyDetailPage() {
   const staleData = property.isError && property.data !== undefined;
   useEffect(() => {
     if (staleData) {
-      announce(staleWarning(propertyKey));
+      announce(propertyStaleWarning(propertyKey));
     }
   }, [staleData, propertyKey, announce]);
 
@@ -189,7 +174,7 @@ export function AdminPropertyDetailPage() {
   // otherwise be announced twice.
   const hardFailureMessage =
     property.isError && property.data === undefined
-      ? loadFailureMessage(propertyKey, property.error)
+      ? propertyLoadFailureMessage(propertyKey, property.error)
       : null;
   useEffect(() => {
     if (hardFailureMessage !== null) {
@@ -211,9 +196,20 @@ export function AdminPropertyDetailPage() {
             definition ? <span className="font-mono">{definition.key}</span> : undefined
           }
           actions={
-            <Link to="/admin/properties" className={buttonClassName("secondary")}>
-              Back to the property registry
-            </Link>
+            <>
+              {definition && (
+                <Link
+                  to="/admin/properties/$propertyKey/edit"
+                  params={{ propertyKey }}
+                  className={buttonClassName("primary")}
+                >
+                  Edit property
+                </Link>
+              )}
+              <Link to="/admin/properties" className={buttonClassName("secondary")}>
+                Back to the property registry
+              </Link>
+            </>
           }
         />
 
@@ -223,7 +219,7 @@ export function AdminPropertyDetailPage() {
           <p className="m-0 text-[var(--color-danger)]">{hardFailureMessage}</p>
         )}
 
-        {staleData && <p>{staleWarning(propertyKey)}</p>}
+        {staleData && <p>{propertyStaleWarning(propertyKey)}</p>}
 
         {definition && (
           <>

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCreateRequest,
   constraintKeysOf,
-  CREATE_FIELD_IDS,
+  PROPERTY_FIELD_IDS,
   type CreateValues,
   type DatatypeDescription,
   EMPTY_CREATE_VALUES,
@@ -195,12 +195,12 @@ describe("buildCreateRequest", () => {
 
     expect(result.body).toBeNull();
     expect(fieldIdsOf(result)).toEqual([
-      CREATE_FIELD_IDS.key,
-      CREATE_FIELD_IDS.label,
-      CREATE_FIELD_IDS.datatype,
-      CREATE_FIELD_IDS.cardinality,
-      CREATE_FIELD_IDS.scope,
-      CREATE_FIELD_IDS.reason,
+      PROPERTY_FIELD_IDS.key,
+      PROPERTY_FIELD_IDS.label,
+      PROPERTY_FIELD_IDS.datatype,
+      PROPERTY_FIELD_IDS.cardinality,
+      PROPERTY_FIELD_IDS.scope,
+      PROPERTY_FIELD_IDS.reason,
     ]);
   });
 
@@ -210,7 +210,7 @@ describe("buildCreateRequest", () => {
       const result = buildCreateRequest(values({ key }), PLAIN);
 
       expect(result.body).toBeNull();
-      expect(fieldIdsOf(result)).toEqual([CREATE_FIELD_IDS.key]);
+      expect(fieldIdsOf(result)).toEqual([PROPERTY_FIELD_IDS.key]);
     },
   );
 
@@ -218,7 +218,7 @@ describe("buildCreateRequest", () => {
     const result = buildCreateRequest(values({ datatype: "beta" }), BOUND);
 
     expect(result.body).toBeNull();
-    expect(fieldIdsOf(result)).toEqual([CREATE_FIELD_IDS.bindingTarget]);
+    expect(fieldIdsOf(result)).toEqual([PROPERTY_FIELD_IDS.bindingTarget]);
   });
 
   it("refuses a value-set binding missing its URI, strength or edition", () => {
@@ -229,9 +229,9 @@ describe("buildCreateRequest", () => {
 
     expect(result.body).toBeNull();
     expect(fieldIdsOf(result)).toEqual([
-      CREATE_FIELD_IDS.valueSetUri,
-      CREATE_FIELD_IDS.strength,
-      CREATE_FIELD_IDS.edition,
+      PROPERTY_FIELD_IDS.valueSetUri,
+      PROPERTY_FIELD_IDS.strength,
+      PROPERTY_FIELD_IDS.edition,
     ]);
   });
 
@@ -245,7 +245,7 @@ describe("buildCreateRequest", () => {
       BOUND,
     );
 
-    expect(fieldIdsOf(result)).toEqual([CREATE_FIELD_IDS.localCodeSystemKey]);
+    expect(fieldIdsOf(result)).toEqual([PROPERTY_FIELD_IDS.localCodeSystemKey]);
   });
 
   it("refuses bad constraints and a bad display order together", () => {
@@ -256,14 +256,14 @@ describe("buildCreateRequest", () => {
 
     expect(result.body).toBeNull();
     expect(fieldIdsOf(result)).toEqual([
-      CREATE_FIELD_IDS.displayOrder,
-      CREATE_FIELD_IDS.constraints,
+      PROPERTY_FIELD_IDS.displayOrder,
+      PROPERTY_FIELD_IDS.constraints,
     ]);
   });
 
   it("refuses a reason that is only spaces", () => {
     const result = buildCreateRequest(values({ reason: "   " }), PLAIN);
 
-    expect(fieldIdsOf(result)).toEqual([CREATE_FIELD_IDS.reason]);
+    expect(fieldIdsOf(result)).toEqual([PROPERTY_FIELD_IDS.reason]);
   });
 });

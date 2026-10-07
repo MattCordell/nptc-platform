@@ -5,6 +5,7 @@ import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AdminPropertyCreatePage } from "../pages/admin-property-create.tsx";
 import { AdminPropertyDetailPage } from "../pages/admin-property-detail.tsx";
+import { AdminPropertyEditPage } from "../pages/admin-property-edit.tsx";
 import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { CatalogueEntryPage } from "../pages/catalogue-entry.tsx";
@@ -389,6 +390,13 @@ const adminPropertyDetailRoute = createRoute({
   head: titled("Property"),
 });
 
+const adminPropertyEditRoute = createRoute({
+  getParentRoute: () => adminPropertiesRoute,
+  path: "$propertyKey/edit",
+  component: AdminPropertyEditPage,
+  head: titled("Edit property"),
+});
+
 // FR-40..43: user administration.
 const adminUsersRoute = createRoute({
   getParentRoute: () => adminRoute,
@@ -532,6 +540,7 @@ export const routeTree = rootRoute.addChildren([
         adminPropertyListRoute,
         adminPropertyNewRoute,
         adminPropertyDetailRoute,
+        adminPropertyEditRoute,
       ]),
       adminUsersRoute.addChildren([adminUserListRoute, adminUserDetailRoute]),
       adminValidationRoute.addChildren([adminFindingListRoute, adminFindingDetailRoute]),
