@@ -13,7 +13,9 @@ test, not just the positive path).
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import logging
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,6 +26,7 @@ from sqlalchemy.engine import Connection
 
 from nptc.api.app import API_PREFIX
 from nptc.api.dependencies import permission_dep
+from nptc.api.unhandled import UNHANDLED_ERROR_DETAIL, UnhandledErrorMiddleware
 from nptc.auth.errors_authorisation import (
     AccountClosedError,
     LastAdministratorError,
@@ -36,6 +39,9 @@ from nptc_shared.terminology import TerminologyConfigError
 #: A `TerminologyConfig.from_env` numeric variable, named here so the tests
 #: below assert the *value* never reaches a response body (NFR-26).
 _TX_CONFIG_VAR = "NPTC_TX_TIMEOUT_SECONDS"
+
+#: Exception text no response may carry (NFR-26, NFR-35).
+_UNHANDLED_SECRET = "internal-detail-7f3a"
 
 # Registered in sys.modules before exec_module - see
 # test_authz_negative_http.py for why @dataclass requires it.
@@ -76,6 +82,10 @@ def api(app_db: Connection) -> Iterator[ApiTestApp]:
                     f"{_TX_CONFIG_VAR}='not-a-number' is not a valid number"
                 ),
             }[error]
+
+        @harness.app.get(f"{API_PREFIX}/_test/boom")
+        def _boom() -> dict[str, bool]:
+            raise RuntimeError(_UNHANDLED_SECRET)
 
         yield harness
 
@@ -194,6 +204,74 @@ def test_www_authenticate_is_exposed_to_cross_origin_js(api: ApiTestApp) -> None
 
     exposed = response.headers.get("access-control-expose-headers", "")
     assert "WWW-Authenticate" in exposed
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_an_unhandled_error_is_a_cors_readable_500_for_the_frontend_origin(
+    api: ApiTestApp,
+) -> None:
+    """`ServerErrorMiddleware` sits outside CORS, so without
+    `UnhandledErrorMiddleware` an unclaimed exception reached the browser with no
+    `Access-Control-Allow-Origin` and the SPA saw a network error, not a 500."""
+    response = api.client.get(f"{API_PREFIX}/_test/boom", headers={"Origin": FRONTEND_ORIGIN})
+
+    assert response.status_code == 500, response.text
+    assert response.headers["access-control-allow-origin"] == FRONTEND_ORIGIN
+    assert response.json() == {"detail": UNHANDLED_ERROR_DETAIL}
+
+
+@pytest.mark.req("NFR-06")
+@pytest.mark.integration
+def test_an_unhandled_error_gives_a_foreign_origin_no_cors_header(api: ApiTestApp) -> None:
+    """The catch-all must not widen the CORS policy: ADR-0021 allows exactly one origin."""
+    response = api.client.get(
+        f"{API_PREFIX}/_test/boom", headers={"Origin": "https://evil.example"}
+    )
+
+    assert response.status_code == 500, response.text
+    assert "access-control-allow-origin" not in response.headers
+
+
+@pytest.mark.req("NFR-26")
+@pytest.mark.integration
+def test_an_unhandled_error_is_logged_but_never_echoed(
+    api: ApiTestApp, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The exception text and traceback belong in the log, not the response."""
+    with caplog.at_level(logging.ERROR, logger="nptc.api.unhandled"):
+        response = api.client.get(f"{API_PREFIX}/_test/boom")
+
+    assert _UNHANDLED_SECRET not in response.text
+    record = next(r for r in caplog.records if r.name == "nptc.api.unhandled")
+    assert record.exc_info is not None
+    assert _UNHANDLED_SECRET in repr(record.exc_info[1])
+
+
+@pytest.mark.req("NFR-06")
+def test_an_error_after_the_response_has_started_is_not_masked_by_a_second_response() -> None:
+    """Once the status line is sent, a 500 cannot follow it. The error must
+    propagate so the server drops the connection, rather than the client receiving
+    two responses."""
+    sent: list[str] = []
+
+    async def failing_app(scope: dict, receive: object, send: object) -> None:  # type: ignore[type-arg]
+        await send({"type": "http.response.start", "status": 200, "headers": []})  # type: ignore[operator]
+        raise RuntimeError(_UNHANDLED_SECRET)
+
+    async def record(message: dict) -> None:  # type: ignore[type-arg]
+        sent.append(message["type"])
+
+    async def receive() -> dict:  # type: ignore[type-arg]
+        return {"type": "http.request"}
+
+    middleware = UnhandledErrorMiddleware(failing_app)  # type: ignore[arg-type]
+    scope = {"type": "http", "method": "GET", "path": "/x"}
+
+    with pytest.raises(RuntimeError, match=_UNHANDLED_SECRET):
+        asyncio.run(middleware(scope, receive, record))  # type: ignore[arg-type]
+
+    assert sent == ["http.response.start"]
 
 
 @pytest.mark.req("FR-44")

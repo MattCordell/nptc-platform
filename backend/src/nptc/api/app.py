@@ -26,6 +26,7 @@ from nptc.api.routers import (
     terminology,
 )
 from nptc.api.terms_gate import declare_terms_refusal, require_current_terms
+from nptc.api.unhandled import UnhandledErrorMiddleware
 from nptc.settings import ApiSettings, AuthSettings
 from nptc.terms.documents import load_terms_document
 from nptc_shared.terminology import TerminologyClient
@@ -71,6 +72,10 @@ def create_app(
 
     # A current version with no file would refuse every contribution with nothing to show.
     load_terms_document(api_settings.terms_current_version)
+
+    # Added before `CORSMiddleware` so it sits inside it: `add_middleware` makes the
+    # latest addition outermost. The 500 it returns then passes through CORS.
+    app.add_middleware(UnhandledErrorMiddleware)
 
     # Exactly one origin, never "*": ADR-0021 has the browser hold the access
     # token and send it here, so a permissive policy would let any origin drive
