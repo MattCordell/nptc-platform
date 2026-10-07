@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react
 
 import { HomePage } from "../pages/home.tsx";
 import { AboutPage } from "../pages/about.tsx";
+import { AdminAuditPage } from "../pages/admin-audit.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AdminPropertyCreatePage } from "../pages/admin-property-create.tsx";
@@ -21,6 +22,7 @@ import { RequireAuth } from "../shell/require-auth.tsx";
 import { RootLayout } from "../shell/root-layout.tsx";
 import {
   validateAdminCatalogueSearch,
+  validateAuditSearch,
   validateCatalogueSearch,
   validateLookupSearch,
   validatePropertyListSearch,
@@ -28,6 +30,8 @@ import {
   validateSignInSearch,
   type AdminCatalogueSearch,
   type AdminCatalogueSearchInput,
+  type AuditSearch,
+  type AuditSearchInput,
   type CatalogueSearch,
   type CatalogueSearchInput,
   type LookupSearch,
@@ -492,14 +496,13 @@ const adminExportConfigRoute = createRoute({
   head: titled("Export configuration"),
 });
 
-// NFR-08..13: audit log viewer, Admin only.
+// NFR-08..13: audit log viewer, Admin only. Filters and the page cursor live in
+// the URL; the server refuses a caller without `audit.read`.
 const adminAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "audit",
-  component: createPlaceholderPage({
-    title: "Audit log",
-    nearest: ADMIN_NEAREST,
-  }),
+  validateSearch: validateAuditSearch as (search: AuditSearchInput) => AuditSearch,
+  component: AdminAuditPage,
   head: titled("Audit log"),
 });
 

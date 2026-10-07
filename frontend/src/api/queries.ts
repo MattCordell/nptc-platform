@@ -1142,6 +1142,69 @@ export function useSavePropertyValues(businessKey: string, key: string) {
   });
 }
 
+type AuditExportQuery = NonNullable<
+  paths["/api/v1/audit/events/export"]["get"]["parameters"]["query"]
+>;
+
+type AuditEventPage = components["schemas"]["AuditEventPage"];
+
+export interface AuditEventsParams {
+  /** The six filters both audit routes share; see `audit/audit-filters.ts`. */
+  filters: AuditExportQuery;
+  limit?: number;
+  /** The previous page's `next_cursor`, passed back unchanged. The server
+   * refuses a cursor it did not issue with a 422. */
+  before?: string;
+  /** False while the filters are invalid, so no request is sent only to fail. */
+  enabled?: boolean;
+}
+
+/**
+ * One page of the audit log, most recent first (NFR-12). Keyset paging, so no
+ * page number or total exists. While another page of the same filters loads,
+ * the previous page stays on screen so a focused paging control is not
+ * unmounted. A different filter set never inherits it: an audit reader must not
+ * mistake the old filter's events for the new one's.
+ */
+export function useAuditEvents(params: AuditEventsParams) {
+  const client = useApiClient();
+  const { filters, limit, before, enabled = true } = params;
+  const query = { ...filters, limit, before };
+  return useQuery<AuditEventPage, Error, AuditEventPage, readonly unknown[]>({
+    queryKey: ["api", "/api/v1/audit/events", filters, { limit, before }],
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery !== undefined &&
+      JSON.stringify(previousQuery.queryKey[2]) === JSON.stringify(filters)
+        ? previousData
+        : undefined,
+    queryFn: async ({ signal }) =>
+      unwrap(await client.GET("/api/v1/audit/events", { params: { query }, signal })),
+    enabled,
+  });
+}
+
+/**
+ * The whole filtered audit log as an NDJSON file (NFR-12), read as a blob.
+ *
+ * A mutation rather than a query: it is a user action that should never refetch
+ * on its own, and a refused one reaches the step-up handler through the
+ * mutation cache like any other refused action (ADR-0036). The caller saves the
+ * blob; the file name is the caller's too, because a blob download ignores the
+ * server's `Content-Disposition`.
+ */
+export function useExportAuditEvents() {
+  const client = useApiClient();
+  return useMutation({
+    mutationFn: async (query: AuditExportQuery) =>
+      unwrap(
+        await client.GET("/api/v1/audit/events/export", {
+          params: { query },
+          parseAs: "blob",
+        }),
+      ),
+  });
+}
+
 type BulkSavePropertyValuesBody = components["schemas"]["BulkSavePropertyValuesRequest"];
 
 /**

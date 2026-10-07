@@ -253,6 +253,51 @@ export function validatePropertyListSearch(
   return asString(search.deprecated) === "show" ? { deprecated: "show" } : {};
 }
 
+// --- audit log ---------------------------------------------------------------
+
+/**
+ * Search state for `/admin/audit` (NFR-12). Every key is a flat string, as
+ * `stringifySearch` requires. `from` and `to` are `YYYY-MM-DD` days; the
+ * offset the API needs is added when the request is built, not stored here.
+ * `before` is the keyset cursor of the page being read.
+ *
+ * Values are kept as typed rather than checked here: silently dropping a bad
+ * actor id from a pasted link would show the whole log as if it were the
+ * filtered one. The page validates and says what is wrong.
+ */
+export type AuditSearch = {
+  actor?: string;
+  entity_type?: string;
+  entity_id?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  before?: string;
+};
+
+export type AuditSearchInput = Partial<AuditSearch> & SearchSchemaInput;
+
+const AUDIT_SEARCH_KEYS = [
+  "actor",
+  "entity_type",
+  "entity_id",
+  "action",
+  "from",
+  "to",
+  "before",
+] as const;
+
+export function validateAuditSearch(search: Record<string, unknown>): AuditSearch {
+  const validated: AuditSearch = {};
+  for (const key of AUDIT_SEARCH_KEYS) {
+    const value = asString(search[key]).trim();
+    if (value.length > 0) {
+      validated[key] = value;
+    }
+  }
+  return validated;
+}
+
 /**
  * The `filter.*` entries of a validated catalogue list search, keyed by
  * facet alone (the `filter.` prefix stripped) - the shape the filter panel

@@ -29,6 +29,12 @@ export interface Route {
    * checking" state without racing a timer; `status` and `body` are ignored.
    */
   neverSettles?: boolean;
+  /**
+   * Sends `body` as this content type and as given, instead of as JSON. For a
+   * route that answers text, such as the audit export's NDJSON; `body` must
+   * then be a string.
+   */
+  contentType?: string;
 }
 
 export interface StubOptions {
@@ -103,15 +109,19 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     if (route.neverSettles === true) {
       return new Promise<Response>(() => {});
     }
-    return new Response(JSON.stringify(route.body), {
-      status: route.status,
-      // `route.headers` spread first, `Content-Type` set after: the
-      // docstring on `Route.headers` promises it cannot be overridden, and
-      // an object spread only keeps that promise in this order (PR #284
-      // review - the reverse order let a route's own `Content-Type` win,
-      // contradicting the doc with nothing to catch it).
-      headers: { ...route.headers, "Content-Type": "application/json" },
-    });
+    return new Response(
+      route.contentType === undefined ? JSON.stringify(route.body) : String(route.body),
+      {
+        status: route.status,
+        // `route.headers` spread first, `Content-Type` set after: the
+        // docstring on `Route.headers` promises it cannot be overridden, and
+        // an object spread only keeps that promise in this order.
+        headers: {
+          ...route.headers,
+          "Content-Type": route.contentType ?? "application/json",
+        },
+      },
+    );
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;

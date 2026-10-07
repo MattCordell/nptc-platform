@@ -7,6 +7,7 @@ import {
   filterSelections,
   toggleFilterValue,
   validateAdminCatalogueSearch,
+  validateAuditSearch,
   validateCatalogueSearch,
   validateLookupSearch,
   validatePropertyListSearch,
@@ -14,6 +15,44 @@ import {
   validateSignInSearch,
   type AdminCatalogueSearch,
 } from "./search-params.ts";
+
+describe("validateAuditSearch", () => {
+  it("defaults to no filters and no cursor", () => {
+    expect(validateAuditSearch({})).toEqual({});
+  });
+
+  it("keeps every filter and the cursor as strings, trimmed", () => {
+    expect(
+      validateAuditSearch({
+        actor: " 3f2a1b4c-5d6e-4f70-8192-a3b4c5d6e7f8 ",
+        entity_type: "catalogue_entry",
+        entity_id: "NPTC-000001",
+        action: "catalogue_entry.updated",
+        from: "2026-10-01",
+        to: "2026-10-07",
+        before: "1042",
+      }),
+    ).toEqual({
+      actor: "3f2a1b4c-5d6e-4f70-8192-a3b4c5d6e7f8",
+      entity_type: "catalogue_entry",
+      entity_id: "NPTC-000001",
+      action: "catalogue_entry.updated",
+      from: "2026-10-01",
+      to: "2026-10-07",
+      before: "1042",
+    });
+  });
+
+  it("drops blank and non-string values, and keys it does not know", () => {
+    expect(
+      validateAuditSearch({ actor: "  ", action: ["a", "b"], limit: "5", before: 12 }),
+    ).toEqual({});
+  });
+
+  it("does not drop an invalid actor, so the page can say what is wrong", () => {
+    expect(validateAuditSearch({ actor: "alice" })).toEqual({ actor: "alice" });
+  });
+});
 
 describe("validatePropertyListSearch", () => {
   it("hides deprecated properties by default", () => {
