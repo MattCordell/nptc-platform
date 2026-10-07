@@ -23,11 +23,10 @@ BUILTIN_DATATYPES: tuple[str, ...] = ("code", "string", "decimal", "positiveInt"
 """Exactly PRD SS6.5's five. A synthetic datatype in `test_synthetic_datatype.py` proves
 extensibility, so no speculative ones are pre-registered.
 
-`boolean` is deliberately excluded (ADR-0013 SS9), because of FR-89: a `0..1` boolean has
-three states, and its absent state is the "accepts any specimen" versus "nobody has filled
-this in yet" ambiguity that FR-89's `specimen_unconstrained` core column exists to remove. The
-registry can accept a `boolean` handler; registering one needs its own decision about that
-tri-state problem."""
+`boolean` is deliberately excluded (ADR-0013 SS9): a `0..1` boolean has three states, and its
+absent state is the "no" versus "nobody has filled this in yet" ambiguity. The registry can
+accept a `boolean` handler; registering one needs its own decision about that tri-state
+problem."""
 
 
 def build_builtin_handlers(deps: HandlerDeps) -> tuple[DatatypeHandler, ...]:

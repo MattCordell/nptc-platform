@@ -424,7 +424,7 @@ def test_get_property_returns_a_code_datatypes_form_control_from_its_binding(
     assert response.json()["form_control"] == {
         "control": "concept_picker",
         "params": {
-            "valueSetUri": "http://snomed.info/sct?fhir_vs=ecl/%3C123038009",
+            "valueSetUri": "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009",
             "strength": "required",
             "edition": "au",
             "allowJustification": False,

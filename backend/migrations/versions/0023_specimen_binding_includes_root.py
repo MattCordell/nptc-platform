@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -35,31 +36,30 @@ depends_on: str | Sequence[str] | None = None
 
 _OLD_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
 _NEW_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
+_OLD_REFUSAL = '{"forbidden_codes": ["Any"]}'
 
 
 def upgrade() -> None:
-    op.execute(
-        f"""
-        UPDATE property_definition
-        SET value_set_uri = '{_NEW_URI}',
-            constraints = CASE
-                WHEN constraints -> 'forbidden_codes' = '["Any"]'::jsonb
-                THEN constraints - 'forbidden_codes'
-                ELSE constraints
-            END,
-            updated_at = clock_timestamp()
-        WHERE key = 'specimen' AND origin = 'system' AND value_set_uri = '{_OLD_URI}'
-        """
+    op.get_bind().execute(
+        sa.text(
+            "UPDATE property_definition SET value_set_uri = :new_uri, "
+            "constraints = CASE WHEN constraints -> 'forbidden_codes' = "
+            "CAST(:old_refusal AS jsonb) -> 'forbidden_codes' "
+            "THEN constraints - 'forbidden_codes' ELSE constraints END, "
+            "updated_at = clock_timestamp() "
+            "WHERE key = 'specimen' AND origin = 'system' AND value_set_uri = :old_uri"
+        ),
+        {"new_uri": _NEW_URI, "old_uri": _OLD_URI, "old_refusal": _OLD_REFUSAL},
     )
 
 
 def downgrade() -> None:
-    op.execute(
-        f"""
-        UPDATE property_definition
-        SET value_set_uri = '{_OLD_URI}',
-            constraints = constraints || '{{"forbidden_codes": ["Any"]}}'::jsonb,
-            updated_at = clock_timestamp()
-        WHERE key = 'specimen' AND origin = 'system' AND value_set_uri = '{_NEW_URI}'
-        """
+    op.get_bind().execute(
+        sa.text(
+            "UPDATE property_definition SET value_set_uri = :old_uri, "
+            "constraints = constraints || CAST(:old_refusal AS jsonb), "
+            "updated_at = clock_timestamp() "
+            "WHERE key = 'specimen' AND origin = 'system' AND value_set_uri = :new_uri"
+        ),
+        {"new_uri": _NEW_URI, "old_uri": _OLD_URI, "old_refusal": _OLD_REFUSAL},
     )

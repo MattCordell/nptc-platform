@@ -31,7 +31,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, Integer, Text, text
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 from sqlalchemy.sql import func
@@ -72,7 +72,7 @@ class CatalogueEntry(Base):
     # bookkeeping for FR-38, never a "changed field", like `User.id` and
     # `created_at`.
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
-        {"business_key", "preferred_term", "status", "specimen_unconstrained"}
+        {"business_key", "preferred_term", "status"}
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset()
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
@@ -134,9 +134,6 @@ class CatalogueEntry(Base):
     # verbatim, and `DEFAULT draft` is not valid DDL for a text column.
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'draft'"), active_history=True
-    )
-    specimen_unconstrained: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false"), active_history=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

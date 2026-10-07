@@ -263,11 +263,6 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
     )
 
     canonical = _entry(seeded.canonical, CANONICAL_TERM, CatalogueEntryStatus.ACTIVE.value)
-    # FR-89: this entry states positively that it accepts any specimen,
-    # which is not the same claim as having no specimen property recorded -
-    # and it *also* has specimen values, so a response that conflated the
-    # two would be visibly wrong here.
-    canonical.specimen_unconstrained = True
     entries = [
         canonical,
         _entry(seeded.accented, ACCENTED_TERM, CatalogueEntryStatus.ACTIVE.value),

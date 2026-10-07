@@ -50,10 +50,12 @@ holds `123038009` alone. The transform, the seed loader and the write API each r
 beside another specimen, so `Any; Serum` is a defect to fix at source.
 
 **4. `specimen_unconstrained` is retired.** The column, its field in list, search, detail and
-write responses, its write route and its frontend toggle go. A migration first converts each `true` row into a `123038009`
-specimen value, with audit events (NFR-08), then drops the column. An entry with no specimen
-value now means only "not yet filled in". That is the ambiguity the flag existed to remove, and
-the root value removes it.
+write responses, its write route and its frontend toggle go. A migration first converts each
+`true` row into a `123038009` specimen value, then drops the column. Like earlier data migrations
+(0009, 0013, 0023) it is raw SQL, so it writes no audit event and the entry's history shows none
+for this change. A migration that called the application's write path would break the first time a
+later revision changed that path. An entry with no specimen value now means only "not yet filled
+in". That is the ambiguity the flag existed to remove, and the root value removes it.
 
 **5. A no-map row (`N/A`, `Culture`) yields zero specimen values and an informational
 finding.** It never means "accepts any specimen".
@@ -90,6 +92,9 @@ unrelated shape errors. The version gate gives one clear message instead (ADR-00
 - **Two workbook strings share a code.** `Any` and `Breath` both seed as `123038009`, and the
   original string is not kept, so a reader cannot tell them apart. A follow-up replaces the
   `Breath` and `Body` rows when the new concepts exist. It must land before production release.
+- **The API change breaks old clients.** Entry responses lose `specimen_unconstrained`, and `PATCH
+  /catalogue/entries/{business_key}` takes `status` only and refuses any other field. The OpenAPI
+  breaking-change gate flags this, and the maintainer approves it.
 - FR-88 and FR-89 are reworded, the `specimen_unconstrained` row leaves PRD 6.2, and OI-2's
   outcome is revised. ADR-0008's status line points here.
 - A database that already holds the old binding is not changed by `seed_system_properties`, which

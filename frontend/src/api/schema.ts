@@ -173,7 +173,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Set a catalogue entry's status and/or specimen_unconstrained flag */
+        /** Set a catalogue entry's status */
         patch: operations["patch_entry_api_v1_catalogue_entries__business_key__patch"];
         trace?: never;
     };
@@ -883,8 +883,6 @@ export interface components {
             length: number;
             /** Status */
             status: string;
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -923,8 +921,6 @@ export interface components {
             length: number;
             /** Status */
             status: string;
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -1622,8 +1618,6 @@ export interface components {
          */
         EntryCoreWriteResult: {
             status: components["schemas"]["CatalogueEntryStatus"];
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /** Row Version */
             row_version: number;
         };
@@ -1656,8 +1650,6 @@ export interface components {
             length: number;
             /** Status */
             status: string;
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -1723,8 +1715,6 @@ export interface components {
             length: number;
             /** Status */
             status: string;
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -1973,17 +1963,11 @@ export interface components {
         };
         /**
          * PatchEntryRequest
-         * @description The body of `PATCH /catalogue/entries/{business_key}`.
-         *
-         *     `status`/`specimen_unconstrained` are both optional so a caller can set
-         *     either or both in one save - `None` means "leave this field alone",
-         *     matching `EntryChanges`' own contract - but a body naming neither is
-         *     refused rather than silently treated as a no-op write.
+         * @description The body of `PATCH /catalogue/entries/{business_key}`. Unknown fields are refused, so a
+         *     client that still sends the retired `specimen_unconstrained` fails loudly (ADR-0044).
          */
         PatchEntryRequest: {
-            status?: components["schemas"]["CatalogueEntryStatus"] | null;
-            /** Specimen Unconstrained */
-            specimen_unconstrained?: boolean | null;
+            status: components["schemas"]["CatalogueEntryStatus"];
             /** Reason */
             reason: string;
             /** Expected Row Version */
@@ -2303,8 +2287,6 @@ export interface components {
             length: number;
             /** Status */
             status: string;
-            /** Specimen Unconstrained */
-            specimen_unconstrained: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -2948,13 +2930,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description The `reason` is missing or low-information (FR-37), the body names neither `status` nor `specimen_unconstrained`, `status` is not one of `draft`, `active`, `deprecated` or `withdrawn`, or setting `specimen_unconstrained` to `true` conflicts with one or more specimen values already recorded on this entry (FR-89) - `issues[]` then names each blocking value by `ordinal`. */
+            /** @description The `reason` is missing or low-information (FR-37), or `status` is missing or not one of `draft`, `active`, `deprecated` or `withdrawn`. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

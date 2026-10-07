@@ -65,8 +65,8 @@ class CodeHandler:
         }
 
     def constraints_schema(self) -> Mapping[str, Any]:
-        # `forbidden_codes` (FR-89): the seam ADR-0012 reserved for a property-specific rule
-        # expressed as data (Specimen's `constraints`), not a hardcoded property key.
+        # `forbidden_codes`: the seam ADR-0012 reserved for a property-specific rule
+        # expressed as data, not a hardcoded property key.
         return {
             "type": "object",
             "properties": {"forbidden_codes": {"type": "array", "items": {"type": "string"}}},
@@ -101,10 +101,8 @@ class CodeHandler:
         if isinstance(forbidden_codes, list) and code.casefold() in {
             forbidden.casefold() for forbidden in forbidden_codes if isinstance(forbidden, str)
         }:
-            # FR-89: the literal 'Any' is the absence of a constraint, not a specimen code. It
-            # belongs in `catalogue_entry.specimen_unconstrained`. Checked before the SCTID and
-            # binding checks so a forbidden code is refused on its own terms, not reported
-            # beside an unrelated complaint.
+            # Checked before the SCTID and binding checks so a forbidden code is refused on
+            # its own terms, not reported beside an unrelated complaint.
             return [
                 ValidationIssue(
                     code="forbidden-code",

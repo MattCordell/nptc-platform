@@ -340,7 +340,6 @@ class SearchHit:
     business_key: str
     preferred_term: str
     status: str
-    specimen_unconstrained: bool
     updated_at: datetime
     row_version: int
     score: float
@@ -547,7 +546,6 @@ def build_search_statement(
                 CatalogueEntry.business_key,
                 CatalogueEntry.preferred_term,
                 CatalogueEntry.status,
-                CatalogueEntry.specimen_unconstrained,
                 CatalogueEntry.updated_at,
                 CatalogueEntry.row_version,
                 scored.c.score.label("score"),
@@ -619,7 +617,6 @@ def search_entries(
             business_key=row.business_key,
             preferred_term=row.preferred_term,
             status=row.status,
-            specimen_unconstrained=row.specimen_unconstrained,
             updated_at=row.updated_at,
             row_version=row.row_version,
             score=float(row.score),

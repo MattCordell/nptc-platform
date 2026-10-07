@@ -25,7 +25,6 @@ const ENTRY = {
   // stop being able to tell a rendered server value from a recomputed one.
   length: 8,
   status: "draft",
-  specimen_unconstrained: false,
   updated_at: "2026-09-01T04:30:00Z",
   row_version: 3,
   designations: [
@@ -1439,9 +1438,9 @@ describe("amending a term", () => {
 
   it("renders a conflicting value that is not a string", async () => {
     // `submitted`/`current` are deliberately untyped on the wire - the audit
-    // diff carries whatever the field holds, and `specimen_unconstrained`
-    // (FR-89) is a boolean. Assuming a string here would print nothing at all
-    // for the one field whose two values look most alike.
+    // diff carries whatever the field holds, and a flag is a boolean. Assuming
+    // a string here would print nothing at all for the one kind of value whose
+    // two states look most alike.
     const user = userEvent.setup();
     stubApi([
       READ_OK,
@@ -1454,9 +1453,7 @@ describe("amending a term", () => {
           business_key: BUSINESS_KEY,
           expected_row_version: 3,
           current_row_version: 4,
-          conflicts: [
-            { field: "specimen_unconstrained", submitted: false, current: true },
-          ],
+          conflicts: [{ field: "provisional", submitted: false, current: true }],
           changed_by: "A Curator",
           changed_at: "2026-09-02T01:00:00Z",
         },
@@ -1473,7 +1470,7 @@ describe("amending a term", () => {
 
     // The field name is in its own <strong>, so climb to the list item that
     // carries the whole sentence.
-    const item = (await screen.findByText("specimen_unconstrained")).closest("li");
+    const item = (await screen.findByText("provisional")).closest("li");
     expect(item).toHaveTextContent("you sent false");
     expect(item).toHaveTextContent("it is now true");
   });

@@ -482,7 +482,7 @@ describe("useAmendDesignation", () => {
 describe("useRetireDesignation", () => {
   it("posts the term and its mandatory reason to the retirement route", async () => {
     const fetchMock = stubFetch(200, {
-      designation: { term: "Cyclir", status: "retired" },
+      designation: { term: "Cyclir", status: "withdrawn" },
       row_version: 2,
     });
     const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
@@ -781,17 +781,13 @@ describe("useSavePropertyValues", () => {
 });
 
 describe("usePatchEntryCore", () => {
-  it("PATCHes the entry's own status/specimen_unconstrained columns", async () => {
-    const fetchMock = stubFetch(200, {
-      status: "active",
-      specimen_unconstrained: true,
-      row_version: 4,
-    });
+  it("PATCHes the entry's own status, with no specimen flag", async () => {
+    const fetchMock = stubFetch(200, { status: "withdrawn", row_version: 4 });
     const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
+      status: "withdrawn",
+      reason: "Withdrawn by the curator",
       expected_row_version: 3,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -800,8 +796,8 @@ describe("usePatchEntryCore", () => {
     expect(new URL(request.url).pathname).toBe("/api/v1/catalogue/entries/NPTC-000247");
     expect(request.method).toBe("PATCH");
     expect(await bodyOf(request)).toEqual({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
+      status: "withdrawn",
+      reason: "Withdrawn by the curator",
       expected_row_version: 3,
     });
   });
@@ -819,8 +815,8 @@ describe("usePatchEntryCore", () => {
     const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      specimen_unconstrained: true,
-      reason: "This entry accepts any specimen",
+      status: "withdrawn",
+      reason: "Withdrawn by the curator",
       expected_row_version: 3,
     });
 

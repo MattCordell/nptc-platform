@@ -103,8 +103,8 @@ def create_app(
     app.include_router(catalogue_designations.router, prefix=API_PREFIX)
     # Whole-property-value replace (FR-09, FR-10, FR-11, FR-37, FR-38, FR-88, FR-89).
     app.include_router(catalogue_properties.router, prefix=API_PREFIX)
-    # Core-column writes: status and specimen_unconstrained (FR-36, FR-37, FR-38,
-    # FR-89). Shares its path with catalogue.py's public GET; see its docstring.
+    # Core-column write: status (FR-36, FR-37, FR-38). Shares its path with
+    # catalogue.py's public GET; see its docstring.
     app.include_router(catalogue_entries.router, prefix=API_PREFIX)
     # Admin read of an entry in any status, gated on catalogue.edit_published.
     # Kept apart from catalogue.py on purpose; see its docstring.

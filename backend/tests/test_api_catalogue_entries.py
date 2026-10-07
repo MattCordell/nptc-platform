@@ -1,5 +1,5 @@
 """HTTP tests for `nptc.api.routers.catalogue_entries` (issue #249, FR-36,
-FR-37, FR-38, FR-44, FR-89, NFR-08).
+FR-37, FR-38, FR-44, NFR-08).
 
 Follows `test_api_catalogue_properties.py`'s own precedent exactly: the
 service layer already has its own unit tests (`test_catalogue_property_
@@ -21,15 +21,8 @@ from sqlalchemy import select
 
 from nptc.audit.writer import AuditContext
 from nptc.catalogue.entries import create_entry
-from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
-from nptc.catalogue.property_values import PropertyValueInput, save_property_values
-from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.registry.datatypes import build_builtin_handlers
-from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
-from nptc_shared.terminology.models import Edition, ValidationResult
-from nptc_shared.terminology.stub import StubTerminologyClient
 
 
 def _load(name: str) -> Any:
@@ -48,9 +41,6 @@ ApiTestApp = _api_support.ApiTestApp
 latest_audit_event = _load("audit_support").latest_audit_event
 
 _REASON = "Created for issue #249 entry core write route test."
-_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
-_SPECIMEN_EDITION = Edition(module_id="au", label="au")
-_SPECIMEN_SYSTEM = "http://example.org/specimen-test"
 
 
 @pytest.fixture
@@ -75,112 +65,15 @@ def _patch_entry(
     business_key: str,
     expected_row_version: int,
     status: str | None = None,
-    specimen_unconstrained: bool | None = None,
     reason: str = _REASON,
 ) -> Any:
     body: dict[str, object] = {"reason": reason, "expected_row_version": expected_row_version}
     if status is not None:
         body["status"] = status
-    if specimen_unconstrained is not None:
-        body["specimen_unconstrained"] = specimen_unconstrained
     return api.request("PATCH", f"/catalogue/entries/{business_key}", token=token, json=body)
 
 
-def _record_specimen_value(api: ApiTestApp, entry: CatalogueEntry) -> None:
-    seed_system_properties(api.session)
-    api.session.flush()
-    terminology = StubTerminologyClient()
-    terminology.seed_validate_code(
-        "specimen-1",
-        ValidationResult(code="specimen-1", result=True),
-        value_set_url=_SPECIMEN_VALUE_SET_URI,
-        edition=_SPECIMEN_EDITION,
-    )
-    registry = DatatypeRegistry(
-        build_builtin_handlers(
-            HandlerDeps(
-                terminology_client=terminology,
-                local_code_lookup=DatabaseLocalCodeLookup(api.session),
-            )
-        )
-    )
-    save_property_values(
-        api.session,
-        AuditContext.system(),
-        entry=entry,
-        expected_row_version=entry.row_version,
-        property_key="specimen",
-        values=[PropertyValueInput(value={"system": _SPECIMEN_SYSTEM, "code": "specimen-1"})],
-        reason="Recorded a specimen value before the conflict test",
-        registry=registry,
-    )
-    api.session.flush()
-
-
 # --- happy path ------------------------------------------------------------
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.req("NFR-08")
-@pytest.mark.integration
-def test_patch_entry_sets_specimen_unconstrained_bumps_row_version_and_audits(
-    api: ApiTestApp,
-) -> None:
-    token = api.admin_token(subject="sub-patch-specimen-set")
-    entry = _new_entry(api)
-    starting_row_version = entry.row_version
-
-    response = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=starting_row_version,
-        specimen_unconstrained=True,
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["specimen_unconstrained"] is True
-    assert body["row_version"] == starting_row_version + 1
-
-    event = latest_audit_event(api.session, entity_type="catalogue_entry", entity_id=entry.id)
-    assert event.action == "catalogue_entry.updated"
-    assert event.before == {"specimen_unconstrained": False}
-    assert event.after == {"specimen_unconstrained": True}
-    # FR-37/PRD SS13.2: the changelog note supplied on the request must
-    # reach `AuditEvent.reason` verbatim, not just get accepted at the
-    # 200 - the second of #61's two parent-level acceptance criteria.
-    assert event.reason == _REASON
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.integration
-def test_patch_entry_clears_specimen_unconstrained(api: ApiTestApp) -> None:
-    """`specimen_unconstrained: false` is not `None`, so `EntryChanges.
-    as_dict()` keeps it and the route applies it like any other value -
-    PATCH semantics ("absent means unchanged") must not be confused with
-    "falsy means unchanged"."""
-    token = api.admin_token(subject="sub-patch-specimen-clear")
-    entry = _new_entry(api)
-    set_response = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=entry.row_version,
-        specimen_unconstrained=True,
-    )
-    assert set_response.status_code == 200, set_response.text
-
-    response = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=set_response.json()["row_version"],
-        specimen_unconstrained=False,
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["specimen_unconstrained"] is False
 
 
 @pytest.mark.req("FR-36")
@@ -209,6 +102,7 @@ def test_patch_entry_sets_status_to_every_recognised_value(api: ApiTestApp, stat
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == status
+    assert set(response.json()) == {"status", "row_version"}
 
     if status == "draft":
         assert response.json()["row_version"] == starting_row_version
@@ -229,10 +123,8 @@ def test_patch_entry_resubmitting_the_current_status_is_a_no_op(api: ApiTestApp)
     """`save_entry`'s own no-op short-circuit reaches this route: a body
     naming `status` but submitting the entry's already-current value
     returns `200` with an *unchanged* `row_version` and writes no audit
-    event - a different outcome from a body naming neither field, which is
-    refused `422` (`test_patch_entry_with_neither_field_is_422`) because
-    that case is ambiguous between "no-op" and "caller forgot the
-    field"."""
+    event - a different outcome from a body naming no status, which is
+    refused `422` (`test_patch_entry_with_no_status_is_422`)."""
     token = api.admin_token(subject="sub-patch-status-no-op")
     entry = _new_entry(api)
     events_before = api.session.execute(select(AuditEvent)).all()
@@ -270,87 +162,6 @@ def test_patch_entry_with_an_unrecognised_status_is_422(api: ApiTestApp) -> None
     )
 
     assert response.status_code == 422, response.text
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.integration
-def test_patch_entry_sets_specimen_unconstrained_after_clearing_specimen_values(
-    api: ApiTestApp,
-) -> None:
-    """The plan's own end-to-end verification: recording a specimen value
-    refuses the flag (proven by the dedicated conflict test below); once
-    that value is cleared through the property route, the same PATCH that
-    was refused now succeeds and bumps `row_version`."""
-    token = api.admin_token(subject="sub-patch-specimen-recovery")
-    entry = _new_entry(api)
-    _record_specimen_value(api, entry)
-
-    refused = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=entry.row_version,
-        specimen_unconstrained=True,
-    )
-    assert refused.status_code == 422, refused.text
-
-    cleared = api.request(
-        "PUT",
-        f"/catalogue/entries/{entry.business_key}/properties/specimen",
-        token=token,
-        json={
-            "values": [],
-            "reason": "Cleared for the end-to-end recovery test.",
-            "expected_row_version": entry.row_version,
-        },
-    )
-    assert cleared.status_code == 200, cleared.text
-
-    response = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=cleared.json()["row_version"],
-        specimen_unconstrained=True,
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["specimen_unconstrained"] is True
-    assert response.json()["row_version"] == cleared.json()["row_version"] + 1
-
-
-# --- FR-89: setting the flag while specimen values exist --------------------
-
-
-@pytest.mark.req("FR-89")
-@pytest.mark.integration
-def test_patch_entry_refuses_specimen_unconstrained_when_specimen_values_exist(
-    api: ApiTestApp,
-) -> None:
-    token = api.admin_token(subject="sub-patch-specimen-conflict")
-    entry = _new_entry(api)
-    _record_specimen_value(api, entry)
-    events_before = api.session.execute(select(AuditEvent)).all()
-
-    response = _patch_entry(
-        api,
-        token,
-        business_key=entry.business_key,
-        expected_row_version=entry.row_version,
-        specimen_unconstrained=True,
-    )
-
-    assert response.status_code == 422, response.text
-    body = response.json()
-    assert body["issues"][0]["code"] == "specimen-unconstrained-conflict"
-    assert body["issues"][0]["property_key"] == "specimen"
-
-    current = api.session.execute(
-        select(CatalogueEntry).where(CatalogueEntry.business_key == entry.business_key)
-    ).scalar_one()
-    assert current.specimen_unconstrained is False
-    assert current.row_version == entry.row_version
-    assert api.session.execute(select(AuditEvent)).all() == events_before
 
 
 # --- FR-38: optimistic locking -----------------------------------------------
@@ -402,12 +213,12 @@ def test_patch_entry_with_no_reason_is_422(api: ApiTestApp) -> None:
     assert current.status == "draft"
 
 
-# --- a body naming neither field ---------------------------------------------
+# --- a body naming no status, or the retired flag ------------------------------
 
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
-def test_patch_entry_with_neither_field_is_422(api: ApiTestApp) -> None:
+def test_patch_entry_with_no_status_is_422(api: ApiTestApp) -> None:
     token = api.admin_token(subject="sub-patch-empty-body")
     entry = _new_entry(api)
 
@@ -419,6 +230,33 @@ def test_patch_entry_with_neither_field_is_422(api: ApiTestApp) -> None:
     )
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_a_stale_client_sending_the_retired_flag_is_refused_not_ignored(api: ApiTestApp) -> None:
+    """The flag moved into the specimen value (ADR-0044). A client that still sends it must
+    fail loudly: a silent 200 would tell it the entry now accepts any specimen."""
+    token = api.admin_token(subject="sub-patch-retired-flag")
+    entry = _new_entry(api)
+
+    response = api.request(
+        "PATCH",
+        f"/catalogue/entries/{entry.business_key}",
+        token=token,
+        json={
+            "status": "active",
+            "specimen_unconstrained": True,
+            "reason": _REASON,
+            "expected_row_version": entry.row_version,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    current = api.session.execute(
+        select(CatalogueEntry).where(CatalogueEntry.business_key == entry.business_key)
+    ).scalar_one()
+    assert current.status == "draft"
 
 
 # --- 404 ----------------------------------------------------------------

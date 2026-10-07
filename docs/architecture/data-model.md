@@ -470,10 +470,13 @@ designations/code bindings (#47/#48) are separate tables layered on top.
 | `business_key` | `TEXT` | `NOT NULL`, `UNIQUE`, `CHECK (business_key ~ '^NPTC-[0-9]{6,}$')`. Immutable (FR-03). |
 | `preferred_term` | `TEXT` | `NOT NULL` |
 | `status` | `TEXT` | `NOT NULL DEFAULT 'draft'`, `CHECK IN ('draft','active','deprecated','withdrawn')` - `TEXT` + `CHECK`, not a native `ENUM`, matching `app_user.status`'s own precedent (`ALTER TYPE ... ADD VALUE` cannot run in a transaction, and autogenerate mishandles the create/drop pair on downgrade) |
-| `specimen_unconstrained` | `BOOLEAN` | `NOT NULL DEFAULT false` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 | `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. See "Optimistic locking" below. |
 | `preferred_term_key` | `TEXT` | `NOT NULL DEFAULT ''`, indexed. FR-05's comparison key - see "Collision detection" below. |
+
+Migration 0024 retired a `specimen_unconstrained` boolean that this table held (ADR-0044). "Accepts
+any specimen" is now the `specimen` property value `123038009 |Specimen|`, held alone (FR-89). The
+`specimen` property is bound to `<<123038009`, which includes that root (migration 0023).
 
 ### `business_key` minting and immutability (FR-03)
 

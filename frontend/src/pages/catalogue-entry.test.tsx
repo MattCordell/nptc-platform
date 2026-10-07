@@ -29,7 +29,6 @@ function entry(overrides: Record<string, unknown> = {}) {
     preferred_term: "Ferritin",
     length: 8,
     status: "active",
-    specimen_unconstrained: false,
     updated_at: "2026-09-01T12:00:00Z",
     has_open_finding: false,
     code: LONG_CODE,
@@ -508,7 +507,7 @@ describe("the details sidebar", () => {
     expect(facts?.textContent).toContain(KEY);
     expect(facts?.textContent).toContain("8 characters");
     expect(facts?.textContent).toContain("Chemical pathology, Haematology");
-    expect(facts?.textContent).toContain("Any specimenNo");
+    expect(facts?.textContent).not.toContain("Any specimen");
     expect(facts?.textContent).toContain("1 September 2026");
   });
 

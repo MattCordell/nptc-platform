@@ -1028,11 +1028,12 @@ export function useBulkSavePropertyValues(key: string) {
 }
 
 /**
- * Set an entry's core `status` and/or `specimen_unconstrained` flag (issue
- * #249, FR-36, FR-89) - the one write this screen needs that is not a
- * property value at all, since both columns live on `catalogue_entry`
- * itself. `Any` (FR-89) is this flag turned on with zero specimen values,
- * never a value the `specimen` property itself can hold.
+ * Set an entry's core `status` (FR-36). `status` is a column on
+ * `catalogue_entry` itself, not a property value, so it has its own write.
+ * The body carries the status, a reason and the row version, and the
+ * response is the new status and row version. Accepting any specimen is not
+ * written here: it is the `specimen` property holding the root code alone
+ * (FR-89, ADR-0044).
  */
 export function usePatchEntryCore(businessKey: string) {
   const client = useApiClient();

@@ -24,12 +24,6 @@ flush, before it builds an `AuditEvent`. Each path has its own test in
 `test_catalogue_optimistic_locking.py`; one passing proves nothing about the
 other.
 
-**FR-89, reverse direction.** `save_property_values` refuses a specimen value
-on an entry flagged `specimen_unconstrained`. `save_entry` calls
-`assert_specimen_flag_allowed` to refuse setting the flag on an entry that
-already holds specimen values. `property_values` imports this module only
-inside a function, to break the cycle.
-
 **FR-37.** `reason` is required and validated by `validate_changelog_note`
 before the row is touched. The seeded-import path (ADR-0010) supplies
 `SEED_IMPORT_NOTE`, which passes that validation rather than bypassing it.
@@ -66,7 +60,6 @@ from nptc.catalogue.errors import (
     EntryVersionConflictError,
     FieldConflict,
 )
-from nptc.catalogue.property_values import assert_specimen_flag_allowed
 from nptc.catalogue.term_hygiene import clean_term, exceeds_maximum_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
@@ -134,7 +127,6 @@ class EntryChanges:
 
     preferred_term: str | None = None
     status: str | None = None
-    specimen_unconstrained: bool | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -142,7 +134,6 @@ class EntryChanges:
             for name, value in (
                 ("preferred_term", self.preferred_term),
                 ("status", self.status),
-                ("specimen_unconstrained", self.specimen_unconstrained),
             )
             if value is not None
         }
@@ -175,7 +166,6 @@ def create_entry(
     preferred_term: str,
     reason: str,
     status: CatalogueEntryStatus | str = CatalogueEntryStatus.DRAFT,
-    specimen_unconstrained: bool = False,
     business_key: str | None = None,
     max_preferred_term_length: int | None = None,
 ) -> CatalogueEntry:
@@ -210,7 +200,6 @@ def create_entry(
         business_key=resolved_key,
         preferred_term=cleaned_preferred_term,
         status=str(status),
-        specimen_unconstrained=specimen_unconstrained,
     )
     session.add(entry)
     record_change(
@@ -547,14 +536,6 @@ def save_entry(
             language=DEFAULT_LANGUAGE,
             use=str(DesignationUse.PREFERRED),
         )
-
-    if changes.specimen_unconstrained and not entry.specimen_unconstrained:
-        # FR-89, reverse direction: refused before the savepoint, like the
-        # collision check. Checked only on the transition to True. An entry
-        # already holding the flag (a direct-SQL or seeded row) stays editable
-        # for its other columns, because the edit screen resends the whole form
-        # on every save. Clearing the flag never conflicts with a specimen value.
-        assert_specimen_flag_allowed(session, entry)
 
     # The savepoint opens before any attribute changes: opening one autoflushes
     # pending state, and a flush after the setattr calls would write the

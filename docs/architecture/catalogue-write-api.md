@@ -591,8 +591,8 @@ the same reason `catalogue_bindings.py`/`catalogue_designations.py` stay apart f
 Everything below HTTP already existed and was already tested as a library -
 `nptc.catalogue.property_values.save_property_values` (issue #52) - so this route is
 purely the HTTP adapter: whole-property replace, cardinality bounds, FR-10 binding
-strength, FR-11 deprecation refusal, FR-89's specimen cross-field check, FR-38's
-optimistic lock and the audit event are all handled by that existing service. `key`
+strength, FR-11 deprecation refusal, FR-89's rule that the specimen root stands alone,
+FR-38's optimistic lock and the audit event are all handled by that existing service. `key`
 addresses the `property_definition` being written, not a value's own identifier - there
 is no route for a single value in isolation, matching `save_property_values`'
 whole-set-replace posture (see that module's own docstring for why).
@@ -649,7 +649,7 @@ property still open for writes, short of a second call to `GET /registry/propert
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry with this `business_key`, or no `property_definition` with this `key`. |
 | 409 | A stale `expected_row_version` (FR-38) - the same `VersionConflictResponse` body `/amendment` returns above. |
-| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check - `issues[]` then names each failing value's `property_key`, `label` and `ordinal`. |
+| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), or one or more submitted values fail their property's JSON Schema, cardinality bound, or FR-89's specimen root rule (`123038009` beside another specimen) - `issues[]` then names each failing value's `property_key`, `label` and `ordinal`. |
 
 A rejected write leaves no partial `property_value` state and no audit event -
 `save_property_values` validates the whole submitted set before it touches a row (see
@@ -669,7 +669,7 @@ this route). `save_property_values` (above) has no plural form of its own: it ta
 `CatalogueEntry`, not many. `nptc.catalogue.property_values.
 save_property_values_for_entries` is the seam this route adapts - **not**
 `nptc.catalogue.entries.save_entries`, which batches `EntryChanges`' own columns
-(`preferred_term`/`status`/`specimen_unconstrained`), not `property_value` rows.
+(`preferred_term`/`status`), not `property_value` rows.
 
 **Selection is an explicit list, not a filter.** `entries` names every target as
 `(business_key, expected_row_version)` - the version each entry held when the caller
@@ -714,24 +714,18 @@ entry would repeat the request N times over for no new information.
 once, before any entry is touched: an unknown or deprecated property (404/FR-11, named
 `key` in the route's own path segment, `property_key` in the seam it calls),
 a missing or low-information `reason` (FR-37, checked first of all), and the shared
-`values` set's own schema/cardinality/binding-strength validation. This is what keeps
+`values` set's own schema/cardinality/binding-strength validation, and FR-89's rule that the
+specimen root `123038009` stands alone (ADR-0044). This is what keeps
 the batch order-independent: a batch whose first several entries all conflict must still
 refuse a bad `values` set or an invalid `reason`, rather than returning 200 having never
 looked at either. Everything else - a stale `expected_row_version`, a missing entry - is
 per-entry.
 
-**FR-89's specimen cross-field check is the one exception, deliberately.** It depends on
-one entry's own `specimen_unconstrained` flag, so it cannot be checked before the loop
-reaches that entry - but a violation still aborts the *whole* batch (a 422, no partial
-write) rather than producing a per-entry outcome, because the operator explicitly
-selected that entry: silently skipping it would report success for a batch that did not
-do what was asked. See ADR-0035.
-
 **Atomicity, at two granularities.** A genuine concurrent write (the row-version check
 above passed, but another writer committed before this one's flush) is caught per entry
 by the same `session.begin_nested()`/`StaleDataError` pattern `save_entry` uses for a
 single write - that entry becomes a `conflict` outcome, and the rest of the batch still
-applies. A whole-request failure (an unhandled exception, including FR-89's abort above)
+applies. A whole-request failure (an unhandled exception)
 discards the entire batch, applied entries included: `nptc.db.session.session_scope`
 commits once per request and rolls back on any exception.
 
@@ -780,7 +774,7 @@ so a new writer added later is checked automatically.
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No `property_definition` with `key`. An unknown `business_key` among `entries` is a `not-found` outcome in the 200 body, never a 404 for the whole request - and so is one deleted by a concurrent transaction mid-batch, rather than an uncaught `EntryNotFoundError` escaping as a whole-request 404. |
-| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), the shared `values` set failing its property's JSON Schema, cardinality bound, or FR-89's specimen cross-field check (aborts the whole batch - see above), a `business_key` not shaped `NPTC-nnnnnn` (the same `BusinessKeyPath` pattern the singular route's path segment enforces - a malformed key is never a `not-found` outcome, indistinguishable from a well-formed one that simply does not exist), a repeated `business_key`, or more than 100 `entries`. |
+| 422 | A missing or low-information `reason` (FR-37), a write against a deprecated property (FR-11), the shared `values` set failing its property's JSON Schema, cardinality bound, or FR-89's specimen root rule, a `business_key` not shaped `NPTC-nnnnnn` (the same `BusinessKeyPath` pattern the singular route's path segment enforces - a malformed key is never a `not-found` outcome, indistinguishable from a well-formed one that simply does not exist), a repeated `business_key`, or more than 100 `entries`. |
 
 ## Entry core columns (issue #249)
 
@@ -790,11 +784,12 @@ one owns `CatalogueEntry`'s own core columns, not a sub-resource attached to it.
 
 | Path | Method | Body | Returns |
 |---|---|---|---|
-| `/entries/{business_key}` | `PATCH` | `{status?, specimen_unconstrained?, reason, expected_row_version}` | `200 {status, specimen_unconstrained, row_version}` |
+| `/entries/{business_key}` | `PATCH` | `{status, reason, expected_row_version}` | `200 {status, row_version}` |
 
 `business_key` is immutable (FR-03) and `preferred_term` writes through
 `/amendment` (issue #227, ADR-0022's two storage homes) - this route is the remaining
-two of `catalogue_entry`'s four auditable core columns. It shares its path with
+one of `catalogue_entry`'s three auditable core columns. The fourth, `specimen_unconstrained`,
+was retired (ADR-0044): "accepts any specimen" is now the specimen value `123038009`. It shares its path with
 [public-api.md](public-api.md)'s public `GET /catalogue/entries/{business_key}`: one
 path item in the OpenAPI document carrying a public `get` (tag `catalogue`) and an
 admin `patch` (tag `catalogue-admin`), the same write family every route above lives
@@ -802,18 +797,12 @@ in rather than `catalogue_admin.py`'s separate `/admin/` prefix.
 
 Everything below HTTP already existed and was already tested as a library -
 `nptc.catalogue.entries.save_entry` (issue #46) - so this route is purely the HTTP
-adapter: FR-37's reason gate, FR-38's optimistic lock and FR-89's specimen cross-field
-check (see below) are all handled by that existing service, the same posture
-`/properties/{key}` above takes for `save_property_values`.
+adapter: FR-37's reason gate and FR-38's optimistic lock are handled by that existing
+service, the same posture `/properties/{key}` above takes for `save_property_values`.
 
-**`PATCH` semantics, not two named sub-resources.** Both fields are core columns of one
-row under one `row_version`, and `save_entry` applies them in one `EntryChanges`/one
-audit event - splitting them into two routes would mean two lock tokens and two audit
-events for one editorial save. An absent field means "leave this alone", matching
-`EntryChanges`' own `None`-means-unchanged contract - including
-`specimen_unconstrained: false`, which is not `None` and so is applied like any other
-value. A body naming neither field is refused (422) rather than silently accepted as a
-no-op write.
+**`status` is required, and unknown fields are refused.** A client that still sends the
+retired `specimen_unconstrained` gets a 422, not a silent 200 that would tell it the entry
+now accepts any specimen.
 
 **No status transition rules.** `save_entry` does a bare `setattr` and the PRD defines
 no state machine for `status`; the wire type is the closed `CatalogueEntryStatus` enum,
@@ -821,27 +810,11 @@ so a value outside `draft|active|deprecated|withdrawn` is a 422 before the route
 ever runs, and the table's own `CHECK` constraint remains the backstop. Introducing
 transition rules would be new editorial policy with no PRD backing today.
 
-**FR-89's cross-field check, the reverse direction.** `save_property_values` already
-refused a specimen value on an entry already flagged `specimen_unconstrained`; this
-route is what makes the other direction reachable over HTTP - setting the flag on an
-entry that already holds specimen values. `nptc.catalogue.property_values.
-assert_specimen_flag_allowed` is the shared implementation, called from `save_entry`
-itself (so `save_entries` inherits it too, not just this route), and it raises the same
-`PropertyValidationError`/`PropertyValidationResponse` the forward direction does -
-both directions share one refusal message, and the 422 names each blocking specimen
-value by `ordinal`. It only runs on the *transition* to `True` - a submitted
-`specimen_unconstrained: true` against an entry already `True` is not checked again, so
-an editor whose form resends the whole entry on every save (issue #149's edit screen)
-never gets refused for a flag they are not changing.
-
 **A no-op resubmission returns 200, not 422.** `save_entry`'s own short-circuit means a
-body naming a field but submitting its already-current value - e.g.
-`{"status": "draft", ...}` against an entry already `draft` - returns `200` with the
-entry's *unchanged* `row_version` and writes no audit event; the submitted `reason` is
-silently discarded. This differs from a body naming neither field, which is refused
-(422): naming neither is ambiguous between "no-op" and "caller forgot the field",
-whereas naming a field with its current value unambiguously states the intent and
-`save_entry` simply finds nothing to apply.
+body submitting the already-current `status` - e.g. `{"status": "draft", ...}` against
+an entry already `draft` - returns `200` with the entry's *unchanged* `row_version` and
+writes no audit event; the submitted `reason` is silently discarded. A body with no
+`status` is refused (422).
 
 ### Errors (entry core columns)
 
@@ -851,10 +824,10 @@ whereas naming a field with its current value unambiguously states the intent an
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry with this `business_key`. |
 | 409 | A stale `expected_row_version` (FR-38) - the same `VersionConflictResponse` body `/amendment` and `/properties/{key}` return above. |
-| 422 | A missing or low-information `reason` (FR-37), a body naming neither `status` nor `specimen_unconstrained`, a `status` outside the closed enum, or setting `specimen_unconstrained` to `true` while the entry does not already hold it and still holds one or more specimen values (FR-89) - `issues[]` then names each blocking value's `ordinal`. |
+| 422 | A missing or low-information `reason` (FR-37), a missing `status` or one outside the closed enum, or a field this route does not take (including the retired `specimen_unconstrained`). |
 
 A rejected write leaves no partial mutation and no audit event: `save_entry`'s
-row-version and FR-89 preconditions both run before its savepoint opens, the same
+row-version precondition runs before its savepoint opens, the same
 "reject before mutating" posture every write path in this document takes. A no-op
 resubmission (see above) is not a rejection - it is a `200`.
 

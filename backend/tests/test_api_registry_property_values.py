@@ -56,7 +56,7 @@ _api_support = _load("api_app_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
-_SPECIMEN_ECL = "<123038009"
+_SPECIMEN_ECL = "<<123038009"
 
 
 @pytest.fixture

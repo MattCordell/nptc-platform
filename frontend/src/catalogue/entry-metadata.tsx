@@ -40,9 +40,6 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
           )}
         </dd>
 
-        <dt className="font-medium">Any specimen</dt>
-        <dd className="m-0">{entry.specimen_unconstrained ? "Yes" : "No"}</dd>
-
         <dt className="font-medium">Last updated</dt>
         <dd className="m-0">
           <time dateTime={entry.updated_at}>{formatDate(entry.updated_at)}</time>

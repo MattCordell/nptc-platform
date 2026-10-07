@@ -15,9 +15,10 @@ function isInternalKey(name: string): boolean {
 
 /** Field names whose plain capitalised form is unclear, an acronym, or not the
  * word the public screens use for the same thing: the Details panel calls
- * `business_key` "Identifier" and `specimen_unconstrained` "Any specimen", the
- * Terms table calls `use` "Type", and search calls `preferred_term` "Requesting
- * term". */
+ * `business_key` "Identifier", the Terms table calls `use` "Type", and search
+ * calls `preferred_term` "Requesting term". `specimen_unconstrained` is kept
+ * for events recorded before that flag was retired (ADR-0044); they still
+ * carry the field. */
 const FIELD_LABELS: Record<string, string> = {
   business_key: "Identifier",
   fsn: "Fully specified name",

@@ -1,21 +1,16 @@
-"""The entry-level core-column write route: `status` and `specimen_unconstrained` (FR-36,
-FR-37, FR-38, FR-89).
+"""The entry-level core-column write route: `status` (FR-36, FR-37, FR-38).
 
-`catalogue_entry` has four auditable core columns. `business_key` is immutable (FR-03) and
+`catalogue_entry` has three auditable core columns. `business_key` is immutable (FR-03) and
 `preferred_term` writes through `POST .../designations/amendment` (ADR-0022). This route
-covers the other two.
+covers the other one.
 
 The HTTP adapter over `nptc.catalogue.entries.save_entry`; it re-implements no domain rule.
 A domain exception carries `http_status` and `nptc.api.errors` maps it, so no route body has
 a try/except. `docs/architecture/catalogue-write-api.md` ("Entry core columns") records the
 reasoning behind the points below.
 
-**One `PATCH`, not two sub-resources.** Both fields are core columns of one row under one
-`row_version`, and `save_entry` applies them in one `EntryChanges` and one audit event. Two
-routes would mean two lock tokens and two audit events for what an editor experiences as
-one save. `PATCH` semantics (an absent field means no change) match `EntryChanges`'
-`None`-means-unchanged contract, including `specimen_unconstrained=False`, which
-`EntryChanges.as_dict()` keeps because `False is not None`.
+**`PATCH` on the entry.** `status` is a core column of one row under one `row_version`, and
+`save_entry` applies it in one `EntryChanges` and one audit event.
 
 **A separate router module**, since it owns `CatalogueEntry`'s own core columns, a different
 write surface from a property's values or a designation row.
@@ -33,10 +28,9 @@ four statuses is a 422, and the table's `CHECK` constraint is the backstop.
 **Authorisation:** `Permission.CATALOGUE_EDIT_PUBLISHED` (FR-44), in
 `MFA_REQUIRED_PERMISSIONS` (NFR-06).
 
-**A no-op resubmission is a `200`, not a `422`.** `save_entry` short-circuits when a named
-field already holds the submitted value: the response is a `200` with the unchanged
-`row_version`, no audit event is written, and the `reason` is discarded. A body naming neither
-field is a `422`, because that is ambiguous between a no-op and a forgotten field.
+**A no-op resubmission is a `200`, not a `422`.** `save_entry` short-circuits when `status`
+already holds the submitted value: the response is a `200` with the unchanged `row_version`,
+no audit event is written, and the `reason` is discarded.
 """
 
 from __future__ import annotations
@@ -44,11 +38,11 @@ from __future__ import annotations
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import AuditContextDep, get_session, permission_dep
-from nptc.api.errors import PropertyValidationResponse, VersionConflictResponse
+from nptc.api.errors import VersionConflictResponse
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import BusinessKeyPath
 from nptc.auth.permissions import Permission
@@ -89,20 +83,14 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     ),
 }
 
-#: Three 422 body shapes reach a caller, as in `catalogue_properties.py`: a typed
-#: domain error (`ErrorResponse`, a rejected changelog note), the field-level body
-#: (`PropertyValidationResponse`, FR-89's specimen conflict, which
-#: `assert_specimen_flag_allowed` raises as `save_property_values` does), or a
-#: pydantic failure that never reaches the route body (an unrecognised `status`, or
-#: a body naming neither field: `HTTPValidationError`).
+#: Two 422 body shapes reach a caller: a typed domain error (`ErrorResponse`, a rejected
+#: changelog note) or a pydantic failure that never reaches the route body (a missing or
+#: unrecognised `status`: `HTTPValidationError`).
 _RESPONSE_422: Final[dict[str, Any]] = {
-    "model": ErrorResponse | PropertyValidationResponse,
+    "model": ErrorResponse,
     "description": (
-        "The `reason` is missing or low-information (FR-37), the body names neither "
-        "`status` nor `specimen_unconstrained`, `status` is not one of `draft`, "
-        "`active`, `deprecated` or `withdrawn`, or setting `specimen_unconstrained` "
-        "to `true` conflicts with one or more specimen values already recorded on "
-        "this entry (FR-89) - `issues[]` then names each blocking value by `ordinal`."
+        "The `reason` is missing or low-information (FR-37), or `status` is missing or not "
+        "one of `draft`, `active`, `deprecated` or `withdrawn`."
     ),
     "content": {
         "application/json": {
@@ -121,26 +109,14 @@ ENTRY_CORE_WRITE_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
 
 
 class PatchEntryRequest(BaseModel):
-    """The body of `PATCH /catalogue/entries/{business_key}`.
+    """The body of `PATCH /catalogue/entries/{business_key}`. Unknown fields are refused, so a
+    client that still sends the retired `specimen_unconstrained` fails loudly (ADR-0044)."""
 
-    `status`/`specimen_unconstrained` are both optional so a caller can set
-    either or both in one save - `None` means "leave this field alone",
-    matching `EntryChanges`' own contract - but a body naming neither is
-    refused rather than silently treated as a no-op write.
-    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    model_config = ConfigDict(frozen=True)
-
-    status: CatalogueEntryStatus | None = None
-    specimen_unconstrained: bool | None = None
+    status: CatalogueEntryStatus
     reason: str
     expected_row_version: int
-
-    @model_validator(mode="after")
-    def _reject_empty_body(self) -> PatchEntryRequest:
-        if self.status is None and self.specimen_unconstrained is None:
-            raise ValueError("at least one of status or specimen_unconstrained must be given")
-        return self
 
 
 class EntryCoreWriteResult(BaseModel):
@@ -157,7 +133,6 @@ class EntryCoreWriteResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: CatalogueEntryStatus
-    specimen_unconstrained: bool
     row_version: int
 
 
@@ -167,7 +142,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 
 @router.patch(
     "/entries/{business_key}",
-    summary="Set a catalogue entry's status and/or specimen_unconstrained flag",
+    summary="Set a catalogue entry's status",
     responses=ENTRY_CORE_WRITE_RESPONSES,
     dependencies=[_EDIT],
 )
@@ -182,15 +157,8 @@ def patch_entry(
         ctx,
         business_key=business_key,
         expected_row_version=body.expected_row_version,
-        changes=EntryChanges(
-            status=str(body.status) if body.status is not None else None,
-            specimen_unconstrained=body.specimen_unconstrained,
-        ),
+        changes=EntryChanges(status=str(body.status)),
         reason=body.reason,
     )
     session.flush()
-    return EntryCoreWriteResult(
-        status=entry.status,
-        specimen_unconstrained=entry.specimen_unconstrained,
-        row_version=entry.row_version,
-    )
+    return EntryCoreWriteResult(status=entry.status, row_version=entry.row_version)

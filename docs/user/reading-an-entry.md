@@ -59,8 +59,8 @@ Beside the main column, or below it on a narrow screen:
 - **Term length** is the number of characters in the requesting term.
 - **Disciplines** lists each discipline recorded for the test. **None recorded** means none
   is.
-- **Any specimen** is **Yes** when the test accepts any specimen, and **No** when it does
-  not. **No** does not name the specimens. Look in **Properties** for those.
+- A test that accepts any specimen lists one specimen value in **Properties**, the root
+  concept **Specimen** (code `123038009`). There is no separate **Any specimen** row.
 - **Last updated** is the date the entry last changed.
 
 ### Recent changes

@@ -84,15 +84,21 @@ describe("describeChange", () => {
       describeChange(
         event({
           action: "catalogue_entry.created",
-          changed_fields: [
-            "business_key",
-            "preferred_term",
-            "specimen_unconstrained",
-            "status",
-          ],
+          changed_fields: ["business_key", "preferred_term", "status"],
         }),
       ).fields,
-    ).toBe("Identifier, Requesting term, Any specimen, Status");
+    ).toBe("Identifier, Requesting term, Status");
+  });
+
+  it("still labels the retired specimen_unconstrained field on an old event (ADR-0044)", () => {
+    expect(
+      describeChange(
+        event({
+          action: "catalogue_entry.updated",
+          changed_fields: ["specimen_unconstrained"],
+        }),
+      ).fields,
+    ).toBe("Any specimen");
   });
 
   it("hides any audited key that ends in _id, including one added later", () => {

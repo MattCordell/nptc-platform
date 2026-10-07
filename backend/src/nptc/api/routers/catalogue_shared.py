@@ -303,10 +303,6 @@ class EntrySummary(BaseModel):
     preferred_term: str
     length: int
     status: str
-    #: FR-89: `true` means "this test accepts any specimen", which is a
-    #: different statement from "no specimen property has been recorded" -
-    #: the ambiguity this core column exists to destroy.
-    specimen_unconstrained: bool
     #: A real `datetime`, not a formatted string, so the OpenAPI document says
     #: `format: date-time` and a generated client parses it as a date.
     updated_at: datetime
@@ -533,7 +529,6 @@ def entry_summary_fields(
     preferred_term: str,
     length: int,
     status: str,
-    specimen_unconstrained: bool,
     updated_at: datetime,
     facts: queries.RowFacts,
 ) -> dict[str, Any]:
@@ -542,7 +537,6 @@ def entry_summary_fields(
         "preferred_term": preferred_term,
         "length": length,
         "status": status,
-        "specimen_unconstrained": specimen_unconstrained,
         "updated_at": updated_at,
         "has_open_finding": facts.has_open_finding,
         "code": facts.code,
@@ -560,7 +554,6 @@ def summary_from_entry(entry: CatalogueEntry, facts: queries.RowFacts) -> EntryS
             entry.preferred_term,
             entry.length,
             entry.status,
-            entry.specimen_unconstrained,
             entry.updated_at,
             facts,
         )
@@ -580,7 +573,6 @@ def build_entry_detail(
             entry.preferred_term,
             entry.length,
             entry.status,
-            entry.specimen_unconstrained,
             entry.updated_at,
             queries.row_facts_for(session, entry.business_key),
         ),

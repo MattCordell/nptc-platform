@@ -247,8 +247,6 @@ REQUIRED_PUBLIC_FIELDS = frozenset(
         "preferred_term",
         "length",
         "status",
-        # FR-89: "accepts any specimen" as a positive statement.
-        "specimen_unconstrained",
         "updated_at",
         # FR-18, issue #141: the open-finding indicator.
         "has_open_finding",
@@ -516,7 +514,7 @@ def test_entry_core_write_response_contains_no_uuid(api: ApiTestApp) -> None:
         f"/catalogue/entries/{entry.business_key}",
         token=admin_token,
         json={
-            "specimen_unconstrained": True,
+            "status": "active",
             "reason": "Set for the entry core write-hygiene test.",
             "expected_row_version": entry.row_version,
         },

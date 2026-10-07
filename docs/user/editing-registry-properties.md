@@ -2,8 +2,8 @@
 
 Every catalogue entry can hold a value for each **registry property** an administrator has
 defined — discipline, subgroup, specimen, and any others the registry has been extended
-with. This guide covers recording, changing and retiring those values, and the entry's own
-**accepts any specimen** setting.
+with. This guide covers recording, changing and retiring those values, including how to
+record that a test accepts any specimen.
 
 You need the Administrator role to change registry properties.
 
@@ -56,16 +56,16 @@ sentence describing the change; single words like "update" or "fix" are refused.
 If a value you entered fails validation, the message appears against that value, not as a
 generic refusal — you can see exactly which one to fix.
 
-## Accepts any specimen (Any)
+## Accepting any specimen
 
-This is shown separately from the properties table, because it is not a property value at
-all — it is a setting on the entry itself. An entry can either record specific specimen
-codes through the **Specimen** property above, or accept any specimen, but not both at
-once.
+A test that accepts any specimen holds one **Specimen** value: the concept **Specimen**
+(code `123038009`), on its own. Record it through the Specimen property's Edit dialog, as
+you would any other specimen. There is no separate setting for it.
 
-Choose **Edit** next to this setting, tick or untick the checkbox, give a changelog note,
-and save. Turning this on while the entry already has specimen values recorded is refused
-— clear those values first, through the Specimen property's own Edit dialog.
+The root cannot sit beside another specimen. If you try, the save is refused with a message
+against the value that conflicts: remove the root, or remove the named specimens. An entry
+with no specimen value at all is one nobody has filled in yet, which is a different fact
+from accepting any specimen.
 
 ## If something goes wrong
 

@@ -155,7 +155,7 @@ def test_detail_carries_the_summary_fields_and_every_sub_resource(
     # computed rather than stored.
     assert body["length"] == len(_seed.CANONICAL_TERM)
     assert body["status"] == "active"
-    assert body["specimen_unconstrained"] is True
+    assert "specimen_unconstrained" not in body  # retired; "any specimen" is a value (FR-89)
     assert body["designations"] and body["bindings"] and body["properties"]
 
 
