@@ -13,6 +13,7 @@ import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
 import { filterQueryParams } from "./filter-params.ts";
 import type { components, paths } from "./schema.ts";
+import { asTermsVersionStale, TERMS_QUERY_KEY } from "./terms.ts";
 import { ApiError, unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
 
@@ -74,6 +75,52 @@ export function useSession() {
     queryFn: async ({ signal }) =>
       unwrap(await client.GET("/api/v1/auth/me", { signal })),
     staleTime: 30_000,
+  });
+}
+
+/**
+ * The current terms of use and whether the caller has accepted them (NFR-45,
+ * NFR-47). Open to anonymous callers, who always read `accepted: false`.
+ *
+ * The cached answer depends on who asked, so the key carries whether the
+ * caller is signed in and the query waits out `"restoring"` - the same two
+ * guards as `useEntryHistory`. Without them a signed-in user whose session is
+ * still being restored would cache the anonymous answer and be shown the gate
+ * for terms they already accepted. Every invalidation targets the shared
+ * `TERMS_QUERY_KEY` prefix, which matches both variants.
+ */
+export function useCurrentTerms() {
+  const client = useApiClient();
+  const { status } = useAuth();
+  return useQuery({
+    queryKey: [...TERMS_QUERY_KEY, { signedIn: status === "signed-in" }],
+    queryFn: async ({ signal }) =>
+      unwrap(await client.GET("/api/v1/auth/terms", { signal })),
+    enabled: status !== "restoring",
+  });
+}
+
+/**
+ * Record that the caller accepted `version` (NFR-45). The caller passes the
+ * version it displayed, so the server can refuse a stale one.
+ *
+ * Success and a stale-version refusal both invalidate the terms read: the
+ * first so the gate gives way, the second so it re-shows under the new text.
+ * The returned promise keeps the mutation pending until that refetch settles,
+ * so the form does not flash between the two states.
+ */
+export function useAcceptTerms() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (version: string) =>
+      unwrap(await client.POST("/api/v1/auth/terms/acceptance", { body: { version } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY }),
+    onError: (error: unknown) => {
+      if (asTermsVersionStale(error) !== null) {
+        void queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY });
+      }
+    },
   });
 }
 
