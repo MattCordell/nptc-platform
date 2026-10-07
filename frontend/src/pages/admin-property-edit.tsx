@@ -277,6 +277,7 @@ export function AdminPropertyEditPage() {
 
         {definition && (
           <AmendForm
+            key={definition.key}
             definition={definition}
             allowedConstraintKeys={allowedConstraintKeys}
           />

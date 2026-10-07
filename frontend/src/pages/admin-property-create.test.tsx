@@ -346,6 +346,55 @@ describe("AdminPropertyCreatePage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("can be filled in and submitted by keyboard alone, in reading order", async () => {
+    const calls = stubApi([
+      DATATYPES_OK,
+      { method: "POST", path: CREATE_PATH, status: 201, body: CREATED },
+      { method: "GET", path: `${CREATE_PATH}/assay_method`, status: 200, body: CREATED },
+    ]);
+    const user = userEvent.setup();
+    await renderCreate();
+    screen.getByLabelText("Key").focus();
+
+    const order = [
+      "Key",
+      "Label",
+      "Datatype",
+      "Cardinality",
+      "Scope",
+      "Display order",
+      "Required for submission",
+      "Required for publication",
+      "Used as a catalogue filter",
+      "Constraints",
+      "Reason",
+    ];
+    for (const [index, name] of order.entries()) {
+      expect(screen.getByLabelText(name)).toHaveFocus();
+      if (index < order.length - 1) {
+        await user.tab();
+      }
+    }
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Create property" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Cancel" })).toHaveFocus();
+
+    // Enter in a text field submits the form, as it does for a keyboard user.
+    await user.type(screen.getByLabelText("Key"), "assay_method");
+    await user.type(screen.getByLabelText("Label"), "Assay method");
+    await user.selectOptions(screen.getByLabelText("Datatype"), "alpha");
+    await user.selectOptions(screen.getByLabelText("Cardinality"), "0..1");
+    await user.selectOptions(screen.getByLabelText("Scope"), "both");
+    await user.type(
+      screen.getByLabelText("Reason"),
+      "Needed for the immunoassay entries{Enter}",
+    );
+
+    await screen.findByRole("heading", { level: 1, name: "Assay method" });
+    expect(writeCalls(calls)).toHaveLength(1);
+  });
+
   it("links back to the registry from the header and from Cancel", async () => {
     stubApi([DATATYPES_OK]);
 
