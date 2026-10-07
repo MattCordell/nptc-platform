@@ -17,6 +17,18 @@ describe("/about (NFR-31)", () => {
     await expectNoA11yViolations(container);
   });
 
+  it("keeps section ids and paragraphs unique, so owner edits cannot break labelling or keys", () => {
+    const ids = ABOUT_SECTIONS.map((section) => section.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-z0-9-]+$/);
+    }
+    for (const section of ABOUT_SECTIONS) {
+      expect(new Set(section.paragraphs).size).toBe(section.paragraphs.length);
+    }
+  });
+
   it("has one h1 and one h2 per content section, in content order", async () => {
     await renderRoute("/about");
     await screen.findByRole("heading", { level: 1 });

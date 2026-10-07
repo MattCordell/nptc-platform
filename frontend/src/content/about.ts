@@ -1,7 +1,8 @@
 /**
  * The wording of the About page (/about). Owners edit this file only; the
  * layout lives in `pages/about.tsx`. Each section becomes one card with its
- * own `h2`. Wording marked "placeholder" is awaiting text from the owners.
+ * own `h2`. Link only to screens that are built, and describe only features
+ * that exist.
  */
 
 export type AboutLinkTarget = "/catalogue" | "/exports" | "/terms";
@@ -42,12 +43,7 @@ export const ABOUT_SECTIONS: readonly AboutSection[] = [
     heading: "How to use it",
     paragraphs: [
       "Anyone can search the catalogue by test name or code, and open an entry to read its details.",
-      "Registered members can propose new tests and changes. Curators review each proposal before it reaches the catalogue.",
-      "Placeholder: the owners will add guidance on how often releases are published and where to send questions.",
-    ],
-    links: [
-      { label: "Exports", to: "/exports" },
-      { label: "Terms of use", to: "/terms" },
+      "Release schedules and contact details will be added here.",
     ],
   },
 ];
