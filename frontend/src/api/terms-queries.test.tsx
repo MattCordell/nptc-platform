@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -218,6 +218,53 @@ describe("useAcceptTerms", () => {
       "2026-11-01",
     );
     expect(calls.filter((call) => call.method === "GET")).toHaveLength(2);
+  });
+
+  // The form reads the mutation's error against the displayed version, so an
+  // error that arrives before the new version reads as a plain failure: the
+  // form flashes a wrong message and moves focus before the real notice.
+  it("stays pending on a stale refusal until the refetch settles", async () => {
+    const calls = stubApi(
+      [
+        {
+          method: "POST",
+          path: ACCEPTANCE,
+          status: 409,
+          body: {
+            detail: "The terms have changed.",
+            code: "terms_version_stale",
+            current_version: "2026-11-01",
+          },
+        },
+      ],
+      {
+        vary: ({ method, path }, priorSameCalls) => {
+          if (method !== "GET" || path !== TERMS) {
+            return null;
+          }
+          return priorSameCalls > 0
+            ? { method, path, status: 200, body: CURRENT, neverSettles: true }
+            : { method, path, status: 200, body: CURRENT };
+        },
+      },
+    );
+
+    const { result } = renderHook(
+      () => ({ terms: useCurrentTerms(), accept: useAcceptTerms() }),
+      { wrapper: wrapperFor() },
+    );
+    await waitFor(() => expect(result.current.terms.isSuccess).toBe(true));
+
+    result.current.accept.mutate(CURRENT.version);
+
+    await waitFor(() =>
+      expect(calls.filter((call) => call.method === "GET")).toHaveLength(2),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.accept.isPending).toBe(true);
+    expect(result.current.accept.isError).toBe(false);
   });
 
   // The terms on screen are still current after any other refusal, so a

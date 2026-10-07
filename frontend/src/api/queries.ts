@@ -125,11 +125,10 @@ export function useAcceptTerms() {
     mutationFn: async (version: string) =>
       unwrap(await client.POST("/api/v1/auth/terms/acceptance", { body: { version } })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY }),
-    onError: (error: unknown) => {
-      if (asTermsVersionStale(error) !== null) {
-        void queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY });
-      }
-    },
+    onError: (error: unknown) =>
+      asTermsVersionStale(error) !== null
+        ? queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY })
+        : undefined,
   });
 }
 
