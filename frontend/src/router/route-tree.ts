@@ -299,7 +299,8 @@ const accountRoute = createRoute({
 // above, and what a given user sees there is decided server-side (NFR-20).
 
 // The built admin screen offered from every admin stub as a way on. The
-// property registry is built too, but only the admin home links to it.
+// property registry and the audit log are built too, but only the admin home
+// links to them.
 const ADMIN_NEAREST = {
   to: "/admin/catalogue",
   label: "Catalogue administration",
@@ -308,6 +309,11 @@ const ADMIN_NEAREST = {
 const ADMIN_PROPERTY_REGISTRY = {
   to: "/admin/properties",
   label: "Property registry",
+} as const;
+
+const ADMIN_AUDIT_LOG = {
+  to: "/admin/audit",
+  label: "Audit log",
 } as const;
 
 const adminRoute = createRoute({
@@ -321,7 +327,7 @@ const adminHomeRoute = createRoute({
   path: "/",
   component: createPlaceholderPage({
     title: "Administration",
-    nearest: [ADMIN_NEAREST, ADMIN_PROPERTY_REGISTRY],
+    nearest: [ADMIN_NEAREST, ADMIN_PROPERTY_REGISTRY, ADMIN_AUDIT_LOG],
   }),
   head: titled("Administration"),
 });

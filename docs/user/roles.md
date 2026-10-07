@@ -19,6 +19,8 @@ shipped:
   [registry properties](editing-registry-properties.md)).
 - **[Bulk reclassify](bulk-reclassify.md)** — setting one registry property to one value
   across a selection of entries in a single audited batch.
+- **[Searching the audit log](searching-the-audit-log.md)** — finding who changed what and
+  when, and exporting a filtered view. No other role can read the audit log.
 
 **Multi-factor authentication.** Every administrative action needs a second sign-in step
 beyond a password — see [Signing in](signing-in.md#multi-factor-authentication) for when
