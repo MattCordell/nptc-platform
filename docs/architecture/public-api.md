@@ -499,3 +499,14 @@ writes fetch code of its own:
   anonymous caller. `useEntryHistory` puts whether the caller is signed in into its query
   key, and waits while the session is still restoring, so an anonymous page is never
   shown to a signed-in reader.
+- **The entry page reads one entry and a short history** (issue #440).
+  `pages/catalogue-entry.tsx` calls `useEntryDetail` for the entry, with its designations,
+  bindings and properties in the one response, and `useEntryHistory` with `limit: 5`. The
+  two queries are independent, so a slow or failed history leaves the entry on screen. The
+  page shows every property the route returns and does not decide which are public: the
+  route serves each value of an entry's properties, including maintenance-scoped ones such
+  as `usage_guidance`.
+- **A 404 and a 422 both mean "no such entry" to the entry page.** The route answers an
+  unknown key and a key that is not public with one identical 404. It answers a malformed
+  key with a 422 whose body is the framework's own, not a declared shape. The page shows
+  the not-found page for either and never reads the 422 body.

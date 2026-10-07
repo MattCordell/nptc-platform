@@ -26,7 +26,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 |---|---|
 | `/` | landing (its search box navigates to `/catalogue` with the trimmed `q`) |
 | `/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #439) | FR-14, FR-15, FR-16, FR-18 |
-| `/catalogue/$businessKey` | FR-17, FR-19 |
+| `/catalogue/$businessKey` (issue #440) | FR-17, FR-18, FR-19 |
 | `/catalogue/$businessKey/history` | FR-19, FR-35 |
 | `/catalogue/code/$systemToken/$code` | FR-17 |
 | `/catalogue/lookup?system=&code=` | FR-17 |
@@ -86,9 +86,10 @@ public endpoints offer no sort and no page number (ADR-0024), so the route has n
 The API half of this contract - `GET /catalogue/entries/{business_key}`,
 `GET /catalogue/code/{system_token}/{code}` and `GET /catalogue/lookup`, all serving the
 identical `EntryDetail` body - is documented in
-[public-api.md](public-api.md#exact-code-lookup-fr-17). All three routes above still
-mount `createPlaceholderPage` today; the public entry and lookup screens will call this
-API and swap the placeholders for real screens.
+[public-api.md](public-api.md#exact-code-lookup-fr-17). `/catalogue/{business_key}` is a
+real screen (`pages/catalogue-entry.tsx`, issue #440). The two code lookup routes still
+mount `createPlaceholderPage`; those screens will call the same API and swap their
+placeholders for real screens.
 
 ## Codes are strings, always
 
@@ -261,6 +262,12 @@ to wire one (PRD §17.2 item 5).
   screen and the user has somewhere to go, rather than a blank screen. A route needing a
   more specific message (e.g. "no entry with that business key") can still throw
   `notFound()` from a loader and set its own `notFoundComponent`.
+  The entry page (`pages/catalogue-entry.tsx`) has no loader. It renders `NotFoundPage`
+  itself when `GET /catalogue/entries/{business_key}` answers 404 or 422, so an API
+  refusal and an unmatched URL look the same. The API gives an unknown key and a
+  non-public key the identical 404, and a malformed key a 422 whose body has no declared
+  shape, so the page cannot tell the cases apart and never reads the 422 body. The same
+  mapping applies when a refresh of an entry already on screen answers 404.
 - **Route error** (`shell/route-error-page.tsx`): catches any render error thrown inside a
   route. Renders a friendly message and a "Try again" action; logs the real error to
   `console.error` for a developer. It must never render `error.message`, `error.stack`, or

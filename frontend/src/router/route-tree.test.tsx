@@ -1,8 +1,34 @@
 import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderRoute } from "../test/render-route.tsx";
+import { stubApi } from "../test/stub-api.ts";
 import { createAppRouter } from "./router.tsx";
+
+/**
+ * What the entry detail route reads (`/catalogue/$businessKey` fetches the
+ * entry and its history on arrival). The other rows never call it.
+ */
+const ENTRY_STUB = {
+  business_key: "NPTC-000247",
+  preferred_term: "Ferritin",
+  length: 8,
+  status: "active",
+  specimen_unconstrained: false,
+  updated_at: "2026-09-01T12:00:00Z",
+  has_open_finding: false,
+  code: null,
+  disciplines: [],
+  label_provenance: {},
+  row_version: 1,
+  designations: [],
+  bindings: [],
+  properties: [],
+};
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /**
  * One entry per public URL shape declared in `route-tree.ts`. `to`/`params`/
@@ -30,7 +56,7 @@ const ROUTES = [
   {
     to: "/catalogue/$businessKey",
     params: { businessKey: "NPTC-000247" },
-    heading: /Catalogue entry/i,
+    heading: /^Ferritin$/,
   },
   {
     to: "/catalogue/$businessKey/history",
@@ -62,6 +88,21 @@ describe("route table", () => {
     // Built from the route table itself - if a component needs an href, this
     // is what it must do too (criterion 4).
     const href = createAppRouter().buildLocation(spec).href;
+
+    stubApi([
+      {
+        method: "GET",
+        path: "/catalogue/entries/NPTC-000247",
+        status: 200,
+        body: ENTRY_STUB,
+      },
+      {
+        method: "GET",
+        path: "/catalogue/entries/NPTC-000247/history",
+        status: 200,
+        body: { items: [], next_cursor: null },
+      },
+    ]);
 
     // A cold memory history is a fresh browser session: no prior navigation,
     // nothing in the router's cache, no landing page in between.

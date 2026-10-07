@@ -235,6 +235,34 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
 - **`back-to-landing-link.tsx` — `BackToLandingLink`.** The "Back to the landing page" link,
   styled as a button, so the wording is the same on every such screen.
 
+## Entry detail primitives
+
+Issue #440. The pieces of the public entry page that another screen can reuse. Same rules
+as above: a co-located test, an `expectNoA11yViolations` call and design tokens only.
+
+- **`breadcrumb.tsx` — `Breadcrumb`.** A `nav` labelled "Breadcrumb" holding an ordered
+  list. It takes `ancestors`, each already a link, and the `current` page as plain text
+  marked `aria-current="page"`. The caller builds the links with the router's typed
+  `<Link>`, so the component holds no URL. The separators are drawn by the component and
+  hidden from assistive technology. Each link is at least 24px tall.
+- **`code-chip.tsx` — `CodeChip`.** A code in the `--color-code-text` and `--color-code-bg`
+  tokens, monospaced, left-aligned and never truncated. Its `code` prop is a `string`,
+  never a number, and it renders the text as given (FR-06). Use it for any SNOMED CT code
+  shown on its own.
+- **`detail-layout.tsx` — `DetailLayout`.** The two-column body. It takes the main column
+  as `children`, a `sidebar` and a `sidebarLabel` that names the sidebar's `aside`
+  landmark. Below the large breakpoint the sidebar stacks under the main column, so the
+  reading order never changes. `minmax(0, 1fr)` lets the main column shrink, so a wide
+  table scrolls inside its own `overflow-x-auto` wrapper instead of widening the page.
+- **`finding-indicator.tsx` — `FindingIndicator`.** "Open finding" in the danger tokens with
+  a mark, or "None" when `open` is false (FR-18). It carries no detail about a finding. The
+  search results table and the entry page both use it.
+
+The sections of the entry page itself live in `frontend/src/catalogue/entry-*.tsx`. They
+render what the API sends and nothing else: a property value goes through
+`format-property-value.ts` whatever its type, because a branch on `datatype` is what
+ADR-0013 forbids, and a fully specified name is shown exactly as served (FR-83).
+
 ## Search and paging primitives
 
 Issue #438. The search box, filter controls and keyset paging that listings share, so the
