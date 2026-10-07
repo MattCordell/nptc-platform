@@ -13,41 +13,26 @@ import { Markdown } from "../components/markdown.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { useFocusHeadingOnMount } from "../components/use-focus-heading-on-mount.ts";
+import { COLLECTION_NOTICE } from "./collection-notice.ts";
 
 type CurrentTerms = components["schemas"]["CurrentTermsResponse"];
 
 const HEADING_ID = "terms-acceptance-heading";
 
-/**
- * The collection notice, worded as Keycloak's registration page words it
- * (`deploy/keycloak/themes/nptc/login/messages/messages_en.properties`) so a
- * person who registered sees the same account of their details here. The
- * terms text below it is not SPA copy; this notice is.
- */
 function CollectionNotice() {
   return (
     <Card className="flex max-w-3xl flex-col gap-3">
-      <h2 className="m-0 text-xl">How we use your details</h2>
-      <p className="m-0">
-        We collect the details you enter on the registration form to create your account
-        and to attribute your contributions to the catalogue.
-      </p>
-      <p className="m-0">
-        Platform administrators can see your identity and your interest records.
-      </p>
-      <p className="m-0">
-        How long we keep your details is still being settled. The privacy policy will
-        state it.
-      </p>
-      <p className="m-0">
-        To ask for access to your details or to correct them, follow the privacy policy.
-      </p>
+      <h2 className="m-0 text-xl">{COLLECTION_NOTICE.title}</h2>
+      <p className="m-0">{COLLECTION_NOTICE.collect}</p>
+      <p className="m-0">{COLLECTION_NOTICE.visible}</p>
+      <p className="m-0">{COLLECTION_NOTICE.retention}</p>
+      <p className="m-0">{COLLECTION_NOTICE.access}</p>
       <p className="m-0">
         <Link
           to="/privacy"
           className="inline-flex min-h-6 items-center text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]"
         >
-          Read the privacy policy
+          {COLLECTION_NOTICE.privacyLink}
         </Link>
       </p>
     </Card>
