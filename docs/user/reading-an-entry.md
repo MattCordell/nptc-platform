@@ -67,8 +67,7 @@ Beside the main column, or below it on a narrow screen:
 
 **Recent changes** lists the latest five changes, newest first. Each shows the date, what
 happened, such as "Designation created", the fields it touched, and the note the editor
-wrote, if any. The list leaves out fields that change on every edit and have no meaning to
-a reader.
+wrote, if any. The list leaves out internal identifiers, which mean nothing to a reader.
 
 The name of the person who made a change appears only when you are signed in. This page does
 not link to the full history yet.
@@ -97,4 +96,5 @@ Press Tab to move through the page: the breadcrumb links, then any links and con
 main column. A visible ring shows where you are. The page has one main heading, and each
 block below it has its own heading, so a screen reader can jump between **Terms**, **SNOMED
 CT codes**, **Properties**, **Details** and **Recent changes**. Status is always written in
-words as well as shown in colour.
+words as well as shown in colour. A screen reader announces it when the entry cannot be
+loaded or refreshed, and when **Recent changes** cannot be loaded.

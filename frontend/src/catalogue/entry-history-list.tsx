@@ -1,4 +1,8 @@
+import { useEffect } from "react";
+
 import { useEntryHistory } from "../api/queries.ts";
+import { LiveRegion } from "../components/live-region.tsx";
+import { useAnnounce } from "../components/use-announce.ts";
 import { EntrySection } from "./entry-section.tsx";
 import { formatDate } from "./format-date.ts";
 import { describeChange } from "./history-text.ts";
@@ -7,6 +11,9 @@ import { describeChange } from "./history-text.ts";
  * full history page. */
 const RECENT_EVENTS = 5;
 
+const LOAD_FAILURE =
+  "The recent changes could not be loaded. The rest of this entry is unaffected.";
+
 /**
  * The entry's most recent changes (FR-19). It has its own query, so a slow or
  * failed history never holds back the rest of the page. The author appears only
@@ -14,17 +21,21 @@ const RECENT_EVENTS = 5;
  */
 export function EntryHistoryList({ businessKey }: { businessKey: string }) {
   const history = useEntryHistory(businessKey, { limit: RECENT_EVENTS });
+  const { message, politeness, announce } = useAnnounce();
+
+  useEffect(() => {
+    if (history.isError) {
+      announce(LOAD_FAILURE);
+    }
+  }, [history.isError, announce]);
 
   return (
     <EntrySection title="Recent changes">
+      <LiveRegion message={message} politeness={politeness} />
       {history.isPending ? (
-        <p role="status" className="m-0 text-[var(--color-text-muted)]">
-          Loading recent changes…
-        </p>
+        <p className="m-0 text-[var(--color-text-muted)]">Loading recent changes…</p>
       ) : history.isError ? (
-        <p role="status" className="m-0">
-          The recent changes could not be loaded. The rest of this entry is unaffected.
-        </p>
+        <p className="m-0">{LOAD_FAILURE}</p>
       ) : history.data.items.length === 0 ? (
         <p className="m-0 text-[var(--color-text-muted)]">No changes are recorded.</p>
       ) : (

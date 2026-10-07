@@ -71,9 +71,17 @@ function EntryView({
   refreshFailed: boolean;
 }) {
   useDocumentTitle(`${entry.preferred_term} — NPTC Catalogue`);
+  const { message, politeness, announce } = useAnnounce();
+
+  useEffect(() => {
+    if (refreshFailed) {
+      announce(STALE_DATA_WARNING);
+    }
+  }, [refreshFailed, announce]);
 
   return (
     <section aria-labelledby={HEADING_ID}>
+      <LiveRegion message={message} politeness={politeness} />
       <PageContainer className="py-6">
         <EntryBreadcrumb current={entry.preferred_term} />
 
@@ -96,7 +104,7 @@ function EntryView({
           }
         />
 
-        {refreshFailed ? <p role="status">{STALE_DATA_WARNING}</p> : null}
+        {refreshFailed ? <p className="m-0">{STALE_DATA_WARNING}</p> : null}
 
         <DetailLayout
           sidebarLabel="Entry details"
@@ -157,9 +165,7 @@ export function CatalogueEntryPage() {
             </Button>
           </div>
         ) : (
-          <p role="status" className="m-0">
-            Loading entry…
-          </p>
+          <p className="m-0">Loading entry…</p>
         )}
       </PageContainer>
     </section>

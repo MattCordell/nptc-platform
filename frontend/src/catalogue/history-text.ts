@@ -2,14 +2,22 @@ import type { components } from "../api/schema.ts";
 
 type HistoryEvent = components["schemas"]["HistoryEvent"];
 
-/** Columns whose names say nothing a reader can use: the bookkeeping that
- * changes on every write, and the internal key that links a row to its entry. */
-const HIDDEN_FIELDS = new Set(["row_version", "updated_at", "entry_id", "id"]);
+/** Audited columns that mean nothing to a reader: a row's position among a
+ * property's values, and the form a term is compared in. */
+const HIDDEN_FIELDS = new Set(["ordinal", "term_key"]);
 
-/** Field names whose plain capitalised form would be an unexplained acronym. */
+/** Every audited foreign key ends in `_id` (`entry_id`,
+ * `replaced_by_binding_id`, `acknowledged_by_user_id`). Matching the suffix
+ * hides one added later without a list to keep in step. */
+function isInternalKey(name: string): boolean {
+  return name.endsWith("_id") || HIDDEN_FIELDS.has(name);
+}
+
+/** Field names whose plain capitalised form would be unclear or an acronym. */
 const FIELD_LABELS: Record<string, string> = {
   fsn: "Fully specified name",
   au_preferred_term: "AU preferred term",
+  property_key: "Property",
 };
 
 /** `preferred_term` -> `Preferred term`. */
@@ -33,11 +41,11 @@ export interface ChangeText {
  * What a reader is told about one history event. The action name is turned into
  * a sentence rather than shown as stored, and the field names follow it as a
  * second line, so the action is never the only text a reader has to go on when
- * a field is named.
+ * a field is named. Internal keys are left out.
  */
 export function describeChange(event: HistoryEvent): ChangeText {
   const fields = event.changed_fields
-    .filter((field) => !HIDDEN_FIELDS.has(field))
+    .filter((field) => !isInternalKey(field))
     .map(fieldLabel);
   return {
     action: humanise(event.action.replaceAll(".", " ")),

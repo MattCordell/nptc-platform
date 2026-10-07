@@ -148,7 +148,7 @@ function historyEvent(overrides: Record<string, unknown> = {}) {
     occurred_at: "2026-09-01T12:00:00Z",
     action: "catalogue_entry.updated",
     changed_by: null,
-    changed_fields: ["entry_id", "preferred_term", "row_version", "updated_at"],
+    changed_fields: ["preferred_term", "status"],
     note: "Corrected the spelling.",
     release: null,
     ...overrides,
@@ -191,6 +191,31 @@ function holdHistory() {
     return inner(request);
   });
   return { release: () => release() };
+}
+
+/**
+ * The sighted-reader copy of a message, as opposed to its live-region copy.
+ * A live region is a `role="status"` element mounted empty and filled later, so
+ * a screen reader announces the change (`LiveRegion`).
+ */
+async function visibleNote(text: string | RegExp) {
+  const matches = await screen.findAllByText(text);
+  const visible = matches.find((node) => node.closest("[role=status]") === null);
+  expect(visible).toBeDefined();
+  return visible as HTMLElement;
+}
+
+async function expectAnnounced(text: string | RegExp) {
+  await waitFor(() => {
+    const spoken = screen
+      .getAllByRole("status")
+      .some((region) =>
+        typeof text === "string"
+          ? region.textContent === text
+          : text.test(region.textContent ?? ""),
+      );
+    expect(spoken).toBe(true);
+  });
 }
 
 async function renderEntry(routes: Route[] = [ENTRY_OK, HISTORY_OK]) {
@@ -517,12 +542,37 @@ describe("recent changes", () => {
       await within(section).findByText("Catalogue entry updated"),
     ).toBeInTheDocument();
     expect(within(section).getByText("1 September 2026")).toBeInTheDocument();
-    expect(within(section).getByText("Fields: Preferred term")).toBeInTheDocument();
+    expect(
+      within(section).getByText("Fields: Preferred term, Status"),
+    ).toBeInTheDocument();
     expect(within(section).getByText("Corrected the spelling.")).toBeInTheDocument();
     expect(within(section).queryByText(/^By /)).toBeNull();
     expect(section.textContent).not.toMatch(
       /row.?version|updated_at|entry.?id|catalogue_entry/i,
     );
+  });
+
+  it("names no internal key for a binding replacement event", async () => {
+    await renderEntry([
+      ENTRY_OK,
+      {
+        ...HISTORY_OK,
+        body: {
+          items: [
+            historyEvent({
+              action: "code_binding.replacement_linked",
+              changed_fields: ["replaced_by_binding_id", "status", "retirement_reason"],
+            }),
+          ],
+          next_cursor: null,
+        },
+      },
+    ]);
+
+    expect(
+      await screen.findByText("Fields: Status, Retirement reason"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/binding id/i)).toBeNull();
   });
 
   it("names the author when the API sends one", async () => {
@@ -579,8 +629,9 @@ describe("recent changes", () => {
     ]);
 
     expect(
-      await screen.findByText(/The recent changes could not be loaded/),
+      await visibleNote(/The recent changes could not be loaded/),
     ).toBeInTheDocument();
+    await expectAnnounced(/The recent changes could not be loaded/);
     expect(
       screen.getByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
@@ -656,8 +707,9 @@ describe("an entry that cannot be shown", () => {
     await renderRoute(`/catalogue/${KEY}`);
 
     expect(
-      await screen.findByText("This entry could not be loaded. Try again in a moment."),
+      await visibleNote("This entry could not be loaded. Try again in a moment."),
     ).toBeInTheDocument();
+    await expectAnnounced("This entry could not be loaded. Try again in a moment.");
     expect(screen.queryByRole("heading", NOT_FOUND_HEADING)).toBeNull();
 
     failing = false;
@@ -683,9 +735,8 @@ describe("an entry that cannot be shown", () => {
       await queryClient.refetchQueries({ queryKey: ["api"] });
     });
 
-    expect(
-      await screen.findByText(/could not be refreshed just now/),
-    ).toBeInTheDocument();
+    expect(await visibleNote(/could not be refreshed just now/)).toBeInTheDocument();
+    await expectAnnounced(/could not be refreshed just now/);
     expect(
       screen.getByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
