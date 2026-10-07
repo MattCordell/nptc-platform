@@ -13,11 +13,16 @@ function isInternalKey(name: string): boolean {
   return name.endsWith("_id") || HIDDEN_FIELDS.has(name);
 }
 
-/** Field names whose plain capitalised form would be unclear or an acronym. */
+/** Field names whose plain capitalised form is unclear, an acronym, or not the
+ * word the page uses for the same thing: the Details panel calls `business_key`
+ * "Identifier", and the Terms table calls `use` "Type". */
 const FIELD_LABELS: Record<string, string> = {
+  business_key: "Identifier",
   fsn: "Fully specified name",
   au_preferred_term: "AU preferred term",
   property_key: "Property",
+  system: "Code system",
+  use: "Type",
 };
 
 /** `preferred_term` -> `Preferred term`. */

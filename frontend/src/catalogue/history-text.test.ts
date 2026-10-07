@@ -46,7 +46,7 @@ describe("describeChange", () => {
       "a code binding created",
       "code_binding.created",
       ["entry_id", "system", "code", "fsn", "edition_hint", "status"],
-      "System, Code, Fully specified name, Edition hint, Status",
+      "Code system, Code, Fully specified name, Edition hint, Status",
     ],
     [
       "a binding replaced",
@@ -64,7 +64,7 @@ describe("describeChange", () => {
       "a designation created",
       "designation.created",
       ["entry_id", "term", "use", "language", "status"],
-      "Term, Use, Language, Status",
+      "Term, Type, Language, Status",
     ],
     [
       "a collision acknowledged",
@@ -77,6 +77,22 @@ describe("describeChange", () => {
 
     expect(text.fields).toBe(expected);
     expect(text.fields).not.toMatch(/\bid\b|key\b|ordinal/i);
+  });
+
+  it("uses the page's own word for an entry's identifier", () => {
+    expect(
+      describeChange(
+        event({
+          action: "catalogue_entry.created",
+          changed_fields: [
+            "business_key",
+            "preferred_term",
+            "specimen_unconstrained",
+            "status",
+          ],
+        }),
+      ).fields,
+    ).toBe("Identifier, Preferred term, Specimen unconstrained, Status");
   });
 
   it("hides any audited key that ends in _id, including one added later", () => {
