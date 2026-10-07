@@ -52,8 +52,12 @@ import type { PropertyValueSlot } from "./property-controls/index.ts";
  * **`specimen` is an ordinary coded property here.** "Accepts any specimen"
  * is the root code `123038009` held alone, edited through the same dialog as
  * every other property (FR-89, ADR-0044). The write API refuses the root
- * beside another specimen, and that refusal shows as a field error.
+ * beside another specimen, and that refusal shows as a field error. The
+ * picker shows the server's display for the root, "Specimen", where a loaded
+ * workbook stores "Any", so the specimen dialog says which value to pick.
  */
+
+const SPECIMEN_KEY = "specimen";
 
 type EntryDetail = components["schemas"]["EntryDetail"];
 type PropertyDefinitionResponse = components["schemas"]["PropertyDefinitionResponse"];
@@ -300,6 +304,12 @@ function PropertyEditDialog({
           );
         }}
       >
+        {definition.key === SPECIMEN_KEY ? (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            To record that a test accepts any specimen, choose Specimen (123038009) on its
+            own. A workbook import stores the same value as Any.
+          </p>
+        ) : null}
         <RepeatableValues
           propertyKey={definition.key}
           label={definition.label}

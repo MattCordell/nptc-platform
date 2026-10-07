@@ -442,7 +442,6 @@ type BindCodeBody = components["schemas"]["BindCodeRequest"];
 type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
 type ReplaceBindingBody = components["schemas"]["ReplaceBindingRequest"];
 type SavePropertyValuesBody = components["schemas"]["SavePropertyValuesRequest"];
-type PatchEntryBody = components["schemas"]["PatchEntryRequest"];
 
 /**
  * Add one or more terms to an entry (FR-04).
@@ -1023,37 +1022,6 @@ export function useBulkSavePropertyValues(key: string) {
       void queryClient.invalidateQueries({
         queryKey: ["api", "/api/v1/catalogue/admin/entries/{business_key}"],
       });
-    },
-  });
-}
-
-/**
- * Set an entry's core `status` (FR-36). `status` is a column on
- * `catalogue_entry` itself, not a property value, so it has its own write.
- * The body carries the status, a reason and the row version, and the
- * response is the new status and row version. Accepting any specimen is not
- * written here: it is the `specimen` property holding the root code alone
- * (FR-89, ADR-0044).
- */
-export function usePatchEntryCore(businessKey: string) {
-  const client = useApiClient();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: PatchEntryBody) =>
-      unwrap(
-        await client.PATCH("/api/v1/catalogue/entries/{business_key}", {
-          params: { path: { business_key: businessKey } },
-          body,
-        }),
-      ),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
-    onError: (error: unknown) => {
-      if (asVersionConflict(error) !== null) {
-        void queryClient.invalidateQueries({
-          queryKey: adminEntryDetailKey(businessKey),
-        });
-      }
     },
   });
 }

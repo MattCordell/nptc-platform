@@ -20,14 +20,17 @@ values were unmapped, among them `Amniotic fluid`, `Platelet poor plasma`, `Bloo
 `Swabs`, `Fluids` and `Red cells`.
 
 A terminologist-reviewed map now covers every string in the workbook: 87 rows, prepared by the
-maintainer against the September 2026 SNOMED CT-AU release. The relationship column reads 70
-equivalent, 12 inexact, 3 broader and 2 no map (`N/A` and `Culture`).
+maintainer against the September 2026 SNOMED CT-AU release. In the file as received, the
+relationship column reads 70 equivalent, 12 inexact, 3 broader and 2 no map (`N/A` and
+`Culture`). The committed map differs in one row (decision 3).
 
 The map conflicts with the model in PRD 6.2 and 6.6 in two places:
 
 - `Any` maps to `123038009 |Specimen|`. FR-89 forbade a code for `Any`.
-- `Breath` maps to the same root, as a broader concept, until SCTAU adds a Breath concept.
-  The binding `<123038009` selects descendants only, so it refuses the root.
+- The binding `<123038009` selects descendants only, so it refuses the root.
+
+The received map also coded `Breath` as the root, a broader concept, until SCTAU adds a Breath
+concept.
 
 `Body` maps to `371784004`, which the maintainer confirmed is a subtype of `123038009`. A
 more precise concept is due in the October release.
@@ -47,7 +50,10 @@ the transform predicts the loader.
 **3. `Any` is coded as `123038009`, and the specimen binding widens to `<<123038009`.** The
 `forbidden_codes` constraint on `specimen` is dropped. An entry that accepts any specimen
 holds `123038009` alone. The transform, the seed loader and the write API each refuse the root
-beside another specimen, so `Any; Serum` is a defect to fix at source.
+beside another specimen, so `Any; Serum` is a defect to fix at source. **Only `Any` may use the
+root.** The map loader refuses any other row that targets it. The received map had `Breath` on the
+root, but every rule here reads that code as "any specimen", so a breath test would be stored,
+searched and filtered as one. The committed map marks `Breath` no-map instead (decision 5).
 
 **4. `specimen_unconstrained` is retired.** The column, its field in list, search, detail and
 write responses, its write route and its frontend toggle go. A migration first converts each
@@ -57,8 +63,8 @@ for this change. A migration that called the application's write path would brea
 later revision changed that path. An entry with no specimen value now means only "not yet filled
 in". That is the ambiguity the flag existed to remove, and the root value removes it.
 
-**5. A no-map row (`N/A`, `Culture`) yields zero specimen values and an informational
-finding.** It never means "accepts any specimen".
+**5. A no-map row (`N/A`, `Culture`, and `Breath` until SCTAU adds a concept) yields zero
+specimen values and an informational finding.** It never means "accepts any specimen".
 
 **6. Each FR-75 drift group takes its code and display from the map.** `SPECIMEN_TABLE`
 keeps its preferred-term wording in Python, because the map holds workbook cell strings and not
@@ -79,7 +85,8 @@ unrelated shape errors. The version gate gives one clear message instead (ADR-00
 
 | Alternative | Why not |
 |---|---|
-| Keep the flag and keep `<123038009`, and refuse `Any` and `Breath` | The reviewed map codes both as the root. Every entry that says `Any` would stay unseedable, which is the gap this change closes. |
+| Keep the flag and keep `<123038009`, and refuse `Any` | The reviewed map codes `Any` as the root. Every entry that says `Any` would stay unseedable, which is the gap this change closes. |
+| Keep `Breath` on the root as a placeholder | The root means "any specimen" everywhere. A breath test would be stored, searched and filtered as an `Any` entry, and the migration's downgrade would flag it as unconstrained. |
 | Keep the flag, and map `Any` to zero values in the transform only | The map would hold a row that the transform then ignores. The flag also needs a core column, a field on every entry response, a toggle and a two-sided guard, all to carry what one code can carry. |
 | Keep the map in a Python module (ADR-0008, decision 3) | The reviewer works on rows, not on code. A Python table makes each correction a code change that the reviewer cannot diff as data. The load-time checks answer the drift concern ADR-0008 raised. |
 | Derive every drift group, wording included, from the map | The map holds workbook cell strings. Short ones such as `DNA`, `Blood` and `Hair` would match inside many preferred terms and raise a flood of drift candidates, and the phrases a curator writes in a preferred term ("stool") are not in it. |
@@ -89,9 +96,9 @@ unrelated shape errors. The version gate gives one clear message instead (ADR-00
 
 ## Consequences
 
-- **Two workbook strings share a code.** `Any` and `Breath` both seed as `123038009`, and the
-  original string is not kept, so a reader cannot tell them apart. A follow-up replaces the
-  `Breath` and `Body` rows when the new concepts exist. It must land before production release.
+- **A breath test seeds with no specimen value** until SCTAU adds a concept, and the transform
+  reports `SPECIMEN_VALUE_NO_EQUIVALENT` for it. A follow-up replaces the `Breath` and `Body`
+  rows when the new concepts exist. It must land before production release.
 - **The API change breaks old clients.** Entry responses lose `specimen_unconstrained`, and `PATCH
   /catalogue/entries/{business_key}` takes `status` only and refuses any other field. The OpenAPI
   breaking-change gate flags this, and the maintainer approves it.

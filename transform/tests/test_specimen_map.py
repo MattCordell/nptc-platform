@@ -46,7 +46,7 @@ def _problems(text: str) -> tuple[str, ...]:
 def test_the_packaged_map_carries_the_reviewed_rows() -> None:
     assert len(SPECIMEN_MAP.entries) == 87
     no_map = [entry.source for entry in SPECIMEN_MAP.entries if entry.code is None]
-    assert sorted(no_map) == ["Culture", "N/A"]
+    assert sorted(no_map) == ["Breath", "Culture", "N/A"]
 
 
 @pytest.mark.req("FR-06")
@@ -76,12 +76,41 @@ def test_a_string_the_map_does_not_cover_resolves_to_nothing(text: str) -> None:
     assert SPECIMEN_MAP.resolve(text) is None
 
 
-@pytest.mark.req("FR-88")
-def test_any_and_breath_resolve_to_the_specimen_root() -> None:
-    for text in ("Any", "Breath"):
-        entry = SPECIMEN_MAP.resolve(text)
-        assert entry is not None
-        assert entry.code == SPECIMEN_ROOT_CODE
+@pytest.mark.req("FR-89")
+def test_any_is_the_only_string_that_resolves_to_the_specimen_root() -> None:
+    entry = SPECIMEN_MAP.resolve("Any")
+    assert entry is not None
+    assert entry.code == SPECIMEN_ROOT_CODE
+    others = [e.source for e in SPECIMEN_MAP.entries if e.code == SPECIMEN_ROOT_CODE]
+    assert others == ["Any"]
+
+
+@pytest.mark.req("FR-89")
+def test_breath_has_no_equivalent_until_a_specimen_concept_exists() -> None:
+    entry = SPECIMEN_MAP.resolve("Breath")
+    assert entry is not None
+    assert entry.code is None
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.parametrize("source", ["Breath", "Anything else"])
+def test_a_row_other_than_any_that_targets_the_specimen_root_is_refused(source: str) -> None:
+    problems = _problems(
+        _tsv(_row(source, SPECIMEN_ROOT_CODE, "Specimen (specimen)", "TARGET_BROADER"))
+    )
+    assert len(problems) == 1
+    assert source in problems[0]
+    assert "line 2" in problems[0]
+    assert SPECIMEN_ROOT_CODE in problems[0]
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.parametrize("source", ["Any", "  any ", "ANY"])
+def test_any_may_target_the_specimen_root(source: str) -> None:
+    entry = parse_specimen_map(
+        _tsv(_row(source, SPECIMEN_ROOT_CODE, "Specimen (specimen)", "TARGET_EQUIVALENT"))
+    ).entries[0]
+    assert entry.code == SPECIMEN_ROOT_CODE
 
 
 @pytest.mark.req("FR-88")

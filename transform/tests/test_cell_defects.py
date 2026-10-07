@@ -619,7 +619,7 @@ def test_only_the_uncovered_string_in_a_multi_value_cell_is_reported(tmp_path: P
 
 
 @pytest.mark.req("FR-88")
-@pytest.mark.parametrize("specimen", ["N/A", "Culture"])
+@pytest.mark.parametrize("specimen", ["N/A", "Culture", "Breath"])
 def test_a_no_map_string_is_informational_and_blocks_nothing(tmp_path: Path, specimen: str) -> None:
     (finding,) = _specimen_findings(tmp_path, specimen)
     assert finding.code == "SPECIMEN_VALUE_NO_EQUIVALENT"
@@ -627,7 +627,7 @@ def test_a_no_map_string_is_informational_and_blocks_nothing(tmp_path: Path, spe
 
 
 @pytest.mark.req("FR-88")
-@pytest.mark.parametrize("specimen", ["Serum", "Any", "Breath", "Any; Breath", " serum ;PLASMA"])
+@pytest.mark.parametrize("specimen", ["Serum", "Any", " serum ;PLASMA"])
 def test_a_covered_specimen_cell_produces_no_finding(tmp_path: Path, specimen: str) -> None:
     assert _specimen_findings(tmp_path, specimen) == []
 
@@ -641,12 +641,10 @@ def test_any_beside_a_named_specimen_is_a_blocking_data_defect(tmp_path: Path) -
 
 
 @pytest.mark.req("FR-89")
-def test_a_string_mapped_to_the_root_is_treated_as_any_beside_a_named_specimen(
-    tmp_path: Path,
-) -> None:
+def test_a_no_map_string_beside_a_named_specimen_is_not_read_as_any(tmp_path: Path) -> None:
     (finding,) = _specimen_findings(tmp_path, "Breath; Serum")
-    assert finding.code == "SPECIMEN_ROOT_WITH_OTHERS"
-    assert "'Breath'" in finding.message
+    assert finding.code == "SPECIMEN_VALUE_NO_EQUIVALENT"
+    assert finding.band is Band.INFORMATIONAL
 
 
 @pytest.mark.req("FR-89")

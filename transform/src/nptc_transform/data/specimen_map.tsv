@@ -15,7 +15,7 @@ af7f07d8ddce77c5457a0dd0ef8c67d5	Blood product	119300005	Specimen from blood pro
 ac101b32dda4448cf13a93fe283dddd8	Body	371784004	Body parts for identification (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
 bed75b3eacf165394bca567360869d88	Body fluid	309051001	Body fluid specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
 be62468bc018e7e1b5dacaf93b37938b	Bone marrow	119359002	Bone marrow specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
-382f1d7e8d99f3ee29d872432b560c16	Breath	123038009	Specimen (specimen)	TARGET_BROADER	Target is broader than source	false	MAPPED
+382f1d7e8d99f3ee29d872432b560c16	Breath					true	MAPPED
 802ac8b911409405387789cd1f0352e4	Buccal cells	733104004	Swab from buccal mucosa (specimen)	TARGET_INEXACT	Target is an inexact match to source	false	MAPPED
 223ca5df47edeeeb7c65a09d52a9cfcf	Capillary	122554006	Capillary blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED
 6d78e4bd77e0e5c8f78c57b25d2fb1eb	Capillary blood	122554006	Capillary blood specimen (specimen)	TARGET_EQUIVALENT	Target is equivalent to source	false	MAPPED

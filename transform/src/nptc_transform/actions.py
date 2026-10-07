@@ -194,8 +194,8 @@ ACTION_BY_CODE: dict[str, str] = {
         "import is not blocked."
     ),
     FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT: (
-        "No action required. The specimen map marks this value as needing no "
-        "specimen, so none is seeded for it (FR-88). The import is not blocked."
+        "No action required. The specimen map has no SNOMED CT equivalent for "
+        "this value, so none is seeded for it (FR-88). The import is not blocked."
     ),
 }
 

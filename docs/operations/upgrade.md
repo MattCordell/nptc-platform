@@ -431,8 +431,10 @@ the `specimen` value `123038009`, held alone.
 
 **The flag converts before the column goes.** Each entry marked `true` that holds no specimen
 value gets one: `{"system": "http://snomed.info/sct", "code": "123038009", "display": "Any"}`.
-An entry that holds named specimens and the flag (the old rule refused that pair) keeps its named
-specimens. The conversion is raw SQL, so it writes **no audit event** and leaves `row_version`
+An entry that holds named specimens and the flag (the old rule refused that pair, but a seeded or
+direct-SQL row could hold it) keeps its named specimens, and the flag is lost. The upgrade logs a
+warning that gives the count and the business keys (the first 50) before it drops the column, so
+read the migrate output and review those entries. The conversion is raw SQL, so it writes **no audit event** and leaves `row_version`
 alone, as migrations 0009, 0013 and 0023 do. The entry's history shows no event for it. Run the
 migration with the backend stopped, which the compose `migrate` service already guarantees.
 

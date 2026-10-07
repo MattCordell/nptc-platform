@@ -583,6 +583,29 @@ describe("editing a property's values", () => {
 });
 
 describe("accepting any specimen (FR-89, ADR-0044)", () => {
+  it("tells an editor, in the specimen dialog, which single value means any specimen", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Specimen" }));
+
+    const hint = within(screen.getByRole("dialog")).getByText(/any specimen/i);
+    expect(hint).toHaveTextContent("Specimen (123038009)");
+    expect(hint).toHaveTextContent("on its own");
+    expect(hint).toHaveTextContent("Any");
+  });
+
+  it("shows no any-specimen hint in another property's dialog", async () => {
+    stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(panel().getByRole("button", { name: "Edit Discipline" }));
+
+    expect(within(screen.getByRole("dialog")).queryByText(/any specimen/i)).toBeNull();
+  });
+
   it("offers no separate any-specimen setting beside the property rows", async () => {
     stubApi([READ_OK, PROPERTIES_OK, VALUE_OPTIONS_OK, SPECIMEN_VALUE_OPTIONS_OK]);
 

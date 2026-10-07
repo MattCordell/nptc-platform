@@ -238,10 +238,11 @@ def test_any_beside_a_named_specimen_blocks_the_run(tmp_path: Path) -> None:
 
 
 @pytest.mark.req("FR-89")
-def test_two_strings_that_share_the_root_code_do_not_block(tmp_path: Path) -> None:
+def test_a_no_map_string_beside_any_neither_blocks_nor_adds_a_value(tmp_path: Path) -> None:
     result = run_transform(_specimen_workbook(tmp_path, "Any; Breath"), mode=Mode.EMIT_DATASET)
 
-    assert "SPECIMEN_ROOT_WITH_OTHERS" not in {f.code for f in result.findings}
+    specimen_codes = {f.code for f in result.findings if f.code.startswith("SPECIMEN_")}
+    assert specimen_codes == {"SPECIMEN_VALUE_NO_EQUIVALENT"}
 
 
 @pytest.mark.req("FR-04")

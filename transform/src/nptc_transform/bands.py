@@ -167,7 +167,7 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.SPECIMEN_ROOT_WITH_OTHERS: Band.DATA_DEFECT,
     # FR-88: a map code outside <<123038009 would seed a specimen the binding refuses.
     FindingCode.SPECIMEN_MAP_CODE_OUT_OF_SCOPE: Band.DATA_DEFECT,
-    # Informational: the map marks the value as needing no specimen; nothing to repair.
+    # Informational: the map has no concept for the value; nothing to repair.
     FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT: Band.INFORMATIONAL,
 }
 

@@ -331,8 +331,8 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
                     code=FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT,
                     location=cell.reference,
                     message=(
-                        f"'{header}' cell value '{shown}' is marked as needing no specimen "
-                        "in the specimen map; no specimen is seeded for it (FR-88)"
+                        f"'{header}' cell value '{shown}' has no SNOMED CT equivalent in the "
+                        "specimen map; no specimen is seeded for it (FR-88)"
                     ),
                 )
             )

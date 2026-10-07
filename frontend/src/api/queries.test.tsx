@@ -24,7 +24,6 @@ import {
   useEntryDetail,
   useEntryHistory,
   useEntryProperties,
-  usePatchEntryCore,
   usePropertyDefinition,
   usePropertyDefinitions,
   usePropertyValueOptions,
@@ -772,51 +771,6 @@ describe("useSavePropertyValues", () => {
     result.current.mutate({
       values: [{ value: "HAEM" }],
       reason: "Record the discipline",
-      expected_row_version: 3,
-    });
-
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(4);
-  });
-});
-
-describe("usePatchEntryCore", () => {
-  it("PATCHes the entry's own status, with no specimen flag", async () => {
-    const fetchMock = stubFetch(200, { status: "withdrawn", row_version: 4 });
-    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
-
-    result.current.mutate({
-      status: "withdrawn",
-      reason: "Withdrawn by the curator",
-      expected_row_version: 3,
-    });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    const request = requestFor(fetchMock);
-    expect(new URL(request.url).pathname).toBe("/api/v1/catalogue/entries/NPTC-000247");
-    expect(request.method).toBe("PATCH");
-    expect(await bodyOf(request)).toEqual({
-      status: "withdrawn",
-      reason: "Withdrawn by the curator",
-      expected_row_version: 3,
-    });
-  });
-
-  it("refetches the entry on a version conflict", async () => {
-    stubFetch(409, {
-      detail: "This entry was changed by someone else since you loaded it.",
-      business_key: "NPTC-000247",
-      expected_row_version: 3,
-      current_row_version: 4,
-      conflicts: [],
-      changed_by: "A Curator",
-      changed_at: "2026-09-02T00:00:00Z",
-    });
-    const { result } = renderHook(() => usePatchEntryCore("NPTC-000247"), { wrapper });
-
-    result.current.mutate({
-      status: "withdrawn",
-      reason: "Withdrawn by the curator",
       expected_row_version: 3,
     });
 

@@ -60,7 +60,9 @@ generic refusal — you can see exactly which one to fix.
 
 A test that accepts any specimen holds one **Specimen** value: the concept **Specimen**
 (code `123038009`), on its own. Record it through the Specimen property's Edit dialog, as
-you would any other specimen. There is no separate setting for it.
+you would any other specimen. There is no separate setting for it. The dialog reminds you
+which value to pick: the picker names the concept **Specimen**, and an entry loaded from the
+workbook shows the same value as **Any**.
 
 The root cannot sit beside another specimen. If you try, the save is refused with a message
 against the value that conflicts: remove the root, or remove the named specimens. An entry

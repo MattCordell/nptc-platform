@@ -467,7 +467,7 @@ The source notes proposed binding `Discipline` to `<394595002` and `Specimen` to
 
 The root value keeps the model honest. An entry with no specimen values is unfilled, and an entry that holds `123038009` accepts any specimen. These are different facts, and a consumer tells them apart by reading one property. Exports render `123038009` as `Any` for continuity with the current published format.
 
-**Specimen vocabulary (ADR-0044).** A terminologist-reviewed map from each workbook specimen string to a SNOMED CT code is the one source of specimen vocabulary. The transform treats a workbook specimen string that the map does not cover as a data defect, so it fails where the seed loader would. A string the map marks as having no equivalent (`N/A`, `Culture`) yields no specimen value. `Breath` and `Body` are mapped to a broader or inexact concept until SCTAU and the October release add more precise ones.
+**Specimen vocabulary (ADR-0044).** A terminologist-reviewed map from each workbook specimen string to a SNOMED CT code is the one source of specimen vocabulary. The transform treats a workbook specimen string that the map does not cover as a data defect, so it fails where the seed loader would. A string the map marks as having no equivalent (`N/A`, `Culture`, and `Breath` until SCTAU adds a concept) yields no specimen value. Only `Any` may map to the specimen root. `Body` is mapped to an inexact concept until the October release adds a more precise one.
 
 #### Discipline and Subgroup: governed RCPA local code systems
 

@@ -241,16 +241,18 @@ def test_the_specimen_root_alone_is_accepted(
 
 
 @pytest.mark.req("FR-89")
-def test_two_strings_that_share_the_root_code_are_accepted(
+def test_the_root_under_two_displays_is_not_a_root_beside_another_specimen(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document()
     document["entries"][0]["properties"]["specimen"] = [
         {"value": "Any", "code": "123038009"},
-        {"value": "Breath", "code": "123038009"},
+        {"value": "Specimen", "code": "123038009"},
     ]
 
-    assert read_import_dataset(write_dataset(document)).entries[0]
+    entry = read_import_dataset(write_dataset(document)).entries[0]
+
+    assert {value.code for value in entry.properties.specimen} == {"123038009"}
 
 
 def test_a_dataset_that_still_carries_the_retired_flag_is_refused(

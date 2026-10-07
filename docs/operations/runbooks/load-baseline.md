@@ -73,11 +73,12 @@ Do not guess a code to get past the block.
 
 Two specimen outcomes remain after a clean run. Check both in `report.md`:
 
-- **`SPECIMEN_VALUE_NO_EQUIVALENT`** (informational). The map marks a string such as `N/A` as
-  needing no specimen, so none is seeded. Nothing to do.
-- **`Any` and `Breath`.** Both are coded as `123038009 |Specimen|`, so a reader cannot tell them
-  apart in the catalogue. `Body` uses `371784004`. These rows are placeholders until SNOMED CT
-  has more precise concepts (see the `README.md` beside the map). Confirm with the
+- **`SPECIMEN_VALUE_NO_EQUIVALENT`** (informational). The map has no code for a string such as
+  `N/A` or `Breath`, so no specimen is seeded for it. Nothing to do, but a breath test loads
+  with no specimen until SNOMED CT has a concept for it.
+- **`Body`.** It uses `371784004`, an inexact match, and `Breath` is no-map. Both rows are
+  placeholders until SNOMED CT has more precise concepts (see the `README.md` beside the map).
+  Confirm with the
   terminologist that the placeholders are acceptable for this load.
 
 ## Step 4: Emit the import dataset

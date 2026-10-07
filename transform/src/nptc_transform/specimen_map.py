@@ -4,7 +4,11 @@
 case-insensitive equality and by nothing else: no prefix, substring or similarity match, because a
 wrong code seeded silently is worse than a row that blocks (FR-88).
 
-A row marked "no map" has no code. It names a test that needs no specimen, so it yields no value.
+A row marked "no map" has no code and yields no value. It names a test that needs no specimen, or
+a specimen that SNOMED CT has no concept for yet.
+
+Only ``Any`` may target the specimen root: every rule downstream reads that code as "any specimen",
+so a second string that borrowed it would silently become "any specimen" too.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from importlib import resources
 from typing import Final
 
 from nptc_shared.sctid import has_valid_check_digit, has_valid_format
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 from nptc_shared.text import normalise_for_comparison
 
 _SOURCE: Final = "Source display"
@@ -31,6 +36,7 @@ _REQUIRED_COLUMNS: Final = (_SOURCE, _CODE, _DISPLAY, _RELATIONSHIP, _NO_MAP, _S
 _KNOWN_RELATIONSHIPS: Final = frozenset({"TARGET_EQUIVALENT", "TARGET_INEXACT", "TARGET_BROADER"})
 _REVIEWED_STATUS: Final = "MAPPED"
 _BOM: Final = chr(0xFEFF)
+_ROOT_SOURCE: Final = "any"
 
 SPECIMEN_MAP_FILE: Final = "specimen_map.tsv"
 
@@ -103,6 +109,11 @@ def _entry_from_row(row: dict[str, str], line: int, problems: list[str]) -> Spec
         return SpecimenMapEntry(source, None, None, None, line)
     if not (has_valid_format(code) and has_valid_check_digit(code)):
         problem(f"{source!r} has target code {code!r}, which is not a valid SCTID")
+    if code == SPECIMEN_ROOT_CODE and normalise_specimen_key(source) != _ROOT_SOURCE:
+        problem(
+            f"{source!r} targets the specimen root {code}, which only 'Any' may use "
+            "(mark it no-map until a concept exists)"
+        )
     if not display:
         problem(f"{source!r} has no target display")
     if relationship not in _KNOWN_RELATIONSHIPS:

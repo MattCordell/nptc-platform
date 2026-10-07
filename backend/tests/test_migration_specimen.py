@@ -9,6 +9,7 @@ missing and never revisits a row.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -296,6 +297,40 @@ def test_a_flagged_entry_that_already_holds_a_specimen_keeps_only_its_named_valu
     _migrate(engine, "upgrade", "0024")
 
     assert [row[1]["code"] for row in _specimen_rows(engine)["NPTC-900001"]] == ["119364003"]
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_the_upgrade_names_each_flagged_entry_whose_flag_it_drops_unconverted(
+    engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    _at_0023_with(
+        engine,
+        {"NPTC-900001": True, "NPTC-900002": True, "NPTC-900003": False},
+        {"NPTC-900001": ["119364003"], "NPTC-900003": ["119364003"]},
+    )
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _migrate(engine, "upgrade", "0024")
+
+    (record,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert "1 " in record.getMessage()
+    assert "NPTC-900001" in record.getMessage()
+    assert "NPTC-900002" not in record.getMessage()
+    assert "NPTC-900003" not in record.getMessage()
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_the_upgrade_is_silent_when_every_flag_converts_cleanly(
+    engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    _at_0023_with(engine, {"NPTC-900001": True, "NPTC-900002": False})
+
+    with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
+        _migrate(engine, "upgrade", "0024")
+
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
 
 
 @pytest.mark.req("FR-89")
