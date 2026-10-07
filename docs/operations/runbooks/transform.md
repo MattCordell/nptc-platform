@@ -36,7 +36,7 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
 | `--emit-dataset` | off | Opt into the mutating mode: apply the auto-correctable band's repairs and write `import-dataset.json` alongside the report (FR-70, FR-76, P0-9). Requires `--release-name`. |
 | `--release-name` | *(none)* | The synthetic baseline release's name, `YYYY-MM` (FR-57), e.g. `2026-06`. Required with `--emit-dataset`; refused without it - the name cannot be derived from the workbook or the clock without breaking FR-73's determinism guarantee, so it must be supplied explicitly. |
-| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below), and run the FR-75 semantic-drift review of specimen/timing wording (see "Interpreting a semantic-drift finding" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below), run the FR-75 semantic-drift review of specimen/timing wording (see "Interpreting a semantic-drift finding" below), and check that every code in the specimen map is an active concept under `<<123038009` (see "The specimen map" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -126,7 +126,6 @@ corrected, and each defect is reported under one of two codes chosen by
 | `WHITESPACE_ONLY_CELL` | A.3 | The cell's text is nothing *but* whitespace - stripping it would empty the cell entirely, which only a curator can confirm is the intended value. |
 | `CODE_CELL_NOT_TEXT` | A.2 | The code column holds a numeric cell rather than text (FR-06). The digits are intact, so coercing the number to a string deterministically recovers the SCTID. |
 | `EMPTY_SYNONYM_REMOVED` | - | The `RCPA Synonyms` cell has a doubled delimiter (e.g. `'Zovirax;;Cyclir'`), which would otherwise produce an empty synonym (FR-04). The empty part is dropped; the two real synonyms are seeded. |
-| `SPECIMEN_UNCONSTRAINED_RESOLVED` | - | The `Specimen` cell's value is `'Any'` (FR-89). No specimen code is ever emitted for it - the entry is seeded with `specimen_unconstrained: true` and zero specimen values instead. |
 | `COMPOUND_VALUE_SPLIT` | - | A `Discipline` or `Subgroup` cell holds a compound `'X or Y'` value (FR-90). It is split into separate property values rather than seeded as one string. |
 | `CODE_CELL_INVALID_TYPE` | A.2 | The code column holds a date, boolean, formula or error cell rather than text. Unlike a number, there is no value to recover here - only a wrong one to report, so this is not treated the same as `CODE_CELL_NOT_TEXT`. |
 | `NUMERIC_PRECISION_RISK` | A.2 | Any numeric-typed cell, in any column, holding an integer of 16 or more significant digits - the point past which Excel's own 15-significant-decimal-digit ceiling silently corrupts a long SCTID. (15 digits is exactly representable, so it is *not* flagged.) A cell whose raw value has already overflowed Excel's numeric range entirely (rare - a malformed numeric cell text openpyxl parses as `inf`) is flagged with a distinct message rather than a fabricated digit count. The digits are already gone by the time this fires, so there is nothing left to coerce. |
@@ -144,7 +143,10 @@ corrected, and each defect is reported under one of two codes chosen by
 | `TERM_SPECIMEN_NOT_MODELLED` | - | The RCPA preferred term asserts a specimen (e.g. "urine", "CSF") the bound concept constrains no `Has specimen` (116686009) value for at all (FR-75, H-03) - informational, a candidate for editorial review. See "Interpreting a semantic-drift finding" below. |
 | `TERM_SPECIMEN_DIFFERS` | - | The RCPA preferred term asserts a specimen, and the bound concept *does* constrain a `Has specimen` value, but not one subsumed by the asserted specimen's root (FR-75, H-03) - informational. |
 | `TERM_TIMING_NOT_MODELLED` | - | The RCPA preferred term asserts a timing (e.g. "24 hour") that appears in neither the bound concept's own served designations nor its asserted specimen concept's - only reported when the specimen aspect itself is not asserted or already agrees (FR-75, H-03) - informational. |
-| `SPECIMEN_VALUE_UNMAPPED` | - | A `Specimen` cell value matches no entry in `specimen_table.SPECIMEN_TABLE` by exact surface form (FR-88). It is seeded verbatim as a provisional property value with no specimen code - informational, never blocking; the table is an allowlist, not a finding generator. |
+| `SPECIMEN_VALUE_UNMAPPED` | - | A `Specimen` cell value is not in the reviewed specimen map (FR-88, ADR-0044). Matching trims whitespace and ignores case, and does nothing else. It blocks the run, because the seed loader refuses a specimen with no code. See "The specimen map" below. |
+| `SPECIMEN_VALUE_NO_EQUIVALENT` | - | A `Specimen` cell value is marked "no map" in the reviewed specimen map (for example `N/A`). The test needs no specimen, so none is seeded. Informational. |
+| `SPECIMEN_ROOT_WITH_OTHERS` | - | A `Specimen` cell holds a string that maps to `123038009 \|Specimen\|` (the "any specimen" value, such as `Any`) beside another specimen (FR-89). The root must stand alone. |
+| `SPECIMEN_MAP_CODE_OUT_OF_SCOPE` | - | A code in the specimen map is not an active concept under `<<123038009` in SNOMED CT-AU (FR-88). Raised only with `--check-terminology`. The location is the map's own `Target code` cell, for example `specimen_map.tsv!C15`. |
 | `MISSING_PREFERRED_TERM` | - | A row resolves a code binding but carries no `RCPA Preferred term` value (P0-9/#31). Row-level, not cell-level - the defect is the absence of a cell, so nothing can be recovered or coerced; the row would otherwise be silently omitted from the seeded baseline. |
 | `MISSING_CODE_BINDING` | - | A row carries a `RCPA Preferred term` value but resolves no code binding at all (FR-100/#132). Mirror of `MISSING_PREFERRED_TERM` for the opposite column - reported against the preferred-term cell's reference. Unlike that code, the row is never seeded once flagged: a code-less row is judged more likely to be layout (a heading, a continuation line) than a genuine entry, so `build_dataset` omits it entirely rather than seeding an empty `code_bindings` list. |
 | `DESIGNATION_COLLISION` | - | A preferred term or synonym that the seed loader would refuse under FR-05: a preferred term equal to an earlier entry's preferred term or synonym, or a synonym equal to an earlier entry's preferred term, compared with `nptc_shared.similarity.collision_key`. Reported against the later entry's cell and naming the earlier entries by sheet and row. Only rows the loader would seed are compared. A synonym shared by two entries is a warning in the backend and is not reported. |
@@ -176,10 +178,10 @@ and this one together are the complete classification.
 
 | Band | Blocks import | Codes | What it means |
 |---|---|---|---|
-| `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT`, `EMPTY_SYNONYM_REMOVED`, `SPECIMEN_UNCONSTRAINED_RESOLVED`, `COMPOUND_VALUE_SPLIT` | The defect has one deterministic repair. Applied when `--emit-dataset` writes `import-dataset.json` (P0-9); the report itemises each one either way. |
+| `auto-correctable` | No | `INVISIBLE_CHARACTER`, `SURROUNDING_WHITESPACE`, `CODE_CELL_NOT_TEXT`, `EMPTY_SYNONYM_REMOVED`, `COMPOUND_VALUE_SPLIT` | The defect has one deterministic repair. Applied when `--emit-dataset` writes `import-dataset.json` (P0-9); the report itemises each one either way. |
 | `requires-human-decision` | Yes | `INVISIBLE_CHARACTER_AMBIGUOUS`, `WHITESPACE_ONLY_CELL` | No deterministic repair exists; a curator must decide the correct value. The import aborts until it's resolved. |
-| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION`, `MISSING_PREFERRED_TERM`, `MISSING_CODE_BINDING`, `DESIGNATION_COLLISION` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
-| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING`, `TERM_SPECIMEN_NOT_MODELLED`, `TERM_SPECIMEN_DIFFERS`, `TERM_TIMING_NOT_MODELLED`, `SPECIMEN_VALUE_UNMAPPED` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
+| `data-defect` | Yes | `CODE_CELL_INVALID_TYPE`, `NUMERIC_PRECISION_RISK`, `UNRECOGNISED_LAYOUT`, `CODE_NOT_WELL_FORMED`, `CODE_NOT_FOUND`, `CODE_INACTIVE`, `OUT_OF_SCOPE_HIERARCHY`, `LABEL_BOUND_TO_OTHER_CONCEPT`, `LABEL_MATCHES_NO_DESIGNATION`, `MISSING_PREFERRED_TERM`, `MISSING_CODE_BINDING`, `DESIGNATION_COLLISION`, `SPECIMEN_VALUE_UNMAPPED`, `SPECIMEN_ROOT_WITH_OTHERS`, `SPECIMEN_MAP_CODE_OUT_OF_SCOPE` | The source data itself is wrong or unrecoverable; RCPA-QAP must fix it at source. The import aborts until it's resolved. |
+| `informational` | No | `SHEET_NOT_SPIA_DATA`, `UNEXPECTED_SEMANTIC_TAG`, `LABEL_DESIGNATION_DRIFT`, `LABEL_DIFFERS_FROM_PREFERRED_TERM`, `PROBABLE_MISSPELLING`, `INCONSISTENT_SPELLING`, `TERM_SPECIMEN_NOT_MODELLED`, `TERM_SPECIMEN_DIFFERS`, `TERM_TIMING_NOT_MODELLED`, `SPECIMEN_VALUE_NO_EQUIVALENT` | Not a defect at all - not one of FR-71's three bands, see [ADR-0004](../../adr/0004-informational-band-and-code-level-band-assignment.md). Reported so an operator can see it, without treating it as something to fix. |
 
 A run's exit code (above) is `1` if *any* finding blocks - a single
 `requires-human-decision` or `data-defect` finding aborts the whole run, no
@@ -199,14 +201,17 @@ class, cite exact cell references, and state the required action. Both
 files satisfy all three from the same grouped data
 (`report_writer._group_findings`); neither is derived from the other.
 
-### `report.json` (`schema_version` 8)
+### `report.json` (`schema_version` 9)
 
 Findings are grouped by `code` into a `defect_classes` array - the flat,
 per-finding `findings` list schema 6 had is gone; nothing outside
 `transform/` reads `report.json`, so there was no reason to keep both and
 let the two copies drift. Schema 8 (P0-9/#31) adds five new `FindingCode`
 values to the vocabulary `defect_classes` can carry - the shape is otherwise
-unchanged from schema 7.
+unchanged from schema 7. Schema 9 (ADR-0044) removes
+`SPECIMEN_UNCONSTRAINED_RESOLVED`, adds `SPECIMEN_VALUE_NO_EQUIVALENT`,
+`SPECIMEN_ROOT_WITH_OTHERS` and `SPECIMEN_MAP_CODE_OUT_OF_SCOPE`, adds the
+`specimen_map` provenance block, and drops `drift.specimen_column_values_unmapped`.
 
 ```json
 "defect_classes": [
@@ -278,7 +283,6 @@ action:
 | `SURROUNDING_WHITESPACE` | auto-correctable | No action required. The transform strips the leading and/or trailing whitespace automatically. The import is not blocked. |
 | `CODE_CELL_NOT_TEXT` | auto-correctable | No action required. The transform coerces this code cell to text, recovering the SCTID's digits exactly, automatically. The import is not blocked. |
 | `EMPTY_SYNONYM_REMOVED` | auto-correctable | No action required. The transform removes the empty synonym a doubled delimiter produces automatically (FR-04). The import is not blocked. |
-| `SPECIMEN_UNCONSTRAINED_RESOLVED` | auto-correctable | No action required. The transform records specimen_unconstrained and emits no specimen code for 'Any' automatically (FR-89). The import is not blocked. |
 | `COMPOUND_VALUE_SPLIT` | auto-correctable | No action required. The transform splits this compound value into separate property values automatically (FR-90). The import is not blocked. |
 | `INVISIBLE_CHARACTER_AMBIGUOUS` | requires-human-decision | RCPA-QAP must open the cell and decide the correct value: this character has no deterministic repair. The import is blocked until the cell is corrected at source. |
 | `WHITESPACE_ONLY_CELL` | requires-human-decision | Confirm whether the cell is meant to be empty or to hold a value, and set it explicitly. The transform will not decide on your behalf that whitespace means empty. The import is blocked until the cell is corrected at source. |
@@ -294,6 +298,9 @@ action:
 | `MISSING_PREFERRED_TERM` | data-defect | RCPA-QAP must supply the 'RCPA Preferred term' value for this row at source; no entry can be seeded without one. The import is blocked until it is corrected. |
 | `MISSING_CODE_BINDING` | data-defect | RCPA-QAP must supply a 'Terminology binding (SNOMED CT-AU)' value for this row at source, or confirm the row is layout (for example a heading) and remove it. No entry is seeded for this row until it is corrected. |
 | `DESIGNATION_COLLISION` | data-defect | RCPA-QAP must decide which entry changes: reword the term on one of the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). The import is blocked until it is resolved. |
+| `SPECIMEN_VALUE_UNMAPPED` | data-defect | A terminologist must add this specimen string to the specimen map with a verified SNOMED CT code, or RCPA-QAP must correct the cell to a string the map already covers (FR-88). The import is blocked until it is resolved. |
+| `SPECIMEN_ROOT_WITH_OTHERS` | data-defect | RCPA-QAP must keep 'Any' as the only specimen in the cell, or remove it and list the named specimens (FR-89). The import is blocked until the cell is corrected at source. |
+| `SPECIMEN_MAP_CODE_OUT_OF_SCOPE` | data-defect | A terminologist must correct the target code in the specimen map to an active concept under 123038009 (Specimen) (FR-88). The import is blocked until the map is corrected. |
 | `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
 | `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
 | `LABEL_DESIGNATION_DRIFT` | informational | No action required. Server-sourced FSN seeding is deferred (ADR-0010); the published label is seeded as-is, and the drift is recorded for editorial review only if unexpected (FR-97). The import is not blocked. |
@@ -303,7 +310,7 @@ action:
 | `TERM_SPECIMEN_NOT_MODELLED` | informational | No action required to proceed. A terminologist should review whether the bound concept ought to model the asserted specimen (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
 | `TERM_SPECIMEN_DIFFERS` | informational | No action required to proceed. A terminologist should review whether the bound concept's modelled specimen agrees with the one asserted by the term (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
 | `TERM_TIMING_NOT_MODELLED` | informational | No action required to proceed. A terminologist should review whether the asserted timing is genuinely unmodelled (FR-75); this is a candidate for editorial review, not a confirmed defect. The import is not blocked. |
-| `SPECIMEN_VALUE_UNMAPPED` | informational | No action required to proceed. A terminologist should review whether this specimen value should be added to the specimen table (FR-88); it is seeded with no specimen code in the meantime. The import is not blocked. |
+| `SPECIMEN_VALUE_NO_EQUIVALENT` | informational | No action required. The specimen map marks this value as needing no specimen, so none is seeded for it (FR-88). The import is not blocked. |
 
 This table is generated by hand from `nptc_transform.actions.ACTION_BY_CODE`
 and is kept in sync with it by a dedicated test
@@ -319,7 +326,7 @@ written) without it or with a malformed one.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tool_version": "0.0.0",
   "source": {"filename": "SPIA-Requesting.xlsx", "sha256": "…"},
   "baseline_release": {
@@ -332,7 +339,6 @@ written) without it or with a malformed one.
       "source": {"sheet": "Requesting", "row": 2, "legacy_version": "4", "legacy_history": "…"},
       "preferred_term": "Acid fast bacilli culture",
       "status": "active",
-      "specimen_unconstrained": false,
       "designations": [{"term": "…", "use": "preferred", "language": "en-AU", "status": "active"}],
       "code_bindings": [
         {
@@ -378,17 +384,17 @@ is exactly what `baseline_release` replaces. The existing hand-typed values
 are preserved verbatim under `source.legacy_version`/`legacy_history` -
 immutable seeding provenance, not an editable field.
 
-**Specimen: verbatim always, code only where certain** (FR-88/FR-89/FR-92).
-A specimen value's `code` is populated only on an *exact*, casefolded match
-against `specimen_table.SPECIMEN_TABLE`'s own surface forms - never the
-word-boundary substring heuristic the FR-75 semantic-drift review uses for
-its own, lower-stakes purpose. An unmapped value is still seeded, verbatim,
-with `code: null` (`SPECIMEN_VALUE_UNMAPPED`, informational, never
-blocking). `'Any'` sets `specimen_unconstrained: true` and yields no
-specimen value for itself (FR-89) - but does not discard any other value the
-same cell asserts. The published data is not guaranteed to keep `'Any'` from
-co-occurring with a named specimen on one row, and the dataset seeds exactly
-what the report already describes for that cell, never less.
+**Specimen: the reviewed map decides** (FR-88, FR-89, ADR-0044). A specimen
+value keeps the workbook string as `value` and takes its `code` from the
+reviewed specimen map: trimmed, case-insensitive equality, never the
+word-boundary heuristic the FR-75 semantic-drift review uses for its own,
+lower-stakes purpose. A string the map marks "no map" yields no value. A
+string the map does not cover blocks the run, so no dataset is written
+(`SPECIMEN_VALUE_UNMAPPED`). `'Any'` is coded as the specimen root
+`123038009` like any other string, and it must stand alone in its cell
+(`SPECIMEN_ROOT_WITH_OTHERS`). `schema_version` 2 drops the
+`specimen_unconstrained` entry field that version 1 carried, so the loader
+refuses a version 1 file with a message that names the version.
 
 **A blocking finding aborts emission, not the report.** Exit `1`, the report
 is written as usual, and `import-dataset.json` is not written at all - a
@@ -403,6 +409,38 @@ written only after the report - only the dataset file is missing.
 `fsn`/`au_preferred_term` come from the published cell text/`null`.
 Populating these from a live sweep's served designations is a follow-up
 issue, not part of this one.
+
+## The specimen map (FR-88, FR-89)
+
+`transform/src/nptc_transform/data/specimen_map.tsv` maps every specimen string
+in the RCPA workbook to a SNOMED CT code. A terminologist reviewed it, and
+ADR-0044 records the decision. The `README.md` beside it says who prepared it,
+against which SNOMED CT-AU release, and which two rows are placeholders.
+
+A `Specimen` cell is split on `;`, and each string is looked up by trimmed,
+case-insensitive equality. There is no prefix, substring or similarity match.
+Each string ends in one of three outcomes:
+
+| The map says | The transform does | Finding |
+|---|---|---|
+| A target code | Seeds a specimen value with that code | None |
+| "No map" (`N/A`, `Culture`) | Seeds no specimen value for it | `SPECIMEN_VALUE_NO_EQUIVALENT`, informational |
+| Nothing: the string is not in the map | Blocks the run | `SPECIMEN_VALUE_UNMAPPED`, data defect |
+
+`Any` is the specimen root `123038009`, and so is `Breath` until SCTAU adds a
+concept for it. A cell that holds the root beside another specimen
+(`Any; Serum`) is `SPECIMEN_ROOT_WITH_OTHERS`.
+
+### Interpreting a specimen finding
+
+- **`SPECIMEN_VALUE_UNMAPPED`.** First read the string in the finding. If it is
+  a typo, RCPA-QAP corrects the workbook cell. If it is a real specimen the map
+  lacks, a terminologist adds one row to `specimen_map.tsv` with a verified
+  code, keeps one row for each string, and updates the provenance table. Do not
+  guess a code to get past the block: the loader would seed it.
+- **`SPECIMEN_MAP_CODE_OUT_OF_SCOPE`.** The finding names the map row by line.
+  A terminologist checks the code in SNOMED CT-AU and corrects the row. The
+  code may be inactive, mistyped or outside `<<123038009`.
 
 ## Terminology validation (`--check-terminology`)
 
@@ -441,6 +479,11 @@ catalogue scale at all:
    designations (or its asserted specimen concept's) already carry the
    wording it asserts needs no classification call at all - see the worked
    examples below.
+
+6. **The specimen map check costs `ceil(M / NPTC_TX_CHUNK_SIZE)` further
+   `$expand` calls**, where `M` is the number of distinct codes in the map (78
+   today, so one). Each is `(codes) AND <<123038009` against SNOMED CT-AU
+   (FR-88). A code missing from the answer is reported, whatever the reason.
 
 There is never one request per code per edition. A 429 is retried honouring
 `Retry-After` with exponential backoff, by the shared client (see the
@@ -616,7 +659,10 @@ Annex A.9, run through this pass:
 **The check is a heuristic over free text, not a lookup.** A term's asserted
 specimen/timing comes from matching a small, hand-typed table of surface
 forms (`nptc_transform.specimen_table.SPECIMEN_TABLE`) against the RCPA
-preferred term, word-boundary and case-folded. The table is deliberately not
+preferred term, word-boundary and case-folded. Each group's code and
+display come from the reviewed specimen map; only the wording is hand-typed,
+because the map holds workbook cell strings, not the phrases a curator writes
+inside a preferred term. The table is deliberately not
 exhaustive - see "The specimen table is an allowlist" below.
 
 **The free visibility filter is what keeps a row like row 7 silent.** Before
@@ -643,12 +689,9 @@ the two findings can, and sometimes should, fire on the same cell together.
 
 **The specimen table is an allowlist, never a finding generator.** A term
 asserting a specimen no group in the table covers is silently never
-inspected for that aspect at all. The mitigation is a coverage *audit*, never
-an assertion source: the workbook's own `Specimen` column (free text, not
-controlled vocabulary) is checked only for how many distinct values map to no
-group - `specimen_column_values_unmapped` in `report.json`'s `drift` block -
-so a systematically-uncovered specimen shows up as a number to investigate,
-not a silent zero.
+inspected for that aspect at all. The workbook's own `Specimen` column is never
+an assertion source here. It is coded through the specimen map, and a string
+the map does not cover blocks the run (see "The specimen map" below).
 
 `specimen_table_entries_unresolved` is the same "the check did not actually
 run for that many, not a silent pass" signal `unresolved_fsn_count` already
@@ -674,14 +717,13 @@ produces, but not the guarantees above:
 - The `Release` table that turns the seeded baseline into a real release (P4). The backend
   already loads `import-dataset.json` into an empty catalogue with `scripts/seed_baseline.py`
   (see [`seed-baseline.md`](seed-baseline.md)), which records the baseline as a seed record
-  until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
-  `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
-  workbook has eight such entries. It also has one FR-05 collision, which the transform now
-  reports as `DESIGNATION_COLLISION` and which blocks `--emit-dataset`.
+  until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, which the
+  transform now prevents: a `SPECIMEN_VALUE_UNMAPPED` finding blocks the run. The 50-row sample
+  workbook has one FR-05 collision, which the transform reports as `DESIGNATION_COLLISION` and
+  which blocks `--emit-dataset`.
   [`load-baseline.md`](load-baseline.md) walks through loading the real workbook.
   The development stack seeds it through `scripts/dev-seed.ps1`, which drops the colliding
-  row from a copy of the workbook first and the eight uncoded entries afterwards (see
-  "Load sample data for evaluation" in
+  row from a copy of the workbook first (see "Load sample data for evaluation" in
   [`deployment.md`](../deployment.md#load-sample-data-for-evaluation)).
 - Terminology-served enrichment of `import-dataset.json`'s `edition_hint`,
   `fsn` and `au_preferred_term` from a live `--check-terminology` sweep (see

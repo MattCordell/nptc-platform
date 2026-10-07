@@ -108,7 +108,7 @@ def test_the_key_ignores_case_and_every_kind_of_space() -> None:
 
 
 def test_a_leading_byte_order_mark_is_tolerated() -> None:
-    parsed = parse_specimen_map("﻿" + _tsv(_row("Urine")))
+    parsed = parse_specimen_map(chr(0xFEFF) + _tsv(_row("Urine")))
     assert [entry.source for entry in parsed.entries] == ["Urine"]
 
 

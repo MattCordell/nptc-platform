@@ -19,6 +19,10 @@ import openpyxl
 import pytest
 from openpyxl.worksheet.worksheet import Worksheet
 
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
+from nptc_shared.terminology.stub import StubConcept
+from nptc_transform.specimen_map import SPECIMEN_MAP
+
 
 @pytest.fixture(autouse=True)
 def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,6 +41,19 @@ def _no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _refuse)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_async)
     monkeypatch.setattr(socket.socket, "connect", _refuse)
+
+
+@pytest.fixture(scope="session")
+def specimen_map_concepts() -> tuple[StubConcept, ...]:
+    """Every code in the reviewed specimen map as an active concept under the specimen
+    root, so a stub-backed run passes the specimen map check (ADR-0044)."""
+    return tuple(
+        StubConcept(
+            code=code, fsn=f"Fixture specimen {code} (specimen)", parents=(SPECIMEN_ROOT_CODE,)
+        )
+        for code in SPECIMEN_MAP.codes
+        if code != SPECIMEN_ROOT_CODE
+    )
 
 
 # FR-63's documented published header layout.

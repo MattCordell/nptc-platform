@@ -26,6 +26,7 @@ import math
 import re
 
 from nptc_shared.sctid import has_valid_check_digit
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 from nptc_shared.text import (
     escape_invisible,
     find_invisible_characters,
@@ -36,7 +37,7 @@ from nptc_transform.cellref import CellRef
 from nptc_transform.corrections import apply_corrections
 from nptc_transform.findings import Finding
 from nptc_transform.rows import SourceRow, group_rows, has_code_binding
-from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup
+from nptc_transform.specimen_map import SPECIMEN_MAP, SpecimenMapEntry
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
 # PRD §2.1: "any SCTID of 16 digits or more entered into a numeric cell is
@@ -80,17 +81,6 @@ _COMPOUND_VALUE_RE = re.compile(r"\s+or\s+", re.IGNORECASE)
 # cardinality 0..* in the import dataset.
 _SPECIMEN_DELIMITER = ";"
 
-# FR-89: the one specimen value that must never resolve to a specimen code.
-_SPECIMEN_ANY = "any"
-
-#: Every ``SpecimenGroup.terms`` surface form, casefolded, to the group it
-#: names. An exact-match index, not the word-boundary substring matching
-#: ``semantic_drift.py`` uses for its free-text heuristic: seeding a specimen
-#: *code* needs certainty a heuristic cannot give (FR-88, FR-92).
-_SPECIMEN_TERMS_TO_GROUP: dict[str, SpecimenGroup] = {
-    term: group for group in SPECIMEN_TABLE for term in group.terms
-}
-
 
 def split_synonyms(text: str) -> tuple[str, ...]:
     """Splits a ``RCPA Synonyms`` cell into individual designation values (FR-04).
@@ -124,12 +114,12 @@ def split_specimen_values(text: str) -> tuple[str, ...]:
     return tuple(part for part in parts if part)
 
 
-def resolve_specimen_term(value: str) -> SpecimenGroup | None:
-    """The ``SpecimenGroup`` ``value`` names by an *exact*, casefolded match
-    against ``specimen_table.SPECIMEN_TABLE``'s own surface forms, or
-    ``None`` if it names none of them (``SPECIMEN_VALUE_UNMAPPED``, FR-88).
+def resolve_specimen_term(value: str) -> SpecimenMapEntry | None:
+    """The reviewed-map row ``value`` names, or ``None`` if the map does not cover it
+    (``SPECIMEN_VALUE_UNMAPPED``). Equality after trimming and casefolding, never a
+    heuristic: seeding a specimen *code* needs certainty (FR-88, ADR-0044).
     """
-    return _SPECIMEN_TERMS_TO_GROUP.get(value.strip().casefold())
+    return SPECIMEN_MAP.resolve(value)
 
 
 def _digit_count(value: int) -> int:
@@ -319,32 +309,54 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
         return ()
     header = escape_invisible(cell.header)
     findings: list[Finding] = []
+    coded: list[tuple[str, str]] = []
     for value in split_specimen_values(apply_corrections(cell.text)):
-        if value.casefold() == _SPECIMEN_ANY:
-            findings.append(
-                Finding(
-                    code=FindingCode.SPECIMEN_UNCONSTRAINED_RESOLVED,
-                    location=cell.reference,
-                    message=(
-                        f"'{header}' cell value 'Any' resolves to specimen_unconstrained; "
-                        "no specimen code is ever emitted for it (FR-89)"
-                    ),
-                )
-            )
-            continue
-        if resolve_specimen_term(value) is None:
+        entry = resolve_specimen_term(value)
+        shown = escape_invisible(value)
+        if entry is None:
             findings.append(
                 Finding(
                     code=FindingCode.SPECIMEN_VALUE_UNMAPPED,
                     location=cell.reference,
                     message=(
-                        f"'{header}' cell value '{escape_invisible(value)}' matches no "
-                        "entry in the specimen table; seeded verbatim with no specimen "
-                        "code (FR-88)"
+                        f"'{header}' cell value '{shown}' is not in the reviewed specimen "
+                        "map; add it to the map with a verified code, or correct the "
+                        "workbook value (FR-88)"
                     ),
                 )
             )
+        elif entry.code is None:
+            findings.append(
+                Finding(
+                    code=FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT,
+                    location=cell.reference,
+                    message=(
+                        f"'{header}' cell value '{shown}' is marked as needing no specimen "
+                        "in the specimen map; no specimen is seeded for it (FR-88)"
+                    ),
+                )
+            )
+        else:
+            coded.append((shown, entry.code))
+    roots = [shown for shown, code in coded if code == SPECIMEN_ROOT_CODE]
+    named = [shown for shown, code in coded if code != SPECIMEN_ROOT_CODE]
+    if roots and named:
+        findings.append(
+            Finding(
+                code=FindingCode.SPECIMEN_ROOT_WITH_OTHERS,
+                location=cell.reference,
+                message=(
+                    f"'{header}' cell value {_quoted(roots)} maps to {SPECIMEN_ROOT_CODE} "
+                    f"(any specimen), which must stand alone, but the cell also lists "
+                    f"{_quoted(named)} (FR-89)"
+                ),
+            )
+        )
     return tuple(findings)
+
+
+def _quoted(values: list[str]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
 
 
 def _row_has_code(row: SourceRow) -> bool:

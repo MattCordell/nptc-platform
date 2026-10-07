@@ -14,6 +14,7 @@ from nptc_transform.misspelling import THRESHOLDS, AuthoritySource, MisspellingR
 from nptc_transform.pipeline import Finding, Mode, RunResult, SourceRef
 from nptc_transform.report_writer import SCHEMA_VERSION, write_report
 from nptc_transform.semantic_drift import DriftRun
+from nptc_transform.specimen_map_check import SpecimenMapRun
 from nptc_transform.terminology_check import EditionResolution, TerminologyRun
 
 
@@ -266,7 +267,7 @@ def test_a_misspelling_run_records_its_thresholds_verbatim(tmp_path: Path) -> No
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 8
+    assert payload["schema_version"] == SCHEMA_VERSION == 9
     assert payload["misspellings"]["thresholds"] == THRESHOLDS
     assert payload["misspellings"]["authority_source"] == "SWEEP"
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
@@ -324,7 +325,6 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
             term_specimen_differs_count=1,
             term_timing_not_modelled_count=1,
             specimen_table_entries_unresolved=1,
-            specimen_column_values_unmapped=1,
             describe_requests=1,
             classification_requests=3,
         ),
@@ -334,7 +334,7 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
     write_report(result, report_dir)
 
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == SCHEMA_VERSION == 8
+    assert payload["schema_version"] == SCHEMA_VERSION == 9
     assert payload["drift"] == {
         "rows_examined": 4,
         "rows_excluded": 1,
@@ -342,7 +342,6 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
         "term_specimen_differs_count": 1,
         "term_timing_not_modelled_count": 1,
         "specimen_table_entries_unresolved": 1,
-        "specimen_column_values_unmapped": 1,
         "describe_requests": 1,
         "classification_requests": 3,
         "resolved_versions": [],
@@ -350,7 +349,6 @@ def test_a_drift_run_records_its_provenance_counters(tmp_path: Path) -> None:
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     assert "4 row(s) examined, 1 not examined" in markdown_text
     assert "1 specimen-table concept(s) could not be resolved" in markdown_text
-    assert "1 distinct `Specimen` column value(s) map to no group" in markdown_text
 
 
 @pytest.mark.req("FR-75")
@@ -366,7 +364,6 @@ def test_a_drift_run_with_zero_unresolved_counters_omits_their_lines(tmp_path: P
 
     markdown_text = (report_dir / "report.md").read_text(encoding="utf-8")
     assert "could not be resolved" not in markdown_text
-    assert "map to no group" not in markdown_text
 
 
 @pytest.mark.req("FR-75")
@@ -386,6 +383,38 @@ def test_a_run_with_no_drift_pass_says_so_rather_than_omitting_it(tmp_path: Path
     assert "Semantic drift review: `not run`" in (report_dir / "report.md").read_text(
         encoding="utf-8"
     )
+
+
+@pytest.mark.req("FR-88")
+def test_a_specimen_map_run_records_its_provenance(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64),
+        mode=Mode.REPORT_ONLY,
+        specimen_map=SpecimenMapRun(codes_checked=78, resolved_versions=("http://v/1",)),
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["specimen_map"] == {"codes_checked": 78, "resolved_versions": ["http://v/1"]}
+    assert "Specimen map check: 78 code(s) checked" in (report_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.req("FR-88")
+def test_a_run_with_no_specimen_map_check_says_so_rather_than_omitting_it(tmp_path: Path) -> None:
+    result = RunResult(
+        source=SourceRef(filename="sample.xlsx", sha256="a" * 64), mode=Mode.REPORT_ONLY
+    )
+    report_dir = tmp_path / "report"
+
+    write_report(result, report_dir)
+
+    payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert payload["specimen_map"] is None
+    assert "Specimen map check: `not run`" in (report_dir / "report.md").read_text(encoding="utf-8")
 
 
 def test_workbook_text_cannot_break_the_markdown_table(tmp_path: Path) -> None:

@@ -30,6 +30,9 @@ _REQUIRED_COLUMNS: Final = (_SOURCE, _CODE, _DISPLAY, _RELATIONSHIP, _NO_MAP, _S
 
 _KNOWN_RELATIONSHIPS: Final = frozenset({"TARGET_EQUIVALENT", "TARGET_INEXACT", "TARGET_BROADER"})
 _REVIEWED_STATUS: Final = "MAPPED"
+_BOM: Final = chr(0xFEFF)
+
+SPECIMEN_MAP_FILE: Final = "specimen_map.tsv"
 
 
 class SpecimenMapError(ValueError):
@@ -44,12 +47,14 @@ class SpecimenMapError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class SpecimenMapEntry:
-    """One reviewed row. ``code`` is ``None`` exactly when the row is marked "no map"."""
+    """One reviewed row. ``code`` is ``None`` exactly when the row is marked "no map".
+    ``line`` is the 1-based line in the file, for a finding that points at the row."""
 
     source: str
     code: str | None
     display: str | None
     relationship: str | None
+    line: int
 
 
 def normalise_specimen_key(text: str) -> str:
@@ -59,6 +64,8 @@ def normalise_specimen_key(text: str) -> str:
 @dataclass(frozen=True)
 class SpecimenMap:
     entries: tuple[SpecimenMapEntry, ...]
+    #: The spreadsheet column letter of ``Target code``, for a finding that points at a row.
+    code_column: str = "C"
 
     @cached_property
     def _by_key(self) -> dict[str, SpecimenMapEntry]:
@@ -93,20 +100,20 @@ def _entry_from_row(row: dict[str, str], line: int, problems: list[str]) -> Spec
     if flag == "true":
         if code or display or relationship:
             problem(f"{source!r} is marked no-map but carries a target")
-        return SpecimenMapEntry(source, None, None, None)
+        return SpecimenMapEntry(source, None, None, None, line)
     if not (has_valid_format(code) and has_valid_check_digit(code)):
         problem(f"{source!r} has target code {code!r}, which is not a valid SCTID")
     if not display:
         problem(f"{source!r} has no target display")
     if relationship not in _KNOWN_RELATIONSHIPS:
         problem(f"{source!r} has unknown relationship {relationship!r}")
-    return SpecimenMapEntry(source, code, display, relationship)
+    return SpecimenMapEntry(source, code, display, relationship, line)
 
 
 def parse_specimen_map(text: str) -> SpecimenMap:
     """Parses and validates the TSV, raising one ``SpecimenMapError`` that lists every defect."""
     reader = csv.DictReader(
-        io.StringIO(text.removeprefix("﻿"), newline=""), delimiter="\t", quoting=csv.QUOTE_NONE
+        io.StringIO(text.removeprefix(_BOM), newline=""), delimiter="\t", quoting=csv.QUOTE_NONE
     )
     missing = [column for column in _REQUIRED_COLUMNS if column not in (reader.fieldnames or ())]
     if missing:
@@ -136,11 +143,12 @@ def parse_specimen_map(text: str) -> SpecimenMap:
         problems.append("the map has no rows")
     if problems:
         raise SpecimenMapError(problems)
-    return SpecimenMap(tuple(entries))
+    column = (reader.fieldnames or []).index(_CODE)
+    return SpecimenMap(tuple(entries), chr(ord("A") + column) if column < 26 else "A")
 
 
 def _load_packaged() -> SpecimenMap:
-    resource = resources.files("nptc_transform").joinpath("data", "specimen_map.tsv")
+    resource = resources.files("nptc_transform").joinpath("data", SPECIMEN_MAP_FILE)
     return parse_specimen_map(resource.read_text(encoding="utf-8-sig"))
 
 

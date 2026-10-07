@@ -26,10 +26,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "spia-requesting-sample.xlsx"
 #: --emit-dataset stops on it. The tests below that need a dataset build one
 #: directly with ``build_dataset``, which the CLI would not reach.
 EXPECTED_ENTRY_COUNT = 50
-EXPECTED_AUTO_CORRECTABLE = 154
+EXPECTED_AUTO_CORRECTABLE = 148
 EXPECTED_REQUIRES_HUMAN_DECISION = 0
 EXPECTED_DATA_DEFECT = 1
-EXPECTED_INFORMATIONAL = 13
+EXPECTED_INFORMATIONAL = 3
 
 
 @pytest.mark.req("FR-05")
@@ -47,6 +47,22 @@ def test_the_real_excerpt_is_blocked_only_by_its_designation_collision() -> None
     assert counts["requires-human-decision"] == EXPECTED_REQUIRES_HUMAN_DECISION
     assert counts["data-defect"] == EXPECTED_DATA_DEFECT
     assert counts["informational"] == EXPECTED_INFORMATIONAL
+
+
+@pytest.mark.req("FR-88")
+def test_every_specimen_string_in_the_real_excerpt_is_covered_by_the_reviewed_map() -> None:
+    """The excerpt carried ten strings the old table missed (Amniotic fluid,
+    Platelet poor plasma, Blood, Skin, Swabs, Fluids, Red cells and others): the
+    transform reported them as informational and the loader then refused them."""
+    result = run_transform(FIXTURE, mode=Mode.EMIT_DATASET)
+    sheets = read_workbook(FIXTURE)
+
+    dataset = build_dataset(sheets, result, release_name="2026-06")
+
+    assert not [f for f in result.findings if f.code.startswith("SPECIMEN_")]
+    specimens = [v for entry in dataset.entries for v in entry.properties.specimen]
+    assert specimens
+    assert all(isinstance(v.code, str) and v.code.isdigit() for v in specimens)
 
 
 @pytest.mark.req("FR-70")

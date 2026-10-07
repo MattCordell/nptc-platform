@@ -43,11 +43,6 @@ ACTION_BY_CODE: dict[str, str] = {
         "doubled delimiter produces automatically (FR-04). The import is "
         "not blocked."
     ),
-    FindingCode.SPECIMEN_UNCONSTRAINED_RESOLVED: (
-        "No action required. The transform records specimen_unconstrained "
-        "and emits no specimen code for 'Any' automatically (FR-89). The "
-        "import is not blocked."
-    ),
     FindingCode.COMPOUND_VALUE_SPLIT: (
         "No action required. The transform splits this compound value into "
         "separate property values automatically (FR-90). The import is not "
@@ -127,6 +122,22 @@ ACTION_BY_CODE: dict[str, str] = {
         "heading) and remove it. No entry is seeded for this row until it is "
         "corrected."
     ),
+    FindingCode.SPECIMEN_VALUE_UNMAPPED: (
+        "A terminologist must add this specimen string to the specimen map "
+        "with a verified SNOMED CT code, or RCPA-QAP must correct the cell to "
+        "a string the map already covers (FR-88). The import is blocked until "
+        "it is resolved."
+    ),
+    FindingCode.SPECIMEN_ROOT_WITH_OTHERS: (
+        "RCPA-QAP must keep 'Any' as the only specimen in the cell, or remove "
+        "it and list the named specimens (FR-89). The import is blocked until "
+        "the cell is corrected at source."
+    ),
+    FindingCode.SPECIMEN_MAP_CODE_OUT_OF_SCOPE: (
+        "A terminologist must correct the target code in the specimen map to "
+        "an active concept under 123038009 (Specimen) (FR-88). The import is "
+        "blocked until the map is corrected."
+    ),
     FindingCode.DESIGNATION_COLLISION: (
         "RCPA-QAP must decide which entry changes: reword the term on one of "
         "the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). "
@@ -182,11 +193,9 @@ ACTION_BY_CODE: dict[str, str] = {
         "is a candidate for editorial review, not a confirmed defect. The "
         "import is not blocked."
     ),
-    FindingCode.SPECIMEN_VALUE_UNMAPPED: (
-        "No action required to proceed. A terminologist should review "
-        "whether this specimen value should be added to the specimen "
-        "table (FR-88); it is seeded with no specimen code in the meantime. "
-        "The import is not blocked."
+    FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT: (
+        "No action required. The specimen map marks this value as needing no "
+        "specimen, so none is seeded for it (FR-88). The import is not blocked."
     ),
 }
 

@@ -509,76 +509,21 @@ def test_an_unresolvable_specimen_table_code_is_counted_and_degrades_gracefully(
     assert _drift_findings(outcome) == []
 
 
-# -- the Specimen column coverage audit --------------------------------------
+# -- the Specimen column ---------------------------------------------------
 
 
 @pytest.mark.req("FR-75")
-def test_a_specimen_column_value_mapping_to_no_group_is_counted(
+def test_the_specimen_column_is_never_an_assertion_source(
     tmp_path: Path, annex_a9_client: StubTerminologyClient
 ) -> None:
-    workbook = _workbook(
-        tmp_path,
-        [
-            ("Acetone urine", "Nasopharyngeal aspirate", ACETONE_URINE_CODE),
-        ],
-    )
+    """The term names no specimen, so there is nothing to compare, however the
+    ``Specimen`` column reads. The column is coded through the specimen map and
+    never inspected here (ADR-0044)."""
+    workbook = _workbook(tmp_path, [("Adenovirus antigen", "Faeces", ADENOVIRUS_FAECES_CODE)])
 
     outcome = _run(workbook, annex_a9_client)
 
-    assert outcome.run.specimen_column_values_unmapped == 1
-
-
-@pytest.mark.req("FR-75")
-def test_a_covered_specimen_column_value_is_not_counted_as_unmapped(
-    tmp_path: Path, annex_a9_client: StubTerminologyClient
-) -> None:
-    workbook = _workbook(
-        tmp_path,
-        [
-            ("Acetone urine", "Urine", ACETONE_URINE_CODE),
-        ],
-    )
-
-    outcome = _run(workbook, annex_a9_client)
-
-    assert outcome.run.specimen_column_values_unmapped == 0
-
-
-@pytest.mark.req("FR-75")
-def test_any_and_fluids_specimen_column_values_are_excluded_from_the_audit(
-    tmp_path: Path, annex_a9_client: StubTerminologyClient
-) -> None:
-    workbook = _workbook(
-        tmp_path,
-        [
-            ("Acetone urine", "Any", ACETONE_URINE_CODE),
-        ],
-    )
-
-    outcome = _run(workbook, annex_a9_client)
-
-    assert outcome.run.specimen_column_values_unmapped == 0
-
-
-@pytest.mark.req("FR-75")
-def test_a_multi_value_specimen_cell_counts_its_unmapped_value_separately(
-    tmp_path: Path, annex_a9_client: StubTerminologyClient
-) -> None:
-    """A ``Specimen`` cell asserting more than one value (FR-88's delimiter)
-    must be split before checking coverage, the same way
-    ``cell_defects.split_specimen_values`` splits it for the rest of the
-    pipeline - folding the whole cell as one value let a covered value's
-    partial match hide an unmapped sibling value's gap (issue #130)."""
-    workbook = _workbook(
-        tmp_path,
-        [
-            ("Acetone urine", "Serum; Nasopharyngeal aspirate", ACETONE_URINE_CODE),
-        ],
-    )
-
-    outcome = _run(workbook, annex_a9_client)
-
-    assert outcome.run.specimen_column_values_unmapped == 1
+    assert _drift_findings(outcome) == []
 
 
 # -- idempotency of the pure function itself ---------------------------------

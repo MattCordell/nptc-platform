@@ -1197,6 +1197,37 @@ def test_codes_with_attribute_value_closure_catches_a_descendant_specimen_value(
     assert result == ("100000001",)
 
 
+@pytest.mark.req("FR-88")
+def test_codes_subsumed_by_returns_only_codes_under_the_root_and_the_root_itself() -> None:
+    root = "123038009"
+    under = _procedure("100000001", parents=(root,))
+    outside = _procedure("100000002")
+    client = _stub(under, outside)
+
+    result = TerminologySweep(client).codes_subsumed_by(
+        ["100000001", "100000002", "100000003", root], root=root, edition=SNOMED_CT_AU
+    )
+
+    # 100000002 sits elsewhere, 100000003 is not in the edition at all: both are missing.
+    assert result == ("100000001", root)
+
+
+@pytest.mark.req("FR-88")
+def test_codes_subsumed_by_chunks_and_reports_the_resolved_versions() -> None:
+    root = "123038009"
+    codes = _codes(5)
+    client = _stub(*(_procedure(code, parents=(root,)) for code in codes))
+    versions: set[str] = set()
+
+    result = TerminologySweep(client, chunk_size=2).codes_subsumed_by(
+        codes, root=root, edition=SNOMED_CT_AU, versions=versions
+    )
+
+    assert result == codes
+    assert len([r for r in client.requests if " AND <<" in r.detail]) == 3  # ceil(5 / 2)
+    assert versions == {"http://snomed.info/sct/32506021000036107/version/20260531"}
+
+
 @pytest.mark.req("FR-75")
 def test_describe_resolves_every_code_directly_not_through_a_hierarchy_expression() -> None:
     concept = StubConcept(
