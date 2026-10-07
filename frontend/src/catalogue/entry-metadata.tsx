@@ -27,7 +27,9 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
         </dd>
 
         <dt className="font-medium">Term length</dt>
-        <dd className="m-0">{entry.length} characters</dd>
+        <dd className="m-0">
+          {entry.length} {entry.length === 1 ? "character" : "characters"}
+        </dd>
 
         <dt className="font-medium">Disciplines</dt>
         <dd className="m-0">

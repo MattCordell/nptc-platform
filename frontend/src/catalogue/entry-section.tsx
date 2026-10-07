@@ -34,6 +34,9 @@ export function ScrollRegion({
   children: ReactNode;
 }) {
   return (
+    // The rule would have this region unfocusable, but axe's
+    // `scrollable-region-focusable` requires focus on anything that scrolls.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
     <div role="region" aria-label={label} tabIndex={0} className="overflow-x-auto">
       {children}
     </div>

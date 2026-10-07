@@ -487,6 +487,12 @@ describe("the details sidebar", () => {
     expect(facts?.textContent).toContain("1 September 2026");
   });
 
+  it("writes a one-character term length in the singular", async () => {
+    await renderEntry([{ ...ENTRY_OK, body: entry({ length: 1 }) }, HISTORY_OK]);
+
+    expect(await screen.findByText("1 character")).toBeInTheDocument();
+  });
+
   it("never shows a row version", async () => {
     const { container } = await renderEntry();
     await screen.findByRole("heading", { level: 1, name: "Ferritin" });
