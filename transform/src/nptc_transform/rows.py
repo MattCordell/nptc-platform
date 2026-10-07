@@ -14,7 +14,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from nptc_transform.workbook import Cell, ColumnRole, Sheet
+from nptc_transform.workbook import Cell, ColumnRole, Sheet, column_role
 
 
 @dataclass(frozen=True)
@@ -46,4 +46,31 @@ def group_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
     return tuple(
         SourceRow(sheet=sheet_name, row=row, cells=dict(cells))
         for (sheet_name, row), cells in sorted(grouped.items())
+    )
+
+
+def resolves_code_column(sheet: Sheet) -> bool:
+    """True if ``sheet``'s header row resolves the code column."""
+    roles = {column_role(header) for header in sheet.headers} - {ColumnRole.UNKNOWN}
+    return ColumnRole.CODE in roles
+
+
+def has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
+    """True if ``row_cells`` holds a code that is not blank, as ``cell_defects`` judges it."""
+    code_cell = row_cells.get(ColumnRole.CODE)
+    return code_cell is not None and bool(code_cell.text.strip())
+
+
+def seedable_rows(sheets: Sequence[Sheet]) -> tuple[SourceRow, ...]:
+    """The rows the loader would seed, in ``(sheet name, row)`` order, which is its write order.
+
+    A row with no preferred term or no code binding is already a finding, never an entry.
+    """
+    codeable = sorted(
+        (sheet for sheet in sheets if resolves_code_column(sheet)), key=lambda sheet: sheet.name
+    )
+    return tuple(
+        row
+        for row in group_rows(codeable)
+        if ColumnRole.PREFERRED_TERM in row.cells and has_code_binding(row.cells)
     )

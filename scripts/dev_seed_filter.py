@@ -10,9 +10,11 @@ The sample is a real excerpt that nobody edits. Three things stop `seed_baseline
   entry per code, loader exit 5).
 
 Each is an editorial matter for RCPA-QAP, so the dev seed leaves those entries out and says which.
-The sample today has no duplicate code; the rule keeps the filter right if the sample changes.
+`scripts/dev_seed_workbook_filter.py` drops the collisions earlier, from the workbook, because the
+transform blocks a dataset that holds one. The collision rule here stays as a backstop. The sample
+today has no duplicate code; the rule keeps the filter right if the sample changes.
 Entries keep their business keys, so the kept keys have gaps. Everything outside `entries` passes
-through unchanged, including `source.sha256`, which still names the full workbook.
+through unchanged, including `source.sha256`, which names the workbook the transform read.
 
 This is dev tooling. A production baseline is never filtered: the loader's refusal is the point.
 

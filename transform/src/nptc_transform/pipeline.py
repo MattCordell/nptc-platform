@@ -5,9 +5,9 @@ reader, cell-level defect detection and band classification (FR-71), batch
 terminology validation over the ``nptc_shared.terminology`` client and sweep,
 designation reconciliation (FR-97, over the sweep's results; see
 ``designation_check.py``), the FR-79 misspelling heuristics (over the sweep's
-results when available; see ``misspelling.py``) and the FR-75 semantic-drift
-check (``semantic_drift.py``). Report content grouped by defect class with
-required actions (FR-72) is ``report_writer.py``'s.
+results when available; see ``misspelling.py``), the FR-75 semantic-drift check
+(``semantic_drift.py``) and the FR-05 collision check (``collision_check.py``). Report
+content grouped by defect class with required actions (FR-72) is ``report_writer.py``'s.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from nptc_shared.terminology.models import Edition
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.bands import Band, blocks_import
 from nptc_transform.cell_defects import scan_workbook
+from nptc_transform.collision_check import check_collisions
 from nptc_transform.designation_check import DesignationRun, check_designations
 from nptc_transform.findings import Finding
 from nptc_transform.misspelling import MisspellingRun, check_misspellings
@@ -137,7 +138,7 @@ def run_transform_sheets(
     test in ``transform/tests`` passes a stub-backed sweep or none, so the suite
     needs no network (NFR-37).
     """
-    findings = scan_workbook(sheets)
+    findings = (*scan_workbook(sheets), *check_collisions(sheets))
     if sweep is None:
         misspellings = check_misspellings(sheets)
         return RunResult(

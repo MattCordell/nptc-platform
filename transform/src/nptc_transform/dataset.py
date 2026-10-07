@@ -4,8 +4,8 @@
 file (ADR-0009). Call it only once the caller has confirmed ``result`` carries no
 blocking finding (``RunResult.has_blocking_findings``). A caller that doesn't is
 at fault; this module does not re-check, in the "true by construction" style
-``Finding`` uses. FR-05 takes the same stance: the seeded baseline cannot be
-created until RCPA-QAP resolves designation collisions editorially.
+``Finding`` uses. That includes FR-05: ``collision_check.py`` blocks a dataset
+whose designations the loader would refuse, until RCPA-QAP resolves them.
 
 One file, ``import-dataset.json``, goes into the same ``--report-dir`` as
 ``report.json``/``report.md``, so the CLI's "no file outside --report-dir is
@@ -49,14 +49,13 @@ from pathlib import Path
 from nptc_transform import __version__
 from nptc_transform.cell_defects import (
     resolve_specimen_term,
-    resolves_code_column,
     split_compound_value,
     split_specimen_values,
     split_synonyms,
 )
 from nptc_transform.corrections import apply_corrections, correct_code_cell
 from nptc_transform.pipeline import RunResult
-from nptc_transform.rows import group_rows
+from nptc_transform.rows import has_code_binding, seedable_rows
 from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
@@ -182,20 +181,8 @@ def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designati
     return tuple(designations)
 
 
-def _has_code_binding(row_cells: Mapping[ColumnRole, Cell]) -> bool:
-    """True if ``row_cells`` resolves a non-empty code binding.
-
-    A code cell holding only empty or whitespace text does not count. This is the
-    test ``cell_defects._scan_missing_code_binding`` and
-    ``terminology_check.collect_code_bindings`` apply, so all three agree on what
-    "resolves a code binding" means.
-    """
-    code_cell = row_cells.get(ColumnRole.CODE)
-    return code_cell is not None and bool(code_cell.text.strip())
-
-
 def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
-    if not _has_code_binding(row_cells):
+    if not has_code_binding(row_cells):
         return ()
     code_cell = row_cells[ColumnRole.CODE]
     fsn_cell = row_cells.get(ColumnRole.FSN)
@@ -258,24 +245,9 @@ def build_dataset(
     key down by one; no gap is left.
     """
     entries: list[ImportEntry] = []
-    sequence = 0
-    codeable = sorted(
-        (sheet for sheet in sheets if resolves_code_column(sheet)), key=lambda sheet: sheet.name
-    )
-    for source_row in group_rows(codeable):
+    for sequence, source_row in enumerate(seedable_rows(sheets), start=1):
         row_cells = source_row.cells
-        preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
-        if preferred_cell is None:
-            # A code binding with no preferred term is MISSING_PREFERRED_TERM, a
-            # data defect that already blocked emission. A row with neither is
-            # not a SPIA data row. Either way, nothing to seed.
-            continue
-        if not _has_code_binding(row_cells):
-            # The mirror case: MISSING_CODE_BINDING, a data defect that already
-            # blocked emission. Never seeded with an empty code_bindings list;
-            # it is judged layout, not an entry.
-            continue
-        sequence += 1
+        preferred_cell = row_cells[ColumnRole.PREFERRED_TERM]
         specimen, unconstrained = _build_specimen(row_cells)
         entries.append(
             ImportEntry(

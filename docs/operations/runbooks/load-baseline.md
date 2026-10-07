@@ -103,9 +103,11 @@ If the loader refuses, nothing was written. Find the message in
 [`seed-baseline.md`](seed-baseline.md#refusals-and-how-to-fix-them), settle it at source,
 and repeat from step 1. Two refusals deserve a warning:
 
-- **An FR-05 collision (exit `5`).** The transform does not look for these, so the first
-  sign is here. Two entries share a term, for example one entry's preferred term is another's
-  synonym. RCPA-QAP must decide which term changes (PRD 6.3). The message names both entries.
+- **An FR-05 collision (exit `5`).** The transform reports these as `DESIGNATION_COLLISION`
+  at step 1, so you should not meet one here. Two entries share a term, for example one
+  entry's preferred term is another's synonym. RCPA-QAP must decide which term changes
+  (PRD 6.3). The message names both entries. If you see this refusal, the dataset did not come
+  from a clean transform run.
 - **Exit `3` for a specimen.** You skipped step 3. Go back to it.
 
 A dry run still advances the business-key sequence. This leaves a few skipped key numbers and

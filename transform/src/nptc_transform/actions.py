@@ -127,6 +127,11 @@ ACTION_BY_CODE: dict[str, str] = {
         "heading) and remove it. No entry is seeded for this row until it is "
         "corrected."
     ),
+    FindingCode.DESIGNATION_COLLISION: (
+        "RCPA-QAP must decide which entry changes: reword the term on one of "
+        "the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). "
+        "The import is blocked until it is resolved."
+    ),
     # Informational: not a defect (see bands.py's module docstring).
     FindingCode.SHEET_NOT_SPIA_DATA: (
         "No action required. This sheet is recognised as prose, not SPIA "

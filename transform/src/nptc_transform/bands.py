@@ -81,6 +81,7 @@ class FindingCode(StrEnum):
     TERM_TIMING_NOT_MODELLED = "TERM_TIMING_NOT_MODELLED"
     MISSING_PREFERRED_TERM = "MISSING_PREFERRED_TERM"
     MISSING_CODE_BINDING = "MISSING_CODE_BINDING"
+    DESIGNATION_COLLISION = "DESIGNATION_COLLISION"
 
 
 BAND_BY_CODE: dict[str, Band] = {
@@ -130,6 +131,8 @@ BAND_BY_CODE: dict[str, Band] = {
     # code, so dataset.py omits it, and this finding tells the operator it
     # happened.
     FindingCode.MISSING_CODE_BINDING: Band.DATA_DEFECT,
+    # Data defect: the loader refuses it (FR-05), and which entry changes is editorial (PRD 6.3).
+    FindingCode.DESIGNATION_COLLISION: Band.DATA_DEFECT,
     # Informational: not a defect at all (see the module docstring).
     FindingCode.SHEET_NOT_SPIA_DATA: Band.INFORMATIONAL,
     # FR-99: an unexpected semantic tag is a warning, not an error, because

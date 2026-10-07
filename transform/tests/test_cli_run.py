@@ -19,6 +19,8 @@ from nptc_transform.cli import app
 runner = CliRunner()
 
 CLEAN_CODE = "122192001"
+#: Verhoeff-valid codes, so a test that needs several distinct entries is not blocked by CODE_NOT_WELL_FORMED.
+VALID_CODES = ("122192001", "122192017", "122192029", "122192038")
 
 
 def _tree(root: Path) -> set[str]:
@@ -488,6 +490,52 @@ def test_emit_dataset_blocks_and_writes_no_dataset_for_a_row_missing_its_preferr
     assert result.exit_code == 1, result.output
     assert "MISSING_PREFERRED_TERM" in (report_dir / "report.json").read_text(encoding="utf-8")
     assert not (report_dir / "import-dataset.json").exists()
+
+
+def _workbook_with_terms(tmp_path: Path, rows: list[tuple[str, str | None]]) -> Path:
+    path = tmp_path / "terms.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(["RCPA Preferred term", "RCPA Synonyms", "Terminology binding (SNOMED CT-AU)"])
+    for (preferred, synonyms), code in zip(rows, VALID_CODES, strict=False):
+        sheet.append([preferred, synonyms, code])
+    workbook.save(path)
+    return path
+
+
+@pytest.mark.req("FR-05")
+def test_emit_dataset_blocks_and_writes_no_dataset_for_a_designation_collision(
+    tmp_path: Path,
+) -> None:
+    """The loader refuses a preferred term that equals an earlier synonym, so the
+    transform must stop at the same point instead of emitting a dataset that cannot
+    load."""
+    workbook_path = _workbook_with_terms(
+        tmp_path, [("Adrenal antibody", "Adrenal Ab"), ("Adrenal Ab", None)]
+    )
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 1, result.output
+    report = (report_dir / "report.json").read_text(encoding="utf-8")
+    assert "DESIGNATION_COLLISION" in report
+    assert not (report_dir / "import-dataset.json").exists()
+
+
+@pytest.mark.req("FR-05")
+def test_emit_dataset_still_emits_when_two_entries_only_share_a_synonym(tmp_path: Path) -> None:
+    """A shared synonym is a warning in the backend, so it must not block."""
+    workbook_path = _workbook_with_terms(
+        tmp_path, [("Glucose", "Sugar"), ("Blood sugar test", "Sugar")]
+    )
+
+    report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
+
+    assert result.exit_code == 0, result.output
+    assert "DESIGNATION_COLLISION" not in (report_dir / "report.json").read_text(encoding="utf-8")
+    assert (report_dir / "import-dataset.json").is_file()
 
 
 @pytest.mark.req("FR-70")
