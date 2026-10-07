@@ -4,9 +4,9 @@ The property registry lists every **property** a catalogue entry can hold, such 
 discipline, subgroup and specimen. The registry screens show how each property is
 defined. They are read-only: you cannot add, change or deprecate a property here.
 
-You need to be signed in with a role that can read the registry. Administrators can. To
-record values for a property on an entry, see
-[Editing registry properties](editing-registry-properties.md).
+Any signed-in contributor role can read the registry: Provisional, Member, Reviewer or
+Administrator. Visitors who are not signed in, and Observers, cannot. To record values for
+a property on an entry, see [Editing registry properties](editing-registry-properties.md).
 
 Open the registry from **Administration → Property registry**, or go straight to
 `/admin/properties`.
