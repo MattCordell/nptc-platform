@@ -1,7 +1,7 @@
 """The datatype handler contract (FR-77, ADR-0013).
 
-The Protocol has ten members. ADR-0013 names an eleventh, ``sort_key``, which was dropped
-(see its open question 5).
+The Protocol has eleven members: ADR-0013's ten (``sort_key`` was dropped, its open question 5)
+and ``uses_binding``.
 
 ``nptc.registry`` is a leaf (ADR-0013 SS2): it may import ``nptc_shared``, SQLAlchemy,
 ``jsonschema`` and the stdlib, and nothing else from ``nptc``. A handler's input is therefore
@@ -158,11 +158,17 @@ def jsonb_root_as_text(column: ColumnElement[Any]) -> ColumnElement[Any]:
 
 
 class DatatypeHandler(Protocol):
-    """Ten members. Four are FR-77's own sentence (`json_schema_fragment`, `validate`,
-    `form_control`, `serialise`); six are forced by the seams ADR-0012 left open."""
+    """Eleven members. Four are FR-77's own sentence (`json_schema_fragment`, `validate`,
+    `form_control`, `serialise`); six are forced by the seams ADR-0012 left open; one is `uses_binding`."""
 
     @property
     def datatype(self) -> str: ...
+
+    @property
+    def uses_binding(self) -> bool:
+        """Whether a property of this datatype takes a terminology binding. The database
+        refuses a mismatch either way."""
+        ...
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]: ...
 
@@ -254,6 +260,9 @@ class DatatypeRegistry:
         """The runtime set of valid datatypes, used for write-time resolution and startup
         reconciliation."""
         return frozenset(self._by_datatype)
+
+    def handlers(self) -> tuple[DatatypeHandler, ...]:
+        return tuple(self._by_datatype[name] for name in sorted(self._by_datatype))
 
 
 @dataclass(frozen=True, slots=True)

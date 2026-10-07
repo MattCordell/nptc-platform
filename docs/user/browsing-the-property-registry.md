@@ -2,7 +2,8 @@
 
 The property registry lists every **property** a catalogue entry can hold, such as
 discipline, subgroup and specimen. The registry screens show how each property is
-defined. They are read-only: you cannot add, change or deprecate a property here.
+defined. To add, change or retire a property, see
+[Managing registry properties](managing-registry-properties.md).
 
 Any signed-in contributor role can read the registry: Provisional, Member, Reviewer or
 Administrator. Visitors who are not signed in, and Observers, cannot. To record values for
@@ -60,7 +61,11 @@ and codes appear exactly as stored.
 stored name, such as `maxLength` or `forbidden_codes`, followed by its value. The page
 shows these names as they are, because each datatype defines its own.
 
-Choose **Back to the property registry** to return to the list.
+Choose **Back to the property registry** to return to the list. **Edit property** and
+**Deprecate property** open the screens described in
+[Managing registry properties](managing-registry-properties.md). The list has a
+**New property** button for the same reason. **Deprecate property** is hidden once a
+property is deprecated.
 
 ## If something goes wrong
 

@@ -1,5 +1,6 @@
 import {
   keepPreviousData,
+  type QueryClient,
   useMutation,
   useQueries,
   useQuery,
@@ -12,7 +13,7 @@ import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
 import { filterQueryParams } from "./filter-params.ts";
 import type { components, paths } from "./schema.ts";
-import { unwrap } from "./unwrap.ts";
+import { ApiError, unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
 
 /**
@@ -442,6 +443,19 @@ type BindCodeBody = components["schemas"]["BindCodeRequest"];
 type RetireBindingBody = components["schemas"]["RetireBindingRequest"];
 type ReplaceBindingBody = components["schemas"]["ReplaceBindingRequest"];
 type SavePropertyValuesBody = components["schemas"]["SavePropertyValuesRequest"];
+type CreatePropertyBody = components["schemas"]["CreatePropertyDefinitionRequest"];
+type AmendPropertyBody = components["schemas"]["AmendPropertyDefinitionRequest"];
+type DeprecatePropertyBody = components["schemas"]["DeprecatePropertyDefinitionRequest"];
+
+const PROPERTY_DEFINITIONS_KEY = [
+  "api",
+  "/api/v1/registry/properties",
+  { include_deprecated: true },
+];
+
+function propertyDefinitionKey(key: string) {
+  return ["api", "/api/v1/registry/properties/{key}", key];
+}
 
 /**
  * Add one or more terms to an entry (FR-04).
@@ -771,7 +785,7 @@ export function useReplaceBinding(businessKey: string) {
 export function usePropertyDefinitions() {
   const client = useApiClient();
   return useQuery({
-    queryKey: ["api", "/api/v1/registry/properties", { include_deprecated: true }],
+    queryKey: PROPERTY_DEFINITIONS_KEY,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/registry/properties", {
@@ -790,7 +804,7 @@ export function usePropertyDefinitions() {
 export function usePropertyDefinition(key: string) {
   const client = useApiClient();
   return useQuery({
-    queryKey: ["api", "/api/v1/registry/properties/{key}", key],
+    queryKey: propertyDefinitionKey(key),
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/registry/properties/{key}", {
@@ -799,6 +813,103 @@ export function usePropertyDefinition(key: string) {
         }),
       ),
     enabled: key.length > 0,
+  });
+}
+
+/**
+ * Every registered datatype with its constraints schema and whether a property
+ * of it takes a terminology binding (FR-77). The create form builds its options
+ * from this answer, so no datatype name appears in the frontend (ADR-0013).
+ * The set only changes with a deployment, so one fetch per page load is enough.
+ */
+export function useDatatypes() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/registry/datatypes"],
+    queryFn: async ({ signal }) =>
+      unwrap(await client.GET("/api/v1/registry/datatypes", { signal })),
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * Invalidating the list and the one definition together keeps both registry
+ * screens current after any definition write. `row_version` and `status` are
+ * both on the response, so neither screen can reconstruct them locally.
+ */
+function invalidatePropertyDefinition(queryClient: QueryClient, key: string) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: PROPERTY_DEFINITIONS_KEY }),
+    queryClient.invalidateQueries({ queryKey: propertyDefinitionKey(key) }),
+  ]);
+}
+
+/**
+ * Create a property definition (FR-09). The hook takes no key because the key
+ * is part of the body; a 409 for a duplicate `key` reaches the caller as a
+ * thrown `ApiError` carrying its plain `detail`, not a version conflict.
+ */
+export function useCreateProperty() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreatePropertyBody) =>
+      unwrap(await client.POST("/api/v1/registry/properties", { body })),
+    onSuccess: (created) => invalidatePropertyDefinition(queryClient, created.key),
+  });
+}
+
+/**
+ * Amend a property definition (FR-09, FR-12). The body carries only the fields
+ * being changed: the API refuses an explicit `null` and any field outside the
+ * amendable set, so the caller omits what it did not edit.
+ */
+export function useAmendProperty(key: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: AmendPropertyBody) =>
+      unwrap(
+        await client.PATCH("/api/v1/registry/properties/{key}", {
+          params: { path: { key } },
+          body,
+        }),
+      ),
+    onSuccess: () => invalidatePropertyDefinition(queryClient, key),
+    // See `useBindCode`: a stale `expected_row_version` means the definition
+    // moved, so the cached copy is refetched rather than left to fail again.
+    onError: (error: unknown) => {
+      if (asVersionConflict(error) !== null) {
+        void queryClient.invalidateQueries({ queryKey: propertyDefinitionKey(key) });
+      }
+    },
+  });
+}
+
+/**
+ * Deprecate a property definition (FR-11). One-way: the API refuses to
+ * reactivate, and refuses a system property or one already deprecated.
+ */
+export function useDeprecateProperty(key: string) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: DeprecatePropertyBody) =>
+      unwrap(
+        await client.POST("/api/v1/registry/properties/{key}/deprecation", {
+          params: { path: { key } },
+          body,
+        }),
+      ),
+    onSuccess: () => invalidatePropertyDefinition(queryClient, key),
+    // Any 409, not only a stale version: "already deprecated" means the cached
+    // copy still shows an active property, and a screen reading it would keep
+    // offering to deprecate it.
+    onError: (error: unknown) => {
+      if (error instanceof ApiError && error.status === 409) {
+        void invalidatePropertyDefinition(queryClient, key);
+      }
+    },
   });
 }
 

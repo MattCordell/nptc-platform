@@ -343,6 +343,7 @@ def test_list_properties_returns_a_synthetic_datatypes_own_form_control(api: Api
         `DurationHandler`, trimmed to what this route-level test needs)."""
 
         datatype = "synthetic_colour"
+        uses_binding = False
 
         def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> dict[str, object]:
             return {"type": "string"}
@@ -617,6 +618,92 @@ def test_delete_property_unknown_key_is_still_409_not_404(api: ApiTestApp) -> No
 # is the direct service-layer proof of this guard; the end-to-end test at
 # the bottom of this module exercises the same guard from an HTTP-created
 # property and definition.
+
+
+# --- datatype listing (FR-77) ---------------------------------------------
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_list_datatypes_describes_every_builtin_in_name_order(api: ApiTestApp) -> None:
+    token = api.admin_token(subject="sub-list-datatypes")
+
+    response = api.get("/registry/datatypes", token=token)
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["name"] for item in items] == ["code", "decimal", "positiveInt", "string", "url"]
+    assert {item["name"]: item["uses_binding"] for item in items} == {
+        "code": True,
+        "decimal": False,
+        "positiveInt": False,
+        "string": False,
+        "url": False,
+    }
+    by_name = {item["name"]: item["constraints_schema"] for item in items}
+    assert by_name["string"]["properties"] == {"maxLength": {"type": "integer", "minimum": 1}}
+    assert all(schema["additionalProperties"] is False for schema in by_name.values())
+
+
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_list_datatypes_includes_a_datatype_registered_only_at_runtime(api: ApiTestApp) -> None:
+    """The route reads the live registry, so FR-77's "no edit outside the handler" claim holds
+    for the listing too."""
+    from nptc.api.dependencies import get_datatype_registry
+    from nptc.registry import DatatypeRegistry, HandlerDeps, build_builtin_handlers
+    from nptc_shared.terminology.stub import StubTerminologyClient
+
+    class _AddedHandler:
+        datatype = "added_at_runtime"
+        uses_binding = False
+
+        def constraints_schema(self) -> dict[str, object]:
+            return {"type": "object", "additionalProperties": False}
+
+    builtins = build_builtin_handlers(HandlerDeps(terminology_client=StubTerminologyClient()))
+    registry_with_added = DatatypeRegistry([*builtins, _AddedHandler()])  # type: ignore[list-item]
+    api.app.dependency_overrides[get_datatype_registry] = lambda: registry_with_added
+    try:
+        token = api.admin_token(subject="sub-list-datatypes-added")
+        response = api.get("/registry/datatypes", token=token)
+    finally:
+        del api.app.dependency_overrides[get_datatype_registry]
+
+    assert response.status_code == 200, response.text
+    added = [item for item in response.json()["items"] if item["name"] == "added_at_runtime"]
+    assert added == [
+        {
+            "name": "added_at_runtime",
+            "constraints_schema": {"type": "object", "additionalProperties": False},
+            "uses_binding": False,
+        }
+    ]
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_list_datatypes_no_credential_is_401(api: ApiTestApp) -> None:
+    response = api.get("/registry/datatypes", token=None)
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_list_datatypes_authenticated_without_permission_is_403(api: ApiTestApp) -> None:
+    """Gated on `registry.read` like the property reads (ADR-0028); `Role.OBSERVER` is the one
+    authenticated role without it."""
+    token = api.exact_role_token(subject="sub-datatypes-observer", role=Role.OBSERVER)
+    response = api.get("/registry/datatypes", token=token)
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_list_datatypes_provisional_role_is_200(api: ApiTestApp) -> None:
+    token = api.exact_role_token(subject="sub-datatypes-provisional", role=Role.PROVISIONAL)
+    response = api.get("/registry/datatypes", token=token)
+    assert response.status_code == 200, response.text
 
 
 # --- authorisation (FR-44, NFR-06, NFR-20) --------------------------------

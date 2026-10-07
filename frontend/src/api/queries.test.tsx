@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthContext, type AuthContextValue } from "../auth/session.ts";
-import { asCollisionError, asVersionConflict } from "./conflicts.ts";
+import { asCollisionError, asVersionConflict, refusalDetail } from "./conflicts.ts";
 import { stubApi } from "../test/stub-api.ts";
 import { createQueryClient } from "./query-client.ts";
 import {
@@ -15,7 +15,11 @@ import {
   useAdminEntryDetail,
   useAdminSearch,
   useAmendDesignation,
+  useAmendProperty,
   useCatalogueSearch,
+  useCreateProperty,
+  useDatatypes,
+  useDeprecateProperty,
   useEntriesList,
   useEntryBindings,
   useEntryByCode,
@@ -674,6 +678,253 @@ describe("usePropertyDefinition", () => {
     renderHook(() => usePropertyDefinition(""), { wrapper });
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDatatypes", () => {
+  it("fetches the registered datatypes", async () => {
+    const list = {
+      items: [
+        { name: "string", constraints_schema: { type: "object" }, uses_binding: false },
+      ],
+    };
+    const fetchMock = stubFetch(200, list);
+
+    const { result } = renderHook(() => useDatatypes(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(list);
+    expect(new URL(requestFor(fetchMock).url).pathname).toBe(
+      "/api/v1/registry/datatypes",
+    );
+  });
+
+  it("surfaces a 403 as an error carrying its status", async () => {
+    stubFetch(403, { detail: "You do not have permission to do that." });
+
+    const { result } = renderHook(() => useDatatypes(), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect((result.current.error as ApiError).status).toBe(403);
+  });
+});
+
+const PROPERTY_LIST_KEY = [
+  "api",
+  "/api/v1/registry/properties",
+  { include_deprecated: true },
+];
+const PROPERTY_KEY = ["api", "/api/v1/registry/properties/{key}", "assay_method"];
+
+function invalidatedKeys(spy: { mock: { calls: unknown[][] } }) {
+  return spy.mock.calls.map((call) => (call[0] as { queryKey: unknown }).queryKey);
+}
+
+// The generated body type marks the four defaulted fields as required, so a
+// caller always sends them.
+function newProperty(reason: string) {
+  return {
+    key: "assay_method",
+    label: "Assay method",
+    datatype: "string",
+    cardinality: "0..1" as const,
+    scope: "both" as const,
+    required_for_submission: false,
+    required_for_publication: false,
+    filterable: false,
+    display_order: 0,
+    reason,
+  };
+}
+
+describe("useCreateProperty", () => {
+  it("posts the body and refreshes the list and the new key's detail", async () => {
+    const created = { key: "assay_method", row_version: 1 };
+    const fetchMock = stubFetch(201, created);
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useCreateProperty(), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate(newProperty("Needed for the immunoassay entries"));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock);
+    expect(request.method).toBe("POST");
+    expect(new URL(request.url).pathname).toBe("/api/v1/registry/properties");
+    expect(await bodyOf(request)).toMatchObject({
+      key: "assay_method",
+      datatype: "string",
+    });
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_LIST_KEY, PROPERTY_KEY]);
+  });
+
+  it("throws a duplicate-key 409 with its plain detail and refreshes nothing", async () => {
+    stubFetch(409, { detail: "A property definition with this key already exists." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useCreateProperty(), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate(newProperty("Duplicate"));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(refusalDetail(result.current.error)).toBe(
+      "A property definition with this key already exists.",
+    );
+    expect(asVersionConflict(result.current.error)).toBeNull();
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("throws a 403 for a caller without registry.manage", async () => {
+    stubFetch(403, { detail: "You do not have permission to do that." });
+    const { result } = renderHook(() => useCreateProperty(), { wrapper });
+
+    result.current.mutate(newProperty("Not permitted"));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect((result.current.error as ApiError).status).toBe(403);
+  });
+});
+
+describe("useAmendProperty", () => {
+  it("patches the named key with only the fields given", async () => {
+    const fetchMock = stubFetch(200, { key: "assay_method", row_version: 2 });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAmendProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({
+      label: "Assay method (immunoassay)",
+      expected_row_version: 1,
+      reason: "Clarify the label",
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock);
+    expect(request.method).toBe("PATCH");
+    expect(new URL(request.url).pathname).toBe(
+      "/api/v1/registry/properties/assay_method",
+    );
+    expect(await bodyOf(request)).toEqual({
+      label: "Assay method (immunoassay)",
+      expected_row_version: 1,
+      reason: "Clarify the label",
+    });
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_LIST_KEY, PROPERTY_KEY]);
+  });
+
+  it("refetches the definition after a stale-version 409 and keeps the conflict body", async () => {
+    stubFetch(409, {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: "assay_method",
+      expected_row_version: 1,
+      current_row_version: 2,
+      conflicts: [],
+      changed_by: "A Curator",
+      changed_at: "2026-10-07T00:00:00Z",
+    });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAmendProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ label: "Stale", expected_row_version: 1, reason: "Stale" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(asVersionConflict(result.current.error)?.current_row_version).toBe(2);
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_KEY]);
+  });
+
+  it("does not refetch after a refusal that is not a version conflict", async () => {
+    stubFetch(403, { detail: "You do not have permission to do that." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAmendProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ label: "Nope", expected_row_version: 1, reason: "Nope" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect((result.current.error as ApiError).status).toBe(403);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDeprecateProperty", () => {
+  it("posts the deprecation and refreshes the list and the definition", async () => {
+    const fetchMock = stubFetch(200, { key: "assay_method", status: "deprecated" });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeprecateProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({
+      expected_row_version: 2,
+      reason: "Replaced by a coded property",
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const request = requestFor(fetchMock);
+    expect(request.method).toBe("POST");
+    expect(new URL(request.url).pathname).toBe(
+      "/api/v1/registry/properties/assay_method/deprecation",
+    );
+    expect(await bodyOf(request)).toEqual({
+      expected_row_version: 2,
+      reason: "Replaced by a coded property",
+    });
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_LIST_KEY, PROPERTY_KEY]);
+  });
+
+  it("throws the system-property refusal with its plain detail", async () => {
+    stubFetch(409, { detail: "A built-in system property cannot be deprecated." });
+    const { result } = renderHook(() => useDeprecateProperty("specimen"), { wrapper });
+
+    result.current.mutate({ expected_row_version: 1, reason: "Try" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(refusalDetail(result.current.error)).toBe(
+      "A built-in system property cannot be deprecated.",
+    );
+  });
+
+  it("refreshes the list and the definition after any 409, such as already deprecated", async () => {
+    stubFetch(409, { detail: "This property is already deprecated." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeprecateProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ expected_row_version: 2, reason: "Again" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(asVersionConflict(result.current.error)).toBeNull();
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_LIST_KEY, PROPERTY_KEY]);
+  });
+
+  it("does not refresh after a 403", async () => {
+    stubFetch(403, { detail: "You do not have permission to do that." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeprecateProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ expected_row_version: 2, reason: "Nope" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
 

@@ -29,6 +29,8 @@ class _StubHandler:
     """The minimum structural shape of a `DatatypeHandler` - just enough to
     exercise `DatatypeRegistry` without depending on any builtin handler."""
 
+    uses_binding = False
+
     def __init__(self, datatype: str) -> None:
         self.datatype = datatype
 
@@ -112,6 +114,18 @@ def test_known_datatypes_reflects_exactly_what_was_registered() -> None:
     registry = DatatypeRegistry([_StubHandler("string"), _StubHandler("decimal")])
 
     assert registry.known_datatypes() == frozenset({"string", "decimal"})
+
+
+@pytest.mark.req("FR-77")
+def test_handlers_are_listed_in_datatype_order_whatever_the_registration_order() -> None:
+    registry = DatatypeRegistry([_StubHandler("url"), _StubHandler("code"), _StubHandler("string")])
+
+    assert [handler.datatype for handler in registry.handlers()] == ["code", "string", "url"]
+
+
+@pytest.mark.req("FR-77")
+def test_handlers_of_an_empty_registry_is_empty() -> None:
+    assert DatatypeRegistry([]).handlers() == ()
 
 
 @pytest.mark.req("FR-77")

@@ -106,6 +106,27 @@ describe("AdminPropertyListPage", () => {
     );
   });
 
+  it("offers New property, which opens the create screen (FR-09)", async () => {
+    stubApi([
+      PROPERTIES_OK,
+      { method: "GET", path: "/registry/datatypes", status: 200, body: { items: [] } },
+    ]);
+    const user = userEvent.setup();
+
+    const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+    const link = await screen.findByRole("link", { name: "New property" });
+
+    expect(link).toHaveAttribute("href", "/admin/properties/new");
+    await user.click(link);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/admin/properties/new"),
+    );
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "New property" }),
+    ).toBeVisible();
+  });
+
   it("has exactly one h1 and summarises the registry in its meta line", async () => {
     stubApi([PROPERTIES_OK]);
 

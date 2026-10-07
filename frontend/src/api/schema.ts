@@ -623,6 +623,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/datatypes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the registered property datatypes
+         * @description The live `DatatypeRegistry`, so a datatype added to it appears here with no edit to this
+         *     route (FR-77). Ordered by name.
+         */
+        get: operations["list_datatypes_api_v1_registry_datatypes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registry/properties": {
         parameters: {
             query?: never;
@@ -1525,6 +1546,28 @@ export interface components {
             text: string;
             /** Accepted */
             accepted: boolean;
+        };
+        /**
+         * DatatypeDescription
+         * @description One registered datatype, as a create form needs it: the name to offer, the JSON Schema
+         *     its `constraints` must satisfy, and whether a property of it takes a terminology binding
+         *     (`DatatypeHandler.uses_binding`). A client offers the binding fields from the flag, never
+         *     from the name (FR-77).
+         */
+        DatatypeDescription: {
+            /** Name */
+            name: string;
+            /** Constraints Schema */
+            constraints_schema: {
+                [key: string]: unknown;
+            };
+            /** Uses Binding */
+            uses_binding: boolean;
+        };
+        /** DatatypeList */
+        DatatypeList: {
+            /** Items */
+            items: components["schemas"]["DatatypeDescription"][];
         };
         /** DeprecatePropertyDefinitionRequest */
         DeprecatePropertyDefinitionRequest: {
@@ -4209,6 +4252,44 @@ export interface operations {
                 };
             };
             /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_datatypes_api_v1_registry_datatypes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatatypeList"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
             403: {
                 headers: {
                     [name: string]: unknown;

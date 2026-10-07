@@ -31,6 +31,7 @@ class DecimalHandler:
     `positiveInt` is its own handler (see positive_int.py's docstring)."""
 
     datatype = "decimal"
+    uses_binding = False
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]:
         return {"type": "number"}

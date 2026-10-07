@@ -1025,6 +1025,16 @@ filed alongside #55's PR covers the rest.
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL` |
 | `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`. The cache key (with `key`) for `nptc.registry.schema.property_schema`'s in-process JSON Schema memoisation (issue #52) - owned by exactly one write path, the ORM's `version_id_col` on this table's mapped `UPDATE` (see ADR-0012), and covered by `test_sql_parameterisation.py`'s `VERSIONED_TABLE_MODELS` guard alongside `catalogue_entry.row_version` |
 
+**A client learns the valid datatypes from `GET /registry/datatypes`** (`registry.read`), which
+reads the live `DatatypeRegistry` and returns, for each handler, its `name`, its
+`constraints_schema()` and `uses_binding`. `uses_binding` is the eleventh `DatatypeHandler`
+member. It states, without naming a datatype, the rule the binding `CHECK`s enforce: a
+datatype that uses a binding requires `binding_target`, and every other datatype must carry
+no binding column at all. The create form reads it rather than comparing a datatype name
+(FR-77, ADR-0013). The write routes do not yet turn those `CHECK` violations, or a `key`
+outside `^[a-z][a-z0-9_]{0,62}$`, into a 4xx: they surface as a 500, so the create form
+checks them before sending.
+
 `property_value` is one row per value, with **`(entry_id, property_key, ordinal)` as the
 primary key** (not a surrogate id plus a separate `UNIQUE`) - `ordinal` `NOT NULL`,
 `CHECK (ordinal >= 0)`, zero-based - plus `value JSONB NOT NULL` and `justification`

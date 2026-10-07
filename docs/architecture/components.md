@@ -201,6 +201,14 @@ nothing is also a type error. The type is what protects a panel; no test can obs
 save") pins the void path's late-refusal announcement for a hook-driven panel. See
 ADR-0026's 2026-10-02 addendum for the alternatives rejected.
 
+The registry screens (`admin-property-create.tsx`, `admin-property-edit.tsx` and
+`registry/deprecate-property-dialog.tsx`) are the first callers of the promise path. Each
+validates on submit, returns nothing when its own checks fail, and otherwise returns the
+`mutateAsync` promise mapped to an outcome. A save that navigates away calls
+`registry/release-focus.ts`'s `releaseFocus()` first: the submit button still holds focus
+when the route changes, so `useFocusMainOnNavigation` leaves focus alone and it then falls
+to `<body>` as the button unmounts. Blurring first lets that hook move focus to `<main>`.
+
 ## Layout primitives
 
 Issue #427. Presentational components that carry the page structure from

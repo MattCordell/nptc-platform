@@ -30,6 +30,7 @@ class UrlHandler:
     """A URI. `constraints` may carry `schemes` (defaults to `["https"]`)."""
 
     datatype = "url"
+    uses_binding = False
 
     def json_schema_fragment(self, spec: PropertyDefinitionSpec) -> Mapping[str, Any]:
         return {"type": "string", "format": "uri"}

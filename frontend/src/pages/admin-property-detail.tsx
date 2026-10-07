@@ -1,11 +1,9 @@
 import { Link, useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { refusalDetail } from "../api/conflicts.ts";
 import { usePropertyDefinition } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
-import { ApiError } from "../api/unwrap.ts";
 import {
   bindingStrengthLabelFor,
   bindingTargetLabelFor,
@@ -15,6 +13,7 @@ import {
   scopeLabelFor,
 } from "../catalogue/property-display.ts";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import { Button } from "../components/button.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { Card } from "../components/card.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
@@ -22,10 +21,15 @@ import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { DeprecatePropertyDialog } from "../registry/deprecate-property-dialog.tsx";
+import {
+  propertyLoadFailureMessage,
+  propertyStaleWarning,
+} from "../registry/property-load.ts";
 
 /**
  * The property registry detail screen (FR-08..13, NFR-31): one property's
- * whole definition, read-only.
+ * whole definition, with the actions that change it (Edit and Deprecate).
  *
  * It shows what the API returns and nothing datatype-specific. `datatype` is
  * plain text, the binding rows appear when their value is present, and
@@ -35,24 +39,9 @@ import { useAnnounce } from "../components/use-announce.ts";
 
 type Definition = components["schemas"]["PropertyDefinitionResponse"];
 
+const HEADING_ID = "property-detail-heading";
+
 const LABEL_CLASS = "text-[var(--color-text-muted)]";
-
-function staleWarning(key: string): string {
-  return (
-    `${key} could not be refreshed just now, so what follows may be out of date. ` +
-    "Reload the page to try again."
-  );
-}
-
-function loadFailureMessage(key: string, error: unknown): string {
-  if (error instanceof ApiError && error.status === 404) {
-    return `No property was found for ${key}. Check the key.`;
-  }
-  return (
-    refusalDetail(error) ??
-    `${key} could not be loaded. Try again, or contact an administrator if the problem persists.`
-  );
-}
 
 function yesNo(value: boolean): string {
   return value ? "Yes" : "No";
@@ -176,11 +165,14 @@ export function AdminPropertyDetailPage() {
   });
   const property = usePropertyDefinition(propertyKey);
   const { message, politeness, announce } = useAnnounce();
+  const [deprecating, setDeprecating] = useState(false);
+  const [deprecationDone, setDeprecationDone] = useState(false);
+  const reportedDeprecation = useRef(false);
 
   const staleData = property.isError && property.data !== undefined;
   useEffect(() => {
     if (staleData) {
-      announce(staleWarning(propertyKey));
+      announce(propertyStaleWarning(propertyKey));
     }
   }, [staleData, propertyKey, announce]);
 
@@ -189,7 +181,7 @@ export function AdminPropertyDetailPage() {
   // otherwise be announced twice.
   const hardFailureMessage =
     property.isError && property.data === undefined
-      ? loadFailureMessage(propertyKey, property.error)
+      ? propertyLoadFailureMessage(propertyKey, property.error)
       : null;
   useEffect(() => {
     if (hardFailureMessage !== null) {
@@ -198,22 +190,70 @@ export function AdminPropertyDetailPage() {
   }, [hardFailureMessage, announce]);
 
   const definition = property.data;
+  const isDeprecated = definition?.status === "deprecated";
+
+  // The Deprecate button disappears once the refetch shows the new status, and
+  // the dialog would restore focus to it. So focus moves to the heading once
+  // both the write has succeeded and the new status is showing, whichever
+  // arrives last, and the change is announced.
+  useEffect(() => {
+    if (
+      deprecationDone &&
+      definition !== undefined &&
+      isDeprecated &&
+      !reportedDeprecation.current
+    ) {
+      reportedDeprecation.current = true;
+      announce(`${definition.label} is now deprecated.`);
+      document.getElementById(HEADING_ID)?.focus();
+    }
+  }, [deprecationDone, definition, isDeprecated, announce]);
+
+  // A refusal such as "already deprecated" refetches the property, which can
+  // remove the Deprecate button the dialog would return focus to.
+  function closeDeprecateDialog() {
+    setDeprecating(false);
+    if (isDeprecated) {
+      document.getElementById(HEADING_ID)?.focus();
+    }
+  }
 
   return (
-    <section aria-labelledby="property-detail-heading">
+    <section aria-labelledby={HEADING_ID}>
       <LiveRegion message={message} politeness={politeness} />
 
       <PageContainer className="py-6">
         <PageHeader
-          id="property-detail-heading"
+          id={HEADING_ID}
+          focusable
           title={definition ? definition.label : propertyKey}
           meta={
             definition ? <span className="font-mono">{definition.key}</span> : undefined
           }
           actions={
-            <Link to="/admin/properties" className={buttonClassName("secondary")}>
-              Back to the property registry
-            </Link>
+            <>
+              {definition && (
+                <Link
+                  to="/admin/properties/$propertyKey/edit"
+                  params={{ propertyKey }}
+                  className={buttonClassName("primary")}
+                >
+                  Edit property
+                </Link>
+              )}
+              {definition && !isDeprecated && (
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={() => setDeprecating(true)}
+                >
+                  Deprecate property
+                </Button>
+              )}
+              <Link to="/admin/properties" className={buttonClassName("secondary")}>
+                Back to the property registry
+              </Link>
+            </>
           }
         />
 
@@ -223,7 +263,7 @@ export function AdminPropertyDetailPage() {
           <p className="m-0 text-[var(--color-danger)]">{hardFailureMessage}</p>
         )}
 
-        {staleData && <p>{staleWarning(propertyKey)}</p>}
+        {staleData && <p>{propertyStaleWarning(propertyKey)}</p>}
 
         {definition && (
           <>
@@ -233,6 +273,17 @@ export function AdminPropertyDetailPage() {
               <ConstraintsCard constraints={definition.constraints} />
             )}
           </>
+        )}
+
+        {deprecating && definition && (
+          <DeprecatePropertyDialog
+            definition={definition}
+            onClose={closeDeprecateDialog}
+            onDeprecated={() => {
+              setDeprecationDone(true);
+              setDeprecating(false);
+            }}
+          />
         )}
       </PageContainer>
     </section>

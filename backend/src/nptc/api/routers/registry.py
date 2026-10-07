@@ -5,7 +5,7 @@ a try/except. Each route has its own `_RESPONSES_*` dict naming only the statuse
 produce.
 
 **Mutating routes (`POST`, `PATCH`, `POST .../deprecation`, `DELETE`) require
-`Permission.REGISTRY_MANAGE`, and both `GET` routes require `Permission.REGISTRY_READ`**
+`Permission.REGISTRY_MANAGE`, and the `GET` routes require `Permission.REGISTRY_READ`**
 (FR-44). ADR-0028 records why the reads use neither `REGISTRY_MANAGE` nor
 `CATALOGUE_BROWSE`.
 
@@ -135,6 +135,10 @@ _RESPONSES_LIST: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403_READ,
     500: _RESPONSE_500_DATATYPE,
+}
+_RESPONSES_DATATYPES: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_READ,
 }
 _RESPONSES_GET_ONE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
@@ -284,6 +288,25 @@ class PropertyDefinitionList(BaseModel):
     items: list[PropertyDefinitionResponse]
 
 
+class DatatypeDescription(BaseModel):
+    """One registered datatype, as a create form needs it: the name to offer, the JSON Schema
+    its `constraints` must satisfy, and whether a property of it takes a terminology binding
+    (`DatatypeHandler.uses_binding`). A client offers the binding fields from the flag, never
+    from the name (FR-77)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    constraints_schema: dict[str, Any]
+    uses_binding: bool
+
+
+class DatatypeList(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[DatatypeDescription]
+
+
 class CreatePropertyDefinitionRequest(BaseModel):
     """The body of `POST /registry/properties`. Every property created
     through this route is `origin = 'admin'` - there is no field to
@@ -424,6 +447,27 @@ def _to_response(
         constraints=dict(definition.constraints),
         row_version=definition.row_version,
         form_control=FormControl(control=descriptor.control, params=dict(descriptor.params)),
+    )
+
+
+@router.get(
+    "/datatypes",
+    summary="List the registered property datatypes",
+    responses=_RESPONSES_DATATYPES,
+    dependencies=[_READ],
+)
+def list_datatypes(registry: RegistryDep) -> DatatypeList:
+    """The live `DatatypeRegistry`, so a datatype added to it appears here with no edit to this
+    route (FR-77). Ordered by name."""
+    return DatatypeList(
+        items=[
+            DatatypeDescription(
+                name=handler.datatype,
+                constraints_schema=dict(handler.constraints_schema()),
+                uses_binding=handler.uses_binding,
+            )
+            for handler in registry.handlers()
+        ]
     )
 
 
