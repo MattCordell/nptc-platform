@@ -45,7 +45,7 @@ function CollectionNotice() {
       <p className="m-0">
         <Link
           to="/privacy"
-          className="text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]"
+          className="inline-flex min-h-6 items-center text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]"
         >
           Read the privacy policy
         </Link>

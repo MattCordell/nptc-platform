@@ -88,6 +88,13 @@ export function useSession() {
  * still being restored would cache the anonymous answer and be shown the gate
  * for terms they already accepted. Every invalidation targets the shared
  * `TERMS_QUERY_KEY` prefix, which matches both variants.
+ *
+ * Retries once when the request fails without any answer from the server.
+ * A new user's first page load sends this read beside `GET /auth/me`, and
+ * while both create the user's record one of them can fail with a response
+ * the browser blocks (no CORS headers on a 500), which reads as a network
+ * failure. Without the retry that user would never be shown the gate on that
+ * load. A refusal the server did answer (`ApiError`) is not retried.
  */
 export function useCurrentTerms() {
   const client = useApiClient();
@@ -97,6 +104,8 @@ export function useCurrentTerms() {
     queryFn: async ({ signal }) =>
       unwrap(await client.GET("/api/v1/auth/terms", { signal })),
     enabled: status !== "restoring",
+    retry: (failureCount, error) => failureCount < 1 && !(error instanceof ApiError),
+    retryDelay: 1000,
   });
 }
 

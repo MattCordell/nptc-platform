@@ -83,6 +83,60 @@ describe("useCurrentTerms", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
   });
+
+  it("does not retry a refusal the server answered", async () => {
+    const calls = stubApi([
+      { method: "GET", path: TERMS, status: 500, body: { detail: "boom" } },
+    ]);
+
+    const { result } = renderHook(() => useCurrentTerms(), { wrapper: wrapperFor() });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(calls).toHaveLength(1);
+  });
+
+  // A new user's first load sends this read beside GET /auth/me while the
+  // user's record is created; one of the two can fail with a response the
+  // browser blocks, which arrives as a network error rather than an answer.
+  it("retries once when the request fails with no answer, then succeeds", async () => {
+    let attempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : Promise.resolve(
+              new Response(JSON.stringify(CURRENT), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+            );
+      }),
+    );
+
+    const { result } = renderHook(() => useCurrentTerms(), { wrapper: wrapperFor() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true), { timeout: 4000 });
+    expect(attempts).toBe(2);
+    expect(result.current.data).toEqual(CURRENT);
+  });
+
+  it("gives up after the one retry", async () => {
+    let attempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        attempts += 1;
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }),
+    );
+
+    const { result } = renderHook(() => useCurrentTerms(), { wrapper: wrapperFor() });
+
+    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 4000 });
+    expect(attempts).toBe(2);
+  });
 });
 
 describe("useAcceptTerms", () => {
