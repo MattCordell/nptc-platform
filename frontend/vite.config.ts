@@ -1,7 +1,7 @@
-/// <reference types="vitest/config" />
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -9,6 +9,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Playwright specs run in a real browser via `pnpm test:e2e`, not under jsdom.
+    exclude: [...configDefaults.exclude, "e2e/**"],
     setupFiles: ["./src/test/setup.ts"],
     // Default 5000ms leaves no margin under --coverage's v8 instrumentation
     // overhead once the suite grows large route test files (issue #244).
