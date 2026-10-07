@@ -5,7 +5,7 @@
  * that exist.
  */
 
-export type AboutLinkTarget = "/catalogue" | "/exports" | "/terms";
+export type AboutLinkTarget = "/catalogue";
 
 export interface AboutSection {
   /** Used for the heading's `id`, so it must be unique and URL-safe. */
