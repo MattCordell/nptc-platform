@@ -1,18 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { expectNoA11yViolations } from "./axe.ts";
 
 // Real-browser smoke suite against the compose stack (NFR-41), with colour
 // contrast checked by axe on every page (NFR-31).
 
+// The header shows an inert placeholder while the session check runs and the
+// "Sign in" link once it reports signed out, so axe sees the settled page. A
+// "Sign-in unavailable" header fails here, which is the clearer failure.
+async function waitForSessionCheck(page: Page): Promise<void> {
+  await expect(page.getByRole("link", { name: "Sign in" }).first()).toBeVisible();
+}
+
 test("landing page renders and has no axe violations", async ({ page }) => {
   await page.goto("/");
   await expect(
     page.getByRole("heading", { level: 1, name: "NPTC Catalogue Maintenance Platform" }),
   ).toBeVisible();
-  // The page renders before the session check answers; axe must see the
-  // settled page, not a mid-restore one.
-  await page.waitForLoadState("networkidle");
+  await waitForSessionCheck(page);
   await expectNoA11yViolations(page);
 });
 
@@ -32,11 +37,14 @@ test("sign-in redirects to the Keycloak authorisation endpoint", async ({
   const url = new URL(page.url());
   expect(url.searchParams.get("client_id")).toBe("nptc-frontend");
   expect(url.searchParams.get("code_challenge")).toBeTruthy();
-  // Keycloak refuses a redirect_uri it does not know, so a mismatch between
-  // NPTC_E2E_BASE_URL and the stack's NPTC_FRONTEND_BASE_URL fails here.
-  expect(url.searchParams.get("redirect_uri")).toBe(`${baseURL}/auth/callback`);
-  await page.waitForLoadState("load");
-  await expect(page.getByText("Invalid parameter: redirect_uri")).toHaveCount(0);
+  // The app derives redirect_uri from the page origin, so this checks the app,
+  // not the stack's NPTC_FRONTEND_BASE_URL.
+  expect(url.searchParams.get("redirect_uri")).toBe(
+    new URL("/auth/callback", baseURL).href,
+  );
+  // Keycloak shows its login form only for a redirect_uri it has registered. A
+  // mismatch with NPTC_FRONTEND_BASE_URL shows an error page instead.
+  await expect(page.getByRole("textbox", { name: /username/i })).toBeVisible();
 });
 
 test("stub page renders and has no axe violations", async ({ page }) => {
@@ -44,7 +52,7 @@ test("stub page renders and has no axe violations", async ({ page }) => {
   await expect(
     page.getByRole("heading", { level: 1, name: "About the catalogue" }),
   ).toBeVisible();
-  await page.waitForLoadState("networkidle");
+  await waitForSessionCheck(page);
   await expectNoA11yViolations(page);
 });
 
@@ -53,6 +61,6 @@ test("not-found page renders and has no axe violations", async ({ page }) => {
   await expect(
     page.getByRole("heading", { level: 1, name: "We couldn't find that page" }),
   ).toBeVisible();
-  await page.waitForLoadState("networkidle");
+  await waitForSessionCheck(page);
   await expectNoA11yViolations(page);
 });
