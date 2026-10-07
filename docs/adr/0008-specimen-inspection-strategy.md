@@ -1,6 +1,8 @@
 # ADR-0008: Specimen inspection strategy — ECL set-membership over the `Has specimen` attribute, a hand-typed + server-augmented specimen table, and a coverage audit for what the table doesn't cover
 
-**Status:** Accepted
+**Status:** Accepted; decision 3 (the hand-typed Python specimen table) and the "YAML/JSON
+specimen table" rejected alternative are superseded by
+[ADR-0044](0044-specimen-map-and-any-as-root.md). The rest stands.
 **Date:** 2026-08-12
 
 ## Context

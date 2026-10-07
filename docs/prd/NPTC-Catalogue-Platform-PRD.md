@@ -277,7 +277,6 @@ The central entity. Deliberately split into **core columns** (first-class, index
 | `business_key` | text, unique, immutable | Stable public identifier for the entry, independent of code or term. See FR-03. |
 | `preferred_term` | text, not null | The RCPA preferred term. |
 | `status` | enum | `draft`, `active`, `deprecated`, `withdrawn` |
-| `specimen_unconstrained` | boolean, not null, default false | True where the test accepts any specimen. A **core column, not a registry property**, because `boolean` is deliberately not an available property datatype (FR-77) and this flag must be queryable and constrained. See FR-89. |
 | `created_at`, `updated_at` | timestamptz (UTC) | |
 | `row_version` | integer | Optimistic concurrency. See FR-38. |
 
@@ -452,7 +451,7 @@ Adding a datatype remains a code change, deliberately. Allowing administrators t
 
 The source notes proposed binding `Discipline` to `<394595002` and `Specimen` to `<123038009`. Both were verified against SNOMED CT-AU using Ontoserver in preparing v0.2 of this document. The two produced opposite results.
 
-#### Specimen: bind to SNOMED, with one modelling addition
+#### Specimen: bind to SNOMED
 
 `<123038009` covers the sample's specimen vocabulary better than expected. Values that were flagged as doubtful in v0.1 all resolve:
 
@@ -462,13 +461,13 @@ The source notes proposed binding `Discipline` to `<394595002` and `Specimen` to
 | `Platelet poor plasma` | `119362004` \|Platelet poor plasma specimen\| | Yes |
 | `Swabs` | `257261003` \|Swab\|, with a large subtype hierarchy | Yes |
 
-**FR-88 (MUST):** `Specimen` MUST be a coded property with cardinality `0..*`, bound to a value set rooted at `123038009`, replacing the semicolon-delimited string. The multi-valued case is the norm, not the exception: one sample entry carries seven specimens.
+**FR-88 (MUST):** `Specimen` MUST be a coded property with cardinality `0..*`, bound to the value set `<<123038009` (the root and its descendants), replacing the semicolon-delimited string. The multi-valued case is the norm, not the exception: one sample entry carries seven specimens. *Amended 2026-10-07 by ADR-0044: the binding was `<123038009`, which excludes the root.*
 
-**FR-89 (MUST):** The value `'Any'` MUST NOT be represented as a specimen code. It is the absence of a specimen constraint, not a specimen. It MUST be modelled as **zero specimen values plus the `specimen_unconstrained` core column** defined in Section 6.2 (decision closing OI-2). It is a core column rather than a registry property because `boolean` is not an available property datatype and the flag needs a not-null constraint and an index.
+**FR-89 (MUST):** The value `'Any'` MUST be represented as the specimen code `123038009` |Specimen (specimen)|, the root of the specimen hierarchy, and an entry that carries it MUST carry no other specimen value. There is no separate flag. *Amended 2026-10-07 by ADR-0044, which reverses the earlier rule: zero specimen values plus a `specimen_unconstrained` core column (the decision that closed OI-2).*
 
-The boolean is what makes the model honest. Without it, an entry with no specimens is ambiguous between "this test accepts any specimen" and "nobody has filled this in yet", and those are different facts that a consumer must be able to tell apart. Exports render the flag as `Any` for continuity with the current published format.
+The root value keeps the model honest. An entry with no specimen values is unfilled, and an entry that holds `123038009` accepts any specimen. These are different facts, and a consumer tells them apart by reading one property. Exports render `123038009` as `Any` for continuity with the current published format.
 
-One value remains unresolved, and it is editorial rather than technical: `Fluids` is vague enough that a terminologist should choose the intended concept or split it. It should be resolved during the P0 designation pass. `Any` is fully determined by FR-89 and needs no editorial input.
+**Specimen vocabulary (ADR-0044).** A terminologist-reviewed map from each workbook specimen string to a SNOMED CT code is the one source of specimen vocabulary. The transform treats a workbook specimen string that the map does not cover as a data defect, so it fails where the seed loader would. A string the map marks as having no equivalent (`N/A`, `Culture`) yields no specimen value. `Breath` and `Body` are mapped to a broader or inexact concept until SCTAU and the October release add more precise ones.
 
 #### Discipline and Subgroup: governed RCPA local code systems
 
@@ -839,9 +838,9 @@ Phase P0. A standalone, runnable tool that converts the current published spread
 
 | Band | Behaviour | Examples |
 |---|---|---|
-| **Auto-correctable** | Fixed automatically, every correction itemised in the report | Non-breaking and narrow no-break space normalisation to ordinary space; leading and trailing whitespace stripping; empty synonym removal from doubled delimiters; type coercion of codes to string; the `'Any'` specimen value, now deterministic under FR-89; compound `'X or Y'` discipline values, now deterministic as multiplicity under FR-90 |
-| **Requires human decision** | Import aborts. Reported with row, column, current value and the decision required | Comma-versus-semicolon delimiter ambiguity where a synonym may legitimately contain a comma, or is space-separated with no delimiter at all; the `Fluids` specimen value; `Subgroup` values whose classification axis is unclear |
-| **Data defect** | Import aborts. Reported for RCPA-QAP to correct at source | Codes failing Verhoeff check-digit validation; codes not resolving in either edition; **stored text matching no designation on the concept, or matching the FSN of a different concept** (FR-97); **codes not subsumed by `<<71388002`** (FR-84); duplicate codes; synonym colliding with another entry's preferred term. Note that a published label which is merely a *synonym* or a superseded FSN is **not** in this band: it is reported as information and seeded with the served FSN, because the catalogue lagging the terminology is expected rather than defective. |
+| **Auto-correctable** | Fixed automatically, every correction itemised in the report | Non-breaking and narrow no-break space normalisation to ordinary space; leading and trailing whitespace stripping; empty synonym removal from doubled delimiters; type coercion of codes to string; compound `'X or Y'` discipline values, now deterministic as multiplicity under FR-90 |
+| **Requires human decision** | Import aborts. Reported with row, column, current value and the decision required | Comma-versus-semicolon delimiter ambiguity where a synonym may legitimately contain a comma, or is space-separated with no delimiter at all; `Subgroup` values whose classification axis is unclear |
+| **Data defect** | Import aborts. Reported for RCPA-QAP to correct at source | Codes failing Verhoeff check-digit validation; codes not resolving in either edition; **stored text matching no designation on the concept, or matching the FSN of a different concept** (FR-97); **codes not subsumed by `<<71388002`** (FR-84); duplicate codes; synonym colliding with another entry's preferred term; **a specimen string the reviewed specimen map does not cover**, or `Any` combined with another specimen (ADR-0044). Note that a published label which is merely a *synonym* or a superseded FSN is **not** in this band: it is reported as information and seeded with the served FSN, because the catalogue lagging the terminology is expected rather than defective. |
 
 **FR-100 (MUST):** A row that carries a `RCPA Preferred term` value but resolves **no** code binding MUST be reported as a data defect (`MISSING_CODE_BINDING`) and MUST NOT be seeded into the import dataset.
 
@@ -1176,7 +1175,7 @@ Recorded so that the reasoning is not lost and the decisions are not silently re
 
 | ID | Decision | Basis |
 |---|---|---|
-| **OI-2** | Specimen `'Any'` becomes zero specimen codes plus an explicit `specimen_unconstrained` flag. `<123038009` binding confirmed adequate; `24 hour urine specimen`, `Platelet poor plasma specimen` and `Swab` all resolve. | Verified against SNOMED CT-AU. FR-88, FR-89. |
+| **OI-2** | **Revised 2026-10-07 (ADR-0044):** `Any` is the specimen code `123038009` and the binding is `<<123038009`; the `specimen_unconstrained` flag is retired. Originally: specimen `'Any'` becomes zero specimen codes plus an explicit `specimen_unconstrained` flag. `<123038009` binding confirmed adequate; `24 hour urine specimen`, `Platelet poor plasma specimen` and `Swab` all resolve. | Verified against SNOMED CT-AU. FR-88, FR-89. |
 | **OI-3** | `Discipline` becomes a governed RCPA local code system with an optional non-authoritative SNOMED map. | Verified: `<394595002` returns 17 concepts; three of six RCPA disciplines match exactly, Microbiology is ambiguous between two, and Molecular and Serology have no match in the specialty hierarchy at all. FR-90, FR-91. |
 | **OI-4** | Reviewer and Observer roles added. | Section 4, with an authoritative permission matrix at 4.7. |
 | **OI-5** | No NCTS integration. Exports delivered as an archive through the existing email submission process; NCTS publishes through its existing pipeline. | FR-93, FR-94. Removes an entire integration from P4. |
@@ -1362,7 +1361,7 @@ This is precisely the case that motivated storing designations **as served** rat
 
 **Discipline binding: not viable.** `<394595002` expands to 17 concepts in SNOMED CT-AU. Three of the six RCPA disciplines match exactly (`394596001`, `394916005`, `394598000`), Microbiology is ambiguous between `408454008` and `394820005`, and Molecular and Serology have no match. Their nearest neighbours, `708179009` \|Molecular pathology service\| and `708188000` \|Serology service\|, are healthcare service concepts: `check_subsumption(394595002, 708179009)` returns **not-subsumed**. This finding closed OI-3.
 
-**Specimen binding: viable.** `276833005` \|24 hour urine specimen\|, `119362004` \|Platelet poor plasma specimen\| and `257261003` \|Swab\| all resolve under `<123038009`. The v0.1 concern about timed collections was unfounded. This finding closed OI-2.
+**Specimen binding: viable.** `276833005` \|24 hour urine specimen\|, `119362004` \|Platelet poor plasma specimen\| and `257261003` \|Swab\| all resolve under `<123038009`. The v0.1 concern about timed collections was unfounded. This finding closed OI-2. *Amended 2026-10-07: ADR-0044 widens the binding to `<<123038009`, which includes the root.*
 
 **Hierarchy constraint: clean.** Expanding `(all 50 codes) MINUS <<71388002` returns **zero results**. Every sample code is subsumed by `71388002` \|Procedure (procedure)\|. The constraint in FR-84 is therefore empirically supported and will not block seeding, and the single-call ECL idiom is demonstrated to work.
 
