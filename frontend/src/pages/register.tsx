@@ -14,10 +14,9 @@ import { useAuth } from "../auth/session.ts";
  * authorize endpoint, a user who registers lands straight back in the same
  * PKCE flow and arrives signed in, with no second trip through `/sign-in`.
  *
- * **Not yet covered**: NFR-14/NFR-45 require the privacy notice and
- * versioned terms to be presented with positive acceptance at registration.
- * Handing off to Keycloak's page does not do that - see the follow-up issue
- * linked from this PR.
+ * Keycloak's page shows the collection notice and links to `/terms` and
+ * `/privacy`. It records no acceptance: the terms gate in the signed-in
+ * routes asks for that on first sign-in (NFR-45, ADR-0043).
  */
 export function RegisterPage() {
   const { status, register } = useAuth();

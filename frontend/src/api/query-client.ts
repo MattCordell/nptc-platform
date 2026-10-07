@@ -1,6 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 
 import { asStepUpChallenge, type StepUpChallenge } from "./step-up.ts";
+import { asTermsRequired, TERMS_QUERY_KEY } from "./terms.ts";
 
 /**
  * What a query/mutation cache handler is told about the request an
@@ -57,6 +58,13 @@ export function createQueryClient(
   onStepUpChallenge?: StepUpChallengeHandler,
 ): QueryClient {
   const notify = (error: unknown, context: StepUpChallengeContext): void => {
+    // A write refused for unaccepted terms (NFR-45) means the cached
+    // `accepted: true` is wrong - the terms changed under a long session.
+    // Refetching it is what makes the gate appear; this needs no callback
+    // because the client is in scope and the key is a constant.
+    if (asTermsRequired(error) !== null) {
+      void queryClient.invalidateQueries({ queryKey: TERMS_QUERY_KEY });
+    }
     const challenge = asStepUpChallenge(error);
     if (challenge && onStepUpChallenge) {
       // Fire-and-forget from the cache's own point of view - a cache

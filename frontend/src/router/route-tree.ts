@@ -15,6 +15,7 @@ import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
 import { SignInPage } from "../pages/sign-in.tsx";
 import { SignOutPage } from "../pages/sign-out.tsx";
+import { TermsPage } from "../pages/terms.tsx";
 import { AdminLayout } from "../shell/admin-layout.tsx";
 import { RequireAuth } from "../shell/require-auth.tsx";
 import { RootLayout } from "../shell/root-layout.tsx";
@@ -191,7 +192,7 @@ const aboutRoute = createRoute({
 const termsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "terms",
-  component: createPlaceholderPage({ title: "Terms of use", issue: 64 }),
+  component: TermsPage,
   head: titled("Terms of use"),
 });
 

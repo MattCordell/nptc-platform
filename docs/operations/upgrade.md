@@ -395,9 +395,10 @@ creates an empty table, so the upgrade itself is instant and needs no data step.
 **Every existing user must accept the current terms before their next contribution.** None has
 an acceptance row, so once the API at this revision runs, it refuses every contribution with a
 403 whose body carries `code: terms_acceptance_required` until that user accepts. Reads,
-sign-in, and the accept request itself stay open. The terms page and gate that ask users to
-accept belong to the SPA; until the SPA has them, a user can accept only by calling
-`POST /api/v1/auth/terms/acceptance` with the current `version` from `GET /api/v1/auth/terms`.
+sign-in, and the accept request itself stay open. The SPA shows each such user a full-page
+**Accept the terms of use** gate on their next signed-in page load, so no operator step is
+needed. Any other client accepts by calling `POST /api/v1/auth/terms/acceptance` with the
+current `version` from `GET /api/v1/auth/terms`.
 
 The API reads the terms files named by `NPTC_TERMS_CURRENT_VERSION` and refuses to start if
 that version has no file. See [`configuration.md`](configuration.md).

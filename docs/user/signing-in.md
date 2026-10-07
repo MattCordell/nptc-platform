@@ -18,15 +18,48 @@ later.
 The registration page explains how your details are used and links to the privacy policy
 and the terms of use. Both links open in a new tab, so your form stays as you left it.
 
-> **Partly implemented.** The platform now records which version of the terms of use you
-> accept, and it refuses a contribution until you have accepted the current version. The
-> screen that shows the terms and asks you to accept is not built yet. The terms text is
-> temporary placeholder wording, and the privacy policy page is still a placeholder. The
-> registration notice says that the retention period is still being settled. See
-> [ADR-0043](../adr/0043-terms-acceptance-storage.md) for the plan.
+## Accepting the terms of use
 
-When the terms change, you are asked to accept the new version before your next
-contribution. You can still read the catalogue and sign out without accepting.
+You must accept the terms of use before you can make a change to the catalogue. The
+registration page does not record this. The catalogue asks for it the first time you sign
+in, and again whenever the terms change.
+
+Until you accept, the catalogue shows a page called **Accept the terms of use** in place of
+the page you asked for. It shows:
+
+- how your details are used;
+- the full text of the terms;
+- a box to tick; and
+- the buttons **Accept and continue** and **Sign out**.
+
+To accept:
+
+1. Read the terms.
+2. Tick **I have read and accept the terms of use**.
+3. Choose **Accept and continue**. You go on to the page you asked for.
+
+If you choose **Accept and continue** without ticking the box, the page tells you why and
+links to the box. If the catalogue cannot save your acceptance, the page says so, keeps
+your tick and lets you try again.
+
+If you do not want to accept, choose **Sign out**. Your account stays, and you can accept
+the next time you sign in. You can read the public catalogue and the terms without
+accepting.
+
+You can read the current terms at any time with **Terms of use** in the page footer, signed
+in or not. When you are signed in, that page also says whether you have accepted the
+version it shows.
+
+**When the terms change.** The next time the catalogue checks, you see the gate again, now
+showing the new version. If the terms change while you are reading the gate, the page tells
+you, clears the tick and shows the new version, so you accept the text you have read.
+
+If the terms change while you are editing, the catalogue refuses your next save and shows
+the gate. The page you were on stays where it was. Accept, then save again.
+
+> **Placeholder wording.** The terms text is temporary, and the privacy policy page is
+> still a placeholder. The registration notice says that the retention period is still
+> being settled. See [ADR-0043](../adr/0043-terms-acceptance-storage.md) for the design.
 
 ## Signing in
 
@@ -74,6 +107,14 @@ replayed by someone else.
 **"Sign-in is unavailable."** The catalogue cannot reach the sign-in service. This is
 usually temporary — try again in a few minutes. The public catalogue stays available
 meanwhile.
+
+**The "Accept the terms of use" page appears when you did not expect it.** The terms
+changed since you last accepted. Read the new version, tick the box and choose **Accept
+and continue**. To leave without accepting, choose **Sign out**.
+
+**"Your acceptance could not be saved."** The catalogue could not reach the service that
+records it. Your tick stays in place. Choose **Accept and continue** again, or try again in
+a few minutes.
 
 **You are asked to sign in again unexpectedly.** Sessions expire after a period of
 inactivity. Sign in again to continue; nothing you have already submitted is lost.
