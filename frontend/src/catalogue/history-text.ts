@@ -14,13 +14,17 @@ function isInternalKey(name: string): boolean {
 }
 
 /** Field names whose plain capitalised form is unclear, an acronym, or not the
- * word the page uses for the same thing: the Details panel calls `business_key`
- * "Identifier", and the Terms table calls `use` "Type". */
+ * word the public screens use for the same thing: the Details panel calls
+ * `business_key` "Identifier" and `specimen_unconstrained` "Any specimen", the
+ * Terms table calls `use` "Type", and search calls `preferred_term` "Requesting
+ * term". */
 const FIELD_LABELS: Record<string, string> = {
   business_key: "Identifier",
   fsn: "Fully specified name",
   au_preferred_term: "AU preferred term",
+  preferred_term: "Requesting term",
   property_key: "Property",
+  specimen_unconstrained: "Any specimen",
   system: "Code system",
   use: "Type",
 };

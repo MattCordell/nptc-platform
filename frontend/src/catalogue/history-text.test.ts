@@ -29,7 +29,7 @@ describe("describeChange", () => {
   it("names the changed fields in words", () => {
     expect(
       describeChange(event({ changed_fields: ["preferred_term", "status"] })).fields,
-    ).toBe("Preferred term, Status");
+    ).toBe("Requesting term, Status");
   });
 
   it("spells out a field name that would otherwise be an unexplained acronym", () => {
@@ -92,7 +92,7 @@ describe("describeChange", () => {
           ],
         }),
       ).fields,
-    ).toBe("Identifier, Preferred term, Specimen unconstrained, Status");
+    ).toBe("Identifier, Requesting term, Any specimen, Status");
   });
 
   it("hides any audited key that ends in _id, including one added later", () => {

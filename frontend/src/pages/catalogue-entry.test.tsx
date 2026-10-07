@@ -543,7 +543,7 @@ describe("recent changes", () => {
     ).toBeInTheDocument();
     expect(within(section).getByText("1 September 2026")).toBeInTheDocument();
     expect(
-      within(section).getByText("Fields: Preferred term, Status"),
+      within(section).getByText("Fields: Requesting term, Status"),
     ).toBeInTheDocument();
     expect(within(section).getByText("Corrected the spelling.")).toBeInTheDocument();
     expect(within(section).queryByText(/^By /)).toBeNull();
