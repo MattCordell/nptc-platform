@@ -100,8 +100,8 @@ not apply.
 | Every control works with the keyboard alone, and focus order matches reading order | Reviewer, by hand; component tests for each component's own key contract |
 | Focus is always visible, and a sticky header or dialog never hides the focused element (WCAG 2.4.11) | Reviewer, by hand |
 | Every control has a label or accessible name; use `frontend/src/components/`, not a bare `<input>` or `<button>` | `expectNoA11yViolations` in the component test |
-| The page has one `h1`, headings in order, and the landmarks from `root-layout.tsx` | axe test; Playwright run once it exists |
-| Colour contrast is checked in a real browser, not assumed from the tokens | Playwright with axe and colour contrast on; `frontend/tests/design-tokens-contrast.test.ts` for the token pairs |
+| The page has one `h1`, headings in order, and the landmarks from `root-layout.tsx` | axe test; the Playwright smoke suite for the pages it covers ([`docs/operations/frontend-e2e-testing.md`](docs/operations/frontend-e2e-testing.md)) |
+| Colour contrast is checked in a real browser, not assumed from the tokens | `pnpm test:e2e` in `frontend/` (Playwright with axe and colour contrast on, see [`docs/operations/frontend-e2e-testing.md`](docs/operations/frontend-e2e-testing.md)); `frontend/tests/design-tokens-contrast.test.ts` for the token pairs |
 | Errors name the problem and the next step, and are announced through the live region or the error summary | Component test; reviewer, by hand |
 | No information is carried by colour alone (a status also has text) | Reviewer, by hand |
 | Click and tap targets are at least 24 by 24 CSS pixels (WCAG 2.5.8) | Reviewer, by hand |

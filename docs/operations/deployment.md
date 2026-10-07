@@ -205,5 +205,6 @@ Run `down -v` and start again.
 | Sign-in works, but pages say you lack permission | You have no role yet, or you hold the administrator role but have not completed the second-factor step. See [Create the first user and administrator](#create-the-first-user-and-administrator). |
 
 To run the API or web app on your own machine instead, see
-[`local-development.md`](local-development.md). Every setting is listed in
+[`local-development.md`](local-development.md). To check the running web app in a real
+browser, see [`frontend-e2e-testing.md`](frontend-e2e-testing.md). Every setting is listed in
 [`configuration.md`](configuration.md).
