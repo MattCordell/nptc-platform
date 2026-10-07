@@ -18,9 +18,10 @@ What the backend cannot store, and the loader therefore refuses rather than repa
 
 - A specimen value with no SNOMED CT code. A `property_value` holds `{system, code}`, and the
   specimen binding requires a code in the specimen value set, so a verbatim label has nowhere to
-  go. RCPA-QAP maps it in the transform's specimen table or corrects the workbook, then the
-  transform is run again.
-- A named specimen on an entry flagged `specimen_unconstrained` (FR-89 refuses the pair).
+  go. A terminologist adds it to the transform's specimen map or RCPA-QAP corrects the workbook,
+  then the transform is run again.
+- The specimen root `123038009` beside another specimen. The root means "any specimen" and stands
+  alone (FR-89).
 - A code binding with no FSN, which `create_binding` requires and which means the transform
   found no FSN cell.
 """
@@ -38,6 +39,7 @@ from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBindingEditionHint
 from nptc_shared.language import DEFAULT_LANGUAGE
+from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 
 __all__ = [
     "SUPPORTED_SCHEMA_VERSION",
@@ -52,7 +54,7 @@ __all__ = [
     "read_import_dataset",
 ]
 
-SUPPORTED_SCHEMA_VERSION: Final[int] = 1
+SUPPORTED_SCHEMA_VERSION: Final[int] = 2
 
 _SHA256_PATTERN: Final[str] = r"^[0-9a-f]{64}$"
 
@@ -157,14 +159,13 @@ class DatasetEntry(_Strict):
     source: DatasetEntrySource
     preferred_term: str
     status: CatalogueEntryStatus
-    specimen_unconstrained: bool
     designations: tuple[DatasetDesignation, ...]
     code_bindings: tuple[DatasetCodeBinding, ...]
     properties: DatasetProperties
 
 
 class ImportDataset(_Strict):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     tool_version: str
     source: DatasetSource
     baseline_release: DatasetBaselineRelease
@@ -226,13 +227,14 @@ def _entry_problems(entry: DatasetEntry) -> list[str]:
         if value.code is None:
             problems.append(
                 f"{where}: specimen {value.value!r} has no SNOMED CT code (the transform reports "
-                "it as SPECIMEN_VALUE_UNMAPPED) - add it to the transform's specimen table or "
+                "it as SPECIMEN_VALUE_UNMAPPED) - add it to the transform's specimen map or "
                 "correct the workbook value, then run the transform again"
             )
-    if entry.specimen_unconstrained and entry.properties.specimen:
+    codes = {value.code for value in entry.properties.specimen if value.code is not None}
+    if SPECIMEN_ROOT_CODE in codes and len(codes) > 1:
         problems.append(
-            f"{where}: marked as accepting any specimen but also lists named specimens "
-            "(FR-89) - keep one or the other in the workbook"
+            f"{where}: a specimen means any specimen ({SPECIMEN_ROOT_CODE}) but the entry also "
+            "lists named specimens (FR-89) - keep the any-specimen value alone in the workbook"
         )
 
     for label, values in (

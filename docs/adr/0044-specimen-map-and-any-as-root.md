@@ -4,9 +4,11 @@
 **Date:** 2026-10-07
 
 Supersedes decision 3 of [ADR-0008](0008-specimen-inspection-strategy.md) (a hand-typed Python
-table) and its "YAML/JSON specimen table" rejected alternative. It also supersedes the FR-89
-model that closed OI-2 (zero specimen values plus a `specimen_unconstrained` flag). The rest of
-ADR-0008 stands: the ECL checks, the coverage audit and the informational drift bands.
+table) and its "YAML/JSON specimen table" rejected alternative. It replaces the audit count in
+ADR-0008's decision 4, because a string the map does not cover now blocks the run. It also
+supersedes the FR-89 model that closed OI-2 (zero specimen values plus a
+`specimen_unconstrained` flag). The rest of ADR-0008 stands: the ECL checks and the informational
+drift bands.
 
 ## Context
 
@@ -56,9 +58,13 @@ the root value removes it.
 **5. A no-map row (`N/A`, `Culture`) yields zero specimen values and an informational
 finding.** It never means "accepts any specimen".
 
-**6. `SPECIMEN_TABLE`, which the FR-75 drift check reads, is derived from the map.** It gets
-no second hand-typed vocabulary, so the two cannot drift apart. Group keys and the timing
-assertion for the timed urine groups stay in Python, because the map has neither.
+**6. Each FR-75 drift group takes its code and display from the map.** `SPECIMEN_TABLE`
+keeps its preferred-term wording in Python, because the map holds workbook cell strings and not
+the phrases a curator writes inside a preferred term, such as "stool" or "cerebrospinal fluid".
+A corrected code in the map reaches the drift check without a second edit. Group keys and the
+timing assertion for the timed urine groups stay in Python, because the map has neither. Two
+groups, whole blood and breast milk, have no row in the map and keep their own verified codes. A
+test fails when the map gains a row for either, so the group moves over.
 
 **7. `--check-terminology` verifies every map code is under `<<123038009`.** A code that fails
 blocks the run. This reuses the existing sweep primitives, with no request per row.
@@ -74,6 +80,7 @@ unrelated shape errors. The version gate gives one clear message instead (ADR-00
 | Keep the flag and keep `<123038009`, and refuse `Any` and `Breath` | The reviewed map codes both as the root. Every entry that says `Any` would stay unseedable, which is the gap this change closes. |
 | Keep the flag, and map `Any` to zero values in the transform only | The map would hold a row that the transform then ignores. The flag also needs a core column, a field on every entry response, a toggle and a two-sided guard, all to carry what one code can carry. |
 | Keep the map in a Python module (ADR-0008, decision 3) | The reviewer works on rows, not on code. A Python table makes each correction a code change that the reviewer cannot diff as data. The load-time checks answer the drift concern ADR-0008 raised. |
+| Derive every drift group, wording included, from the map | The map holds workbook cell strings. Short ones such as `DNA`, `Blood` and `Hair` would match inside many preferred terms and raise a flood of drift candidates, and the phrases a curator writes in a preferred term ("stool") are not in it. |
 | Match by prefix, substring or similarity | A wrong code seeded silently is worse than a row that blocks. The workbook is the authority, and the map must name its strings. |
 | Read a no-map row as "accepts any specimen" | `N/A` and `Culture` do not say that. The meaning of the root would then rest on guesses about free text. |
 | Leave an unmapped string informational | The loader refuses it regardless, so the transform would keep exiting `0` for a dataset that cannot load. |

@@ -421,7 +421,6 @@ def make_dataset_document() -> Callable[..., dict[str, Any]]:
                     },
                     "preferred_term": term,
                     "status": "active",
-                    "specimen_unconstrained": False,
                     "designations": [
                         {
                             "term": term,
@@ -455,7 +454,7 @@ def make_dataset_document() -> Callable[..., dict[str, Any]]:
                 }
             )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "tool_version": "0.0.0",
             "source": {"filename": "workbook.xlsx", "sha256": "a" * 64},
             "baseline_release": {

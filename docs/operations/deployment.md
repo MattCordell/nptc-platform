@@ -113,19 +113,21 @@ collides under FR-05, runs the transform on the copy, drops the entries the load
 refuse, then loads the rest with a dry run first. It makes no network calls to a terminology
 server. The committed workbook is never changed.
 
-- **What loads:** 41 of the 50 entries, all `active`, so they appear at
+- **What loads:** 49 of the 50 entries, all `active`, so they appear at
   <http://localhost:8081/api/v1/catalogue/entries> without signing in. They cover six
   disciplines (some entries have two), five subgroups, and entries with and without synonyms.
+  Every entry has a specimen, coded through the reviewed specimen map. Six entries accept any
+  specimen, so they carry the specimen root `123038009`.
 - **What is dropped, and why:** the "Adrenal Ab" entry on workbook row 46 collides with a
   synonym on row 10 (FR-05). The transform reports it as `DESIGNATION_COLLISION` and would block
   the dataset, so the script blanks that row in a temporary copy before the transform runs.
-  RCPA-QAP must resolve a real collision (PRD 6.3). Eight entries have a specimen with no SNOMED CT
-  code, and the loader refuses those, so the script drops them from the dataset. The script prints
-  each dropped row or entry and its reason. The dataset filter also drops a later entry whose
-  SNOMED CT code an earlier entry already holds, which the sample does not need today.
+  RCPA-QAP must resolve a real collision (PRD 6.3). The script prints each dropped row or entry
+  and its reason. The dataset filter also drops an entry whose specimen has no code, and a later
+  entry whose SNOMED CT code an earlier entry already holds. The transform now blocks the first,
+  and the sample has neither today.
 - **Business keys:** the transform numbers entries after the collision row is blanked, so entries
-  from row 47 on get a key one lower than the unfiltered sample gives them. The eight uncoded
-  entries leave gaps in the keys. Each entry's seed record still names its original workbook row.
+  from row 47 on get a key one lower than the unfiltered sample gives them. Each entry's seed
+  record still names its original workbook row.
 - **What it cannot show:** every sample row has a SNOMED CT code, so the sample has no entry
   without one. The transform treats a missing code as a blocking finding.
 - **Running it twice:** the second run exits `4`, says the catalogue already holds data, and

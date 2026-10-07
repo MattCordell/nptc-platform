@@ -58,21 +58,27 @@ step 1 again on the corrected file. The "Required action" column of the finding 
 
 Repeat steps 1 and 2 until the exit code is `0`.
 
-## Step 3: Settle specimens that have no code
+## Step 3: Check the specimen findings
 
-The transform reports a specimen value it cannot match as `SPECIMEN_VALUE_UNMAPPED`. That is
-informational, so the transform exits `0`. The loader, however, refuses any entry whose
-specimen has no SNOMED CT code (exit `3`).
+The transform blocks on a specimen string that its reviewed map does not cover
+(`SPECIMEN_VALUE_UNMAPPED`, FR-88), so you settled each one in step 2. Settle it in one of
+two ways:
 
-Look for this finding in `report.md` now, so you do not meet it at step 5. Settle each value
-in one of two ways:
+- **A terminologist adds one row to the specimen map**
+  (`transform/src/nptc_transform/data/specimen_map.tsv`) with a verified SNOMED CT code. This
+  is a data change, so it goes through a pull request.
+- **RCPA-QAP corrects the workbook value** to a string the map already covers.
 
-- **A terminologist adds the value to the specimen table** (`SPECIMEN_TABLE` in
-  `transform/src/nptc_transform/specimen_table.py`, FR-88) with a verified SNOMED CT code.
-  This is a code change, so it goes through a pull request.
-- **RCPA-QAP corrects the workbook value** to one the table already matches.
+Do not guess a code to get past the block.
 
-Do not guess a code to get past the refusal.
+Two specimen outcomes remain after a clean run. Check both in `report.md`:
+
+- **`SPECIMEN_VALUE_NO_EQUIVALENT`** (informational). The map marks a string such as `N/A` as
+  needing no specimen, so none is seeded. Nothing to do.
+- **`Any` and `Breath`.** Both are coded as `123038009 |Specimen|`, so a reader cannot tell them
+  apart in the catalogue. `Body` uses `371784004`. These rows are placeholders until SNOMED CT
+  has more precise concepts (see the `README.md` beside the map). Confirm with the
+  terminologist that the placeholders are acceptable for this load.
 
 ## Step 4: Emit the import dataset
 
@@ -108,7 +114,8 @@ and repeat from step 1. Two refusals deserve a warning:
   entry's preferred term is another's synonym. RCPA-QAP must decide which term changes
   (PRD 6.3). The message names both entries. If you see this refusal, the dataset did not come
   from a clean transform run.
-- **Exit `3` for a specimen.** You skipped step 3. Go back to it.
+- **Exit `3` for a specimen.** The dataset came from an older transform or was edited by hand.
+  Emit it again at step 4.
 
 A dry run still advances the business-key sequence. This leaves a few skipped key numbers and
 does no harm (FR-03 allows gaps), so repeat the dry run as often as you need.

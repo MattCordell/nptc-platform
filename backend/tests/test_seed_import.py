@@ -178,7 +178,7 @@ def test_provenance_and_the_seed_record_are_stored_verbatim(
         "workbook.xlsx",
         "a" * 64,
     )
-    assert (seed.dataset_schema_version, seed.entry_count) == (1, 2)
+    assert (seed.dataset_schema_version, seed.entry_count) == (2, 2)
     rows = {
         _entry_key(app_session, row.entry_id): row
         for row in app_session.execute(select(EntrySeedProvenance)).scalars()
@@ -387,18 +387,33 @@ def test_subgroup_labels_become_provisional_local_codes_once_each(
 
 @pytest.mark.req("FR-89")
 @pytest.mark.integration
-def test_an_unconstrained_entry_keeps_its_flag_and_holds_no_specimen(
+def test_any_is_stored_as_the_specimen_root_code(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(1)
-    document["entries"][0]["specimen_unconstrained"] = True
-    document["entries"][0]["properties"]["specimen"] = []
+    document["entries"][0]["properties"]["specimen"] = [{"value": "Any", "code": "123038009"}]
 
     _seed(app_session, document, write_dataset)
 
-    entry = _entry(app_session, "NPTC-500000")
-    assert entry.specimen_unconstrained is True
-    assert _values(app_session, entry, "specimen") == []
+    values = _values(app_session, _entry(app_session, "NPTC-500000"), "specimen")
+    assert [value["code"] for value in values] == ["123038009"]
+
+
+@pytest.mark.req("FR-88")
+@pytest.mark.integration
+def test_two_strings_with_one_code_are_stored_once(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document(1)
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Fluid", "code": "309051001"},
+        {"value": "Fluids", "code": "309051001"},
+    ]
+
+    _seed(app_session, document, write_dataset)
+
+    values = _values(app_session, _entry(app_session, "NPTC-500000"), "specimen")
+    assert [value["code"] for value in values] == ["309051001"]
 
 
 @pytest.mark.req("FR-63")

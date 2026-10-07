@@ -85,7 +85,7 @@ def test_an_unsupported_schema_version_is_refused_before_any_connection(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     path = tmp_path / "import-dataset.json"
-    path.write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": 3}), encoding="utf-8")
 
     code = cli.main(["--dataset", str(path), "--database-url", _UNREACHABLE_DSN])
 

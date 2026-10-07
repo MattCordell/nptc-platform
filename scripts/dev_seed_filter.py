@@ -4,7 +4,8 @@ refuse, so the 50-row sample workbook can seed a development stack (FR-70, FR-76
 
 The sample is a real excerpt that nobody edits. Three things stop `seed_baseline.py`:
 
-- an entry with a specimen that has no SNOMED CT code (loader exit 3),
+- an entry with a specimen that has no SNOMED CT code (loader exit 3). The transform blocks that
+  now, so the sample has none; the rule stays as a backstop, like the collision rule below,
 - an entry whose preferred term equals a designation on an earlier entry (FR-05, loader exit 5),
 - an entry whose SNOMED CT code an earlier entry already holds (the database allows one active
   entry per code, loader exit 5).

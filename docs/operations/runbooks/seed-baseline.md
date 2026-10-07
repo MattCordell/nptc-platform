@@ -88,7 +88,7 @@ place to validate codes before you emit the dataset.
 |---|---|
 | `0` | Seeded and committed. With `--dry-run`: the dataset is seedable, and nothing was committed. |
 | `2` | Usage error: no DSN from `--database-url` or `NPTC_DATABASE_URL`, or an explicitly empty `--database-url ""`. |
-| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `1`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
+| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `2`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
 | `4` | The catalogue already holds an entry, or a seeding run is already recorded. Nothing was written. See "Reseeding". |
 | `5` | A write was refused and everything was rolled back: an FR-05 designation collision, a discipline label with no matching code, or a missing local code system. The message names the entry by business key, preferred term, sheet and row. |
 | `6` | Could not complete: the database was unreachable, a credential was refused, or an unexpected failure occurred. The message names only the exception type, never its text, because that can carry connection details (NFR-26). The transaction is rolled back. |
@@ -101,8 +101,8 @@ Each fix is a data change followed by a new transform run. The loader never repa
 
 | Message | Cause | Fix |
 |---|---|---|
-| `specimen '...' has no SNOMED CT code` | The transform could not match the specimen text to its specimen table (`SPECIMEN_VALUE_UNMAPPED`). A property value needs a code. | Add the text to the transform's specimen table, or correct the workbook value. Then run the transform again. |
-| `marked as accepting any specimen but also lists named specimens` | The cell has `Any` beside a named specimen. FR-89 allows one or the other. | Keep one in the workbook. |
+| `specimen '...' has no SNOMED CT code` | A specimen in the dataset has no code. The transform blocks this now (`SPECIMEN_VALUE_UNMAPPED`), so the file came from an older transform or was edited by hand. | Emit the dataset again with the current transform. If it blocks, a terminologist adds the string to the specimen map, or RCPA-QAP corrects the workbook value. |
+| `a specimen means any specimen (123038009) but the entry also lists named specimens` | The cell has `Any` beside a named specimen. FR-89 says the any-specimen value stands alone. The transform reports it as `SPECIMEN_ROOT_WITH_OTHERS`. | Keep `Any` alone in the workbook cell, or remove it and list the named specimens. Then run the transform again. |
 | `code binding ... has no FSN` | The transform found no FSN cell for the row. | Fill the FSN in the workbook, or check the column mapping. |
 | `schema_version is ...` | The dataset came from a different transform version. | Emit it again with the matching transform. |
 | `discipline '...' is not a code in the 'discipline' local code system` | The workbook names a discipline the governed code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
