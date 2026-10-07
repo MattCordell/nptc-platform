@@ -31,7 +31,8 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/catalogue/code/$systemToken/$code` | FR-17 |
 | `/catalogue/lookup?system=&code=` | FR-17 |
 | `/releases`, `/releases/compare?from=&to=`, `/releases/$releaseId` | FR-56–FR-61 |
-| `/exports`, `/about`, `/terms` | FR-62–FR-69, FR-78, NFR-45 |
+| `/exports`, `/about` | FR-62–FR-69, FR-78 |
+| `/terms` (issue #435, a real screen: `pages/terms.tsx`) | NFR-45, NFR-47 |
 | `/sign-in?redirect=`, `/sign-out`, `/register`, `/auth/callback` | issue #41 |
 | `/submissions`, `/submissions/new`, `/submissions/$submissionId` | FR-23–FR-31 |
 | `/interest`, `/account` | FR-32–FR-34 |
@@ -43,6 +44,13 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 
 Every route not yet implemented mounts `pages/placeholder.tsx`'s `createPlaceholderPage`
 factory rather than one bespoke file per stub.
+
+The signed-in routes sit behind two shell steps, both presentation only (NFR-20). `RequireAuth`
+sends a signed-out visitor to sign in. Inside it, `TermsGate` shows the full-page **Accept the
+terms of use** screen in place of the routed page, which stays mounted but hidden, until the
+user accepts the current terms (NFR-45, issue #435). `/terms`, `/privacy` and the other public
+routes are outside both, so they stay readable to a user who has not accepted. See
+[permissions.md](permissions.md#what-the-spa-does-issue-435).
 
 ### How a stub becomes a real screen
 

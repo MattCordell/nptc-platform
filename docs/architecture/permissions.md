@@ -286,6 +286,25 @@ registered for the whole app in `create_app`.
   `code: terms_version_stale` and the `current_version` when the named version is no longer
   current, so a user is never recorded as accepting text they did not read (NFR-47).
 
+### What the SPA does (issue #435)
+
+The SPA only presents; the server above is the enforcer. `RequireAuth` wraps the signed-in
+routes in `TermsGate` (`frontend/src/shell/terms-gate.tsx`), which reads `GET /auth/terms`.
+
+- **`accepted: false` shows the gate**, a full-page interstitial with the collection notice,
+  the terms, a tick-box, **Accept and continue** and a **Sign out** link. The routed page stays
+  mounted but hidden, so a screen refused mid-edit keeps what the user typed.
+- **A failed read never blocks the app.** The read is retried once when the server gave no
+  answer. After that the page shows, and the server's 403 is what brings the gate up.
+- **A 403 `terms_acceptance_required` from any request** invalidates the terms read
+  (`createQueryClient`, `frontend/src/api/query-client.ts`), so a version that changed under a
+  long session shows the gate on the next refusal. The SPA routes on `code`, never on `detail`
+  (`frontend/src/api/terms.ts`).
+- **A 409 `terms_version_stale`** refetches the terms and shows the gate again under
+  `current_version`, with the tick cleared and a notice that the terms changed.
+- **`/terms` is public.** It renders the same API text for anyone, and says whether a
+  signed-in user accepted the version shown.
+
 The comparison is equality against the user's latest acceptance, so a version rolled back to an
 earlier one also asks for acceptance again. See
 [`data-model.md`](data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043) for the table.
@@ -299,9 +318,8 @@ earlier one also asks for acceptance again. See
   property tests here are stronger than any per-endpoint test, but the issue's own
   acceptance criterion is vacuously true at zero endpoints; the route inventory test
   (with its positive control) holds that debt honestly.
-- **NFR-45, NFR-47**: `in-progress` - the API half (record, gate, serve the text by version)
-  is built and tested. The terms page and the gate the user sees belong to the SPA and stay
-  open, as ADR-0043 records.
+- **NFR-45, NFR-47**: `implemented` - the API half (record, gate, serve the text by version)
+  and the SPA half (the terms page and the acceptance gate, issue #435) are built and tested.
 - **NFR-06**: `implemented` — server refusal and realm step-up flow verified against a
   real container, and the SPA-side request/challenge handling closes the loop end to end
   (issue #184, ADR-0036).

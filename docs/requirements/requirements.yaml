@@ -723,7 +723,7 @@
   phase: p1
   title: "A privacy policy and a collection notice are presented at registration"
   status: in-progress
-  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The requirement stays in-progress because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
+  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The SPA's acceptance gate (issue #435) repeats the same notice. The requirement stays in-progress because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
 - id: "NFR-15"
   priority: MUST
   phase: p1
@@ -910,8 +910,8 @@
   priority: MUST
   phase: p1
   title: "Terms of use MUST be presented at registration and MUST require positive acceptance"
-  status: in-progress
-  notes: "ADR-0043 reads registration as before the user's first contribution. The API half is built: the platform records each acceptance with its version (terms_acceptance, append-only), refuses a contribution from a user who has not accepted the current version, and serves the text by version. backend/tests/test_api_terms.py covers the gate, the stale-version refusal and the exempt route. The requirement stays in-progress until the SPA terms page and gate land (issue #435)."
+  status: implemented
+  notes: "ADR-0043 reads registration as before the user's first contribution. The API half: the platform records each acceptance with its version (terms_acceptance, append-only), refuses a contribution from a user who has not accepted the current version, and serves the text by version. backend/tests/test_api_terms.py covers the gate, the stale-version refusal and the exempt route. The SPA half (issue #435): frontend/src/shell/terms-gate.test.tsx covers the full-page gate, the unticked and failed-accept paths, a stale-version 409 and a mid-session 403; frontend/src/api/terms.test.ts and query-client.test.tsx cover routing on code, never on detail."
 - id: "NFR-46"
   priority: MUST
   phase: p1
@@ -922,5 +922,5 @@
   priority: SHOULD
   phase: p1
   title: "The terms MUST be versioned in the repository and rendered from a single source, so that the text a user accepted can be reproduced exactly"
-  status: in-progress
-  notes: "One immutable Markdown file per version under backend/src/nptc/terms/versions, one setting names the current version, and the API serves any version by its id. The first file is temporary placeholder text. The requirement stays in-progress until the SPA renders the terms from the API (issue #435)."
+  status: implemented
+  notes: "One immutable Markdown file per version under backend/src/nptc/terms/versions, one setting names the current version, and the API serves any version by its id. The first file is temporary placeholder text. The SPA holds no copy: frontend/src/pages/terms.test.tsx asserts that the page and the gate render the version, date and text the API served, and frontend/src/components/markdown.test.tsx asserts that raw HTML and unsafe links in that text cannot run."

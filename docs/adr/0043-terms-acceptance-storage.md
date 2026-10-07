@@ -84,9 +84,10 @@ SPA shows the gate again under the new version.
 
 ### How the SPA learns the state
 
-`GET /api/v1/auth/me`, or a sibling endpoint, reports the current version and whether the
-caller has accepted it. The terms page and the gate render from the API's copy of the text,
-which the API can serve for the current version and for any earlier one.
+`GET /api/v1/auth/terms`, a sibling of `/auth/me`, returns the current version, its effective
+date and text, and whether the caller has accepted it (`false` for an anonymous caller).
+`/auth/me` does not carry this state. The terms page and the gate render from the API's copy
+of the text, which the API can serve for the current version and for any earlier one.
 
 ### Placeholder terms
 
@@ -164,6 +165,8 @@ custom Keycloak code. Shape 2 meets it with the stack's existing parts.
 - A user who registers and never returns has an account but no acceptance row. The account
   cannot contribute, which is the intended outcome.
 - Keycloak's own terms attribute stays unused. Nothing in the platform reads it.
-- NFR-14, NFR-45 and NFR-47, and PRD test item 15, stay `planned` until #434 and #435 land.
+- NFR-45 and NFR-47 became `implemented` when #435 landed the SPA page and gate. NFR-14 stays
+  `in-progress` until the privacy policy text exists (#64). PRD test item 15 is covered by the
+  API tests from #434 and the SPA tests from #435.
 - The account pseudonymisation path (NFR-17) is untouched: acceptance rows keep the internal
   user id and carry no personal data.
