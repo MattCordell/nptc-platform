@@ -35,6 +35,7 @@ test("sign-in redirects to the Keycloak authorisation endpoint", async ({
   // Keycloak refuses a redirect_uri it does not know, so a mismatch between
   // NPTC_E2E_BASE_URL and the stack's NPTC_FRONTEND_BASE_URL fails here.
   expect(url.searchParams.get("redirect_uri")).toBe(`${baseURL}/auth/callback`);
+  await page.waitForLoadState("load");
   await expect(page.getByText("Invalid parameter: redirect_uri")).toHaveCount(0);
 });
 
