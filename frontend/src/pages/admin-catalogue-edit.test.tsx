@@ -2060,25 +2060,25 @@ describe("code bindings", () => {
     // would otherwise read identically - submitting right after pasting a
     // code, before the 400ms debounce fires, is a realistic sequence.
     //
-    // A single `paste`, not `type`: typing nine characters races real
-    // keystroke delays against the 400ms debounce, and on a loaded CI
-    // runner enough of it could land inside that window for the lookup to
-    // resolve before the click below, turning this into a flake rather than
-    // a deterministic check of the still-checking state (review finding).
-    // One paste is one state update, so nothing here waits on wall-clock
-    // timing except the assertion itself.
-    const user = userEvent.setup();
+    // Only the paste and the click may fall inside the 400ms debounce window.
+    // Typing the note re-renders the form once per keystroke, and under
+    // coverage that alone can outlast the window: the lookup then resolves
+    // before the click and the "still checking" state is gone. So the note
+    // goes in first, and the code is a single `paste` (one state update, not
+    // one per character). `delay: null` removes the timer userEvent would
+    // otherwise put between the paste and the click.
+    const user = userEvent.setup({ delay: null });
     const calls = stubApi([READ_OK, terminologyRoute(FSN_CODE)]);
     await renderLoaded();
 
-    await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
-    await user.paste(FSN_CODE);
-    // A valid changelog note, so the FR-37 gate (issue #62) does not
-    // intercept the submit before the code's own validation runs.
+    // A valid changelog note, so the FR-37 gate does not intercept the
+    // submit before the code's own validation runs.
     await user.type(
       inBindingsPanel().getByLabelText("Changelog note"),
       "Bind the new code",
     );
+    await user.click(inBindingsPanel().getByLabelText("SNOMED CT code"));
+    await user.paste(FSN_CODE);
     await user.click(inBindingsPanel().getByRole("button", { name: "Bind code" }));
 
     expect(
