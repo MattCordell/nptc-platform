@@ -1164,14 +1164,22 @@ export interface AuditEventsParams {
  * page number or total exists. While another page of the same filters loads,
  * the previous page stays on screen so a focused paging control is not
  * unmounted. A different filter set never inherits it: an audit reader must not
- * mistake the old filter's events for the new one's.
+ * mistake the old filter's events for the new one's. A disabled query has a key
+ * of its own, because the empty filters it is given would otherwise share the
+ * unfiltered list's key, and a disabled query still serves what is cached.
  */
 export function useAuditEvents(params: AuditEventsParams) {
   const client = useApiClient();
   const { filters, limit, before, enabled = true } = params;
   const query = { ...filters, limit, before };
   return useQuery<AuditEventPage, Error, AuditEventPage, readonly unknown[]>({
-    queryKey: ["api", "/api/v1/audit/events", filters, { limit, before }],
+    queryKey: [
+      "api",
+      "/api/v1/audit/events",
+      filters,
+      { limit, before },
+      ...(enabled ? [] : ["disabled"]),
+    ],
     placeholderData: (previousData, previousQuery) =>
       previousQuery !== undefined &&
       JSON.stringify(previousQuery.queryKey[2]) === JSON.stringify(filters)

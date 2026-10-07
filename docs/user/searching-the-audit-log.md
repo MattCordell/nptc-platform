@@ -45,6 +45,11 @@ screen does not show a page number or a total, because the log keeps growing whi
 it. A change recorded while you page through cannot appear part-way through a page you have
 already seen.
 
+**Previous page** follows only the buttons you pressed on the screen. If you use your browser's
+Back and Forward buttons to change page, the screen shows the page you asked for but no longer
+offers **Previous page**. Use **Next page** to go on, or apply your filters again to start from
+the newest events.
+
 ## Attribution to a closed account
 
 If the person who made a change has since had their account closed, their name is no longer

@@ -126,17 +126,29 @@ export function AdminAuditPage() {
     });
   }
 
-  const items: Row[] = events.data?.items ?? [];
-  const nextCursor = events.data?.next_cursor ?? null;
+  // Results are shown only for filters that are valid: a disabled query can
+  // still hold data from an earlier view, and the table must never sit under a
+  // filter error as if it were that filter's answer.
+  const data = filtersValid ? events.data : undefined;
+  const items: Row[] = data?.items ?? [];
+  const nextCursor = data?.next_cursor ?? null;
 
-  const hardFailure = events.isError && events.data === undefined;
-  const staleData = events.isError && events.data !== undefined;
+  const loadFailed = filtersValid && events.isError;
+  const hardFailure = loadFailed && data === undefined;
+  const staleData = loadFailed && data !== undefined;
   const hardFailureMessage = hardFailure
     ? (refusalDetail(events.error) ?? LOAD_FAILURE)
     : null;
-  const exportFailureMessage = exportEvents.isError
-    ? (refusalDetail(exportEvents.error) ?? EXPORT_FAILURE)
-    : null;
+  // An export failure belongs to the filters it ran with. Once the applied
+  // filters differ, the message would describe a request the screen no longer
+  // shows, so it is not shown.
+  const exportMatchesFilters =
+    filtersValid &&
+    JSON.stringify(exportEvents.variables) === JSON.stringify(filterQuery);
+  const exportFailureMessage =
+    exportEvents.isError && exportMatchesFilters
+      ? (refusalDetail(exportEvents.error) ?? EXPORT_FAILURE)
+      : null;
   const errorSummaryText = appliedErrors.map((error) => error.message).join(" ");
 
   // The message, not the error, is the dependency: a refetch that fails the
@@ -170,14 +182,14 @@ export function AdminAuditPage() {
   // this speaks once per new result set. A placeholder is the page being
   // replaced, and is never announced.
   const resultMessage =
-    events.data && !events.isError && !events.isPlaceholderData
-      ? resultAnnouncement(events.data.items.length, events.data.next_cursor !== null)
+    data && !events.isError && !events.isPlaceholderData
+      ? resultAnnouncement(data.items.length, data.next_cursor !== null)
       : null;
   useEffect(() => {
     if (resultMessage !== null) {
       announce(resultMessage);
     }
-  }, [events.data, resultMessage, announce]);
+  }, [data, resultMessage, announce]);
 
   function applyFilters(values: AuditFilterValues) {
     void navigate({ search: () => values });
@@ -414,7 +426,7 @@ export function AdminAuditPage() {
 
         {staleData && <p className="m-0">{STALE_DATA_WARNING}</p>}
 
-        {events.data && (
+        {data && (
           <>
             <div className="overflow-x-auto">
               <DataTable

@@ -443,6 +443,22 @@ describe("AdminAuditPage", () => {
       expect(eventCalls(calls)).toHaveLength(0);
     });
 
+    it("never shows the cached unfiltered log under an invalid filter after Back", async () => {
+      stubApi([eventsRoute([auditEvent()])]);
+      const { router } = await renderRoute(`${AUDIT_URL}?actor=alice`, SIGNED_IN);
+      await screen.findByRole("link", { name: /Enter the actor as a user id/ });
+      await act(() => router.navigate({ to: AUDIT_URL, search: {} }));
+      await screen.findByRole("table", { name: "Audit events" });
+
+      await act(() => router.history.back());
+
+      expect(
+        await screen.findByRole("link", { name: /Enter the actor as a user id/ }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.queryByText(/events? on this page/)).not.toBeInTheDocument();
+    });
+
     it("filters by an actor when their name is selected in the results", async () => {
       const calls = stubApi([eventsRoute([auditEvent()])]);
       const user = userEvent.setup();
@@ -693,6 +709,25 @@ describe("AdminAuditPage", () => {
         ).toHaveLength(2),
       );
       expect(saveBlob).not.toHaveBeenCalled();
+    });
+
+    it("drops an export failure once the applied filters change", async () => {
+      stubApi([
+        eventsRoute([auditEvent()]),
+        { method: "GET", path: "/audit/events/export", status: 500, body: {} },
+      ]);
+      const user = userEvent.setup();
+      const { router } = await renderRoute(`${AUDIT_URL}?action=a.b`, SIGNED_IN);
+      await screen.findByRole("table", { name: "Audit events" });
+      await user.click(screen.getByRole("button", { name: "Export as NDJSON" }));
+      const failure = /The export could not be prepared/;
+      expect(await screen.findAllByText(failure)).not.toHaveLength(0);
+
+      await act(() =>
+        router.navigate({ to: AUDIT_URL, search: { action: "other.action" } }),
+      );
+
+      await waitFor(() => expect(screen.queryByText(failure)).not.toBeInTheDocument());
     });
 
     it("steps up once on an MFA challenge and does not replay the export by itself", async () => {

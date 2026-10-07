@@ -4,10 +4,12 @@ import { saveBlob } from "./save-blob.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("saveBlob", () => {
   it("clicks a temporary download link for the blob, then cleans up", () => {
+    vi.useFakeTimers();
     const createObjectURL = vi.fn().mockReturnValue("blob:audit");
     const revokeObjectURL = vi.fn();
     Object.assign(URL, { createObjectURL, revokeObjectURL });
@@ -29,7 +31,10 @@ describe("saveBlob", () => {
     expect(clicked).toEqual([
       { download: "audit-events.ndjson", href: "blob:audit", attached: true },
     ]);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:audit");
     expect(document.querySelector("a[download]")).toBeNull();
+    // Revoked only after the browser has had time to start the download.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(10_000);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:audit");
   });
 });
