@@ -92,6 +92,34 @@ Administrator-plus-MFA rather than public. `is_closed` distinguishes a closed ac
 name from a system-initiated event, where `actor` is `null` entirely (`actor_user_id IS
 NULL` - no human actor to resolve at all).
 
+## The administrator screen (issue #447)
+
+`/admin/audit` is the one client of both routes. The rules it applies are in
+`frontend/src/audit/audit-filters.ts`; the page is `frontend/src/pages/admin-audit.tsx`.
+
+- **No permission check in the browser (NFR-20).** A caller without `audit.read` gets the
+  routes' `403`, and the screen shows its `detail` in place of the results. A `403` that
+  carries a step-up challenge goes through the SPA's step-up handler
+  ([ADR-0036](../adr/0036-spa-step-up-loop.md)): a refused read is retried once, and a refused
+  export is not replayed, so the administrator selects Export again.
+- **Days are a fixed UTC+10.** The routes need an offset on `occurred_from` and `occurred_to`,
+  and a date input yields a bare date. The screen sends `YYYY-MM-DDT00:00:00+10:00` for the
+  From day, and the start of the day after the To day for `occurred_to`, so the half-open range
+  makes the To day inclusive. It shows event times in the same zone. There is no daylight
+  saving.
+- **The actor filter is a user id.** `actor_user_id` is the only actor parameter and no
+  endpoint lists users, so the screen takes the id as text, and each actor in the results is a
+  button that applies that actor's id.
+- **Invalid filters are never sent.** The screen applies the routes' own `422` rules first
+  (`entity_id` needs `entity_type`; the range must not run backwards) and names each problem.
+- **A previous filter's events are never shown for a new one.** While another page of the same
+  filters loads, the previous page stays on screen. A change of filters shows a loading state
+  instead.
+- **Export goes through the API client.** The bearer token is not a cookie, so a link would
+  arrive unauthenticated. The client reads the body as a blob and saves it as
+  `audit-events.ndjson`; a blob download ignores `Content-Disposition`. It exports the applied
+  filters, not unapplied edits, and sends no `limit` or `before`.
+
 ## What this surface cannot do
 
 Read-only, end to end. `nptc.audit.queries` issues no `INSERT`/`UPDATE`/`DELETE` against

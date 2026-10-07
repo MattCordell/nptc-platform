@@ -68,7 +68,7 @@ describe("placeholder screens", () => {
     ).toHaveAttribute("href", "/admin/catalogue");
   });
 
-  it("offers both built admin screens from the admin home", async () => {
+  it("offers every built admin screen from the admin home", async () => {
     await renderRoute("/admin", { auth: { status: "signed-in" } });
 
     await screen.findByRole("heading", { level: 1, name: "Administration" });
@@ -78,6 +78,10 @@ describe("placeholder screens", () => {
     expect(main().getByRole("link", { name: "Property registry" })).toHaveAttribute(
       "href",
       "/admin/properties",
+    );
+    expect(main().getByRole("link", { name: "Audit log" })).toHaveAttribute(
+      "href",
+      "/admin/audit",
     );
   });
 

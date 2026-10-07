@@ -40,7 +40,8 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/admin/properties` (+ `deprecated=show` search param), `/admin/properties/$propertyKey`, `/admin/properties/$propertyKey/edit`, `/admin/properties/new` | FR-08–FR-13 |
 | `/admin/users{,/$userId}` | FR-40–FR-43 |
 | `/admin/validation{,/$findingId}` | FR-45–FR-55 |
-| `/admin/releases{,/new}`, `/admin/exports/config`, `/admin/audit` | FR-56–FR-61, FR-78, NFR-08–NFR-13 |
+| `/admin/releases{,/new}`, `/admin/exports/config` | FR-56–FR-61, FR-78 |
+| `/admin/audit` (+ `actor`, `entity_type`, `entity_id`, `action`, `from`, `to`, `before` search params, issue #447) | NFR-09, NFR-12, NFR-31 |
 
 Every route not yet implemented mounts `pages/placeholder.tsx`'s `createPlaceholderPage`
 factory rather than one bespoke file per stub.

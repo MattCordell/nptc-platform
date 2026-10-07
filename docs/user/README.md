@@ -18,8 +18,8 @@
 - [Bulk reclassify](bulk-reclassify.md) — issue #63.
 - [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, shown on
   the catalogue search page and on the public entry page.
-- [Searching the audit log](searching-the-audit-log.md) — issue #286, API-only until the
-  audit log screen lands.
+- [Searching the audit log](searching-the-audit-log.md) — issue #447. The Administrator
+  screen at `/admin/audit`: filters, paging and export.
 - [Reading the preferred-term length distribution report](reading-the-length-distribution-report.md)
   — issue #152, API-only; there is no admin screen for this report yet.
 
