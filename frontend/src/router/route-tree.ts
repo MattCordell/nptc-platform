@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, stripSearchParams } from "@tanstack/react-router";
 
 import { HomePage } from "../pages/home.tsx";
+import { AboutPage } from "../pages/about.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
 import { AdminPropertyCreatePage } from "../pages/admin-property-create.tsx";
@@ -183,7 +184,7 @@ const exportsRoute = createRoute({
 const aboutRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "about",
-  component: createPlaceholderPage({ title: "About the catalogue" }),
+  component: AboutPage,
   head: titled("About"),
 });
 

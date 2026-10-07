@@ -44,18 +44,18 @@ describe("placeholder screens", () => {
   });
 
   it("links back to the landing page", async () => {
-    await renderRoute("/about");
+    await renderRoute("/exports");
 
-    await screen.findByRole("heading", { level: 1, name: "About the catalogue" });
+    await screen.findByRole("heading", { level: 1, name: "Exports" });
     expect(
       main().getByRole("link", { name: "Back to the landing page" }),
     ).toHaveAttribute("href", "/");
   });
 
   it("offers no nearest-screen link on a public stub", async () => {
-    await renderRoute("/about");
+    await renderRoute("/exports");
 
-    await screen.findByRole("heading", { level: 1, name: "About the catalogue" });
+    await screen.findByRole("heading", { level: 1, name: "Exports" });
     expect(main().getAllByRole("link")).toHaveLength(1);
   });
 
@@ -98,9 +98,9 @@ describe("placeholder screens", () => {
   });
 
   it("does not wrap the screen in a second landmark", async () => {
-    await renderRoute("/about");
+    await renderRoute("/exports");
 
-    await screen.findByRole("heading", { level: 1, name: "About the catalogue" });
+    await screen.findByRole("heading", { level: 1, name: "Exports" });
     expect(main().queryByRole("region")).not.toBeInTheDocument();
   });
 });
