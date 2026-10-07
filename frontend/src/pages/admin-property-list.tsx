@@ -140,7 +140,7 @@ export function AdminPropertyListPage() {
                       <Link
                         to="/admin/properties/$propertyKey"
                         params={{ propertyKey: row.key }}
-                        className="font-mono text-[var(--color-accent)] hover:underline"
+                        className="inline-flex min-h-6 items-center font-mono text-[var(--color-accent)] hover:underline"
                       >
                         {row.key}
                       </Link>

@@ -118,6 +118,16 @@ describe("AdminPropertyListPage", () => {
     expect(screen.getByText("3 properties: 2 active, 1 deprecated")).toBeInTheDocument();
   });
 
+  it("gives each key link a 24px minimum target height", async () => {
+    stubApi([PROPERTIES_OK]);
+
+    await renderRoute(LIST_URL, SIGNED_IN);
+
+    expect(await screen.findByRole("link", { name: "discipline" })).toHaveClass(
+      "min-h-6",
+    );
+  });
+
   it("hides deprecated properties until asked to show them", async () => {
     stubApi([PROPERTIES_OK]);
 

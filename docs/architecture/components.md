@@ -119,7 +119,9 @@ records why there is no form library behind these and what was rejected.
 - **`checkbox.tsx` — `Checkbox`.** A single labelled box. The one primitive that does not
   compose `Field`, because a checkbox's label belongs after the box and `Field` renders
   the label first by construction; it repeats `Field`'s id scheme and `aria-describedby`
-  ordering exactly so the two cannot drift.
+  ordering exactly so the two cannot drift. A visible label has a 24px minimum height,
+  because the 16px box alone is below the WCAG 2.5.8 target size and the label toggles it
+  too. A visually-hidden label is left alone.
 - **`checkbox-group.tsx` — `CheckboxGroup`** and **`radio-group.tsx` — `RadioGroup`.**
   Both labelled by a `<fieldset>`/`<legend>` — a screen reader announces a legend on
   entering the group and ignores a nearby paragraph, so adjacent text is not a group
