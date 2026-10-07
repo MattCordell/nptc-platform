@@ -256,12 +256,17 @@ describe("AdminPropertyEditPage", () => {
     expect(screen.getByText("Nothing has been saved.")).toBeInTheDocument();
     const summary = screen.getByText("There is a problem");
     await waitFor(() => expect(summary.closest("[tabindex='-1']")).toHaveFocus());
+    // The screen now matches the server: the untouched label shows the other
+    // administrator's value, and the editor's own edits stay.
     await waitFor(() =>
-      expect(
-        calls.filter((call) => call.method === "GET" && call.path.endsWith(PROPERTY_PATH))
-          .length,
-      ).toBeGreaterThan(1),
+      expect(screen.getByLabelText("Label")).toHaveValue("Assay method v2"),
     );
+    expect(screen.getByLabelText("Display order")).toHaveValue("5");
+    expect(screen.getByLabelText("Reason")).toHaveValue("Clarify the label");
+    expect(
+      calls.filter((call) => call.method === "GET" && call.path.endsWith(PROPERTY_PATH))
+        .length,
+    ).toBeGreaterThan(1);
 
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -273,6 +278,139 @@ describe("AdminPropertyEditPage", () => {
       { display_order: 5, expected_row_version: 3, reason: "Clarify the label" },
       { display_order: 5, expected_row_version: 4, reason: "Clarify the label" },
     ]);
+  });
+
+  it("sends the old label when the editor types it back after someone else changed it", async () => {
+    const conflict = {
+      detail: "This entry was changed by someone else since you loaded it.",
+      business_key: KEY,
+      expected_row_version: 3,
+      current_row_version: 4,
+      conflicts: [],
+      changed_by: null,
+      changed_at: null,
+    };
+    let written = false;
+    const calls = stubApi(
+      [
+        READ_OK,
+        DATATYPES_OK,
+        {
+          method: "PATCH",
+          path: PROPERTY_PATH,
+          status: 200,
+          body: definition({ row_version: 5 }),
+        },
+      ],
+      {
+        vary: (call, prior) => {
+          if (call.method === "PATCH" && prior === 0) {
+            written = true;
+            return { method: "PATCH", path: call.path, status: 409, body: conflict };
+          }
+          return written && call.method === "GET" && call.path.endsWith(PROPERTY_PATH)
+            ? {
+                method: "GET",
+                path: call.path,
+                status: 200,
+                body: definition({ label: "Assay method v2", row_version: 4 }),
+              }
+            : null;
+        },
+      },
+    );
+    const user = userEvent.setup();
+    await renderEdit();
+    await user.clear(screen.getByLabelText("Display order"));
+    await user.type(screen.getByLabelText("Display order"), "5");
+    await typeReason(user);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Label")).toHaveValue("Assay method v2"),
+    );
+
+    // Undo the other administrator's rename by typing the original label back.
+    await user.clear(screen.getByLabelText("Label"));
+    await user.type(screen.getByLabelText("Label"), "Assay method");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(2));
+    expect(patchCalls(calls)[1]?.body).toEqual({
+      label: "Assay method",
+      display_order: 5,
+      expected_row_version: 4,
+      reason: "Clarify the label",
+    });
+  });
+
+  it("drops an earlier server refusal when a later check fails on the screen", async () => {
+    const detail = "A property definition with this key already exists.";
+    stubApi([
+      READ_OK,
+      DATATYPES_OK,
+      { method: "PATCH", path: PROPERTY_PATH, status: 409, body: { detail } },
+    ]);
+    const user = userEvent.setup();
+    await renderEdit();
+    await changeLabel(user);
+    await typeReason(user);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText(detail)).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Reason"));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(
+      await screen.findByRole("link", { name: "Enter the reason for this change." }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(detail)).not.toBeInTheDocument();
+  });
+
+  it("accepts a negative display order, which the API and database accept", async () => {
+    const calls = stubApi([
+      { ...READ_OK, body: definition({ display_order: -1 }) },
+      DATATYPES_OK,
+      {
+        method: "PATCH",
+        path: PROPERTY_PATH,
+        status: 200,
+        body: definition({ display_order: -1 }),
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderEdit();
+    expect(screen.getByLabelText("Display order")).toHaveValue("-1");
+    await user.clear(screen.getByLabelText("Label"));
+    await user.type(screen.getByLabelText("Label"), "New");
+    await typeReason(user);
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    // No other change is blocked by the stored -1, and it is not re-sent.
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(1));
+    expect(patchCalls(calls)[0]?.body).toEqual({
+      label: "New",
+      expected_row_version: 3,
+      reason: "Clarify the label",
+    });
+  });
+
+  it("refuses a display order beyond 32 bits before any request", async () => {
+    const calls = stubApi([READ_OK, DATATYPES_OK]);
+    const user = userEvent.setup();
+    await renderEdit();
+    await user.clear(screen.getByLabelText("Display order"));
+    await user.type(screen.getByLabelText("Display order"), "3000000000");
+    await typeReason(user);
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(
+      await screen.findByRole("link", {
+        name: /Enter the display order as a whole number between/,
+      }),
+    ).toBeInTheDocument();
+    expect(patchCalls(calls)).toHaveLength(0);
   });
 
   it("shows the server's sentence when it refuses the constraints", async () => {

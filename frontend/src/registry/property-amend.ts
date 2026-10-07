@@ -1,6 +1,7 @@
 import type { components } from "../api/schema.ts";
 import type { FormError } from "../components/error-summary.tsx";
 import {
+  DISPLAY_ORDER_PROBLEM,
   parseConstraints,
   parseDisplayOrder,
   PROPERTY_FIELD_IDS,
@@ -12,9 +13,10 @@ import {
  * the fields below, refuses an explicit null, and replaces `constraints` as a
  * whole, so the body carries just the fields the editor changed.
  *
- * "Changed" means different from what the form was first filled with, not from
- * the latest copy of the property: after a stale-version refusal the editor's
- * untouched fields must not overwrite someone else's change.
+ * "Changed" means different from what the form last showed. When the property
+ * reloads after a stale-version refusal, `rebaseOnto` gives every untouched
+ * field the new value and keeps the editor's own text, so the screen matches
+ * the server and an untouched field never overwrites someone else's change.
  */
 
 type Definition = components["schemas"]["PropertyDefinitionResponse"];
@@ -45,6 +47,40 @@ export function amendValuesFrom(definition: Definition): AmendValues {
   };
 }
 
+function keepEdit<K extends keyof AmendValues>(
+  field: K,
+  values: AmendValues,
+  initial: AmendValues,
+  latest: AmendValues,
+): AmendValues[K] {
+  return values[field] === initial[field] ? latest[field] : values[field];
+}
+
+/**
+ * Moves the form onto a freshly loaded property. A field the editor did not
+ * touch takes the new value. A field they did touch keeps their text, and is
+ * now compared with the new value, so typing the old value back to undo
+ * someone else's change counts as a change.
+ */
+export function rebaseOnto(
+  values: AmendValues,
+  initial: AmendValues,
+  latest: AmendValues,
+): { values: AmendValues; initial: AmendValues } {
+  return {
+    values: {
+      label: keepEdit("label", values, initial, latest),
+      displayOrder: keepEdit("displayOrder", values, initial, latest),
+      requiredForSubmission: keepEdit("requiredForSubmission", values, initial, latest),
+      requiredForPublication: keepEdit("requiredForPublication", values, initial, latest),
+      filterable: keepEdit("filterable", values, initial, latest),
+      constraintsText: keepEdit("constraintsText", values, initial, latest),
+      reason: values.reason,
+    },
+    initial: latest,
+  };
+}
+
 export type AmendRequestResult = { errors: FormError[]; body: AmendBody | null };
 
 function problem(fieldId: string, message: string): FormError {
@@ -68,12 +104,7 @@ export function buildAmendRequest(
 
   const displayOrder = parseDisplayOrder(values.displayOrder);
   if (displayOrder === null) {
-    errors.push(
-      problem(
-        PROPERTY_FIELD_IDS.displayOrder,
-        "Enter the display order as a whole number, or leave it empty for 0.",
-      ),
-    );
+    errors.push(problem(PROPERTY_FIELD_IDS.displayOrder, DISPLAY_ORDER_PROBLEM));
   } else if (displayOrder !== parseDisplayOrder(initial.displayOrder)) {
     changes.display_order = displayOrder;
   }

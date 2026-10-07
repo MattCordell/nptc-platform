@@ -117,6 +117,8 @@ export function AdminPropertyCreatePage() {
                 const result = buildCreateRequest(values, selected);
                 setErrors(result.errors);
                 if (result.body === null) {
+                  // An earlier server refusal no longer describes this attempt.
+                  create.reset();
                   return;
                 }
                 return create.mutateAsync(result.body).then(

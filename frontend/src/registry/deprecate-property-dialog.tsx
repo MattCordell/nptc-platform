@@ -63,6 +63,8 @@ export function DeprecatePropertyDialog({
               : [{ fieldId: PROPERTY_FIELD_IDS.reason, message: missing }],
           );
           if (missing !== null) {
+            // An earlier server refusal no longer describes this attempt.
+            deprecate.reset();
             return;
           }
           return deprecate

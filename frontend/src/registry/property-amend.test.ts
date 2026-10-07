@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   amendValuesFrom,
   buildAmendRequest,
+  rebaseOnto,
   type AmendValues,
 } from "./property-amend.ts";
 import { PROPERTY_FIELD_IDS } from "./property-form.ts";
@@ -56,6 +57,65 @@ describe("amendValuesFrom", () => {
 
   it("leaves the constraints box empty when there are none", () => {
     expect(amendValuesFrom({ ...DEFINITION, constraints: {} }).constraintsText).toBe("");
+  });
+});
+
+describe("rebaseOnto", () => {
+  const LATEST = amendValuesFrom({
+    ...DEFINITION,
+    label: "Assay method v2",
+    display_order: 30,
+    filterable: true,
+    row_version: 4,
+  });
+
+  it("gives every untouched field the new value and keeps the reason", () => {
+    const { values, initial } = rebaseOnto(
+      { ...INITIAL, reason: "Because" },
+      INITIAL,
+      LATEST,
+    );
+
+    expect(values).toEqual({ ...LATEST, reason: "Because" });
+    expect(initial).toBe(LATEST);
+  });
+
+  it("keeps a field the editor changed and takes the new value for the rest", () => {
+    const { values } = rebaseOnto(edited({ displayOrder: "5" }), INITIAL, LATEST);
+
+    expect(values.displayOrder).toBe("5");
+    expect(values.label).toBe("Assay method v2");
+    expect(values.filterable).toBe(true);
+  });
+
+  it("compares an edited field with the new value afterwards", () => {
+    const rebased = rebaseOnto(edited({ displayOrder: "30" }), INITIAL, LATEST);
+
+    // The editor's 30 now equals the server's 30, so there is nothing to send.
+    expect(buildAmendRequest(rebased.values, rebased.initial, 4).body).toBeNull();
+  });
+
+  it("counts typing the old value back as a change after someone else changed it", () => {
+    // The form reloads first and shows the new label, then the editor types the old one.
+    const rebased = rebaseOnto(edited({ displayOrder: "5" }), INITIAL, LATEST);
+    const typedBack = { ...rebased.values, label: "Assay method" };
+
+    expect(buildAmendRequest(typedBack, rebased.initial, 4).body).toEqual({
+      display_order: 5,
+      label: "Assay method",
+      expected_row_version: 4,
+      reason: "Clarify the label",
+    });
+  });
+
+  it("sends nothing for fields the editor did not touch, so the other change stands", () => {
+    const rebased = rebaseOnto(edited({ displayOrder: "5" }), INITIAL, LATEST);
+
+    expect(buildAmendRequest(rebased.values, rebased.initial, 4).body).toEqual({
+      display_order: 5,
+      expected_row_version: 4,
+      reason: "Clarify the label",
+    });
   });
 });
 

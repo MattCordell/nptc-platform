@@ -897,6 +897,35 @@ describe("useDeprecateProperty", () => {
       "A built-in system property cannot be deprecated.",
     );
   });
+
+  it("refreshes the list and the definition after any 409, such as already deprecated", async () => {
+    stubFetch(409, { detail: "This property is already deprecated." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeprecateProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ expected_row_version: 2, reason: "Again" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(asVersionConflict(result.current.error)).toBeNull();
+    expect(invalidatedKeys(invalidate)).toEqual([PROPERTY_LIST_KEY, PROPERTY_KEY]);
+  });
+
+  it("does not refresh after a 403", async () => {
+    stubFetch(403, { detail: "You do not have permission to do that." });
+    const queryClient = createQueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeprecateProperty("assay_method"), {
+      wrapper: wrapperWithStatus("signed-in", queryClient),
+    });
+
+    result.current.mutate({ expected_row_version: 2, reason: "Nope" });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(invalidate).not.toHaveBeenCalled();
+  });
 });
 
 describe("usePropertyValueOptions", () => {

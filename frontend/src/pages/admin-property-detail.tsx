@@ -166,7 +166,8 @@ export function AdminPropertyDetailPage() {
   const property = usePropertyDefinition(propertyKey);
   const { message, politeness, announce } = useAnnounce();
   const [deprecating, setDeprecating] = useState(false);
-  const awaitingDeprecation = useRef(false);
+  const [deprecationDone, setDeprecationDone] = useState(false);
+  const reportedDeprecation = useRef(false);
 
   const staleData = property.isError && property.data !== undefined;
   useEffect(() => {
@@ -192,15 +193,30 @@ export function AdminPropertyDetailPage() {
   const isDeprecated = definition?.status === "deprecated";
 
   // The Deprecate button disappears once the refetch shows the new status, and
-  // the dialog would restore focus to it. So focus moves to the heading when
-  // that status arrives, and the change is announced.
+  // the dialog would restore focus to it. So focus moves to the heading once
+  // both the write has succeeded and the new status is showing, whichever
+  // arrives last, and the change is announced.
   useEffect(() => {
-    if (awaitingDeprecation.current && definition !== undefined && isDeprecated) {
-      awaitingDeprecation.current = false;
+    if (
+      deprecationDone &&
+      definition !== undefined &&
+      isDeprecated &&
+      !reportedDeprecation.current
+    ) {
+      reportedDeprecation.current = true;
       announce(`${definition.label} is now deprecated.`);
       document.getElementById(HEADING_ID)?.focus();
     }
-  }, [definition, isDeprecated, announce]);
+  }, [deprecationDone, definition, isDeprecated, announce]);
+
+  // A refusal such as "already deprecated" refetches the property, which can
+  // remove the Deprecate button the dialog would return focus to.
+  function closeDeprecateDialog() {
+    setDeprecating(false);
+    if (isDeprecated) {
+      document.getElementById(HEADING_ID)?.focus();
+    }
+  }
 
   return (
     <section aria-labelledby={HEADING_ID}>
@@ -262,9 +278,9 @@ export function AdminPropertyDetailPage() {
         {deprecating && definition && (
           <DeprecatePropertyDialog
             definition={definition}
-            onClose={() => setDeprecating(false)}
+            onClose={closeDeprecateDialog}
             onDeprecated={() => {
-              awaitingDeprecation.current = true;
+              setDeprecationDone(true);
               setDeprecating(false);
             }}
           />

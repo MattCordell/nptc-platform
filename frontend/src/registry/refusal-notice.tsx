@@ -10,9 +10,12 @@ import { formatValue } from "../catalogue/collision-notice.tsx";
 export function PropertyRefusalNotice({
   error,
   fallback,
+  editsKept = false,
 }: {
   error: unknown;
   fallback: string;
+  /** True on the edit form, which moves untouched fields to the reloaded values. */
+  editsKept?: boolean;
 }) {
   const conflict = asVersionConflict(error);
   if (conflict === null) {
@@ -38,8 +41,11 @@ export function PropertyRefusalNotice({
       )}
       <p>Nothing has been saved.</p>
       <p>
-        The property is reloading with their change. Check yours is still needed, then
-        save it again.
+        The property is reloading with their change.
+        {editsKept
+          ? " Fields you have not edited will show the new values, and your edits stay."
+          : ""}{" "}
+        Check yours is still needed, then save it again.
       </p>
     </div>
   );

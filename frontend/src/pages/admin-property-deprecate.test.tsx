@@ -222,6 +222,72 @@ describe("Deprecate property", () => {
     expect(await within(dialog).findByText(detail)).toBeVisible();
   });
 
+  it("reloads after an already-deprecated refusal, so the button goes and Cancel lands on the heading", async () => {
+    const detail = "This property is already deprecated.";
+    let written = false;
+    stubApi(
+      [
+        READ_OK,
+        { method: "POST", path: DEPRECATION_PATH, status: 409, body: { detail } },
+      ],
+      {
+        vary: (call) => {
+          if (call.method === "POST") {
+            written = true;
+          }
+          // Someone else deprecated it while the dialog was open.
+          return written && call.method === "GET" && call.path.endsWith(PROPERTY_PATH)
+            ? {
+                method: "GET",
+                path: call.path,
+                status: 200,
+                body: definition({ status: "deprecated", row_version: 4 }),
+              }
+            : null;
+        },
+      },
+    );
+    const user = userEvent.setup();
+    const { dialog } = await openDialog(user);
+
+    await confirm(user, dialog);
+
+    expect(await within(dialog).findByText(detail)).toBeVisible();
+    // Only the dialog's own button is left: the one on the page went with the status.
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Deprecate property" })).toHaveLength(
+        1,
+      ),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { level: 1, name: "Assay method" })).toHaveFocus();
+    expect(screen.getByText("Deprecated")).toBeVisible();
+  });
+
+  it("drops an earlier server refusal when the reason check fails on the next try", async () => {
+    const detail = "A built-in system property cannot be deprecated.";
+    stubApi([
+      READ_OK,
+      { method: "POST", path: DEPRECATION_PATH, status: 409, body: { detail } },
+    ]);
+    const user = userEvent.setup();
+    const { dialog } = await openDialog(user);
+    await confirm(user, dialog);
+    expect(await within(dialog).findByText(detail)).toBeVisible();
+
+    await user.clear(within(dialog).getByLabelText("Reason"));
+    await user.click(within(dialog).getByRole("button", { name: "Deprecate property" }));
+
+    expect(
+      await within(dialog).findByRole("link", {
+        name: "Enter the reason for deprecating this property.",
+      }),
+    ).toBeVisible();
+    expect(within(dialog).queryByText(detail)).not.toBeInTheDocument();
+  });
+
   it("shows the refusal to a caller without registry.manage", async () => {
     const detail = "You do not have permission to manage the property registry.";
     stubApi([

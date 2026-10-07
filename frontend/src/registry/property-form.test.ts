@@ -100,9 +100,20 @@ describe("parseDisplayOrder", () => {
     expect(parseDisplayOrder(" 40 ")).toBe(40);
   });
 
-  it.each(["-1", "1.5", "ten", "1e3", "9".repeat(20)])("refuses %s", (text) => {
-    expect(parseDisplayOrder(text)).toBeNull();
+  it.each([
+    ["-1", -1],
+    ["-2147483648", -2147483648],
+    ["2147483647", 2147483647],
+  ])("accepts %s, as the API and the 32-bit column do", (text, expected) => {
+    expect(parseDisplayOrder(text)).toBe(expected);
   });
+
+  it.each(["1.5", "ten", "1e3", "--1", "- 1", "2147483648", "-2147483649", "3000000000"])(
+    "refuses %s",
+    (text) => {
+      expect(parseDisplayOrder(text)).toBeNull();
+    },
+  );
 });
 
 describe("constraintKeysOf", () => {

@@ -30,7 +30,7 @@ When it succeeds, the screen opens the new property's page.
 | **Datatype** | The kind of value the property holds. The list comes from the server. You cannot change it later. |
 | **Cardinality** | How many values an entry can hold. You cannot change it later. |
 | **Scope** | Whether the property appears when proposing a test, when maintaining one, or both. You cannot change it later. |
-| **Display order** | A whole number. Lower numbers come first. Leave it empty for 0. |
+| **Display order** | A whole number from -2,147,483,648 to 2,147,483,647. Lower numbers come first. Leave it empty for 0. |
 | **Required for submission**, **Required for publication**, **Used as a catalogue filter** | Tick the ones that apply. |
 | **Constraints** | Optional. A JSON object. The hint under the box lists the names the chosen datatype accepts. |
 | **Reason** | Why you are making the change. It goes to the audit log and is not published. |
@@ -59,8 +59,11 @@ least one field.
 ### If someone else changed the property first
 
 The screen says who changed it and when, and that nothing was saved. It then reloads the
-property. Check that your change is still needed, then choose **Save changes** again. Fields
-you did not touch are not sent, so the other person's change to them stays.
+property. Fields you have not edited show the new values, and the fields you edited keep your
+text. Check that your change is still needed, then choose **Save changes** again.
+
+The screen sends only the fields you edited. If you type an old value back to undo the other
+person's change, that counts as an edit and is sent.
 
 ## Retire a property
 
@@ -72,12 +75,16 @@ you did not touch are not sent, so the other person's change to them stays.
 
 The dialog closes, the status changes to **Deprecated**, and a screen reader announces it.
 The built-in system properties cannot be deprecated. The dialog shows the reason if you try.
-Choose **Cancel**, or press Escape, to close the dialog without changing anything.
+If someone else has already deprecated the property, the dialog says so and the page reloads
+to show the new status. Choose **Cancel**, or press Escape, to close the dialog without
+changing anything.
 
 ## If something goes wrong
 
 - **The server refuses the change.** The form shows the server's reason at the top, and
-  keyboard focus moves to it. What you typed stays in the form.
+  keyboard focus moves to it. What you typed stays in the form. If you try again and the
+  screen finds a problem before sending, the server's earlier reason disappears and the new
+  problem shows instead.
 - **The key already exists.** Choose a different key.
 - **The constraints are not valid for the datatype.** The server says so but not which name
   is wrong. Check the names against the hint under the Constraints box.

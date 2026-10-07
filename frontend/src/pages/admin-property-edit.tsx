@@ -17,6 +17,7 @@ import { useAnnounce } from "../components/use-announce.ts";
 import {
   amendValuesFrom,
   buildAmendRequest,
+  rebaseOnto,
   type AmendValues,
 } from "../registry/property-amend.ts";
 import { constraintKeysOf, PROPERTY_FIELD_IDS } from "../registry/property-form.ts";
@@ -73,11 +74,22 @@ function AmendForm({
   definition: Definition;
   allowedConstraintKeys: string[] | null;
 }) {
-  const [initial] = useState<AmendValues>(() => amendValuesFrom(definition));
+  const [initial, setInitial] = useState<AmendValues>(() => amendValuesFrom(definition));
   const [values, setValues] = useState<AmendValues>(initial);
+  const [shownVersion, setShownVersion] = useState(definition.row_version);
   const [errors, setErrors] = useState<FormError[]>([]);
   const amend = useAmendProperty(definition.key);
   const navigate = useNavigate();
+
+  // The property reloaded under the editor, as it does after a stale-version
+  // refusal. Adjusting state during render is React's pattern for state that
+  // follows a prop.
+  if (definition.row_version !== shownVersion) {
+    const rebased = rebaseOnto(values, initial, amendValuesFrom(definition));
+    setShownVersion(definition.row_version);
+    setValues(rebased.values);
+    setInitial(rebased.initial);
+  }
 
   function set<K extends keyof AmendValues>(field: K, value: AmendValues[K]) {
     setValues((previous) => ({ ...previous, [field]: value }));
@@ -103,13 +115,19 @@ function AmendForm({
         errors={errors}
         formError={
           amend.isError ? (
-            <PropertyRefusalNotice error={amend.error} fallback={FALLBACK_REFUSAL} />
+            <PropertyRefusalNotice
+              error={amend.error}
+              fallback={FALLBACK_REFUSAL}
+              editsKept
+            />
           ) : undefined
         }
         onSubmit={() => {
           const result = buildAmendRequest(values, initial, definition.row_version);
           setErrors(result.errors);
           if (result.body === null) {
+            // An earlier server refusal no longer describes this attempt.
+            amend.reset();
             return;
           }
           return amend.mutateAsync(result.body).then(

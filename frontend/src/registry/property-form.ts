@@ -102,17 +102,26 @@ export function parseConstraints(text: string): ConstraintsParse {
   return { ok: true, value: parsed as Record<string, unknown> };
 }
 
-/** An empty box means 0, the API's default. */
+const INT32_MIN = -2147483648;
+const INT32_MAX = 2147483647;
+
+export const DISPLAY_ORDER_PROBLEM =
+  "Enter the display order as a whole number between -2,147,483,648 and 2,147,483,647, or leave it empty for 0.";
+
+/**
+ * An empty box means 0, the API's default. The column is a 32-bit integer, so a
+ * larger value would reach the database and come back as a 500.
+ */
 export function parseDisplayOrder(text: string): number | null {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     return 0;
   }
-  if (!/^\d+$/.test(trimmed)) {
+  if (!/^-?\d+$/.test(trimmed)) {
     return null;
   }
   const value = Number(trimmed);
-  return Number.isSafeInteger(value) ? value : null;
+  return value >= INT32_MIN && value <= INT32_MAX ? value : null;
 }
 
 /** The constraint names a datatype's schema allows, read without interpreting any. */
@@ -225,12 +234,7 @@ export function buildCreateRequest(
   }
   const displayOrder = parseDisplayOrder(values.displayOrder);
   if (displayOrder === null) {
-    errors.push(
-      problem(
-        PROPERTY_FIELD_IDS.displayOrder,
-        "Enter the display order as a whole number, or leave it empty for 0.",
-      ),
-    );
+    errors.push(problem(PROPERTY_FIELD_IDS.displayOrder, DISPLAY_ORDER_PROBLEM));
   }
   const constraints = parseConstraints(values.constraintsText);
   if (!constraints.ok) {

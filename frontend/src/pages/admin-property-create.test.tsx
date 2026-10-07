@@ -168,6 +168,55 @@ describe("AdminPropertyCreatePage", () => {
     expect(writeCalls(calls)).toHaveLength(0);
   });
 
+  it("drops the server's duplicate-key refusal when a later check fails on the screen", async () => {
+    const detail = "A property definition with this key already exists.";
+    stubApi([
+      DATATYPES_OK,
+      { method: "POST", path: CREATE_PATH, status: 409, body: { detail } },
+    ]);
+    const user = userEvent.setup();
+    await renderCreate();
+    await fillRequired(user);
+    await user.click(screen.getByRole("button", { name: "Create property" }));
+    expect(await screen.findByText(detail)).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Key"));
+    await user.type(screen.getByLabelText("Key"), "Assay-Method");
+    await user.click(screen.getByRole("button", { name: "Create property" }));
+
+    expect(
+      await screen.findByRole("link", { name: /Enter a key of lowercase letters/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(detail)).not.toBeInTheDocument();
+  });
+
+  it("accepts a negative display order and refuses one beyond 32 bits", async () => {
+    const calls = stubApi([
+      DATATYPES_OK,
+      { method: "POST", path: CREATE_PATH, status: 201, body: CREATED },
+      { method: "GET", path: `${CREATE_PATH}/assay_method`, status: 200, body: CREATED },
+    ]);
+    const user = userEvent.setup();
+    await renderCreate();
+    await fillRequired(user);
+
+    await user.type(screen.getByLabelText("Display order"), "3000000000");
+    await user.click(screen.getByRole("button", { name: "Create property" }));
+    expect(
+      await screen.findByRole("link", {
+        name: /Enter the display order as a whole number between/,
+      }),
+    ).toBeInTheDocument();
+    expect(writeCalls(calls)).toHaveLength(0);
+
+    await user.clear(screen.getByLabelText("Display order"));
+    await user.type(screen.getByLabelText("Display order"), "-1");
+    await user.click(screen.getByRole("button", { name: "Create property" }));
+
+    await screen.findByRole("heading", { level: 1, name: "Assay method" });
+    expect(writeCalls(calls)[0]?.body).toMatchObject({ display_order: -1 });
+  });
+
   it("refuses a bound datatype with no binding, before any request", async () => {
     const calls = stubApi([DATATYPES_OK]);
     const user = userEvent.setup();

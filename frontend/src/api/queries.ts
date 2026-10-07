@@ -13,7 +13,7 @@ import type { ApiClient } from "./client.ts";
 import { asVersionConflict } from "./conflicts.ts";
 import { filterQueryParams } from "./filter-params.ts";
 import type { components, paths } from "./schema.ts";
-import { unwrap } from "./unwrap.ts";
+import { ApiError, unwrap } from "./unwrap.ts";
 import { useApiClient } from "./use-api-client.ts";
 
 /**
@@ -902,10 +902,12 @@ export function useDeprecateProperty(key: string) {
         }),
       ),
     onSuccess: () => invalidatePropertyDefinition(queryClient, key),
-    // See `useAmendProperty`.
+    // Any 409, not only a stale version: "already deprecated" means the cached
+    // copy still shows an active property, and a screen reading it would keep
+    // offering to deprecate it.
     onError: (error: unknown) => {
-      if (asVersionConflict(error) !== null) {
-        void queryClient.invalidateQueries({ queryKey: propertyDefinitionKey(key) });
+      if (error instanceof ApiError && error.status === 409) {
+        void invalidatePropertyDefinition(queryClient, key);
       }
     },
   });
