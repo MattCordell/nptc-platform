@@ -208,6 +208,9 @@ describe("AdminPropertyEditPage", () => {
       changed_by: "A Curator",
       changed_at: "2026-10-07T00:00:00Z",
     };
+    // Keyed on the first write having happened, not on a call count: StrictMode
+    // fetches the property twice on the first render.
+    let written = false;
     const calls = stubApi(
       [
         READ_OK,
@@ -222,9 +225,10 @@ describe("AdminPropertyEditPage", () => {
       {
         vary: (call, prior) => {
           if (call.method === "PATCH" && prior === 0) {
+            written = true;
             return { method: "PATCH", path: call.path, status: 409, body: conflict };
           }
-          if (call.method === "GET" && call.path.endsWith(PROPERTY_PATH) && prior > 0) {
+          if (written && call.method === "GET" && call.path.endsWith(PROPERTY_PATH)) {
             // What another administrator saved, including a label this editor never touched.
             return {
               method: "GET",
@@ -262,12 +266,13 @@ describe("AdminPropertyEditPage", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(patchCalls(calls)).toHaveLength(2));
-    // The untouched label is not sent, so the other administrator's label survives.
-    expect(patchCalls(calls)[1]?.body).toEqual({
-      display_order: 5,
-      expected_row_version: 4,
-      reason: "Clarify the label",
-    });
+    // The first save used the version the form was filled from, the second the
+    // reloaded one. Neither sends the untouched label, so the other
+    // administrator's label survives.
+    expect(patchCalls(calls).map((call) => call.body)).toEqual([
+      { display_order: 5, expected_row_version: 3, reason: "Clarify the label" },
+      { display_order: 5, expected_row_version: 4, reason: "Clarify the label" },
+    ]);
   });
 
   it("shows the server's sentence when it refuses the constraints", async () => {

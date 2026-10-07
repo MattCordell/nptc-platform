@@ -1,5 +1,5 @@
 import { Link, useParams } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { usePropertyDefinition } from "../api/queries.ts";
@@ -13,6 +13,7 @@ import {
   scopeLabelFor,
 } from "../catalogue/property-display.ts";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import { Button } from "../components/button.tsx";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { Card } from "../components/card.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
@@ -20,6 +21,7 @@ import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { DeprecatePropertyDialog } from "../registry/deprecate-property-dialog.tsx";
 import {
   propertyLoadFailureMessage,
   propertyStaleWarning,
@@ -27,7 +29,7 @@ import {
 
 /**
  * The property registry detail screen (FR-08..13, NFR-31): one property's
- * whole definition, read-only.
+ * whole definition, with the actions that change it (Edit and Deprecate).
  *
  * It shows what the API returns and nothing datatype-specific. `datatype` is
  * plain text, the binding rows appear when their value is present, and
@@ -36,6 +38,8 @@ import {
  */
 
 type Definition = components["schemas"]["PropertyDefinitionResponse"];
+
+const HEADING_ID = "property-detail-heading";
 
 const LABEL_CLASS = "text-[var(--color-text-muted)]";
 
@@ -161,6 +165,8 @@ export function AdminPropertyDetailPage() {
   });
   const property = usePropertyDefinition(propertyKey);
   const { message, politeness, announce } = useAnnounce();
+  const [deprecating, setDeprecating] = useState(false);
+  const awaitingDeprecation = useRef(false);
 
   const staleData = property.isError && property.data !== undefined;
   useEffect(() => {
@@ -183,14 +189,27 @@ export function AdminPropertyDetailPage() {
   }, [hardFailureMessage, announce]);
 
   const definition = property.data;
+  const isDeprecated = definition?.status === "deprecated";
+
+  // The Deprecate button disappears once the refetch shows the new status, and
+  // the dialog would restore focus to it. So focus moves to the heading when
+  // that status arrives, and the change is announced.
+  useEffect(() => {
+    if (awaitingDeprecation.current && definition !== undefined && isDeprecated) {
+      awaitingDeprecation.current = false;
+      announce(`${definition.label} is now deprecated.`);
+      document.getElementById(HEADING_ID)?.focus();
+    }
+  }, [definition, isDeprecated, announce]);
 
   return (
-    <section aria-labelledby="property-detail-heading">
+    <section aria-labelledby={HEADING_ID}>
       <LiveRegion message={message} politeness={politeness} />
 
       <PageContainer className="py-6">
         <PageHeader
-          id="property-detail-heading"
+          id={HEADING_ID}
+          focusable
           title={definition ? definition.label : propertyKey}
           meta={
             definition ? <span className="font-mono">{definition.key}</span> : undefined
@@ -205,6 +224,15 @@ export function AdminPropertyDetailPage() {
                 >
                   Edit property
                 </Link>
+              )}
+              {definition && !isDeprecated && (
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={() => setDeprecating(true)}
+                >
+                  Deprecate property
+                </Button>
               )}
               <Link to="/admin/properties" className={buttonClassName("secondary")}>
                 Back to the property registry
@@ -229,6 +257,17 @@ export function AdminPropertyDetailPage() {
               <ConstraintsCard constraints={definition.constraints} />
             )}
           </>
+        )}
+
+        {deprecating && definition && (
+          <DeprecatePropertyDialog
+            definition={definition}
+            onClose={() => setDeprecating(false)}
+            onDeprecated={() => {
+              awaitingDeprecation.current = true;
+              setDeprecating(false);
+            }}
+          />
         )}
       </PageContainer>
     </section>
