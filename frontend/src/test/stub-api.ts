@@ -28,7 +28,7 @@ export interface Route {
    * query stays pending for the rest of the test. For asserting a "still
    * checking" state without racing a timer; `status` and `body` are ignored.
    */
-  never_settles?: boolean;
+  neverSettles?: boolean;
 }
 
 export interface StubOptions {
@@ -100,7 +100,7 @@ export function stubApi(routes: Route[], options: StubOptions = {}) {
     if (route === undefined) {
       return new Response(JSON.stringify({ detail: "no stub" }), { status: 500 });
     }
-    if (route.never_settles === true) {
+    if (route.neverSettles === true) {
       return new Promise<Response>(() => {});
     }
     return new Response(JSON.stringify(route.body), {

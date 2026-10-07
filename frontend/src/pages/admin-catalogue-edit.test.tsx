@@ -2069,7 +2069,7 @@ describe("code bindings", () => {
     const user = userEvent.setup();
     const calls = stubApi([
       READ_OK,
-      { ...terminologyRoute(FSN_CODE), never_settles: true },
+      { ...terminologyRoute(FSN_CODE), neverSettles: true },
     ]);
     await renderLoaded();
 
