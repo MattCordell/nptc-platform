@@ -201,3 +201,15 @@ def test_blank_preferred_terms_are_not_reported_as_a_collision(tmp_path: Path) -
     sheets = _sheets(tmp_path, _rows(("   ", None), ("   ", None)))
 
     assert check_collisions(sheets) == ()
+
+
+@pytest.mark.req("FR-05")
+def test_an_earlier_entry_is_named_once_when_its_synonym_repeats_its_preferred_term(
+    tmp_path: Path,
+) -> None:
+    sheets = _sheets(tmp_path, _rows(("Glucose", "Glucose;Sugar"), ("Glucose", None)))
+
+    (finding,) = check_collisions(sheets)
+
+    assert finding.message.count("row 2") == 1
+    assert " and " not in finding.message

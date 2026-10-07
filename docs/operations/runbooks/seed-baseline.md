@@ -13,7 +13,9 @@ To load the real workbook, follow the end-to-end guide in [`load-baseline.md`](l
 This page is the reference for the loader itself.
 
 To seed a development stack from the 50-row sample workbook, use `scripts/dev-seed.ps1`
-instead. It filters out the entries this loader refuses and then calls it. The transform reports a collision itself (`DESIGNATION_COLLISION`), so the script first drops the colliding rows from a temporary copy of the workbook. See
+instead. It filters out the entries this loader refuses and then calls it. The transform reports
+a collision itself (`DESIGNATION_COLLISION`), so the script first drops the colliding rows from
+a temporary copy of the workbook. See
 [`deployment.md`](../deployment.md#load-sample-data-for-evaluation). Never filter a real
 baseline: the refusals below are the point.
 

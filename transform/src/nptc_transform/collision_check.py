@@ -96,6 +96,8 @@ def check_collisions(sheets: Sequence[Sheet]) -> tuple[Finding, ...]:
         own_synonym_keys: dict[str, str] = {}
         for synonym in synonyms:
             key = collision_key(synonym)
+            if key == preferred_key:
+                continue
             own_synonym_keys.setdefault(key, synonym)
             if key in reported:
                 continue

@@ -547,6 +547,7 @@ reported may clear when that entry's term changes, so re-run the transform after
 Only rows the loader would seed are compared. A row with no code binding is reported as
 `MISSING_CODE_BINDING` and never collides. RCPA-QAP decides which term changes (PRD 6.3). The
 transform never picks one.
+
 ### Interpreting a misspelling finding (FR-79)
 
 The pass reads only the `RCPA Preferred term` and `RCPA Synonyms` columns, tokenises each
@@ -675,7 +676,8 @@ produces, but not the guarantees above:
   (see [`seed-baseline.md`](seed-baseline.md)), which records the baseline as a seed record
   until then (ADR-0042). That loader refuses a dataset holding an uncoded specimen, so a
   `SPECIMEN_VALUE_UNMAPPED` finding must be resolved before loading. The 50-row sample
-  workbook has eight such entries. It also has one FR-05 collision, which the transform now reports as `DESIGNATION_COLLISION` and which blocks `--emit-dataset`.
+  workbook has eight such entries. It also has one FR-05 collision, which the transform now
+  reports as `DESIGNATION_COLLISION` and which blocks `--emit-dataset`.
   [`load-baseline.md`](load-baseline.md) walks through loading the real workbook.
   The development stack seeds it through `scripts/dev-seed.ps1`, which drops the colliding
   row from a copy of the workbook first and the eight uncoded entries afterwards (see

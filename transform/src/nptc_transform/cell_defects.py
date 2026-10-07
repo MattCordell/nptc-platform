@@ -35,7 +35,7 @@ from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
 from nptc_transform.corrections import apply_corrections
 from nptc_transform.findings import Finding
-from nptc_transform.rows import SourceRow, group_rows
+from nptc_transform.rows import SourceRow, group_rows, has_code_binding
 from nptc_transform.specimen_table import SPECIMEN_TABLE, SpecimenGroup
 from nptc_transform.workbook import Cell, CellType, ColumnRole, Sheet, column_role
 
@@ -348,16 +348,8 @@ def _scan_specimen(cell: Cell) -> tuple[Finding, ...]:
 
 
 def _row_has_code(row: SourceRow) -> bool:
-    """True if ``row`` resolves a non-empty code binding.
-
-    A code cell holding only empty or whitespace text does not count. This is the
-    ``.strip()`` test ``terminology_check.collect_code_bindings`` and
-    ``rows.has_code_binding`` apply, so every "has a code binding" question
-    agrees. Both row-level scans below share it, so for any row both fire or
-    neither does.
-    """
-    code_cell = row.cells.get(ColumnRole.CODE)
-    return code_cell is not None and bool(code_cell.text.strip())
+    """Both row-level scans below share this test, so for any row both fire or neither does."""
+    return has_code_binding(row.cells)
 
 
 def _scan_missing_preferred_term(row: SourceRow) -> Finding | None:
