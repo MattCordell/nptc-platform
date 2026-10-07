@@ -181,3 +181,13 @@ def test_every_defect_is_reported_together() -> None:
         _tsv(_row("Urine", code="1"), _row("Serum", status="DRAFT"), _row("urine"))
     )
     assert len(problems) >= 3
+
+
+@pytest.mark.req("FR-88")
+def test_a_file_saved_by_a_spreadsheet_with_a_bom_and_crlf_line_endings_parses() -> None:
+    text = chr(0xFEFF) + _tsv(_row("Urine"), _row("Serum", code="119364003")).replace("\n", "\r\n")
+
+    parsed = parse_specimen_map(text)
+
+    assert [entry.source for entry in parsed.entries] == ["Urine", "Serum"]
+    assert [entry.line for entry in parsed.entries] == [2, 3]

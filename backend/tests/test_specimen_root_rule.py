@@ -53,3 +53,19 @@ def test_the_rule_applies_to_the_specimen_property_only() -> None:
 @pytest.mark.req("FR-89")
 def test_a_value_that_is_not_an_object_is_left_to_the_schema_check() -> None:
     assert validate("specimen", [_ROOT, "not an object", None]) == ()
+
+
+@pytest.mark.req("FR-89")
+def test_a_malformed_value_before_the_root_does_not_shift_the_reported_ordinal() -> None:
+    (issue,) = validate("specimen", ["junk", _ROOT, _SERUM])
+
+    assert issue.ordinal == 1
+
+
+@pytest.mark.req("FR-89")
+def test_a_code_that_is_not_a_string_is_left_to_the_schema_check_not_counted_as_a_specimen() -> (
+    None
+):
+    assert (
+        validate("specimen", [_ROOT, {"system": "http://snomed.info/sct", "code": 119364003}]) == ()
+    )

@@ -185,8 +185,12 @@ def _validate_specimen_root_alone(
     specimen. The issue names the root's `ordinal`."""
     if property_key != _SPECIMEN_KEY:
         return ()
-    codes = [value.get("code") for value in values if isinstance(value, dict)]
-    if SPECIMEN_ROOT_CODE not in codes or all(code == SPECIMEN_ROOT_CODE for code in codes):
+    codes = [
+        value["code"] if isinstance(value, dict) and isinstance(value.get("code"), str) else None
+        for value in values
+    ]
+    named = [code for code in codes if code is not None and code != SPECIMEN_ROOT_CODE]
+    if SPECIMEN_ROOT_CODE not in codes or not named:
         return ()
     return (
         PropertyWriteIssue(
