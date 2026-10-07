@@ -146,10 +146,10 @@ def _create_user(
     or duplicate `preferred_username` and that must not surface as a raw
     `IntegrityError` on first login. Any other constraint violation is
     re-raised at once, except a duplicate `(issuer, subject)` from a concurrent
-    first login, which is returned as an `_IdentityConflict`. Each attempt runs inside its own `SAVEPOINT`, so a
-    failed attempt aborts only itself, including the `user_identity.created`
-    audit event: a rolled-back retry never leaves a record of an insert that
-    did not happen.
+    first login, which is returned as an `_IdentityConflict`. Each attempt runs
+    inside its own `SAVEPOINT`, so a failed attempt aborts only itself, including
+    the `user_identity.created` audit event: a rolled-back retry never leaves a
+    record of an insert that did not happen.
     """
     display_name = claims.display_name or claims.preferred_username
     suffix: str | None = None

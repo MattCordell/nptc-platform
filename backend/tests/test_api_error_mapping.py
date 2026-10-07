@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi import Depends
 from sqlalchemy.engine import Connection
+from starlette.types import Message, Receive, Scope, Send
 
 from nptc.api.app import API_PREFIX
 from nptc.api.dependencies import permission_dep
@@ -211,9 +212,8 @@ def test_www_authenticate_is_exposed_to_cross_origin_js(api: ApiTestApp) -> None
 def test_an_unhandled_error_is_a_cors_readable_500_for_the_frontend_origin(
     api: ApiTestApp,
 ) -> None:
-    """`ServerErrorMiddleware` sits outside CORS, so without
-    `UnhandledErrorMiddleware` an unclaimed exception reached the browser with no
-    `Access-Control-Allow-Origin` and the SPA saw a network error, not a 500."""
+    """An exception no handler claims is answered as a generic 500 that carries
+    `Access-Control-Allow-Origin` for the frontend origin, so the SPA can read the status."""
     response = api.client.get(f"{API_PREFIX}/_test/boom", headers={"Origin": FRONTEND_ORIGIN})
 
     assert response.status_code == 500, response.text
@@ -242,6 +242,7 @@ def test_an_unhandled_error_is_logged_but_never_echoed(
     with caplog.at_level(logging.ERROR, logger="nptc.api.unhandled"):
         response = api.client.get(f"{API_PREFIX}/_test/boom")
 
+    assert response.status_code == 500, response.text
     assert _UNHANDLED_SECRET not in response.text
     record = next(r for r in caplog.records if r.name == "nptc.api.unhandled")
     assert record.exc_info is not None
@@ -255,21 +256,21 @@ def test_an_error_after_the_response_has_started_is_not_masked_by_a_second_respo
     two responses."""
     sent: list[str] = []
 
-    async def failing_app(scope: dict, receive: object, send: object) -> None:  # type: ignore[type-arg]
-        await send({"type": "http.response.start", "status": 200, "headers": []})  # type: ignore[operator]
+    async def failing_app(scope: Scope, receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
         raise RuntimeError(_UNHANDLED_SECRET)
 
-    async def record(message: dict) -> None:  # type: ignore[type-arg]
+    async def record(message: Message) -> None:
         sent.append(message["type"])
 
-    async def receive() -> dict:  # type: ignore[type-arg]
+    async def receive() -> Message:
         return {"type": "http.request"}
 
-    middleware = UnhandledErrorMiddleware(failing_app)  # type: ignore[arg-type]
-    scope = {"type": "http", "method": "GET", "path": "/x"}
+    middleware = UnhandledErrorMiddleware(failing_app)
+    scope: Scope = {"type": "http", "method": "GET", "path": "/x"}
 
     with pytest.raises(RuntimeError, match=_UNHANDLED_SECRET):
-        asyncio.run(middleware(scope, receive, record))  # type: ignore[arg-type]
+        asyncio.run(middleware(scope, receive, record))
 
     assert sent == ["http.response.start"]
 

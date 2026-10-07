@@ -165,11 +165,10 @@ def test_concurrent_first_logins_for_one_new_subject_resolve_to_one_user(
     owner_engine: Engine,
     preferred_username: str | None,
 ) -> None:
-    """The defect behind the 500 on the first page load: both requests missed the
-    read, the loser's insert blocked on the winner's key, and the resulting
-    `uq_user_identity_issuer` violation reached the client. With a shared
-    `preferred_username` the loser first retries a new username suffix, then hits
-    the identity constraint, so the recovery must hold on both orders."""
+    """Two first logins for one new subject both succeed and resolve to one user. The
+    loser's insert blocks on the winner's key, fails on `uq_user_identity_issuer`,
+    and is answered from the winner's row. With a shared `preferred_username` the
+    loser first retries a new username suffix, so recovery must hold on both orders."""
     subject = f"race-first-{uuid.uuid4()}"
     claims = _claims(subject=subject, preferred_username=preferred_username)
 
@@ -198,10 +197,9 @@ def test_concurrent_first_logins_for_one_new_subject_resolve_to_one_user(
 def test_concurrent_auto_links_for_one_new_subject_resolve_to_one_identity(
     pristine_audit_event: None, app_engine: Engine, owner_engine: Engine
 ) -> None:
-    """The auto-link insert had no SAVEPOINT, so the same race aborted the whole
-    request transaction. The loser must come back as `EXISTING` on the user the
-    winner linked, leaving one identity and one `user_identity.created` event for
-    the new subject."""
+    """Two auto-links for one new subject both succeed. The loser's failed insert
+    rolls back alone, and it comes back as `EXISTING` on the user the winner linked,
+    leaving one identity and one `user_identity.created` event for the new subject."""
     email = f"race-link-{uuid.uuid4()}@example.org"
     existing = _claims(subject=f"race-existing-{uuid.uuid4()}", email=email, email_verified=True)
     with Session(app_engine) as session:
