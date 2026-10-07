@@ -9,6 +9,9 @@ from a clean checkout to a signed-in browser (NFR-41). [`local-development.md`](
 covers running the API and web app on your own machine against that stack's database and
 sign-in service.
 
+[`frontend-e2e-testing.md`](frontend-e2e-testing.md) explains how to run the Playwright smoke
+suite, with colour contrast checked in a real browser, against the compose stack (issue #430).
+
 [`backend-test-container-split.md`](backend-test-container-split.md) records which backend
 tests need a Postgres container, with counts per file and timings (issue #363).
 
