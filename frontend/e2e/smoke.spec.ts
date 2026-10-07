@@ -20,8 +20,14 @@ test("sign-in redirects to the Keycloak authorisation endpoint", async ({
   page,
   baseURL,
 }) => {
+  // An anonymous cold load waits out the silent-session probe before the
+  // redirect starts, so this test needs more than the default budget.
+  test.setTimeout(60_000);
   await page.goto("/sign-in");
-  await page.waitForURL(/\/realms\/[^/]+\/protocol\/openid-connect\/auth/);
+  await page.waitForURL(/\/realms\/[^/]+\/protocol\/openid-connect\/auth/, {
+    waitUntil: "commit",
+    timeout: 45_000,
+  });
 
   const url = new URL(page.url());
   expect(url.searchParams.get("client_id")).toBe("nptc-frontend");
