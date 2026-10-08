@@ -52,9 +52,9 @@ export function EntryTerms({ entry }: { entry: EntryDetail }) {
   const rows = termRows(entry);
   return (
     <EntrySection title="Terms">
-      <ScrollRegion label="Terms">
+      <ScrollRegion label="Terms by type">
         <DataTable
-          caption="Terms"
+          caption="Terms by type"
           columns={[
             {
               key: "term",

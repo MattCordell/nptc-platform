@@ -88,11 +88,13 @@ function Value({ view }: { view: ValueView }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="flex flex-wrap items-center gap-2">
-        {view.text !== "" ? <span className="break-words">{view.text}</span> : null}
+        {view.text !== "" ? (
+          <span className="[overflow-wrap:anywhere]">{view.text}</span>
+        ) : null}
         {view.snomedCode !== null ? <CodeChip code={view.snomedCode} /> : null}
       </span>
       {view.justification !== null ? (
-        <span className="break-words text-[var(--color-text-muted)]">
+        <span className="[overflow-wrap:anywhere] text-[var(--color-text-muted)]">
           Justification: {view.justification}
         </span>
       ) : null}
@@ -121,7 +123,7 @@ export function PropertyRows({ properties }: { properties: PropertyValue[] }) {
               />
             ) : null}
           </dt>
-          <dd className="m-0 min-w-0">
+          <dd className="m-0 mb-3 min-w-0">
             {group.values.length === 1 ? (
               <Value view={group.values[0]} />
             ) : (

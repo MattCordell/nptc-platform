@@ -343,7 +343,7 @@ describe("terms", () => {
   async function termRows(overrides: Record<string, unknown> = {}) {
     await renderEntry([{ ...ENTRY_OK, body: entry(overrides) }, HISTORY_OK]);
     await screen.findByRole("heading", { level: 1, name: "Ferritin" });
-    const table = screen.getByRole("table", { name: "Terms" });
+    const table = screen.getByRole("table", { name: "Terms by type" });
     return within(table).getAllByRole("row").slice(1);
   }
 
@@ -362,7 +362,7 @@ describe("terms", () => {
   it("has a Term and a Type column, and no Language or Status column", async () => {
     await termRows();
 
-    const table = screen.getByRole("table", { name: "Terms" });
+    const table = screen.getByRole("table", { name: "Terms by type" });
     expect(
       within(table)
         .getAllByRole("columnheader")
@@ -662,7 +662,7 @@ describe("the details sidebar", () => {
     });
 
     const value = within(facts).getByText(long);
-    expect(value.className).toContain("break-words");
+    expect(value.className).toContain("[overflow-wrap:anywhere]");
     expect((value.closest("dd") as HTMLElement).className).toContain("min-w-0");
   });
 
@@ -857,7 +857,7 @@ describe("recent changes", () => {
       await screen.findByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Loading recent changes…")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Terms" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Terms by type" })).toBeInTheDocument();
 
     await act(async () => hold.release());
     expect(await screen.findByText("Catalogue entry updated")).toBeInTheDocument();
@@ -876,7 +876,7 @@ describe("recent changes", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Terms" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Terms by type" })).toBeInTheDocument();
   });
 });
 
@@ -1019,7 +1019,7 @@ describe("accessibility (NFR-31)", () => {
   // A table that scrolls at a narrow width must take focus, or a keyboard user
   // cannot scroll it. jsdom has no layout, so axe cannot report this itself:
   // the test checks the markup its `scrollable-region-focusable` rule needs.
-  it.each(["Terms", "Retired code bindings"])(
+  it.each(["Terms by type", "Retired code bindings"])(
     "makes the scrollable %s table a focusable, named region",
     async (name) => {
       await renderEntry();

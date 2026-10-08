@@ -15,12 +15,12 @@ type EntryDetail = components["schemas"]["EntryDetail"];
 export function EntryMetadata({ entry }: { entry: EntryDetail }) {
   return (
     <EntrySection title="Details">
-      <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+      <dl className="m-0 grid grid-cols-1 gap-y-1 text-sm">
         <dt className="font-medium">Identifier</dt>
-        <dd className="m-0 font-mono">{entry.business_key}</dd>
+        <dd className="m-0 mb-3 min-w-0 font-mono">{entry.business_key}</dd>
 
         <dt className="font-medium">Status</dt>
-        <dd className="m-0">
+        <dd className="m-0 mb-3 min-w-0 last:mb-0">
           <StatusBadge
             tone={statusToneFor(entry.status)}
             label={statusLabelFor(entry.status)}
@@ -28,7 +28,7 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
         </dd>
 
         <dt className="font-medium">Disciplines</dt>
-        <dd className="m-0">
+        <dd className="m-0 mb-3 min-w-0 last:mb-0">
           {entry.disciplines.length > 0 ? (
             entry.disciplines.join(", ")
           ) : (
@@ -39,7 +39,7 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
         <PropertyRows properties={entry.properties} />
 
         <dt className="font-medium">Last updated</dt>
-        <dd className="m-0">
+        <dd className="m-0 mb-3 min-w-0 last:mb-0">
           <time dateTime={entry.updated_at}>{formatDate(entry.updated_at)}</time>
         </dd>
       </dl>
