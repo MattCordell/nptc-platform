@@ -64,8 +64,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _designation_terms(entry: dict[str, Any], use: str) -> list[str]:
-    return [d["term"] for d in entry["designations"] if d["use"] == use]
+def _synonym_terms(entry: dict[str, Any]) -> list[str]:
+    return [d["term"] for d in entry["designations"]]
 
 
 def _uncoded_specimens(entry: dict[str, Any]) -> list[str]:
@@ -80,7 +80,7 @@ def _collides_with(
     preferred: str = entry["preferred_term"]
     if collision_key(preferred) in kept_preferred | kept_synonyms:
         return preferred
-    for synonym in _designation_terms(entry, "synonym"):
+    for synonym in _synonym_terms(entry):
         if collision_key(synonym) in kept_preferred:
             return synonym
     return None
@@ -126,7 +126,7 @@ def filter_dataset(document: dict[str, Any]) -> tuple[dict[str, Any], list[Dropp
             kept.append(entry)
             code_holder.update(dict.fromkeys(_bound_codes(entry), key))
             kept_preferred.add(collision_key(entry["preferred_term"]))
-            kept_synonyms.update(collision_key(t) for t in _designation_terms(entry, "synonym"))
+            kept_synonyms.update(collision_key(t) for t in _synonym_terms(entry))
     except (KeyError, TypeError) as exc:
         raise DatasetShapeError(f"an entry is missing a field ({type(exc).__name__})") from exc
 

@@ -107,7 +107,6 @@
   "backend/src/nptc/terminology/errors.py": {"code": 11, "prose": 36, "ratio": 3.273},
   "backend/src/nptc/validation/__init__.py": {"code": 0, "prose": 1, "ratio": null},
   "shared/src/nptc_shared/__init__.py": {"code": 1, "prose": 11, "ratio": 11.0},
-  "shared/src/nptc_shared/language.py": {"code": 18, "prose": 45, "ratio": 2.5},
   "shared/src/nptc_shared/sctid.py": {"code": 52, "prose": 33, "ratio": 0.635},
   "shared/src/nptc_shared/similarity.py": {"code": 57, "prose": 76, "ratio": 1.333},
   "shared/src/nptc_shared/terminology/__init__.py": {"code": 104, "prose": 14, "ratio": 0.135},
