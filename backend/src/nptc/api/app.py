@@ -7,12 +7,16 @@ read settings and opened a connection pool at import time.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from nptc.api.dependencies import get_api_settings, get_auth_settings, get_terminology_client
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
+from nptc.api.rate_limit import AnonymousRateLimitMiddleware, declare_rate_limit_refusal
 from nptc.api.routers import (
     audit,
     auth,
@@ -39,6 +43,7 @@ def create_app(
     settings: ApiSettings | None = None,
     auth_settings: AuthSettings | None = None,
     terminology_client: TerminologyClient | None = None,
+    rate_limit_clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="NPTC Catalogue Maintenance Platform",
@@ -77,6 +82,19 @@ def create_app(
     # latest addition outermost. The 500 it returns then passes through CORS.
     app.add_middleware(UnhandledErrorMiddleware)
 
+    # Takes its values as arguments, not from `Depends(get_api_settings)`: a middleware has no
+    # dependency scope, and `api_settings` is the object the rest of the app reads. It sits
+    # inside CORS for the reason above, so its 429 carries `Access-Control-Allow-Origin`.
+    app.add_middleware(
+        AnonymousRateLimitMiddleware,
+        limit=api_settings.anon_rate_limit_requests,
+        window_seconds=api_settings.anon_rate_limit_window_seconds,
+        bulk_artefacts_url=api_settings.bulk_artefacts_url,
+        trusted_proxies=api_settings.trusted_proxies,
+        monotonic=rate_limit_clock or time.monotonic,
+    )
+    declare_rate_limit_refusal(app)
+
     # Exactly one origin, never "*": ADR-0021 has the browser hold the access
     # token and send it here, so a permissive policy would let any origin drive
     # an authenticated request. `allow_credentials` stays False: the SPA sends an
@@ -90,8 +108,9 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
         # NFR-06: a browser hides every cross-origin response header not listed
         # here, `WWW-Authenticate` included (`vite dev` is cross-origin). Without
-        # it the SPA's step-up handler reads `null` and silently never fires.
-        expose_headers=["WWW-Authenticate"],
+        # it the SPA's step-up handler reads `null` and silently never fires. The same
+        # holds for `Retry-After` on a 429.
+        expose_headers=["WWW-Authenticate", "Retry-After"],
     )
 
     register_exception_handlers(app, step_up_auth_settings)

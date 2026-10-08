@@ -43,6 +43,10 @@ API you run on your own machine ([`local-development.md`](local-development.md))
 | `NPTC_FSN_SEMANTIC_TAG` | `nptc.settings.ApiSettings` (backend, issue #144, FR-98) | `intact` | No | Declares whether every binding's `fsn` has its semantic tag intact or stripped (`nptc.api.labels.fsn_provenance`). `"intact"` is the only value accepted today - no binding's `fsn` is stripped on the read path, so `"stripped"` is refused at settings-construction time rather than silently making the served payload lie about what it serves. It does not govern the `fsn` on a public list or search row, which is always stripped (FR-83) and declared `stripped`. A placeholder for FR-66's own export configuration, which does not exist yet (P4) |
 | `NPTC_TERMS_CURRENT_VERSION` | `nptc.settings.ApiSettings` (backend, NFR-45, NFR-47, ADR-0043) | *(blank, meaning the version packaged with the release)* | No | Names the terms file `backend/src/nptc/terms/versions/<version>.md` that every contributor must have accepted. A version is a zero-padded date such as `2026-10-06`. The API refuses to start when the named version has no file, because contributions would be refused with nothing to show the user. Moving to a new version means adding a new file and naming it here: users then accept it before their next contribution. Never edit a published file. Setting this to an earlier version also asks every user to accept again, because the check is equality, not order. The first file is temporary placeholder text. An empty or whitespace-only value counts as unset. The variable name is not checked: a typo such as `NPTC_TERMS_CURENT_VERSION` is dropped silently and leaves the packaged version in force |
 | `NPTC_MAX_PREFERRED_TERM_LENGTH` | `nptc.settings.ApiSettings` (backend, issue #152, FR-86) | *(blank, meaning unset - no warning ever produced)* | No | The preferred-term length past which the designation-amendment route warns, without ever blocking the save. Unset is the default and must stay the default: no maximum has been nominated yet (PRD open item OI-1) - see [`GET /catalogue/admin/preferred-term-length-distribution`](#the-fr-87-length-distribution-report) for the report that informs choosing one. An empty or whitespace-only value counts as unset, so a blank `NPTC_MAX_PREFERRED_TERM_LENGTH=` line in a compose file or `.env` is safe. A value below 1, or one that is not a whole number, is refused when the API starts. The variable name is not checked: a typo such as `NPTC_MAX_PREFERRED_TERM_LENGHT` is dropped silently and leaves the maximum unset |
+| `NPTC_ANON_RATE_LIMIT_REQUESTS` | `nptc.settings.ApiSettings` (backend, FR-22, NFR-24) | *(blank, meaning 600)* | No | How many requests one anonymous client address may make in each window. See [Anonymous rate limit](#anonymous-rate-limit-fr-22-nfr-24). A value below 1 or a non-whole number stops the API at start-up. The variable name is not checked: a typo is dropped silently and leaves the default in force |
+| `NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS` | `nptc.settings.ApiSettings` (backend, FR-22, NFR-24) | *(blank, meaning 60)* | No | The length of that window in seconds. A caller refused with a 429 can try again when the window closes, and the `Retry-After` header says how many seconds that is. The same validation as the line above |
+| `NPTC_BULK_ARTEFACTS_URL` | `nptc.settings.ApiSettings` (backend, FR-22) | *(blank, meaning the documentation page on bulk retrieval)* | No | Where the body of every 429 tells the caller to fetch the whole catalogue instead. An absolute `http(s)` URL, or a path on the same origin that starts with a single `/`. Set it to the release location once releases are published (FR-21). Anything else stops the API at start-up |
+| `NPTC_TRUSTED_PROXIES` | `deploy/compose.yml`'s `backend` service; `nptc.settings.ApiSettings` (backend, NFR-24) | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` in compose; empty in the API itself | No | The addresses allowed to tell the API a caller's real address through `X-Forwarded-For`. Comma-separated addresses or CIDR ranges. Empty means the header is never read. Compose passes it with `-` rather than `:-`, so setting it to an explicit empty value turns the trust off instead of restoring the default. A malformed entry stops the API at start-up. See [Anonymous rate limit](#anonymous-rate-limit-fr-22-nfr-24) |
 | `VITE_OIDC_ISSUER` | `frontend/src/auth/config.ts` (browser, issue #41, NFR-01); compose passes it to the `web` image build | `http://localhost:8080/realms/nptc` - required at build time | No | The realm's issuer URL, as reachable **from the browser** rather than from inside the compose network. Inlined into the built bundle by Vite, so changing it means rebuilding the `web` image; the sign-in flow throws, naming this variable, if it is unset |
 | `VITE_OIDC_CLIENT_ID` | `frontend/src/auth/config.ts` (browser, issue #41, NFR-01); compose passes it to the `web` image build | `nptc-frontend` - required at build time | No | The realm's public client. Must match `nptc-frontend` in the committed realm (ADR-0014). Rebuild the `web` image after changing it |
 | `VITE_API_BASE_URL` | `frontend/src/api/use-api-client.ts` (browser) | *(unset - same origin)* | No | The API's origin when it differs from the web app's. Unset in the compose stack, where Caddy proxies `/api`. Set `http://localhost:8000` in `frontend/.env` for `pnpm dev` |
@@ -200,6 +204,60 @@ because a zero-sized chunk would let a sweep report a catalogue it never checked
 [ADR-0005](../adr/0005-sweep-chunk-size-and-concurrency-defaults.md) records why, and the
 procedure for tuning them against a real instance the first time a seeding transform is run
 against one.
+
+## Anonymous rate limit (FR-22, NFR-24)
+
+The API limits each anonymous client address to `NPTC_ANON_RATE_LIMIT_REQUESTS` requests in
+each `NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS` window. The defaults, 600 requests per 60 seconds,
+leave room for the web app, which makes several calls per page, and for a script that walks the
+whole catalogue in pages. They are a judgement, not a measurement. Lower them only if you see
+abuse, and raise them if a legitimate consumer is refused. The policy and the reasons behind it
+are in [`public-api.md`](../architecture/public-api.md#rate-limiting-and-caching).
+
+**What counts.** A request with no `Authorization` header spends the anonymous budget. A request
+that carries one spends nothing unless the API answers 401, and then it spends a second budget,
+with the same limit and window, for rejected credentials. A valid credential is never counted.
+Both budgets are kept per client address, so an office network shares them.
+
+**Loopback.** Only the compose healthcheck is exempt: it probes `/api/v1/openapi.json` from
+`127.0.0.1`, and a refused probe would mark a healthy container unhealthy. Every other request
+from a loopback address is limited like any other. If you run a proxy on the same host as the
+API and leave `NPTC_TRUSTED_PROXIES` empty, every caller looks like `127.0.0.1` and shares one
+budget, so set `NPTC_TRUSTED_PROXIES=127.0.0.1` there (and make sure the proxy sets
+`X-Forwarded-For`).
+
+**Counters live in one process.** The API keeps them in memory. The compose stack runs one API
+process, so the limit is exact. If you run more than one worker or replica, each keeps its own
+counters and a caller's real budget is the limit times the number of processes. A restart clears
+them.
+
+**Telling the API who the caller is.** Behind Caddy the API's connecting address is Caddy's, so
+without help every visitor would share one budget. Caddy adds the visitor's address to
+`X-Forwarded-For`, and `NPTC_TRUSTED_PROXIES` names the addresses the API believes that header
+from. The compose default trusts the private ranges Docker assigns to compose networks. That is
+safe because the `backend` service publishes no port, so only the `web` container can reach it.
+
+- **Direct access.** If the API is reachable without a proxy, set `NPTC_TRUSTED_PROXIES` to empty.
+  Otherwise any caller could write their own `X-Forwarded-For` and choose their own budget.
+- **Another front end.** Behind a load balancer or CDN, list its addresses, and make sure it
+  appends the connecting address to `X-Forwarded-For` rather than passing a caller's header on
+  unchanged. The API reads the header from the right and stops at the first address it does not
+  trust. It accepts a hop written with a port (`203.0.113.7:51234`, `[2001:db8::1]:443`) and a
+  header split over several lines.
+- **Docker Desktop and rootless Docker.** Where Docker's userland proxy handles the connection,
+  Caddy sees the Docker gateway address (for example `172.18.0.1`) as every visitor's address.
+  That address is inside the trusted ranges, so every visitor shares one budget and the audit log
+  records the gateway. `NPTC_TRUSTED_PROXIES` is already correct in this case. For local use,
+  raise `NPTC_ANON_RATE_LIMIT_REQUESTS`.
+- **Audit log.** The same address is what the audit log records as the actor's address. Before
+  this setting existed, events written behind Caddy recorded Caddy's address.
+
+**IPv6.** Every address in one `/64` subnet shares one budget, because a caller can rotate
+through the addresses in a subnet at no cost.
+
+**Telling a caller where the bulk artefacts are.** A refused request gets a 429 whose body names
+`NPTC_BULK_ARTEFACTS_URL`. No release exists to serve until FR-21 lands, so the default points to
+the documentation on bulk retrieval. Set it to the release location when one exists.
 
 ## Choosing a maximum preferred-term length (`NPTC_MAX_PREFERRED_TERM_LENGTH`)
 

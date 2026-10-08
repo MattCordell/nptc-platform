@@ -53,6 +53,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -102,6 +121,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -188,6 +226,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -265,6 +322,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -356,6 +432,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -461,6 +556,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -526,6 +640,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -645,6 +778,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -728,6 +880,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -806,6 +977,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -871,6 +1061,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -995,6 +1204,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1061,6 +1289,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -1193,6 +1440,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1258,6 +1524,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -1361,6 +1646,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -1493,6 +1797,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -1629,6 +1952,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1753,6 +2095,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1870,6 +2231,25 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -1997,6 +2377,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2106,6 +2505,25 @@
                       "$ref": "#/components/schemas/HTTPValidationError"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -2252,6 +2670,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2359,6 +2796,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -2480,6 +2936,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2592,6 +3067,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2671,6 +3165,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2713,6 +3226,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2752,6 +3284,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -2842,6 +3393,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -2938,6 +3508,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3017,6 +3606,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -3134,6 +3742,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -3199,6 +3826,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -3315,6 +3961,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -3487,6 +4152,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3586,6 +4270,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -3791,6 +4494,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3956,6 +4678,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -7103,6 +7844,26 @@
           "code"
         ],
         "title": "TermsAcceptanceRequiredResponse",
+        "type": "object"
+      },
+      "RateLimitedResponse": {
+        "properties": {
+          "detail": {
+            "description": "One sentence saying what to do next.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "bulk_artefacts": {
+            "description": "Where to fetch the bulk release artefacts instead of paging the API.",
+            "title": "Bulk Artefacts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "bulk_artefacts"
+        ],
+        "title": "RateLimitedResponse",
         "type": "object"
       }
     }

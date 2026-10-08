@@ -172,7 +172,12 @@ def _client_ip(request: Request) -> str | None:
     `None` (an unknown address) is the honest answer and the one
     `AuditContext` models; a placeholder string would be a fabricated fact
     in an append-only log.
+
+    The address `AnonymousRateLimitMiddleware` decided, so Caddy is not recorded as the caller.
     """
+    if "client_address" in request.scope.get("state", {}):
+        decided: str | None = request.state.client_address
+        return decided
     if request.client is None:
         return None
     try:

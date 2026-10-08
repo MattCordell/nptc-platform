@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -223,11 +223,15 @@ def build_api_test_app(
     trusted_issuers: frozenset[str] | None = None,
     mfa_acr_values: frozenset[str] = frozenset({"2"}),
     api_settings: ApiSettings | None = None,
+    rate_limit_clock: Callable[[], float] | None = None,
 ) -> Iterator[ApiTestApp]:
     """Yields a `TestClient` over the production app.
 
     `api_settings` defaults to `hermetic_api_settings()`, never an
-    env-reading `ApiSettings()`.
+    env-reading `ApiSettings()`. The rate limiter reads its limit from it at
+    construction, so a test of the limit passes it here rather than calling
+    `set_api_settings`. `rate_limit_clock` replaces the limiter's clock so a
+    test waits out a window by moving it.
 
     A generator (not a plain function) so the `StubIdp`'s HTTP server is
     shut down deterministically rather than at GC time.
@@ -283,7 +287,11 @@ def build_api_test_app(
         # `@lru_cache`d, so a test overriding `mfa_acr_values` here would
         # otherwise build a step-up challenge from whichever `AuthSettings`
         # happened to be cached first, not from this test's own settings.
-        app = create_app(settings=api_settings or hermetic_api_settings(), auth_settings=settings)
+        app = create_app(
+            settings=api_settings or hermetic_api_settings(),
+            auth_settings=settings,
+            rate_limit_clock=rate_limit_clock,
+        )
         app.dependency_overrides[get_session] = _scoped_session
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings
