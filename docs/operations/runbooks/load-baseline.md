@@ -131,15 +131,20 @@ docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.p
 
 The loader writes everything in one transaction, so the load either completes or leaves the
 database as it was. A good run prints `SEEDED <n> entries as baseline release '<name>'`.
+After the commit it builds the indexes for the filterable system properties and prints a
+`created index:` line for each.
 
 ## Step 7: Check the result
 
 1. **Count.** The `SEEDED` line reports the same `<n>` as the dry run.
-2. **Audit chain.** Confirm the chain is intact across the seeded writes. See
+2. **Indexes.** Three `created index:` lines follow the `SEEDED` line, with no `WARNING` about
+   indexes. A warning does not undo the load. Run `scripts/reconcile_property_indexes.py`, as
+   [`seed-baseline.md`](seed-baseline.md#generated-indexes) describes.
+3. **Audit chain.** Confirm the chain is intact across the seeded writes. See
    [`verify-audit-chain.md`](verify-audit-chain.md).
-3. **Public catalogue.** Open <http://localhost:8081/api/v1/catalogue/entries>. It lists the
+4. **Public catalogue.** Open <http://localhost:8081/api/v1/catalogue/entries>. It lists the
    entries without a sign-in.
-4. **Admin catalogue.** Sign in as an administrator and open
+5. **Admin catalogue.** Sign in as an administrator and open
    <http://localhost:8081/admin/catalogue>. Spot-check a few entries against the workbook.
    The database keeps each entry's workbook sheet and row, and the verbatim `Version` and
    `History` cells (`entry_seed_provenance`), so you can trace an entry back to its row.
