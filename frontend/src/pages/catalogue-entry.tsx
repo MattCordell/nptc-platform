@@ -5,10 +5,9 @@ import { useEntryDetail } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { ApiError } from "../api/unwrap.ts";
 import { EntryBindings } from "../catalogue/entry-bindings.tsx";
-import { EntryDesignations } from "../catalogue/entry-designations.tsx";
 import { EntryHistoryList } from "../catalogue/entry-history-list.tsx";
 import { EntryMetadata } from "../catalogue/entry-metadata.tsx";
-import { EntryProperties } from "../catalogue/entry-properties.tsx";
+import { EntryTerms } from "../catalogue/entry-terms.tsx";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
 import { Breadcrumb } from "../components/breadcrumb.tsx";
 import { Button } from "../components/button.tsx";
@@ -25,8 +24,8 @@ import { useDocumentTitle } from "../shell/use-document-title.ts";
 
 /**
  * One published catalogue entry, read anonymously (FR-17, FR-18, FR-20,
- * NFR-31): its terms, SNOMED CT codes and properties beside its details and
- * recent changes.
+ * NFR-31): its terms, and any retired SNOMED CT codes, beside its details
+ * (properties included) and recent changes.
  *
  * The API answers a key that does not exist and a key that is not public with
  * the same 404, so the page cannot tell them apart and does not try. A key that
@@ -115,9 +114,8 @@ function EntryView({
             </>
           }
         >
-          <EntryDesignations designations={entry.designations} />
+          <EntryTerms entry={entry} />
           <EntryBindings bindings={entry.bindings} />
-          <EntryProperties properties={entry.properties} />
         </DetailLayout>
       </PageContainer>
     </section>
