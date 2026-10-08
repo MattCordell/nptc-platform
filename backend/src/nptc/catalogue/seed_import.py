@@ -23,9 +23,8 @@ discipline.
 
 **How the dataset maps onto the model.**
 
-- The en-AU preferred term lives only in `catalogue_entry.preferred_term`
-  (`ck_designation_no_en_au_preferred`), so the dataset's preferred designation is checked by the
-  reader and not written again. Synonyms go through `add_synonyms`.
+- The preferred term lives only in `catalogue_entry.preferred_term`, and the dataset's
+  designations are all synonyms, written through `add_synonyms`.
 - Discipline and subgroup labels resolve to local codes by one rule: an active code whose
   display or code matches, ignoring case. A discipline label with no match refuses the run, since
   the vocabulary is RCPA-QAP's to extend. A subgroup label with no match becomes a provisional

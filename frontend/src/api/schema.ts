@@ -237,7 +237,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** An entry's active synonyms and non-en-AU preferred variants */
+        /** An entry's active synonyms */
         get: operations["read_designations_api_v1_catalogue_entries__business_key__designations_get"];
         put?: never;
         /** Add one or more synonyms to a catalogue entry */

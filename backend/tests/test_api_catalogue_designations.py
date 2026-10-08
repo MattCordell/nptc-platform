@@ -1163,6 +1163,26 @@ def test_an_unrecognised_target_is_422_not_500(api: ApiTestApp) -> None:
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
+def test_target_synonym_amends_the_synonym_that_shadows_the_preferred_term(
+    api: ApiTestApp,
+) -> None:
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = api.admin_token(subject="sub-pt-target-synonym-shadow")
+    added = _add(api, business_key, token, terms=["Full blood count"])
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, target="synonym", expected_row_version=version)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["designation"]["label_provenance"]["designation"] == "synonym"
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert {d["term"] for d in detail["designations"]} == {"Full blood count, automated"}
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
 def test_target_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
     """The disambiguator has to work in both directions, or it is only half
     a fix: a caller who says `synonym` and names a term that is only the

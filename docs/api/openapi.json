@@ -1005,7 +1005,7 @@
         "tags": [
           "catalogue"
         ],
-        "summary": "An entry's active synonyms and non-en-AU preferred variants",
+        "summary": "An entry's active synonyms",
         "operationId": "read_designations_api_v1_catalogue_entries__business_key__designations_get",
         "parameters": [
           {
