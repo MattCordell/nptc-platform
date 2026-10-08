@@ -13,11 +13,17 @@ described in the runbook.
 It connects as the application role (`NPTC_DATABASE_URL`), like `scripts/grant_role.py`, because
 it writes through the same code paths the API uses.
 
+After the commit it builds the indexes the seeded filterable properties need (FR-13), as the
+indexer role (`NPTC_INDEXER_DATABASE_URL`). That step is outside the import's transaction because
+`CREATE INDEX CONCURRENTLY` cannot run inside one. It never changes the exit code: with the
+indexer DSN unset, or on a failure, the baseline stays committed and the run prints a warning
+naming `scripts/reconcile_property_indexes.py`, which finishes the job later.
+
 Usage:
   uv run python scripts/seed_baseline.py --dataset transform-report/import-dataset.json
   uv run python scripts/seed_baseline.py --dataset path/to/import-dataset.json --dry-run
   uv run python scripts/seed_baseline.py --dataset path/to/import-dataset.json \\
-      --database-url postgresql+psycopg://...
+      --database-url postgresql+psycopg://... --indexer-database-url postgresql+psycopg://...
 
 See docs/operations/runbooks/seed-baseline.md for the exit code reference and the reset procedure.
 """
@@ -57,6 +63,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="DSN to connect with. Falls back to NPTC_DATABASE_URL if not given.",
     )
     parser.add_argument(
+        "--indexer-database-url",
+        default=None,
+        help=(
+            "DSN of the role that builds the generated indexes (it must be able to CREATE INDEX "
+            "on property_value). Falls back to NPTC_INDEXER_DATABASE_URL. With neither set, the "
+            "import still commits and no index is built."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Run the whole import, then roll it back instead of committing.",
@@ -85,10 +100,65 @@ def _resolve_database_url(cli_value: str | None) -> str | None:
         raise
 
 
+def _resolve_indexer_database_url(cli_value: str | None) -> str | None:
+    """`--indexer-database-url`, then `NPTC_INDEXER_DATABASE_URL`; `None` when neither is set,
+    which is a valid posture (FR-13). An explicitly empty flag is a usage mistake, as for
+    `--database-url`."""
+    if cli_value is not None:
+        if not cli_value:
+            raise ValueError("--indexer-database-url must not be empty")
+        return cli_value
+
+    from nptc.settings import IndexerSettings
+
+    return IndexerSettings().indexer_database_url or None
+
+
 def _print_problems(heading: str, problems: tuple[str, ...]) -> None:
     print(f"error: {heading}", file=sys.stderr)
     for problem in problems:
         print(f"  - {problem}", file=sys.stderr)
+
+
+def _build_indexes(indexer_database_url: str | None) -> None:
+    """Builds the committed baseline's generated indexes. Never raises and never changes the exit
+    code: the baseline is already committed, and a re-run would only exit `4`. Every shortfall is a
+    warning that names the script that finishes the job. Only exception type names are printed,
+    because the text can carry connection details (NFR-26)."""
+    fix = "run scripts/reconcile_property_indexes.py to build them"
+    if indexer_database_url is None:
+        print(
+            f"WARNING: no property index was built: NPTC_INDEXER_DATABASE_URL is not set; {fix}",
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        from nptc.db import property_reconciler
+
+        report = property_reconciler.reconcile_property_indexes(database_url=indexer_database_url)
+    except Exception as exc:
+        print(
+            f"WARNING: property indexes were not built ({type(exc).__name__}); {fix}",
+            file=sys.stderr,
+        )
+        return
+
+    if report.skipped_locked:
+        print(
+            f"WARNING: property indexes were not built: another reconciliation is in progress; {fix}",
+            file=sys.stderr,
+        )
+        return
+    for name in report.created:
+        print(f"  created index: {name}")
+    for name, exception_type in report.failed:
+        print(f"WARNING: index {name} was not built ({exception_type}); {fix}", file=sys.stderr)
+    for key in report.skipped_unknown_datatype:
+        print(
+            f"WARNING: no index for property {key!r}: its datatype has no handler in this build",
+            file=sys.stderr,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,6 +179,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return EXIT_USAGE_ERROR
+
+    try:
+        indexer_database_url = _resolve_indexer_database_url(args.indexer_database_url)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE_ERROR
+    except Exception as exc:
+        print(
+            f"error: could not resolve indexer database URL ({type(exc).__name__})",
+            file=sys.stderr,
+        )
+        return EXIT_COULD_NOT_COMPLETE
 
     try:
         # Deferred, as in grant_role.py: keeps --help and usage-error paths free of a hard
@@ -186,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  created system property: {key}")
     for label in report.provisional_subgroup_codes:
         print(f"  created provisional subgroup code: {label}")
+    if not args.dry_run:
+        _build_indexes(indexer_database_url)
     return EXIT_OK
 
 
