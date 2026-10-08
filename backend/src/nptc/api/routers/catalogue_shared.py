@@ -12,11 +12,13 @@ between modules leaves its OpenAPI component name unchanged.
 cross-router contract, listed in `__all__`. An underscore would mark them private and
 invite a future reader to inline them.
 
-**One stripped FSN, and only on a summary (FR-83, FR-98).** `Binding.fsn` is served as
-stored (FR-82), and `Binding.label_provenance` declares that fact. `EntrySummary.fsn` is the
-entry's active binding's FSN with its semantic tag removed by FR-83's sanctioned renderer,
-`nptc.exports.semantic_tag.render_display_term`, and its `label_provenance` declares that.
-The renderer is called from `entry_summary_fields` and the export surface, nowhere else.
+**One stripped FSN, and only on a list or search row (FR-83, FR-98).** `Binding.fsn` is
+served as stored (FR-82), and `Binding.label_provenance` declares that fact. `EntrySummary.fsn`
+is the entry's active binding's FSN with its semantic tag removed by FR-83's sanctioned
+renderer, `nptc.exports.semantic_tag.render_display_term`, and its `label_provenance`
+declares that. The renderer is called from `entry_summary_fields` and the export surface,
+nowhere else. `EntryDetail` carries neither `fsn` nor `specimens`: a stored FSN the renderer
+refuses fails a list page, and must not also stop an entry opening where it can be repaired.
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ __all__ = [
     "CursorQuery",
     "Designation",
     "DesignationList",
+    "EntryCore",
     "EntryCursorQuery",
     "EntryDetail",
     "EntryPage",
@@ -76,6 +79,7 @@ __all__ = [
     "binding_from_row",
     "build_entry_detail",
     "designation_from_row",
+    "entry_core_fields",
     "entry_summary_fields",
     "filter_parameter",
     "property_value_from_row",
@@ -292,8 +296,8 @@ def binding_from_row(row: queries.BindingRow, settings: ApiSettings) -> Binding:
     )
 
 
-class EntrySummary(BaseModel):
-    """An entry as it appears in a list or a search result.
+class EntryCore(BaseModel):
+    """What every entry response carries: a list or search row, and the detail.
 
     `length` is FR-85's published figure - the character count of the
     catalogue's own preferred term, computed by `CatalogueEntry.length` and
@@ -321,17 +325,28 @@ class EntrySummary(BaseModel):
             "`bindings` carry the history."
         )
     )
+    disciplines: list[str] = Field(
+        description=(
+            "The display text of each of the entry's discipline values, in "
+            "recorded order. Empty when none is recorded."
+        )
+    )
+    #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
+    #: (ADR-0022), never an FSN - fixed, not configuration-driven, so this
+    #: is the same constant on every row.
+    label_provenance: dict[str, LabelProvenance]
+
+
+class EntrySummary(EntryCore):
+    """An entry as it appears in a list or a search result."""
+
+    model_config = ConfigDict(frozen=True)
+
     fsn: str | None = Field(
         description=(
             "The fully specified name of the entry's active SNOMED CT code with its "
             "trailing semantic tag removed (FR-83), or `null` when the entry has no "
             "active code. `bindings[].fsn` on the detail keeps the tag."
-        )
-    )
-    disciplines: list[str] = Field(
-        description=(
-            "The display text of each of the entry's discipline values, in "
-            "recorded order. Empty when none is recorded."
         )
     )
     specimens: list[str] = Field(
@@ -342,17 +357,17 @@ class EntrySummary(BaseModel):
             "is recorded."
         )
     )
-    #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
-    #: (ADR-0022) and `specimens` are AU preferred terms; `fsn` is stripped.
-    #: All three are fixed, not configuration-driven, so this is the same
-    #: constant on every row.
-    label_provenance: dict[str, LabelProvenance]
+    #: FR-98: adds `fsn` (stripped) and `specimens` (AU preferred terms) to
+    #: `EntryCore`'s `preferred_term`. A constant on every row.
 
 
-#: `EntrySummary.label_provenance` is the same one entry on every row, so it is a
-#: constant, not rebuilt on each call.
-_ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
+#: `label_provenance` is the same on every row, so each is a constant, not rebuilt
+#: on each call.
+_ENTRY_CORE_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
     "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+}
+_ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
+    **_ENTRY_CORE_LABEL_PROVENANCE,
     "fsn": LIST_FSN_PROVENANCE,
     "specimens": AU_PREFERRED_TERM_PROVENANCE,
 }
@@ -500,7 +515,7 @@ class PropertyValue(BaseModel):
     justification: str | None
 
 
-class EntryDetail(EntrySummary):
+class EntryDetail(EntryCore):
     """A summary plus everything attached to the entry.
 
     One response rather than making a client fetch four: the sub-resources
@@ -545,6 +560,27 @@ class EntryDetail(EntrySummary):
 # the read layer's shapes into its own definition.
 
 
+def entry_core_fields(
+    business_key: str,
+    preferred_term: str,
+    length: int,
+    status: str,
+    updated_at: datetime,
+    facts: queries.RowFacts,
+) -> dict[str, Any]:
+    return {
+        "business_key": business_key,
+        "preferred_term": preferred_term,
+        "length": length,
+        "status": status,
+        "updated_at": updated_at,
+        "has_open_finding": facts.has_open_finding,
+        "code": facts.code,
+        "disciplines": list(facts.disciplines),
+        "label_provenance": _ENTRY_CORE_LABEL_PROVENANCE,
+    }
+
+
 def entry_summary_fields(
     business_key: str,
     preferred_term: str,
@@ -557,15 +593,8 @@ def entry_summary_fields(
     strip. FR-82 makes that unreachable, so it fails the request loudly (a 422 with a logged
     warning) rather than show a value that may still carry, or may never have had, a tag."""
     return {
-        "business_key": business_key,
-        "preferred_term": preferred_term,
-        "length": length,
-        "status": status,
-        "updated_at": updated_at,
-        "has_open_finding": facts.has_open_finding,
-        "code": facts.code,
+        **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),
         "fsn": render_display_term(facts.fsn) if facts.fsn is not None else None,
-        "disciplines": list(facts.disciplines),
         "specimens": list(dict.fromkeys(trim_specimen_suffix(label) for label in facts.specimens)),
         "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }
@@ -594,7 +623,7 @@ def build_entry_detail(
     it, so one edit cannot update only some copies."""
     entry_ids = (entry.id,)
     return EntryDetail(
-        **entry_summary_fields(
+        **entry_core_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,

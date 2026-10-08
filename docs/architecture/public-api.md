@@ -50,8 +50,8 @@ exactly what it does and does not expose.
 them without a request per row. `code` is the entry's one active SNOMED CT binding, as a
 string, or `null` when it has none. A retired binding never appears there, only in the
 detail's `bindings`. `disciplines` is the stored display text of each `discipline` value,
-in `ordinal` order, falling back to the code where a value carries no display. `fsn` and
-`specimens` (issue #511) sit beside them. `fsn` is the active binding's FSN with its semantic
+in `ordinal` order, falling back to the code where a value carries no display. On the public list and
+search only, `fsn` and `specimens` (issue #511) sit beside them. `fsn` is the active binding's FSN with its semantic
 tag removed. `specimens` is each `specimen` value's stored display, in `ordinal` order, with a
 trailing "specimen" word removed and repeats dropped, and the code where a value carries no
 display. The seed stores a SNOMED CT-AU preferred term as that display, but the admin write
@@ -402,15 +402,17 @@ response that never arrives.
 `label_provenance.fsn` is `{"designation": "fsn", "semantic_tag": "intact"}` by default
 (`NPTC_FSN_SEMANTIC_TAG`, see `docs/operations/configuration.md`).
 
-**A summary's own `fsn` is stripped, and can fail to render (FR-83, FR-98).** Every entry
-summary, on a list, a search hit or a detail, carries `fsn`: the active code's FSN with its
+**A list row's own `fsn` is stripped, and can fail to render (FR-83, FR-98).** Every public
+list row and search hit carries `fsn`: the active code's FSN with its
 final parenthesised group removed, or `null` when the entry has no active code. Its
 `label_provenance.fsn` is always `{"designation": "fsn", "semantic_tag": "stripped"}`. The
 strip is `nptc.exports.semantic_tag.render_display_term`, the renderer FR-83 names. It
 refuses a stored FSN with no trailing group, because that value may already have been
 stripped. FR-82 makes that unreachable, so a refusal means stored data broke the guarantee.
 The request then fails with a `422` and a fixed sentence, and the cause is logged at warning
-level. A stored value is never shown unstripped to avoid the failure. The same summary's
+level. A stored value is never shown unstripped to avoid the failure. The detail and the admin
+listing carry neither `fsn` nor `specimens`, so an entry with such an FSN still opens and can
+be repaired. The same row's
 `specimens` carry each specimen's stored display with a trailing "specimen" word removed and
 repeats dropped, declared as AU preferred terms.
 

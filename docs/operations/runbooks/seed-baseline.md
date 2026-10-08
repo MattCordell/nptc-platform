@@ -138,7 +138,7 @@ Each fix is a data change followed by a new transform run. The loader never repa
 |---|---|---|
 | `specimen '...' has no SNOMED CT code` | A specimen in the dataset has no code. The transform blocks this now (`SPECIMEN_VALUE_UNMAPPED`), so the file came from an older transform or was edited by hand. | Emit the dataset again with the current transform. If it blocks, a terminologist adds the string to the specimen map, or RCPA-QAP corrects the workbook value. |
 | `a specimen means any specimen (123038009) but the entry also lists named specimens` | The cell has `Any` beside a named specimen. FR-89 says the any-specimen value stands alone. The transform reports it as `SPECIMEN_ROOT_WITH_OTHERS`. | Keep `Any` alone in the workbook cell, or remove it and list the named specimens. Then run the transform again. |
-| `code binding ... has no FSN` | The transform found no FSN cell for the row. | Fill the FSN in the workbook, or check the column mapping. |
+| `code binding ... has no FSN` | The dataset carries no FSN for a code. The transform writes the FSN the server served, and stops without a dataset when it has none, so the file came from an older transform or was edited by hand. | Emit the dataset again with the current transform and `--check-terminology`. |
 | `schema_version is ...` | The dataset came from a different transform version. | Emit it again with the matching transform. |
 | `discipline '...' is not a code in the 'discipline' local code system` | The workbook names a discipline the governed code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
 | `... matches only a deprecated code` | A discipline or subgroup label matches a code that has been deprecated. | Correct the workbook, or have an administrator add an active code. |
@@ -147,6 +147,11 @@ Each fix is a data change followed by a new transform run. The loader never repa
 | `the catalogue already holds entries` | Not a data problem. See "Reseeding". | |
 
 ## Reseeding
+
+A catalogue seeded before the list columns change (issue #511) holds tag-stripped FSNs and workbook
+specimen wording. The catalogue list refuses such an FSN with a `422`, because a stored FSN with
+no tag may already have been stripped (FR-83). Reseed it from a dataset the current transform
+emitted.
 
 Seeding twice is refused on purpose. Business keys are positional, so a second run could give
 one key to a different clinical concept without any error.

@@ -373,7 +373,7 @@ An empty expansion means every code complies. This was used to verify the sample
 | Simple CSV | `fsn` | **Intact.** It is a new machine-facing artefact and the tag is meaningful to a consumer resolving the concept. |
 | FHIR CodeSystem supplement | Designations carried natively | Not applicable |
 | Search index | `fsn`, `au_preferred_term`, RCPA preferred term, and all synonyms | Both forms indexed, so a user who searches any label ever published reaches the entry |
-| Catalogue list, search and detail summary (API) | `fsn` | Stripped (FR-83), declared in `label_provenance.fsn`. A binding's own `fsn` on the detail stays intact. |
+| Public catalogue list and search row (API) | `fsn` | Stripped (FR-83), declared in `label_provenance.fsn`. A binding's own `fsn` on the detail stays intact. |
 
 Both tag settings are export-configuration values (FR-66), so either default can be changed without a code change. The AU preferred term is available as an addable column in the spreadsheet and CSV.
 

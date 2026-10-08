@@ -185,14 +185,19 @@ _EXPECTED: dict[str, tuple[str | None, str | None, list[str], list[str]]] = {
 }
 
 
-def _assert_rows(seeded: _Seeded, items: list[dict[str, Any]]) -> None:
+def _assert_rows(seeded: _Seeded, items: list[dict[str, Any]], *, summary: bool = True) -> None:
+    """`summary` is `False` for a detail, which carries `code` and `disciplines` but neither
+    `fsn` nor `specimens`."""
     by_key = {item["business_key"]: item for item in items}
     for handle, (code, fsn, disciplines, specimens) in _EXPECTED.items():
         row = by_key[getattr(seeded, handle)]
         assert row["code"] == code, handle
-        assert row["fsn"] == fsn, handle
         assert row["disciplines"] == disciplines, handle
-        assert row["specimens"] == specimens, handle
+        if summary:
+            assert row["fsn"] == fsn, handle
+            assert row["specimens"] == specimens, handle
+        else:
+            assert "fsn" not in row and "specimens" not in row, handle
 
 
 @pytest.mark.req("FR-20")
@@ -225,7 +230,7 @@ def test_anonymous_search_hits_carry_the_code_fsn_disciplines_and_specimens(
 def test_detail_carries_the_same_fields_as_its_row(api: ApiTestApp, seeded: _Seeded) -> None:
     items = [api.get(f"/catalogue/entries/{key}").json() for key in seeded.keys]
 
-    _assert_rows(seeded, items)
+    _assert_rows(seeded, items, summary=False)
     # The retired code is still published, in `bindings`, just never as the row's code.
     bound = items[0]
     assert {b["code"] for b in bound["bindings"]} == {_ACTIVE_CODE, _RETIRED_CODE}
@@ -244,8 +249,8 @@ def test_admin_rows_carry_the_same_fields(api: ApiTestApp, seeded: _Seeded) -> N
     ]
 
     assert found.status_code == 200, found.text
-    _assert_rows(seeded, found.json()["items"])
-    _assert_rows(seeded, details)
+    _assert_rows(seeded, found.json()["items"], summary=False)
+    _assert_rows(seeded, details, summary=False)
 
 
 @pytest.mark.req("FR-20")
@@ -281,7 +286,10 @@ def test_row_fields_cost_a_fixed_number_of_statements_whatever_the_page_size(
 def test_the_list_declares_which_labels_it_stripped_and_which_it_did_not(
     api: ApiTestApp, seeded: _Seeded
 ) -> None:
-    row = api.get(f"/catalogue/entries/{seeded.bound}").json()
+    items = api.get("/catalogue/entries", params={"after": seeded.before_all, "limit": 3}).json()[
+        "items"
+    ]
+    row = next(item for item in items if item["business_key"] == seeded.bound)
 
     assert row["label_provenance"] == {
         "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
@@ -289,7 +297,8 @@ def test_the_list_declares_which_labels_it_stripped_and_which_it_did_not(
         "specimens": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
     }
     # The binding keeps its tag and says so: the strip is the summary's, never the stored value's.
-    active = next(b for b in row["bindings"] if b["status"] == "active")
+    detail = api.get(f"/catalogue/entries/{seeded.bound}").json()
+    active = next(b for b in detail["bindings"] if b["status"] == "active")
     assert active["fsn"] == "Microscopy (acid fast bacilli) (procedure)"
     assert active["label_provenance"]["fsn"]["semantic_tag"] == "intact"
 
@@ -327,3 +336,5 @@ def test_a_stored_fsn_with_no_tag_fails_the_list_rather_than_showing_it(
 
     assert response.status_code == 422, response.text
     assert "Microscopy without a tag" not in response.text
+    # The entry still opens, so it can be repaired.
+    assert api.get(f"/catalogue/entries/{key}").status_code == 200
