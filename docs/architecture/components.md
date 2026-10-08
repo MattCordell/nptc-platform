@@ -124,6 +124,17 @@ records why there is no form library behind these and what was rejected.
   first option that is deliberately *not* disabled — the HTML selectedness algorithm
   skips disabled options when picking a default, so a disabled placeholder is passed
   over and the first real option silently becomes the answer.
+- **`input-classes.ts` — `INPUT_CLASSES`.** The text-input look as one class string, not a
+  component. Put it on every text-like `<input>` (`text`, `number`, `url`, `search`) you
+  render inside `Field` or beside a label of your own, so the screen needs no style of its
+  own and a bare input never falls back to browser defaults. It sets the 4px control
+  radius (`--radius-control`), the 1px border, the surface fill, 16px text (`text-base`)
+  and a 40px minimum height, and `Select` shares the same radius and text size, so the
+  two sit together without a visible seam. Checkboxes and radios are not text-like: use
+  `Checkbox` and `RadioGroup`. The string includes `w-full`, so to narrow an input,
+  constrain the element that wraps it instead of adding a competing width class (the
+  order of classes in a string does not decide which wins). The values behind it are in
+  [design-system.md](design-system.md#layout-patterns).
 - **`checkbox.tsx` — `Checkbox`.** A single labelled box. The one primitive that does not
   compose `Field`, because a checkbox's label belongs after the box and `Field` renders
   the label first by construction; it repeats `Field`'s id scheme and `aria-describedby`
