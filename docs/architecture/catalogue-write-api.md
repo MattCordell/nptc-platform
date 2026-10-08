@@ -311,20 +311,26 @@ for the same reason those two stay apart from each other.
 
 | Path | Method | Body | Returns |
 |---|---|---|---|
-| `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason, expected_row_version}` | `201 {designations: [Designation], warnings: [CollisionWarning], row_version}` |
-| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [CollisionWarning], length_warning: LengthWarning \| null, row_version}` |
+| `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason, expected_row_version}` | `201 {designations: [Designation], warnings: [DesignationWarning], row_version}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
 | `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, row_version}` |
-| `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, warnings: [CollisionWarning], row_version}` |
+| `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
 | `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
 
 `business_key` accepts any status, the same as the code binding routes, via the same
 `load_entry_for_update` loader.
 
-`length_warning` (FR-86) is `{length, max_length}`. It is `null` unless the request took the
-preferred-term branch, `NPTC_MAX_PREFERRED_TERM_LENGTH` is set, and the saved preferred term
-is longer than it. The length warning never blocks the save or becomes a 4xx of its own. It is a separate
-field from `warnings` because `CollisionWarning` describes another entry's synonym and has
-nowhere to carry this entry's own length. See
+`warnings` is a list of `DesignationWarning`, a union discriminated by `kind`
+([ADR-0045](../adr/0045-designation-warning-discriminated-union.md)). Two members exist:
+
+- `CollisionWarning` (`kind: "collision"`, FR-05) is `{term, business_key, preferred_term,
+  label_provenance}`. It names another live entry that holds the same synonym.
+- `LengthWarning` (`kind: "length"`, FR-86) is `{length, max_length}`. It is present only when
+  the request took the amend route's preferred-term branch, `NPTC_MAX_PREFERRED_TERM_LENGTH`
+  is set, and the saved preferred term is longer than it. It never blocks the save or becomes a
+  4xx of its own. The add and reinstate responses use the same type, but cannot produce this
+  member today. A further warning class is a new member and a new `kind`, not a new response
+  field. See
 [configuration.md](../operations/configuration.md#choosing-a-maximum-preferred-term-length-nptc_max_preferred_term_length).
 
 The check is not the route's alone. `nptc.catalogue.entries.create_entry`, `save_entry` and
@@ -861,9 +867,6 @@ that name a status, so nothing checks for this case.
 - A read endpoint for a designation's `warning_collisions` on its own, independent of a
   write - see "Warning-severity collisions ride back on the write response" above for
   why that is deliberate for now, not merely deferred.
-- Showing `length_warning` to an editor. The designations panel forwards only
-  `result.warnings`, so no screen renders the field yet, and FR-86 stays `in-progress`
-  in `docs/requirements/requirements.yaml` until issue #367 does.
 - Server-side SCTID resolution for the code binding form. `POST .../bindings` and
   `/replacement` still take `fsn`/`au_preferred_term` as caller-supplied fields, exactly
   as documented above - issue #240 (FR-26) adds `GET /api/v1/terminology/concepts/{code}`

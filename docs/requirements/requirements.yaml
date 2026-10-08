@@ -549,8 +549,8 @@
   priority: SHOULD
   phase: p1
   title: "The platform SHOULD support a configurable maximum preferred-term length"
-  status: in-progress
-  notes: "Remains in-progress: the backend half is complete and tested, but no editor sees the warning yet - the editing screen forwards only the response's warnings list, and length_warning is a separate field it never reads. #367 widens the warnings envelope into a discriminated union and renders every warning class through one path; it moves this requirement back to implemented. Issue #152: NPTC_MAX_PREFERRED_TERM_LENGTH on nptc.settings.ApiSettings (unset by default - no maximum has been nominated yet, PRD open item OI-1). Compared against CatalogueEntry.length in POST .../designations/amendment's preferred-term branch (nptc.api.routers.catalogue_designations._length_warning); exceeding it returns a LengthWarning field on the response, never a 4xx - a hard block would make an existing over-length entry uneditable, the failure this requirement exists to prevent. See ADR-0041 for why this is an environment variable rather than an admin-editable setting."
+  status: implemented
+  notes: "Issue #152: NPTC_MAX_PREFERRED_TERM_LENGTH on nptc.settings.ApiSettings (unset by default - no maximum has been nominated yet, PRD open item OI-1). Compared against CatalogueEntry.length in POST .../designations/amendment's preferred-term branch (nptc.api.routers.catalogue_designations._length_warning); exceeding it adds a LengthWarning (kind: length) to the response's warnings list, never a 4xx - a hard block would make an existing over-length entry uneditable, the failure this requirement exists to prevent. Issue #367: warnings is a discriminated union on kind (ADR-0045), and the editing screen renders every warning class through one panel, so the editor sees the length warning under 'Check these terms'; the earlier separate length_warning field is gone. See ADR-0041 for why this is an environment variable rather than an admin-editable setting."
 - id: "FR-87"
   priority: SHOULD
   phase: p1
