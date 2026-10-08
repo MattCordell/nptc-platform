@@ -60,7 +60,7 @@ export function Select({
           {...rest}
           {...controlProps}
           className={[
-            "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]",
+            "rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base text-[var(--color-text)]",
             error ? "border-[var(--color-danger)]" : "",
             className ?? "",
           ]

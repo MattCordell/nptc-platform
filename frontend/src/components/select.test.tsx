@@ -80,6 +80,19 @@ describe("Select", () => {
     expect(screen.getByLabelText("Status")).toHaveFocus();
   });
 
+  // jsdom computes no styles, so this asserts the class contract: the same
+  // radius token and text size as `INPUT_CLASSES`, so a select beside a text
+  // input matches it.
+  it("shares the control radius token and text size with text inputs", () => {
+    render(<Select label="Status" options={STATUS_OPTIONS} />);
+
+    const { className } = screen.getByLabelText("Status");
+    expect(className).toContain("rounded-[var(--radius-control)]");
+    expect(className).toContain("text-base");
+    expect(className).not.toContain("rounded-md");
+    expect(className).not.toContain("text-sm");
+  });
+
   it("has no automated accessibility violations", async () => {
     const { container } = render(
       <Select
