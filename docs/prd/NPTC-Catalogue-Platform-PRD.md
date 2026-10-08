@@ -342,9 +342,9 @@ Validation is then plain string equality against the server, per designation:
 
 **Severity rationale.** `fsn_drift` is an error because a changed FSN can indicate the concept's meaning was revised. `preferred_term_drift` is a warning because it is usually AU editorial improving a label: 9 of 50 sample rows are already in that state, and erroring on all of them would create a standing backlog that trains reviewers to dismiss the serious findings alongside it.
 
-**FR-83 (MUST):** Semantic tag removal happens **only in the export renderer**, never in storage or in validation. The rule is: remove the final parenthesised group from the FSN, exactly once. Because the input is always a server-served FSN, it always carries exactly one tag, and the rule needs no list of known tags.
+**FR-83 (MUST):** Semantic tag removal happens **only in the export renderer and the catalogue list read model**, never in storage or in validation. The list read model strips the FSN it shows in a row, through the same renderer, and stores nothing. The rule is: remove the final parenthesised group from the FSN, exactly once. Because the input is always a server-served FSN, it always carries exactly one tag, and the rule needs no list of known tags.
 
-**The double-strip failure is prevented structurally, not by inspection.** The rule has exactly one call site, in the export renderer, and its input is always read directly from the `fsn` column, which by FR-82 always holds a served FSN. There is no code path that can feed it an already-stripped value. That is the whole reason for storing as served, and it is a stronger guarantee than any output check.
+**The double-strip failure is prevented structurally, not by inspection.** The rule has exactly two call sites, the export renderer and the list read model's row assembler, and the input of both is always read directly from the `fsn` column, which by FR-82 always holds a served FSN. There is no code path that can feed it an already-stripped value. That is the whole reason for storing as served, and it is a stronger guarantee than any output check. The transform's dataset builder also reads the tag, only to refuse an FSN that has none; it strips nothing.
 
 Two defensive assertions on top, because this runs unattended on every release:
 
@@ -373,6 +373,7 @@ An empty expansion means every code complies. This was used to verify the sample
 | Simple CSV | `fsn` | **Intact.** It is a new machine-facing artefact and the tag is meaningful to a consumer resolving the concept. |
 | FHIR CodeSystem supplement | Designations carried natively | Not applicable |
 | Search index | `fsn`, `au_preferred_term`, RCPA preferred term, and all synonyms | Both forms indexed, so a user who searches any label ever published reaches the entry |
+| Public catalogue list and search row (API) | `fsn` | Stripped (FR-83), declared in `label_provenance.fsn`. A binding's own `fsn` on the detail stays intact. |
 
 Both tag settings are export-configuration values (FR-66), so either default can be changed without a code change. The AU preferred term is available as an addable column in the spreadsheet and CSV.
 

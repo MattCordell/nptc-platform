@@ -44,7 +44,7 @@ from nptc_transform.pipeline import RunResult
 
 #: Bumped when a new ``FindingCode`` can appear in ``defect_classes`` as well as
 #: when the shape changes, so a consumer pinned to the old vocabulary can tell.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 REPORT_JSON_NAME = "report.json"
 REPORT_MD_NAME = "report.md"

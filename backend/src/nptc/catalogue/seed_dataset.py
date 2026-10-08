@@ -54,7 +54,7 @@ __all__ = [
     "read_import_dataset",
 ]
 
-SUPPORTED_SCHEMA_VERSION: Final[int] = 2
+SUPPORTED_SCHEMA_VERSION: Final[int] = 3
 
 _SHA256_PATTERN: Final[str] = r"^[0-9a-f]{64}$"
 
@@ -138,6 +138,7 @@ class DatasetCodeBinding(_Strict):
 class DatasetPropertyValue(_Strict):
     value: str
     code: str | None
+    display: str | None
 
 
 class DatasetProperties(_Strict):
@@ -165,7 +166,7 @@ class DatasetEntry(_Strict):
 
 
 class ImportDataset(_Strict):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     tool_version: str
     source: DatasetSource
     baseline_release: DatasetBaselineRelease

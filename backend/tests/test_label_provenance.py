@@ -379,11 +379,15 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
             length=17,
             status="active",
             updated_at=datetime.now(UTC),
-            facts=queries.RowFacts(has_open_finding=False, code=None, disciplines=()),
+            facts=queries.RowFacts(
+                has_open_finding=False, code=None, fsn=None, disciplines=(), specimens=()
+            ),
         )
     )
     assert {k: v.model_dump() for k, v in summary.label_provenance.items()} == {
-        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"}
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+        "fsn": {"designation": "fsn", "semantic_tag": "stripped"},
+        "specimens": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
     }
 
     def _designation_row(*, use: str) -> queries.DesignationRow:

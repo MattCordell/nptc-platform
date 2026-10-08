@@ -13,6 +13,7 @@ content grouped by defect class with required actions (FR-72) is ``report_writer
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ from nptc_transform.terminology_check import (
     DEFAULT_EDITIONS,
     TerminologyRun,
     check_terminology,
+    resolve_binding_fsns,
 )
 from nptc_transform.workbook import Sheet, read_workbook
 
@@ -168,6 +170,14 @@ def run_transform_sheets(
         results=outcome.results,
     )
     specimen_map = check_specimen_map(sweep)
+    terminology = outcome.run
+    if mode is Mode.EMIT_DATASET:
+        terminology = dataclasses.replace(
+            terminology,
+            served_fsns=resolve_binding_fsns(
+                sheets, sweep=sweep, editions=editions, served=terminology.served_fsns
+            ),
+        )
     return RunResult(
         source=source,
         mode=mode,
@@ -179,7 +189,7 @@ def run_transform_sheets(
             *drift.findings,
             *specimen_map.findings,
         ),
-        terminology=outcome.run,
+        terminology=terminology,
         designations=designations.run,
         misspellings=misspellings.run,
         drift=drift.run,

@@ -110,7 +110,7 @@ def test_every_entry_is_written_with_its_designations_bindings_and_properties(
         "active",
     )
     assert _values(app_session, first, "specimen") == [
-        {"system": "http://snomed.info/sct", "code": "119364003", "display": "Serum"}
+        {"system": "http://snomed.info/sct", "code": "119364003", "display": "Serum specimen"}
     ]
     assert _values(app_session, first, "usage_guidance") == ["Collect before treatment"]
     (discipline,) = _values(app_session, first, "discipline")
@@ -178,7 +178,7 @@ def test_provenance_and_the_seed_record_are_stored_verbatim(
         "workbook.xlsx",
         "a" * 64,
     )
-    assert (seed.dataset_schema_version, seed.entry_count) == (2, 2)
+    assert (seed.dataset_schema_version, seed.entry_count) == (3, 2)
     rows = {
         _entry_key(app_session, row.entry_id): row
         for row in app_session.execute(select(EntrySeedProvenance)).scalars()
@@ -332,7 +332,9 @@ def test_an_unknown_discipline_refuses_before_any_entry_is_written(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(2)
-    document["entries"][1]["properties"]["discipline"] = [{"value": "Phrenology", "code": None}]
+    document["entries"][1]["properties"]["discipline"] = [
+        {"value": "Phrenology", "code": None, "display": None}
+    ]
     dataset = _read(document, write_dataset)
 
     with pytest.raises(SeedPrerequisiteError) as exc_info:
@@ -349,7 +351,9 @@ def test_discipline_matches_the_governed_code_ignoring_case(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(1)
-    document["entries"][0]["properties"]["discipline"] = [{"value": "HAEMATOLOGY", "code": None}]
+    document["entries"][0]["properties"]["discipline"] = [
+        {"value": "HAEMATOLOGY", "code": None, "display": None}
+    ]
 
     _seed(app_session, document, write_dataset)
 
@@ -364,10 +368,12 @@ def test_subgroup_labels_become_provisional_local_codes_once_each(
 ) -> None:
     document = make_dataset_document(2)
     document["entries"][0]["properties"]["subgroup"] = [
-        {"value": "Coagulation", "code": None},
-        {"value": "Drug measurement", "code": None},
+        {"value": "Coagulation", "code": None, "display": None},
+        {"value": "Drug measurement", "code": None, "display": None},
     ]
-    document["entries"][1]["properties"]["subgroup"] = [{"value": "Coagulation", "code": None}]
+    document["entries"][1]["properties"]["subgroup"] = [
+        {"value": "Coagulation", "code": None, "display": None}
+    ]
 
     report, _ = _seed(app_session, document, write_dataset)
 
@@ -391,7 +397,9 @@ def test_any_is_stored_as_the_specimen_root_code(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(1)
-    document["entries"][0]["properties"]["specimen"] = [{"value": "Any", "code": "123038009"}]
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Any", "code": "123038009", "display": None}
+    ]
 
     _seed(app_session, document, write_dataset)
 
@@ -401,13 +409,48 @@ def test_any_is_stored_as_the_specimen_root_code(
 
 @pytest.mark.req("FR-88")
 @pytest.mark.integration
+def test_a_specimen_is_stored_with_the_datasets_display_not_the_workbook_wording(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document(1)
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "24 hr urine", "code": "122575003", "display": "Urine specimen"}
+    ]
+
+    _seed(app_session, document, write_dataset)
+
+    assert _values(app_session, _entry(app_session, "NPTC-500000"), "specimen") == [
+        {"system": "http://snomed.info/sct", "code": "122575003", "display": "Urine specimen"}
+    ]
+
+
+@pytest.mark.req("FR-88")
+@pytest.mark.integration
+def test_a_specimen_with_no_display_is_stored_by_code_alone(
+    app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    """The workbook's wording is never a stand-in: the list read model falls back to the code."""
+    document = make_dataset_document(1)
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "24 hr urine", "code": "122575003", "display": None}
+    ]
+
+    _seed(app_session, document, write_dataset)
+
+    assert _values(app_session, _entry(app_session, "NPTC-500000"), "specimen") == [
+        {"system": "http://snomed.info/sct", "code": "122575003"}
+    ]
+
+
+@pytest.mark.req("FR-88")
+@pytest.mark.integration
 def test_two_strings_with_one_code_are_stored_once(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(1)
     document["entries"][0]["properties"]["specimen"] = [
-        {"value": "Fluid", "code": "309051001"},
-        {"value": "Fluids", "code": "309051001"},
+        {"value": "Fluid", "code": "309051001", "display": None},
+        {"value": "Fluids", "code": "309051001", "display": None},
     ]
 
     _seed(app_session, document, write_dataset)
@@ -520,7 +563,9 @@ def _add_local_code(
 
 
 def _with_subgroup(document: dict[str, Any], label: str) -> dict[str, Any]:
-    document["entries"][0]["properties"]["subgroup"] = [{"value": label, "code": None}]
+    document["entries"][0]["properties"]["subgroup"] = [
+        {"value": label, "code": None, "display": None}
+    ]
     return document
 
 
@@ -554,7 +599,9 @@ def test_a_deprecated_subgroup_code_refuses_up_front_and_creates_nothing(
 ) -> None:
     _add_local_code(app_session, "subgroup", code="coag", display="Coagulation", deprecated=True)
     document = _with_subgroup(make_dataset_document(2), "Coagulation")
-    document["entries"][1]["properties"]["subgroup"] = [{"value": "Drug measurement", "code": None}]
+    document["entries"][1]["properties"]["subgroup"] = [
+        {"value": "Drug measurement", "code": None, "display": None}
+    ]
     dataset = _read(document, write_dataset)
 
     with pytest.raises(SeedPrerequisiteError) as exc_info:
@@ -591,7 +638,9 @@ def test_every_classification_refusal_is_reported_together(
 ) -> None:
     _add_local_code(app_session, "subgroup", code="coag", display="Coagulation", deprecated=True)
     document = _with_subgroup(make_dataset_document(2), "Coagulation")
-    document["entries"][1]["properties"]["discipline"] = [{"value": "Phrenology", "code": None}]
+    document["entries"][1]["properties"]["discipline"] = [
+        {"value": "Phrenology", "code": None, "display": None}
+    ]
     dataset = _read(document, write_dataset)
 
     with pytest.raises(SeedPrerequisiteError) as exc_info:
@@ -609,8 +658,12 @@ def test_subgroup_labels_differing_only_in_case_share_one_provisional_code(
     app_session: Session, make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(2)
-    document["entries"][0]["properties"]["subgroup"] = [{"value": "Coagulation", "code": None}]
-    document["entries"][1]["properties"]["subgroup"] = [{"value": "coagulation", "code": None}]
+    document["entries"][0]["properties"]["subgroup"] = [
+        {"value": "Coagulation", "code": None, "display": None}
+    ]
+    document["entries"][1]["properties"]["subgroup"] = [
+        {"value": "coagulation", "code": None, "display": None}
+    ]
 
     report, _ = _seed(app_session, document, write_dataset)
 
@@ -632,8 +685,8 @@ def test_two_spellings_of_one_label_in_one_entry_are_stored_once(
 ) -> None:
     document = make_dataset_document(1)
     document["entries"][0]["properties"]["discipline"] = [
-        {"value": "Chemical pathology", "code": None},
-        {"value": "chemical PATHOLOGY", "code": None},
+        {"value": "Chemical pathology", "code": None, "display": None},
+        {"value": "chemical PATHOLOGY", "code": None, "display": None},
     ]
 
     _seed(app_session, document, write_dataset)
@@ -648,9 +701,9 @@ def test_a_specimen_named_twice_with_one_code_is_stored_once(
 ) -> None:
     document = make_dataset_document(1)
     document["entries"][0]["properties"]["specimen"] = [
-        {"value": "Serum", "code": "119364003"},
-        {"value": "serum", "code": "119364003"},
-        {"value": "Plasma", "code": "119361006"},
+        {"value": "Serum", "code": "119364003", "display": None},
+        {"value": "serum", "code": "119364003", "display": None},
+        {"value": "Plasma", "code": "119361006", "display": None},
     ]
 
     report, _ = _seed(app_session, document, write_dataset)

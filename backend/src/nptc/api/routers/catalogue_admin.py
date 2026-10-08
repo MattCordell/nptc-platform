@@ -46,15 +46,15 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
     CursorQuery,
+    EntryCore,
     EntryDetail,
-    EntrySummary,
     Facet,
     FacetBucket,
     FilterRequest,
     LimitQuery,
     binding_from_row,
     designation_from_row,
-    entry_summary_fields,
+    entry_core_fields,
     filter_parameter,
     property_value_from_row,
 )
@@ -156,8 +156,10 @@ RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 
 
-class AdminEntrySummary(EntrySummary):
-    """`EntrySummary` plus FR-38's optimistic-locking token.
+class AdminEntrySummary(EntryCore):
+    """`EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor
+    `specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the
+    public list, and must not also hide an entry from the screen that repairs it.
 
     Defined here, not in `catalogue_shared.py`: that module is imported by
     the public router, and a field the public surface must never carry
@@ -224,7 +226,7 @@ def _admin_summary_from_row(
     """The admin counterpart of `summary_from_entry`, over a `maintenance.ListingRow`
     because the listing statement selects explicit columns, not a mapped entity."""
     return AdminEntrySummary(
-        **entry_summary_fields(
+        **entry_core_fields(
             row.business_key,
             row.preferred_term,
             preferred_term_length(row.preferred_term),
@@ -388,7 +390,7 @@ def search_any_status(
     return AdminSearchPage(
         items=[
             AdminSearchHit(
-                **entry_summary_fields(
+                **entry_core_fields(
                     hit.business_key,
                     hit.preferred_term,
                     preferred_term_length(hit.preferred_term),
@@ -440,7 +442,7 @@ def read_entry_any_status(
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
     return EntryDetail(
-        **entry_summary_fields(
+        **entry_core_fields(
             entry.business_key,
             entry.preferred_term,
             entry.length,

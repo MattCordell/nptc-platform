@@ -31,9 +31,16 @@ function entrySummary(overrides: Record<string, unknown>) {
     updated_at: "2026-09-01T04:30:00Z",
     has_open_finding: false,
     code: null,
+    fsn: null,
     disciplines: [],
+    specimens: [],
     label_provenance: {
       preferred_term: {
+        designation: "au_preferred_term",
+        semantic_tag: "not_applicable",
+      },
+      fsn: { designation: "fsn", semantic_tag: "stripped" },
+      specimens: {
         designation: "au_preferred_term",
         semantic_tag: "not_applicable",
       },
@@ -46,7 +53,9 @@ const BOUND_ROW = entrySummary({
   business_key: BOUND_KEY,
   preferred_term: "Ferritin",
   code: LONG_CODE,
+  fsn: "Ferritin measurement",
   disciplines: ["Chemical pathology", "Haematology"],
+  specimens: ["Serum", "Plasma"],
   has_open_finding: true,
 });
 const UNBOUND_ROW = entrySummary({
@@ -183,25 +192,57 @@ describe("CatalogueSearchPage", () => {
     expect(within(scroller).getByRole("table")).toBeInTheDocument();
   });
 
-  it("shows the code in mono, the disciplines and the finding as text", async () => {
+  it("shows the term, discipline, specimen and FSN, in that order", async () => {
+    stubApi([ENTRIES_OK]);
+
+    await renderRoute("/catalogue");
+    await screen.findByRole("link", { name: "Ferritin" });
+
+    expect(
+      screen.getAllByRole("columnheader").map((header) => header.textContent),
+    ).toEqual(["Requesting term", "Discipline", "Specimen", "SNOMED CT FSN"]);
+  });
+
+  it("shows the disciplines, specimens and FSN, and the finding beside the term", async () => {
     stubApi([ENTRIES_OK]);
 
     await renderRoute("/catalogue");
 
     const bound = (await screen.findByRole("link", { name: "Ferritin" })).closest("tr");
     const boundRow = within(bound as HTMLElement);
-    const code = boundRow.getByText(LONG_CODE);
-    expect(code).toHaveClass("font-mono");
     expect(boundRow.getByText("Chemical pathology, Haematology")).toBeInTheDocument();
+    expect(boundRow.getByText("Serum, Plasma")).toBeInTheDocument();
+    expect(boundRow.getByText("Ferritin measurement")).toBeInTheDocument();
     const finding = boundRow.getByText("Open finding");
     expectTokenClassesOnly(finding.className);
+    expect(finding.closest("th, td")).toBe(boundRow.getByRole("link").closest("th, td"));
+  });
+
+  it("shows no SNOMED CT code on a row", async () => {
+    stubApi([ENTRIES_OK]);
+
+    await renderRoute("/catalogue");
+    await screen.findByRole("link", { name: "Ferritin" });
+
+    expect(screen.queryByText(LONG_CODE)).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /code/i })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Validation" })).toBeNull();
+  });
+
+  it("shows placeholders, and no finding badge, on a row with nothing recorded", async () => {
+    stubApi([ENTRIES_OK]);
+
+    await renderRoute("/catalogue");
 
     const unbound = within(
-      screen.getByRole("link", { name: "Full blood count" }).closest("tr") as HTMLElement,
+      (await screen.findByRole("link", { name: "Full blood count" })).closest(
+        "tr",
+      ) as HTMLElement,
     );
     expect(unbound.getByText("No code")).toBeInTheDocument();
-    expect(unbound.getByText("None recorded")).toBeInTheDocument();
-    expect(unbound.getByText("None")).toBeInTheDocument();
+    expect(unbound.getAllByText("None recorded")).toHaveLength(2);
+    expect(unbound.queryByText("Open finding")).toBeNull();
+    expect(unbound.queryByText("None")).toBeNull();
   });
 
   it("searches once a query is submitted, dropping any cursor", async () => {

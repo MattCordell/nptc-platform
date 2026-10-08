@@ -4131,7 +4131,7 @@
           "row_version"
         ],
         "title": "AdminEntrySummary",
-        "description": "`EntrySummary` plus FR-38's optimistic-locking token.\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets its selection surface read a\n`row_version` per row instead of re-reading the entry once selected."
+        "description": "`EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor\n`specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the\npublic list, and must not also hide an entry from the screen that repairs it.\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets its selection surface read a\n`row_version` per row instead of re-reading the entry once selected."
       },
       "AdminSearchHit": {
         "properties": {
@@ -5651,6 +5651,26 @@
             },
             "type": "object",
             "title": "Label Provenance"
+          },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           }
         },
         "type": "object",
@@ -5663,10 +5683,12 @@
           "has_open_finding",
           "code",
           "disciplines",
-          "label_provenance"
+          "label_provenance",
+          "fsn",
+          "specimens"
         ],
         "title": "EntrySummary",
-        "description": "An entry as it appears in a list or a search result.\n\n`length` is FR-85's published figure - the character count of the\ncatalogue's own preferred term, computed by `CatalogueEntry.length` and\nnever stored, so it cannot drift from the term it describes."
+        "description": "An entry as it appears in a list or a search result."
       },
       "ErrorResponse": {
         "properties": {
@@ -6690,6 +6712,26 @@
             "type": "object",
             "title": "Label Provenance"
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
+          },
           "score": {
             "type": "number",
             "title": "Score",
@@ -6707,6 +6749,8 @@
           "code",
           "disciplines",
           "label_provenance",
+          "fsn",
+          "specimens",
           "score"
         ],
         "title": "SearchHit",

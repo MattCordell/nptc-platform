@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
 import openpyxl
 import pytest
 
-from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
+from nptc_shared.terminology.models import PROCEDURE_ROOT_CODE, SPECIMEN_ROOT_CODE
+from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
+from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform.dataset import (
     DATASET_JSON_NAME,
     ImportDataset,
     PropertyValue,
+    ServedFSNError,
     build_dataset,
     write_dataset,
 )
@@ -187,6 +191,145 @@ def test_a_named_specimen_takes_its_code_from_the_reviewed_map(tmp_path: Path) -
     )
 
 
+def _served_workbook(tmp_path: Path, specimen: str) -> Path:
+    return _workbook(
+        tmp_path, [["A term", "", "", 11, "Chemical", "", specimen, "122192001", "A term", 4, ""]]
+    )
+
+
+def _build_with_server(
+    workbook_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> ImportDataset:
+    sheets = read_workbook(workbook_path)
+    server = StubTerminologyClient(
+        concepts=[
+            StubConcept(code="122192001", fsn="A term (procedure)", parents=(PROCEDURE_ROOT_CODE,)),
+            *specimen_map_concepts,
+        ],
+        resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+    )
+    result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
+    assert not result.has_blocking_findings, result.findings
+    return build_dataset(sheets, result, release_name="2026-06")
+
+
+@pytest.mark.req("FR-82")
+def test_a_binding_carries_the_fsn_the_server_served_not_the_workbooks_stripped_text(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """The workbook's FSN column is the published label with its tag removed. Seeding it would
+    leave a stored FSN FR-83 cannot strip safely, and a second strip would over-strip."""
+    dataset = _build_with_server(_served_workbook(tmp_path, "Serum"), specimen_map_concepts)
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert binding.fsn == "A term (procedure)"
+
+
+@pytest.mark.req("FR-83")
+def test_a_served_fsn_with_no_semantic_tag_refuses_the_dataset(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """The list read model refuses an untagged stored FSN, so the run has to stop at seeding,
+    not leave the failure for the public page."""
+    workbook_path = _served_workbook(tmp_path, "Serum")
+    server = StubTerminologyClient(
+        concepts=[
+            StubConcept(code="122192001", fsn="A term", parents=(PROCEDURE_ROOT_CODE,)),
+            *specimen_map_concepts,
+        ],
+        resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+    )
+    result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
+
+    with pytest.raises(ServedFSNError, match=r"no semantic tag.*122192001"):
+        build_dataset(read_workbook(workbook_path), result, release_name="2026-06")
+
+
+@pytest.mark.req("FR-82")
+def test_a_number_typed_code_cell_still_gets_the_served_fsn(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """A number-typed code cell is repaired, seeded and never swept, so its FSN is looked up
+    on its own. Without that, the repair would seed the workbook's stripped text."""
+    workbook_path = _workbook(
+        tmp_path, [["A term", "", "", 11, "Chemical", "", "Serum", 122192001, "A term", 4, ""]]
+    )
+
+    dataset = _build_with_server(workbook_path, specimen_map_concepts)
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert (binding.code, binding.fsn) == ("122192001", "A term (procedure)")
+
+
+@pytest.mark.req("FR-82")
+def test_a_run_with_no_server_keeps_the_workbook_text_as_the_fsn(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Serum"))
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert binding.fsn == "A term"
+
+
+@pytest.mark.req("FR-82")
+def test_a_bound_code_the_server_served_no_fsn_for_refuses_the_dataset(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """Seeding the workbook text instead would put an untagged FSN in the catalogue, which
+    FR-83's renderer refuses, so the list would fail for the whole page."""
+    workbook_path = _served_workbook(tmp_path, "Serum")
+    server = StubTerminologyClient(
+        concepts=[
+            StubConcept(code="122192001", fsn="A term (procedure)", parents=(PROCEDURE_ROOT_CODE,)),
+            *specimen_map_concepts,
+        ],
+        resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+    )
+    result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
+    assert result.terminology is not None
+    served_nothing = dataclasses.replace(result.terminology, served_fsns=())
+
+    with pytest.raises(ServedFSNError, match="122192001"):
+        build_dataset(
+            read_workbook(workbook_path),
+            dataclasses.replace(result, terminology=served_nothing),
+            release_name="2026-06",
+        )
+
+
+@pytest.mark.req("FR-88")
+def test_a_specimen_carries_the_au_preferred_term_the_server_served_for_its_code(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    dataset = _build_with_server(_served_workbook(tmp_path, "Serum; URINE"), specimen_map_concepts)
+
+    assert dataset.entries[0].properties.specimen == (
+        PropertyValue(value="Serum", code="119364003", display="Fixture specimen 119364003"),
+        PropertyValue(value="URINE", code="122575003", display="Fixture specimen 122575003"),
+    )
+
+
+@pytest.mark.req("FR-88")
+def test_only_a_specimen_has_a_display_and_it_is_written_to_the_json(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    dataset = _build_with_server(_served_workbook(tmp_path, "Serum"), specimen_map_concepts)
+    report_dir = tmp_path / "out"
+
+    write_dataset(dataset, report_dir)
+
+    properties = _dataset_payload(report_dir)["entries"][0]["properties"]
+    assert properties["specimen"] == [
+        {"value": "Serum", "code": "119364003", "display": "Fixture specimen 119364003"}
+    ]
+    assert properties["discipline"] == [{"value": "Chemical", "code": None, "display": None}]
+
+
+@pytest.mark.req("FR-88")
+def test_a_run_with_no_server_leaves_the_specimen_display_empty(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Serum"))
+
+    assert dataset.entries[0].properties.specimen[0].display is None
+
+
 @pytest.mark.req("FR-88")
 def test_every_specimen_in_a_multi_value_cell_is_coded_in_order(tmp_path: Path) -> None:
     dataset = _build(_specimen_workbook(tmp_path, "Serum; plasma ;  URINE"))
@@ -334,7 +477,7 @@ def test_write_dataset_writes_the_json_file(tmp_path: Path) -> None:
     write_dataset(dataset, report_dir)
 
     payload = _dataset_payload(report_dir)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["baseline_release"]["name"] == "2026-06"
     assert len(payload["entries"]) == 1
     assert "specimen_unconstrained" not in payload["entries"][0]

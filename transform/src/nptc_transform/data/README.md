@@ -31,6 +31,9 @@ The transform reads `Source display`, `Target code`, `Target display`, `Relation
 - Only `Any` may target `123038009`. Every rule downstream reads that code as "any specimen", so
   the loader refuses any other row that uses it.
 - Two strings may share a target. The workbook spells some specimens in more than one way.
+- `Target display` is the concept's FSN with its tag, kept for the reviewer. The transform does not
+  use it. The import dataset's specimen display is the code's SNOMED CT-AU preferred term, read from
+  the terminology server under `--check-terminology`.
 
 ## Known follow-ups
 

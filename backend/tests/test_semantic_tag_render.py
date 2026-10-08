@@ -10,6 +10,7 @@ from nptc.exports.semantic_tag import (
     EmptyDisplayTermError,
     NotAServedFSNError,
     render_display_term,
+    trim_specimen_suffix,
 )
 
 
@@ -61,3 +62,25 @@ def test_a_value_that_is_only_its_own_tag_raises() -> None:
     on its actual failure path rather than only the happy path above."""
     with pytest.raises(EmptyDisplayTermError):
         render_display_term("(procedure)")
+
+
+@pytest.mark.req("FR-83")
+@pytest.mark.parametrize(
+    ("term", "trimmed"),
+    [
+        ("Serum specimen", "Serum"),
+        ("Urine specimen", "Urine"),
+        ("serum SPECIMEN", "serum"),
+        ("Cerebrospinal fluid specimen", "Cerebrospinal fluid"),
+        ("Serum", "Serum"),
+        ("Specimen from skin", "Specimen from skin"),
+        ("Specimen", "Specimen"),
+        ("specimen", "specimen"),
+        ("Nonspecimen", "Nonspecimen"),
+        ("309051001", "309051001"),
+    ],
+)
+def test_a_trailing_specimen_word_is_trimmed_and_nothing_else(term: str, trimmed: str) -> None:
+    """The bare word is the root concept's own term; trimming it would leave an empty
+    label, so it stays. A word that only ends in the letters is not a trailing word."""
+    assert trim_specimen_suffix(term) == trimmed

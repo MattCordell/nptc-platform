@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from nptc_shared.terminology.models import Operation
+from nptc_shared.terminology.models import AU_LANGUAGE_TAG, SNOMED_CT_AU, Operation
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
-from nptc_shared.terminology.sweep import TerminologySweep
+from nptc_shared.terminology.sweep import ConceptDesignations, TerminologySweep
 from nptc_transform.bands import Band
 from nptc_transform.specimen_map import SPECIMEN_MAP, parse_specimen_map
 from nptc_transform.specimen_map_check import check_specimen_map
@@ -15,6 +15,11 @@ _AU_VERSION = "http://snomed.info/sct/32506021000036107/version/20260531"
 _HEADER = (
     "Source code\tSource display\tTarget code\tTarget display\tRelationship type code\t"
     "Relationship type display\tNo map flag\tStatus"
+)
+
+
+_URINE_ROW = (
+    "\nh\tUrine\t122575003\tUrine specimen (specimen)\tTARGET_EQUIVALENT\tn\tfalse\tMAPPED\n"
 )
 
 
@@ -40,15 +45,65 @@ def test_every_packaged_code_passes_when_all_sit_under_the_specimen_root(
 
 
 @pytest.mark.req("FR-88")
-def test_the_whole_map_is_checked_in_one_request(
+def test_the_whole_map_is_checked_in_one_request_and_its_terms_read_in_another(
     specimen_map_concepts: tuple[StubConcept, ...],
 ) -> None:
     client = _client(*specimen_map_concepts)
 
     check_specimen_map(TerminologySweep(client))
 
-    assert len(_expansions(client)) == 1
-    assert " AND <<123038009" in _expansions(client)[0]
+    root_check, preferred_terms = _expansions(client)
+    assert " AND <<123038009" in root_check
+    assert "<<" not in preferred_terms
+    assert [r.display_language for r in client.requests if r.operation is Operation.EXPAND][
+        1
+    ] == AU_LANGUAGE_TAG
+
+
+@pytest.mark.req("FR-88")
+def test_each_passing_code_carries_its_au_preferred_term_not_its_fsn() -> None:
+    parsed = parse_specimen_map(_HEADER + _URINE_ROW)
+    client = _client(
+        StubConcept(
+            code="122575003",
+            fsn="Urine specimen (specimen)",
+            preferred_terms={AU_LANGUAGE_TAG: "Urine specimen"},
+            parents=("123038009",),
+        )
+    )
+
+    outcome = check_specimen_map(TerminologySweep(client), parsed)
+
+    assert outcome.run.preferred_terms == (("122575003", "Urine specimen"),)
+
+
+class _NoTermSweep(TerminologySweep):
+    """A sweep whose server serves no AU preferred term for any concept."""
+
+    def describe(  # type: ignore[override]
+        self, codes: object, *, edition: object, versions: set[str] | None = None
+    ) -> tuple[ConceptDesignations, ...]:
+        assert edition is SNOMED_CT_AU
+        return tuple(
+            ConceptDesignations(code=code, fully_specified_name=None, display=None)
+            for code in codes  # type: ignore[attr-defined]
+        )
+
+
+@pytest.mark.req("FR-88")
+def test_a_code_with_no_served_preferred_term_blocks_rather_than_seed_a_blank_display() -> None:
+    parsed = parse_specimen_map(_HEADER + _URINE_ROW)
+    client = _client(
+        StubConcept(code="122575003", fsn="Urine specimen (specimen)", parents=("123038009",))
+    )
+
+    outcome = check_specimen_map(_NoTermSweep(client), parsed)
+
+    (finding,) = outcome.findings
+    assert finding.code == "SPECIMEN_MAP_NO_PREFERRED_TERM"
+    assert finding.band is Band.DATA_DEFECT
+    assert str(finding.location) == "specimen_map.tsv!C2"
+    assert outcome.run.preferred_terms == ()
 
 
 @pytest.mark.req("FR-88")
@@ -120,6 +175,8 @@ def test_the_specimen_root_itself_passes() -> None:
         _HEADER + "\nh\tAny\t123038009\tSpecimen (specimen)\tTARGET_INEXACT\tn\tfalse\tMAPPED\n"
     )
 
-    outcome = check_specimen_map(TerminologySweep(_client()), parsed)
+    outcome = check_specimen_map(
+        TerminologySweep(_client(StubConcept(code="123038009", fsn="Specimen (specimen)"))), parsed
+    )
 
     assert outcome.findings == ()

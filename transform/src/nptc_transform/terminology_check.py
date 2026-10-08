@@ -33,6 +33,7 @@ from nptc_shared.terminology.sweep import SweepResult, TerminologySweep
 from nptc_shared.text import escape_invisible
 from nptc_transform.bands import FindingCode
 from nptc_transform.cellref import CellRef
+from nptc_transform.corrections import apply_corrections, correct_code_cell
 from nptc_transform.findings import Finding
 from nptc_transform.workbook import CellType, ColumnRole, Sheet
 
@@ -89,6 +90,10 @@ class TerminologyRun:
     #: server. Nonzero tells the operator FR-99's check did not run for that many
     #: concepts, which is not a silent pass.
     unresolved_fsn_count: int = 0
+    #: ``(code, served FSN)`` for every checked code the first edition that knows it served an
+    #: FSN for, sorted by code. Not in the report: ``dataset.py`` seeds it as the binding's
+    #: ``fsn`` (FR-82).
+    served_fsns: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -191,10 +196,60 @@ def check_terminology(
                 for label, result in sorted(results.items())
             ),
             unresolved_fsn_count=sum(result.unresolved_fsn_count for result in results.values()),
+            served_fsns=_served_fsns(results, editions),
         ),
         bindings=tuple(checkable),
         results=results,
     )
+
+
+def resolve_binding_fsns(
+    sheets: Sequence[Sheet],
+    *,
+    sweep: TerminologySweep,
+    editions: Sequence[Edition],
+    served: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """``served`` plus the FSN of every code the import dataset will bind that the checks above
+    skipped, sorted by code.
+
+    A number-typed code cell is excluded from validation (``CODE_CELL_NOT_TEXT`` is the cell
+    scanner's), yet ``--emit-dataset`` repairs it and seeds its code. That code still needs its
+    served FSN (FR-82). One ``describe`` request per chunk per edition, in ``editions`` order, only
+    for codes still without one. A code no edition serves stays out, and the dataset refuses it.
+    """
+    known = dict(served)
+    remaining = tuple(
+        sorted(
+            {
+                code
+                for binding in collect_code_bindings(sheets)
+                if (code := correct_code_cell(apply_corrections(binding.code))) not in known
+                and has_valid_check_digit(code)
+            }
+        )
+    )
+    for edition in editions:
+        if not remaining:
+            break
+        for designation in sweep.describe(remaining, edition=edition):
+            if designation.fully_specified_name is not None:
+                known.setdefault(designation.code, designation.fully_specified_name)
+        remaining = tuple(code for code in remaining if code not in known)
+    return tuple(sorted(known.items()))
+
+
+def _served_fsns(
+    results: dict[str, SweepResult], editions: Sequence[Edition]
+) -> tuple[tuple[str, str], ...]:
+    """Each code's served FSN, from the first edition in ``editions`` order that served one, so
+    Australian content keeps its SNOMED CT-AU FSN and an International-only code takes that."""
+    served: dict[str, str] = {}
+    for edition in editions:
+        for designation in results[edition.label].designations:
+            if designation.fully_specified_name is not None:
+                served.setdefault(designation.code, designation.fully_specified_name)
+    return tuple(sorted(served.items()))
 
 
 def _labels(labels: Sequence[str]) -> str:

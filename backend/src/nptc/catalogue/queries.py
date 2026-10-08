@@ -87,8 +87,9 @@ __all__ = [
 #: rather than a set, so the SQL parameter order is stable.
 PUBLIC_STATUSES: Final[tuple[str, ...]] = (CatalogueEntryStatus.ACTIVE.value,)
 
-#: The system property `nptc.db.bootstrap` seeds, which `row_facts` shows on every row.
+#: The system properties `nptc.db.bootstrap` seeds, which `row_facts` shows on every row.
 DISCIPLINE_PROPERTY_KEY: Final = "discipline"
+SPECIMEN_PROPERTY_KEY: Final = "specimen"
 
 
 @dataclass(frozen=True, slots=True)
@@ -559,42 +560,48 @@ def open_finding_business_keys(session: Session, business_keys: Iterable[str]) -
 class RowFacts:
     """What a list or search row shows beyond the entry's own columns.
 
-    `code` is the entry's one active SNOMED CT binding, or `None`. A retired
-    binding never appears here: a row names the code to use now, and the
-    detail's `bindings` carries the history.
+    `code` and `fsn` come from the entry's one active SNOMED CT binding, or are
+    `None`. A retired binding never appears here: a row names the code to use
+    now, and the detail's `bindings` carries the history. `fsn` is as stored
+    (FR-82), semantic tag intact. `disciplines` and `specimens` are stored
+    labels, also as stored.
     """
 
     has_open_finding: bool
     code: str | None
+    fsn: str | None
     disciplines: tuple[str, ...]
+    specimens: tuple[str, ...]
 
 
 def row_facts(session: Session, business_keys: Iterable[str]) -> dict[str, RowFacts]:
     """`RowFacts` for each business key, in three statements whatever the page
     size. Every key given is a key of the result.
 
-    A discipline is its stored `display`, falling back to the code where the
-    value carries none - the same generic JSON handling as a facet bucket's
-    label (`nptc.catalogue.facets`), and for the same reason: no terminology
-    call on a read path (FR-54).
+    A discipline or specimen is its stored `display`, falling back to the code
+    where the value carries none - the same generic JSON handling as a facet
+    bucket's label (`nptc.catalogue.facets`), and for the same reason: no
+    terminology call on a read path (FR-54).
     """
     keys = tuple(dict.fromkeys(business_keys))
     if not keys:
         return {}
     open_findings = open_finding_business_keys(session, keys)
-    codes = dict(
-        session.execute(
-            select(CatalogueEntry.business_key, CodeBinding.code)
+    bindings = {
+        business_key: (code, fsn)
+        for business_key, code, fsn in session.execute(
+            select(CatalogueEntry.business_key, CodeBinding.code, CodeBinding.fsn)
             .join(CodeBinding, CodeBinding.entry_id == CatalogueEntry.id)
             .where(CatalogueEntry.business_key.in_(keys))
             .where(CodeBinding.status == CodeBindingStatus.ACTIVE.value)
             .where(CodeBinding.system == SNOMED_CT_SYSTEM)
         ).all()
-    )
-    disciplines: dict[str, list[str]] = {}
-    for business_key, label in session.execute(
+    }
+    labels: dict[str, dict[str, list[str]]] = {}
+    for business_key, property_key, label in session.execute(
         select(
             CatalogueEntry.business_key,
+            PropertyValue.property_key,
             func.coalesce(
                 func.jsonb_extract_path_text(PropertyValue.value, "display"),
                 func.jsonb_extract_path_text(PropertyValue.value, "code"),
@@ -602,19 +609,23 @@ def row_facts(session: Session, business_keys: Iterable[str]) -> dict[str, RowFa
         )
         .join(PropertyValue, PropertyValue.entry_id == CatalogueEntry.id)
         .where(CatalogueEntry.business_key.in_(keys))
-        .where(PropertyValue.property_key == DISCIPLINE_PROPERTY_KEY)
-        .order_by(CatalogueEntry.business_key, PropertyValue.ordinal)
+        .where(PropertyValue.property_key.in_((DISCIPLINE_PROPERTY_KEY, SPECIMEN_PROPERTY_KEY)))
+        .order_by(CatalogueEntry.business_key, PropertyValue.property_key, PropertyValue.ordinal)
     ):
         if label is not None:
-            disciplines.setdefault(business_key, []).append(label)
-    return {
-        key: RowFacts(
+            labels.setdefault(business_key, {}).setdefault(property_key, []).append(label)
+    facts: dict[str, RowFacts] = {}
+    for key in keys:
+        code, fsn = bindings.get(key, (None, None))
+        own = labels.get(key, {})
+        facts[key] = RowFacts(
             has_open_finding=key in open_findings,
-            code=codes.get(key),
-            disciplines=tuple(disciplines.get(key, ())),
+            code=code,
+            fsn=fsn,
+            disciplines=tuple(own.get(DISCIPLINE_PROPERTY_KEY, ())),
+            specimens=tuple(own.get(SPECIMEN_PROPERTY_KEY, ())),
         )
-        for key in keys
-    }
+    return facts
 
 
 def row_facts_for(session: Session, business_key: str) -> RowFacts:

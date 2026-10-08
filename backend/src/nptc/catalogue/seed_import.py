@@ -231,8 +231,11 @@ def _distinct_labels(dataset: ImportDataset, property_key: str) -> list[str]:
     return list(seen)
 
 
-def _coded_value(system_uri: str, code: str, display: str) -> dict[str, str]:
-    return {"system": system_uri, "code": code, "display": display}
+def _coded_value(system_uri: str, code: str, display: str | None) -> dict[str, str]:
+    value = {"system": system_uri, "code": code}
+    if display is not None:
+        value["display"] = display
+    return value
 
 
 def _match_label(
@@ -363,7 +366,7 @@ def _property_values(
 ) -> list[tuple[str, list[PropertyValueInput]]]:
     properties = entry.properties
     specimen = [
-        _coded_value(SNOMED_SYSTEM, code, value.value)
+        _coded_value(SNOMED_SYSTEM, code, value.display)
         for value in properties.specimen
         if (code := value.code) is not None
     ]

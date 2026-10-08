@@ -149,6 +149,20 @@ design.
   field is gone: `Any` is now the specimen code `123038009`, held alone. The loader refuses a
   version 1 file and names the version. `report.json`'s `schema_version` moved from 8 to 9 for
   the changed finding vocabulary.
+
 - `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
   data defect, not informational, because the loader refuses a specimen with no code. The
   decisions above that say otherwise record what was decided at the time.
+
+## Amendment (2026-10-08, FR-83, FR-98)
+
+- `import-dataset.json`'s `schema_version` moved from 2 to 3. Every property value gains a
+  `display` key. For a specimen it is the code's SNOMED CT-AU preferred term, resolved by the
+  transform's `--check-terminology` pass, so `--emit-dataset` now requires that flag. It is
+  `null` for a discipline or subgroup. The loader stores a specimen's `display` as given, and
+  refuses a version 2 file. `report.json`'s `schema_version` moved from 9 to 10 for the new
+  `SPECIMEN_MAP_NO_PREFERRED_TERM` finding.
+- Each code binding's `fsn` is now the FSN the server served, not the workbook's FSN column,
+  which is the published label with its tag already removed. This ends the deferral recorded
+  above: the list read model strips the tag from a stored FSN (FR-83), and stripping an
+  already-stripped label would over-strip it. A bound code with no served FSN stops the run.

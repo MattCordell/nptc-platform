@@ -36,8 +36,8 @@ def test_a_valid_dataset_is_read(make_dataset_document: MakeDocument, write_data
 
 
 @pytest.mark.req("FR-76")
-@pytest.mark.parametrize("version", [1, 3, 0, "2", None, 2.5, True])
-def test_a_schema_version_other_than_two_is_refused(
+@pytest.mark.parametrize("version", [1, 2, 0, "3", None, 3.5, True])
+def test_a_schema_version_other_than_three_is_refused(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset, version: object
 ) -> None:
     document = make_dataset_document()
@@ -60,7 +60,7 @@ def test_a_missing_schema_version_is_refused(
 def test_the_version_is_checked_before_the_shape(write_dataset: WriteDataset) -> None:
     """A later transform's file must say 'unsupported version', not list shape errors."""
     with pytest.raises(UnsupportedSchemaVersionError):
-        read_import_dataset(write_dataset({"schema_version": 3, "something": "new"}))
+        read_import_dataset(write_dataset({"schema_version": 4, "something": "new"}))
 
 
 def test_a_missing_file_is_unreadable(tmp_path: Path) -> None:
@@ -161,7 +161,9 @@ def test_an_uncoded_specimen_refuses_the_whole_dataset(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document(2)
-    document["entries"][1]["properties"]["specimen"] = [{"value": "Amniotic fluid", "code": None}]
+    document["entries"][1]["properties"]["specimen"] = [
+        {"value": "Amniotic fluid", "code": None, "display": None}
+    ]
 
     with pytest.raises(DatasetNotSeedableError) as exc_info:
         read_import_dataset(write_dataset(document))
@@ -177,7 +179,7 @@ def test_every_problem_is_reported_in_one_refusal(
 ) -> None:
     document = make_dataset_document(3)
     for entry in document["entries"][:2]:
-        entry["properties"]["specimen"] = [{"value": "Blood", "code": None}]
+        entry["properties"]["specimen"] = [{"value": "Blood", "code": None, "display": None}]
     document["entries"][2]["code_bindings"][0]["fsn"] = None
 
     with pytest.raises(DatasetNotSeedableError) as exc_info:
@@ -211,14 +213,39 @@ def test_a_version_1_file_is_refused_with_a_message_that_names_the_version(
     assert "schema_version is 1" in str(exc_info.value)
 
 
+def test_a_version_2_file_is_refused_with_a_message_that_names_the_version(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    """Version 2 carried no specimen display, so it would seed a specimen labelled with the
+    workbook's wording."""
+    document = make_dataset_document()
+    document["schema_version"] = 2
+
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
+        read_import_dataset(write_dataset(document))
+
+    assert "schema_version is 2" in str(exc_info.value)
+
+
+@pytest.mark.req("FR-88")
+def test_a_property_value_without_a_display_key_is_refused(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    document = make_dataset_document()
+    del document["entries"][0]["properties"]["specimen"][0]["display"]
+
+    with pytest.raises(DatasetInvalidError):
+        read_import_dataset(write_dataset(document))
+
+
 @pytest.mark.req("FR-89")
 def test_the_specimen_root_beside_a_named_specimen_is_refused(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document()
     document["entries"][0]["properties"]["specimen"] = [
-        {"value": "Any", "code": "123038009"},
-        {"value": "Serum", "code": "119364003"},
+        {"value": "Any", "code": "123038009", "display": None},
+        {"value": "Serum", "code": "119364003", "display": None},
     ]
 
     with pytest.raises(DatasetNotSeedableError) as exc_info:
@@ -233,7 +260,9 @@ def test_the_specimen_root_alone_is_accepted(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
 ) -> None:
     document = make_dataset_document()
-    document["entries"][0]["properties"]["specimen"] = [{"value": "Any", "code": "123038009"}]
+    document["entries"][0]["properties"]["specimen"] = [
+        {"value": "Any", "code": "123038009", "display": None}
+    ]
 
     entry = read_import_dataset(write_dataset(document)).entries[0]
 
@@ -246,8 +275,8 @@ def test_the_root_under_two_displays_is_not_a_root_beside_another_specimen(
 ) -> None:
     document = make_dataset_document()
     document["entries"][0]["properties"]["specimen"] = [
-        {"value": "Any", "code": "123038009"},
-        {"value": "Specimen", "code": "123038009"},
+        {"value": "Any", "code": "123038009", "display": None},
+        {"value": "Specimen", "code": "123038009", "display": None},
     ]
 
     entry = read_import_dataset(write_dataset(document)).entries[0]

@@ -471,15 +471,19 @@ def make_dataset_document() -> Callable[..., dict[str, Any]]:
                         }
                     ],
                     "properties": {
-                        "discipline": [{"value": "Chemical pathology", "code": None}],
+                        "discipline": [
+                            {"value": "Chemical pathology", "code": None, "display": None}
+                        ],
                         "subgroup": [],
-                        "specimen": [{"value": "Serum", "code": "119364003"}],
+                        "specimen": [
+                            {"value": "Serum", "code": "119364003", "display": "Serum specimen"}
+                        ],
                         "usage_guidance": None,
                     },
                 }
             )
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "tool_version": "0.0.0",
             "source": {"filename": "workbook.xlsx", "sha256": "a" * 64},
             "baseline_release": {

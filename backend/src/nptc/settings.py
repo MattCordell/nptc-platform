@@ -176,29 +176,30 @@ class ApiSettings(BaseSettings):
 
     frontend_base_url: str = "http://localhost:5173"
 
-    #: FR-98's label-provenance declaration for every served `fsn`
+    #: FR-98's label-provenance declaration for every binding's `fsn`
     #: (`nptc.api.labels.fsn_provenance`), a placeholder for FR-66's export
-    #: configuration (P4, not built). `"intact"` is the only value the read
-    #: path can honestly serve: nothing strips an `fsn` between the column
-    #: and the response (FR-83's renderer, `render_display_term`, is reached
-    #: only from the export surface). `_fsn_semantic_tag_is_intact` refuses
-    #: `"stripped"`.
+    #: configuration (P4, not built). `"intact"` is the only value a binding
+    #: can honestly serve: nothing strips a binding's `fsn` between the column
+    #: and the response. It does not govern the list summary's own `fsn`, which
+    #: is always stripped and declared by `LIST_FSN_PROVENANCE`.
+    #: `_fsn_semantic_tag_is_intact` refuses `"stripped"`.
     fsn_semantic_tag: Literal["intact", "stripped"] = "intact"
 
     @field_validator("fsn_semantic_tag")
     @classmethod
     def _fsn_semantic_tag_is_intact(cls, value: str) -> str:
-        """`"stripped"` could never strip anything: the read path has no
-        stripper, so it would only make `LabelProvenance.semantic_tag` claim
-        a strip that never happened (FR-83, FR-66). Refusing it here turns a
+        """`"stripped"` could never strip anything: no binding's `fsn` is
+        stripped on the read path, so it would only make
+        `LabelProvenance.semantic_tag` claim a strip that never happened
+        (FR-83, FR-66). Refusing it here turns a
         typo, or an early attempt to wire FR-66's export configuration
         through this field, into a start-up failure.
         """
         if value == "stripped":
             raise ValueError(
-                "fsn_semantic_tag=stripped is refused: the API read path has no "
-                "semantic-tag stripper (FR-83's renderer is reached only from the "
-                "export surface), so this setting cannot yet make that true. FR-66's "
+                "fsn_semantic_tag=stripped is refused: the API strips no binding's "
+                "fsn (the list summary's own fsn is stripped regardless of this "
+                "setting), so this setting cannot yet make that true. FR-66's "
                 "export configuration is the future home for this choice; until it "
                 "exists, fsn_semantic_tag must stay 'intact'."
             )

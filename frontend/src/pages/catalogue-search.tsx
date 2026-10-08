@@ -389,24 +389,17 @@ export function CatalogueSearchPage() {
                     header: "Requesting term",
                     isRowHeader: true,
                     render: (row: Row) => (
-                      <Link
-                        to="/catalogue/$businessKey"
-                        params={{ businessKey: row.business_key }}
-                        className="text-[var(--color-accent)] hover:underline"
-                      >
-                        {row.preferred_term}
-                      </Link>
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <Link
+                          to="/catalogue/$businessKey"
+                          params={{ businessKey: row.business_key }}
+                          className="text-[var(--color-accent)] hover:underline"
+                        >
+                          {row.preferred_term}
+                        </Link>
+                        {row.has_open_finding ? <FindingIndicator /> : null}
+                      </span>
                     ),
-                  },
-                  {
-                    key: "code",
-                    header: "SNOMED CT code",
-                    render: (row: Row) =>
-                      row.code === null ? (
-                        <span className="text-[var(--color-text-muted)]">No code</span>
-                      ) : (
-                        <span className="font-mono">{row.code}</span>
-                      ),
                   },
                   {
                     key: "disciplines",
@@ -421,11 +414,26 @@ export function CatalogueSearchPage() {
                       ),
                   },
                   {
-                    key: "has_open_finding",
-                    header: "Validation",
-                    render: (row: Row) => (
-                      <FindingIndicator open={row.has_open_finding} />
-                    ),
+                    key: "specimens",
+                    header: "Specimen",
+                    render: (row: Row) =>
+                      row.specimens.length > 0 ? (
+                        row.specimens.join(", ")
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">
+                          None recorded
+                        </span>
+                      ),
+                  },
+                  {
+                    key: "fsn",
+                    header: "SNOMED CT FSN",
+                    render: (row: Row) =>
+                      row.fsn === null ? (
+                        <span className="text-[var(--color-text-muted)]">No code</span>
+                      ) : (
+                        row.fsn
+                      ),
                   },
                 ]}
                 rows={items}

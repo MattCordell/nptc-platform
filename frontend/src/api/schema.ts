@@ -882,7 +882,9 @@ export interface components {
         };
         /**
          * AdminEntrySummary
-         * @description `EntrySummary` plus FR-38's optimistic-locking token.
+         * @description `EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor
+         *     `specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the
+         *     public list, and must not also hide an entry from the screen that repairs it.
          *
          *     Defined here, not in `catalogue_shared.py`: that module is imported by
          *     the public router, and a field the public surface must never carry
@@ -1747,10 +1749,6 @@ export interface components {
         /**
          * EntrySummary
          * @description An entry as it appears in a list or a search result.
-         *
-         *     `length` is FR-85's published figure - the character count of the
-         *     catalogue's own preferred term, computed by `CatalogueEntry.length` and
-         *     never stored, so it cannot drift from the term it describes.
          */
         EntrySummary: {
             /** Business Key */
@@ -1782,6 +1780,16 @@ export interface components {
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
             };
+            /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
         };
         /**
          * ErrorResponse
@@ -2359,6 +2367,16 @@ export interface components {
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
             };
+            /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /**
              * Score
              * @description Trigram similarity against `q`, between 0 and 1.

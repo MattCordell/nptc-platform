@@ -144,7 +144,9 @@ def test_an_uncoded_specimen_refuses_the_dataset_and_names_the_value(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     document = make_dataset_document(2)
-    document["entries"][1]["properties"]["specimen"] = [{"value": "Amniotic fluid", "code": None}]
+    document["entries"][1]["properties"]["specimen"] = [
+        {"value": "Amniotic fluid", "code": None, "display": None}
+    ]
 
     code = _run(app_engine, write_dataset(document))
 

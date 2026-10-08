@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import openpyxl
@@ -13,8 +15,10 @@ from typer.testing import CliRunner
 from nptc_shared.terminology.errors import TerminologyTransportError
 from nptc_shared.terminology.models import PROCEDURE_ROOT_CODE, Operation
 from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
+from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.cli import app
+from nptc_transform.dataset import ServedFSNError
 from nptc_transform.specimen_map import SPECIMEN_MAP
 
 runner = CliRunner()
@@ -58,6 +62,21 @@ def clean_bindings_workbook(tmp_path: Path) -> Path:
 
 def _install_stub(monkeypatch: pytest.MonkeyPatch, stub: StubTerminologyClient) -> None:
     monkeypatch.setattr("nptc_transform.cli.OntoserverClient", lambda _config: stub)
+
+
+#: ``--emit-dataset`` needs ``--check-terminology``: a specimen's display is its AU preferred term.
+_EMIT = ["--emit-dataset", "--release-name", "2026-06", "--check-terminology"]
+
+
+def _without_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs ``--check-terminology`` with no sweep, for a test about a defect found offline,
+    where the workbook's codes need no server."""
+
+    @contextmanager
+    def _no_sweep(_enabled: bool) -> Iterator[TerminologySweep | None]:
+        yield None
+
+    monkeypatch.setattr("nptc_transform.cli._terminology_sweep", _no_sweep)
 
 
 def test_cli_version_command_runs() -> None:
@@ -195,10 +214,12 @@ def test_release_name_without_emit_dataset_is_a_usage_error(
     assert not report_dir.exists()
 
 
-@pytest.mark.req("FR-76")
-def test_emit_dataset_writes_the_report_and_the_import_dataset(
+@pytest.mark.req("FR-88")
+def test_emit_dataset_without_check_terminology_is_a_usage_error_and_writes_nothing(
     tmp_path: Path, sample_workbook: Path
 ) -> None:
+    """A specimen's display is its AU preferred term, which only the server serves, so an
+    offline dataset would seed a different label for the same specimen."""
     report_dir = tmp_path / "report"
     before = _tree(tmp_path)
 
@@ -213,6 +234,32 @@ def test_emit_dataset_writes_the_report_and_the_import_dataset(
             "--emit-dataset",
             "--release-name",
             "2026-06",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--check-terminology" in result.output
+    assert _tree(tmp_path) == before
+    assert not report_dir.exists()
+
+
+@pytest.mark.req("FR-76")
+def test_emit_dataset_writes_the_report_and_the_import_dataset(
+    tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
+) -> None:
+    serve("10000006", fsn="Sample test (procedure)")
+    report_dir = tmp_path / "report"
+    before = _tree(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workbook",
+            str(sample_workbook),
+            "--report-dir",
+            str(report_dir),
+            *_EMIT,
         ],
     )
 
@@ -237,15 +284,50 @@ def test_emit_dataset_writes_the_report_and_the_import_dataset(
     assert entry["business_key"] == "NPTC-000001"
     assert entry["code_bindings"][0]["code"] == "10000006"
     assert isinstance(entry["code_bindings"][0]["code"], str)
+    # The served FSN, tag intact, and not the workbook's "Sample test" (FR-82).
+    assert entry["code_bindings"][0]["fsn"] == "Sample test (procedure)"
+    serum = SPECIMEN_MAP.resolve("Serum")
+    assert serum is not None
+    assert entry["properties"]["specimen"] == [
+        {"value": "Serum", "code": serum.code, "display": f"Fixture specimen {serum.code}"}
+    ]
+
+
+@pytest.mark.req("FR-82")
+def test_emit_dataset_exits_3_and_writes_no_dataset_when_the_server_served_no_fsn(
+    tmp_path: Path,
+    sample_workbook: Path,
+    serve: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve("10000006", fsn="Sample test (procedure)")
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise ServedFSNError("the terminology server served no FSN for 10000006")
+
+    monkeypatch.setattr("nptc_transform.cli.build_dataset", _refuse)
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    (report_dir / "import-dataset.json").write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["run", "--workbook", str(sample_workbook), "--report-dir", str(report_dir), *_EMIT],
+    )
+
+    assert result.exit_code == 3, result.output
+    assert "10000006" in result.output
+    assert not (report_dir / "import-dataset.json").exists()
 
 
 @pytest.mark.req("FR-71")
 def test_emit_dataset_blocks_on_a_blocking_finding_and_writes_no_dataset(
-    tmp_path: Path, annex_a_workbook: Path
+    tmp_path: Path, annex_a_workbook: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A blocking finding aborts emission: exit 1, report written, no
     dataset file (PRD:310's "the seeded baseline cannot be created until
     RCPA-QAP resolves those collisions editorially")."""
+    _without_sweep(monkeypatch)
     report_dir = tmp_path / "report"
 
     result = runner.invoke(
@@ -256,9 +338,7 @@ def test_emit_dataset_blocks_on_a_blocking_finding_and_writes_no_dataset(
             str(annex_a_workbook),
             "--report-dir",
             str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
+            *_EMIT,
         ],
     )
 
@@ -277,9 +357,7 @@ def _run_emit_dataset(tmp_path: Path, workbook_path: Path) -> tuple[Path, Result
             str(workbook_path),
             "--report-dir",
             str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
+            *_EMIT,
         ],
     )
     return report_dir, result
@@ -300,13 +378,13 @@ def _workbook_with_code(tmp_path: Path, name: str, code: str) -> Path:
 
 
 @pytest.mark.req("FR-06")
-def test_emit_dataset_alone_blocks_on_a_malformed_code_with_no_check_terminology(
-    tmp_path: Path,
+def test_emit_dataset_blocks_on_a_malformed_code_found_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Issue #131: ``--emit-dataset`` without ``--check-terminology`` must
-    not seed a code that isn't even a well-formed SCTID - well-formedness is
-    an offline, free check and must never be gated behind the opt-in
-    network validation pass."""
+    """``--emit-dataset`` must not seed a code that isn't even a well-formed
+    SCTID - well-formedness is an offline, free check and must never depend
+    on the terminology pass, so the sweep is switched off here."""
+    _without_sweep(monkeypatch)
     workbook_path = _workbook_with_code(tmp_path, "not_a_code.xlsx", "not-a-code")
 
     report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
@@ -317,11 +395,12 @@ def test_emit_dataset_alone_blocks_on_a_malformed_code_with_no_check_terminology
 
 
 @pytest.mark.req("FR-06")
-def test_emit_dataset_alone_blocks_on_a_bad_check_digit_with_no_check_terminology(
-    tmp_path: Path,
+def test_emit_dataset_blocks_on_a_bad_check_digit_found_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same as above, but for a code that has the right shape (6-18 digits)
     and still fails the Verhoeff check digit - shape alone isn't enough."""
+    _without_sweep(monkeypatch)
     workbook_path = _workbook_with_code(tmp_path, "bad_check_digit.xlsx", "123456789")
 
     report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
@@ -332,14 +411,15 @@ def test_emit_dataset_alone_blocks_on_a_bad_check_digit_with_no_check_terminolog
 
 
 @pytest.mark.req("FR-06")
-def test_emit_dataset_alone_blocks_on_an_nbsp_that_corrects_to_an_interior_space(
-    tmp_path: Path,
+def test_emit_dataset_blocks_on_an_nbsp_that_corrects_to_an_interior_space(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An interior U+00A0 is corrected to an ordinary space before this
     check runs (the same correction ``dataset.py`` applies before seeding),
     so a code with an interior NBSP between two digit groups must be caught
     once corrected - not judged well-formed because the raw, uncorrected
     cell text happened to be all digits plus one invisible character."""
+    _without_sweep(monkeypatch)
     nbsp = chr(0x00A0)
     workbook_path = _workbook_with_code(tmp_path, "nbsp_code.xlsx", f"123{nbsp}456")
 
@@ -351,12 +431,13 @@ def test_emit_dataset_alone_blocks_on_an_nbsp_that_corrects_to_an_interior_space
 
 
 @pytest.mark.req("FR-06")
-def test_emit_dataset_alone_still_emits_cleanly_for_a_well_formed_code(
-    tmp_path: Path,
+def test_emit_dataset_emits_cleanly_for_a_well_formed_code(
+    tmp_path: Path, serve: Callable[..., None]
 ) -> None:
     """The companion positive case: a well-formed, Verhoeff-valid code still
     emits with exit 0 and no new findings - this check must not flag codes
     it has no business flagging."""
+    serve(CLEAN_CODE)
     workbook_path = _workbook_with_code(tmp_path, "clean_code.xlsx", CLEAN_CODE)
 
     report_dir, result = _run_emit_dataset(tmp_path, workbook_path)
@@ -369,43 +450,31 @@ def test_emit_dataset_alone_still_emits_cleanly_for_a_well_formed_code(
 
 @pytest.mark.req("FR-71")
 def test_a_blocking_run_removes_a_stale_dataset_from_an_earlier_successful_run(
-    tmp_path: Path, sample_workbook: Path, annex_a_workbook: Path
+    tmp_path: Path,
+    sample_workbook: Path,
+    annex_a_workbook: Path,
+    serve: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A prior clean run leaves ``import-dataset.json`` next to its report.
     A later run into the same ``--report-dir`` that hits a blocking finding
     must not leave that dataset behind: the refreshed report says the import
     is blocked, so a dataset from a previous, unrelated run sitting beside it
     is a stale-and-misleading artifact, not a still-valid one (issue #130)."""
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
 
     first = runner.invoke(
         app,
-        [
-            "run",
-            "--workbook",
-            str(sample_workbook),
-            "--report-dir",
-            str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
-        ],
+        ["run", "--workbook", str(sample_workbook), "--report-dir", str(report_dir), *_EMIT],
     )
     assert first.exit_code == 0, first.output
     assert (report_dir / "import-dataset.json").is_file()
 
+    _without_sweep(monkeypatch)
     second = runner.invoke(
         app,
-        [
-            "run",
-            "--workbook",
-            str(annex_a_workbook),
-            "--report-dir",
-            str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
-        ],
+        ["run", "--workbook", str(annex_a_workbook), "--report-dir", str(report_dir), *_EMIT],
     )
 
     assert second.exit_code == 1, second.output
@@ -415,26 +484,18 @@ def test_a_blocking_run_removes_a_stale_dataset_from_an_earlier_successful_run(
 
 @pytest.mark.req("FR-71")
 def test_a_report_only_run_removes_a_stale_dataset_from_an_earlier_successful_run(
-    tmp_path: Path, sample_workbook: Path
+    tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
     """The same stale-dataset invariant as the blocked case, reached via the
     success path instead: a run into the same ``--report-dir`` that omits
     ``--emit-dataset`` refreshes the report but must not leave a previous
     run's ``import-dataset.json`` sitting beside it either (issue #130)."""
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
 
     first = runner.invoke(
         app,
-        [
-            "run",
-            "--workbook",
-            str(sample_workbook),
-            "--report-dir",
-            str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
-        ],
+        ["run", "--workbook", str(sample_workbook), "--report-dir", str(report_dir), *_EMIT],
     )
     assert first.exit_code == 0, first.output
     assert (report_dir / "import-dataset.json").is_file()
@@ -457,13 +518,14 @@ def test_a_report_only_run_removes_a_stale_dataset_from_an_earlier_successful_ru
 
 @pytest.mark.req("FR-70")
 def test_emit_dataset_blocks_and_writes_no_dataset_for_a_row_missing_its_preferred_term(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A row that resolves a code binding but carries no 'RCPA Preferred
     term' value must block emission, exactly like any other data defect -
     silently omitting the row from import-dataset.json (as build_dataset did
     before MISSING_PREFERRED_TERM existed) is the P0-9/#31 hazard this
     regression guards against."""
+    _without_sweep(monkeypatch)
     workbook_path = tmp_path / "missing_preferred_term.xlsx"
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -482,9 +544,7 @@ def test_emit_dataset_blocks_and_writes_no_dataset_for_a_row_missing_its_preferr
             str(workbook_path),
             "--report-dir",
             str(report_dir),
-            "--emit-dataset",
-            "--release-name",
-            "2026-06",
+            *_EMIT,
         ],
     )
 
@@ -508,11 +568,12 @@ def _workbook_with_terms(tmp_path: Path, rows: list[tuple[str, str | None]]) -> 
 
 @pytest.mark.req("FR-05")
 def test_emit_dataset_blocks_and_writes_no_dataset_for_a_designation_collision(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The loader refuses a preferred term that equals an earlier synonym, so the
     transform must stop at the same point instead of emitting a dataset that cannot
     load."""
+    _without_sweep(monkeypatch)
     workbook_path = _workbook_with_terms(
         tmp_path, [("Adrenal antibody", "Adrenal Ab"), ("Adrenal Ab", None)]
     )
@@ -526,8 +587,11 @@ def test_emit_dataset_blocks_and_writes_no_dataset_for_a_designation_collision(
 
 
 @pytest.mark.req("FR-05")
-def test_emit_dataset_still_emits_when_two_entries_only_share_a_synonym(tmp_path: Path) -> None:
+def test_emit_dataset_still_emits_when_two_entries_only_share_a_synonym(
+    tmp_path: Path, serve: Callable[..., None]
+) -> None:
     """A shared synonym is a warning in the backend, so it must not block."""
+    serve(*VALID_CODES[:2])
     workbook_path = _workbook_with_terms(
         tmp_path, [("Glucose", "Sugar"), ("Blood sugar test", "Sugar")]
     )

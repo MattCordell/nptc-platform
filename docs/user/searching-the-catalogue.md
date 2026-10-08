@@ -21,13 +21,17 @@ To go back to browsing, clear the box and search again.
 
 | Column | What it shows |
 |---|---|
-| **Requesting term** | The test's name. Choose it to open the test's own page. |
-| **SNOMED CT code** | The code the test is bound to now. **No code** means it has none. |
+| **Requesting term** | The test's name. Choose it to open the test's own page. **Open finding** appears beside the name when an automated check has flagged the test. See [What the finding indicator means](viewing-the-finding-indicator.md). |
 | **Discipline** | Each discipline recorded for the test. **None recorded** means none is. |
-| **Validation** | **Open finding** when an automated check has flagged the test. See [What the finding indicator means](viewing-the-finding-indicator.md). |
+| **Specimen** | Each specimen recorded for the test, by its SNOMED CT-AU preferred term, without a closing "specimen" (so "Serum specimen" shows as "Serum"). **None recorded** means none is. |
+| **SNOMED CT FSN** | The fully specified name of the code the test is bound to now, without its closing tag in brackets (so "Microscopy (procedure)" shows as "Microscopy"). **No code** means the test has none. |
 
-A code that has been retired never appears in this list. The test's own page shows its
-code history.
+The list does not show the code itself. Open the test's own page to see its code, the full
+name with its tag, and its code history. A code that has been retired never appears in
+this list.
+
+A specimen added by hand shows the wording that was entered. Specimens loaded from the
+workbook show the SNOMED CT-AU preferred term.
 
 ## Filtering
 

@@ -25,10 +25,12 @@ baseline: the refusals below are the point.
 2. The transform has emitted a dataset with no blocking finding:
 
    ```powershell
-   uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx --emit-dataset --release-name 2026-06
+   uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx --check-terminology --emit-dataset --release-name 2026-06
    ```
 
-   See [`transform.md`](transform.md) for the flags and the dataset format.
+   `--check-terminology` is required. It resolves each specimen's SNOMED CT-AU preferred term,
+   which the loader stores as the specimen's display. See [`transform.md`](transform.md) for the
+   flags and the dataset format.
 3. The catalogue is empty. The loader refuses anything else (exit `4`).
 4. Optional, and recommended: `NPTC_INDEXER_DATABASE_URL` is set in the process that runs the
    script. The compose `backend` service already has it. From a checkout, export it or pass
@@ -121,7 +123,7 @@ Facets still work without the indexes, but slowly.
 |---|---|
 | `0` | Seeded and committed. With `--dry-run`: the dataset is seedable, and nothing was committed. |
 | `2` | Usage error: no DSN from `--database-url` or `NPTC_DATABASE_URL`, or an explicitly empty `--database-url ""`. |
-| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `2`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
+| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `3`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
 | `4` | The catalogue already holds an entry, or a seeding run is already recorded. Nothing was written. See "Reseeding". |
 | `5` | A write was refused and everything was rolled back: an FR-05 designation collision, a discipline label with no matching code, or a missing local code system. The message names the entry by business key, preferred term, sheet and row. |
 | `6` | Could not complete: the database was unreachable, a credential was refused, or an unexpected failure occurred. The message names only the exception type, never its text, because that can carry connection details (NFR-26). The transaction is rolled back. |
@@ -136,7 +138,7 @@ Each fix is a data change followed by a new transform run. The loader never repa
 |---|---|---|
 | `specimen '...' has no SNOMED CT code` | A specimen in the dataset has no code. The transform blocks this now (`SPECIMEN_VALUE_UNMAPPED`), so the file came from an older transform or was edited by hand. | Emit the dataset again with the current transform. If it blocks, a terminologist adds the string to the specimen map, or RCPA-QAP corrects the workbook value. |
 | `a specimen means any specimen (123038009) but the entry also lists named specimens` | The cell has `Any` beside a named specimen. FR-89 says the any-specimen value stands alone. The transform reports it as `SPECIMEN_ROOT_WITH_OTHERS`. | Keep `Any` alone in the workbook cell, or remove it and list the named specimens. Then run the transform again. |
-| `code binding ... has no FSN` | The transform found no FSN cell for the row. | Fill the FSN in the workbook, or check the column mapping. |
+| `code binding ... has no FSN` | The dataset carries no FSN for a code. The transform writes the FSN the server served, and stops without a dataset when it has none, so the file came from an older transform or was edited by hand. | Emit the dataset again with the current transform and `--check-terminology`. |
 | `schema_version is ...` | The dataset came from a different transform version. | Emit it again with the matching transform. |
 | `discipline '...' is not a code in the 'discipline' local code system` | The workbook names a discipline the governed code system lacks. | Correct the workbook, or have an administrator add the code (FR-90). |
 | `... matches only a deprecated code` | A discipline or subgroup label matches a code that has been deprecated. | Correct the workbook, or have an administrator add an active code. |
@@ -145,6 +147,13 @@ Each fix is a data change followed by a new transform run. The loader never repa
 | `the catalogue already holds entries` | Not a data problem. See "Reseeding". | |
 
 ## Reseeding
+
+A catalogue seeded before the list columns change (issue #511) holds tag-stripped FSNs and workbook
+specimen wording. The public catalogue list and search refuse such an FSN with a `500`, because a
+stored FSN with no tag may already have been stripped (FR-83). No backfill is provided: no
+deployment holds a catalogue worth keeping yet, so the repair is to reseed from a dataset the
+current transform emitted. A deployment that does hold real work needs a backfill first, so
+raise that before upgrading.
 
 Seeding twice is refused on purpose. Business keys are positional, so a second run could give
 one key to a different clinical concept without any error.

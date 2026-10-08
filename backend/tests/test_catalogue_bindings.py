@@ -694,7 +694,7 @@ def test_code_binding_model_has_no_cleaning_hook_over_served_labels() -> None:
     assert not _referenced_names(source, _CLEANING_HOOK_NAMES)
 
 
-# --- FR-83: exactly one call site (plus the pre-existing FR-97 sites) -------
+# --- FR-83: the export renderer, the list assembler and the FR-97 sites -----
 
 _STRIP_NAMES = frozenset({"strip_semantic_tag", "semantic_tag", "render_display_term"})
 
@@ -735,16 +735,15 @@ _ALLOWED_REFERENCES = frozenset(
         # publish under, and a Pydantic field name is what the JSON key
         # actually is - no alias layer sits between them.
         REPO_ROOT / "backend" / "src" / "nptc" / "api" / "labels.py",
-        # Issue #144 (FR-98) removed `catalogue_shared.py`'s own entry: the
-        # `Binding` response model's `display_term` field (and the
-        # `_display_term` helper that called `render_display_term` to build
-        # it) is gone - the read path now serves `fsn` exactly as stored and
-        # declares that fact through `label_provenance` instead of deriving a
-        # second, stripped copy of the label. `catalogue_shared.py` is no
-        # longer a reference site for `_STRIP_NAMES` at all, so it is not
-        # listed here any more; `test_allowed_references_list_is_not_stale`
-        # below is what would fail loudly if a future change reintroduced a
-        # call and forgot to re-add the entry.
+        # FR-83 names the list read model as the second sanctioned call site:
+        # `entry_summary_fields` strips the entry's FSN for the catalogue list.
+        # `Binding.fsn` is still served as stored, so no other function in this
+        # module may call the renderer; `test_the_list_assembler_is_the_only_strip_in_catalogue_shared`
+        # below pins that.
+        REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py",
+        # Asks only whether a served FSN carries a tag, so the run stops at seeding and not
+        # on the public list. It strips nothing.
+        REPO_ROOT / "transform" / "src" / "nptc_transform" / "dataset.py",
     }
 )
 
@@ -781,6 +780,32 @@ def test_semantic_tag_functions_are_referenced_only_at_known_sites(path: Path) -
     source = path.read_text(encoding="utf-8")
     referenced = _referenced_names(source, _STRIP_NAMES)
     assert not referenced, f"{path}: unexpected reference to {referenced}"
+
+
+def test_the_list_assembler_is_the_only_strip_in_catalogue_shared() -> None:
+    """`catalogue_shared.py` is allowlisted for one call. `Binding.fsn` is served as stored
+    (FR-82), so a second function stripping an FSN there would put a second, silently
+    stripped copy of a label on the wire."""
+    path = REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def enclosing_function(node: ast.AST) -> str | None:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.FunctionDef):
+                return node.name
+        return None
+
+    uses = {
+        enclosing_function(node)
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Name) and node.id in _STRIP_NAMES)
+        or (isinstance(node, ast.Attribute) and node.attr in _STRIP_NAMES)
+    }
+
+    # A module-level call or a lambda has no enclosing function, so it shows up as None.
+    assert uses == {"entry_summary_fields"}
 
 
 def test_allowed_references_list_is_not_stale() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -49,6 +50,22 @@ def _misspelling_workbook(tmp_path: Path) -> Path:
     sheet.append(["Bilirubin ratio", "", "", "", "", "", "", "10000052"])
     workbook.save(path)
     return path
+
+
+_STUBBED_CLI = Path(__file__).with_name("stubbed_cli.py")
+
+
+def _run_stubbed_cli(*args: str, env: dict[str, str] | None = None) -> None:
+    """Runs ``--check-terminology`` against the stub server in a fresh process, for a test
+    that must set ``PYTHONHASHSEED``. The sample workbook's one code is served."""
+    procedures = json.dumps([["10000006", "Sample test (procedure)"]])
+    result = subprocess.run(
+        [sys.executable, str(_STUBBED_CLI), *args],
+        capture_output=True,
+        text=True,
+        env={**(env if env is not None else os.environ), "STUBBED_CLI_PROCEDURES": procedures},
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _run_cli(
@@ -212,7 +229,7 @@ def test_two_emit_dataset_runs_produce_a_byte_identical_import_dataset(
     out1 = tmp_path / "out1"
     out2 = tmp_path / "out2"
 
-    _run_cli(
+    _run_stubbed_cli(
         "run",
         "--workbook",
         str(sample_workbook),
@@ -221,8 +238,9 @@ def test_two_emit_dataset_runs_produce_a_byte_identical_import_dataset(
         "--emit-dataset",
         "--release-name",
         "2026-06",
+        "--check-terminology",
     )
-    _run_cli(
+    _run_stubbed_cli(
         "run",
         "--workbook",
         str(sample_workbook),
@@ -231,6 +249,7 @@ def test_two_emit_dataset_runs_produce_a_byte_identical_import_dataset(
         "--emit-dataset",
         "--release-name",
         "2026-06",
+        "--check-terminology",
     )
 
     assert (out1 / "import-dataset.json").read_bytes() == (
@@ -246,7 +265,7 @@ def test_import_dataset_is_independent_of_pythonhashseed(
     out1 = tmp_path / "seed1"
     out2 = tmp_path / "seed2"
 
-    _run_cli(
+    _run_stubbed_cli(
         "run",
         "--workbook",
         str(sample_workbook),
@@ -255,9 +274,10 @@ def test_import_dataset_is_independent_of_pythonhashseed(
         "--emit-dataset",
         "--release-name",
         "2026-06",
+        "--check-terminology",
         env={**os.environ, "PYTHONHASHSEED": "1"},
     )
-    _run_cli(
+    _run_stubbed_cli(
         "run",
         "--workbook",
         str(sample_workbook),
@@ -266,6 +286,7 @@ def test_import_dataset_is_independent_of_pythonhashseed(
         "--emit-dataset",
         "--release-name",
         "2026-06",
+        "--check-terminology",
         env={**os.environ, "PYTHONHASHSEED": "2"},
     )
 

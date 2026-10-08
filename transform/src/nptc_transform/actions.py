@@ -138,6 +138,11 @@ ACTION_BY_CODE: dict[str, str] = {
         "an active concept under 123038009 (Specimen) (FR-88). The import is "
         "blocked until the map is corrected."
     ),
+    FindingCode.SPECIMEN_MAP_NO_PREFERRED_TERM: (
+        "A terminologist must check why SNOMED CT-AU serves no preferred term for this "
+        "code, and correct the target code in the specimen map to a concept that has "
+        "one (FR-88). The import is blocked until it does."
+    ),
     FindingCode.DESIGNATION_COLLISION: (
         "RCPA-QAP must decide which entry changes: reword the term on one of "
         "the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). "
@@ -154,9 +159,9 @@ ACTION_BY_CODE: dict[str, str] = {
         "import is not blocked."
     ),
     FindingCode.LABEL_DESIGNATION_DRIFT: (
-        "No action required. Server-sourced FSN seeding is deferred (ADR-0010); "
-        "the published label is seeded as-is, and the drift is recorded for "
-        "editorial review only if unexpected (FR-97). The import is not blocked."
+        "No action required. The dataset seeds the FSN the server served, not "
+        "the published label, and the drift is recorded for editorial review "
+        "only if unexpected (FR-97). The import is not blocked."
     ),
     FindingCode.LABEL_DIFFERS_FROM_PREFERRED_TERM: (
         "No action required. The current SNOMED CT-AU preferred term "

@@ -1,11 +1,11 @@
-"""FR-83's one legitimate semantic-tag strip: the export renderer.
+"""FR-83's sanctioned semantic-tag strip, and the label trims that sit beside it.
 
-`backend/tests/test_catalogue_bindings.py` asserts that `render_display_term`
-and the shared `semantic_tag`/`strip_semantic_tag` are referenced from no module
-outside this package across `backend/src`, `transform/src` and `shared/src`. The
-exceptions are the shared package's re-export and two FR-97
-seeding-reconciliation call sites (ADR-0006). "Exactly one call site" is
-therefore this package's claim about itself.
+The export renderer and the list read model (`nptc.api.routers.catalogue_shared`) call
+`render_display_term`. `backend/tests/test_catalogue_bindings.py` asserts that it and the
+shared `semantic_tag`/`strip_semantic_tag` are referenced from no other module across
+`backend/src`, `transform/src` and `shared/src`, bar the shared package's re-export, two
+FR-97 seeding-reconciliation sites (ADR-0006) and the transform's dataset builder, which
+only reads whether a served FSN has a tag.
 
 **Why not call `nptc_shared.terminology.strip_semantic_tag` alone.** It returns
 its input unchanged when there is no trailing parenthesised group, which suits a
@@ -17,20 +17,28 @@ strip rule defined once, in `nptc_shared.terminology.snomed`.
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar
 
 from nptc_shared.terminology import semantic_tag, strip_semantic_tag
 
-__all__ = ["EmptyDisplayTermError", "NotAServedFSNError", "render_display_term"]
+__all__ = [
+    "EmptyDisplayTermError",
+    "NotAServedFSNError",
+    "render_display_term",
+    "trim_specimen_suffix",
+]
+
+_SPECIMEN_SUFFIX = re.compile(r"\s+specimen$", re.IGNORECASE)
 
 
 class NotAServedFSNError(ValueError):
     """Raised by `render_display_term` when its input has no trailing
     parenthesised group (FR-83's first assertion). FR-82 guarantees a stored
     `fsn` is a served FSN, which always has one, so the export must fail rather
-    than publish this value."""
+    than publish this value. A stored-data fault, not a caller mistake, so a 500."""
 
-    http_status: ClassVar[int] = 422
+    http_status: ClassVar[int] = 500
 
 
 class EmptyDisplayTermError(ValueError):
@@ -39,7 +47,7 @@ class EmptyDisplayTermError(ValueError):
     a bug in this module; `http_status` matches `NotAServedFSNError` so a caller
     handles both alike."""
 
-    http_status: ClassVar[int] = 422
+    http_status: ClassVar[int] = 500
 
 
 def render_display_term(fsn: str) -> str:
@@ -67,3 +75,12 @@ def render_display_term(fsn: str) -> str:
             f"stripping the semantic tag from {fsn!r} produced an empty string"
         )
     return result
+
+
+def trim_specimen_suffix(term: str) -> str:
+    """`term` without a trailing "specimen" word ("Serum specimen" shows as "Serum").
+
+    A bare "Specimen", the root concept's term, is returned as it is, never empty.
+    """
+    trimmed = _SPECIMEN_SUFFIX.sub("", term)
+    return trimmed or term

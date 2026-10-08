@@ -13,12 +13,14 @@ term only on `catalogue_entry.preferred_term`, enforced by
 therefore a preferred term in another language (e.g. `mi-NZ`), which
 "preferred variant" names correctly.
 
-**The read path contains no tag-stripping code**, so `SemanticTagState` is
+**A binding's FSN is served as stored**, so its `SemanticTagState` is
 config-driven, not computed: `fsn_provenance` reports
 `ApiSettings.fsn_semantic_tag` (FR-66's placeholder) and never inspects the
 FSN string. It is the only reader of that setting. `binding_from_row` and
 `ConceptLookup` both call it, so no caller can observe two opinions about
 whether an FSN's tag is intact.
+
+The public list's `fsn` is always stripped (FR-83): `LIST_FSN_PROVENANCE`.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from nptc.settings import ApiSettings
 
 __all__ = [
     "AU_PREFERRED_TERM_PROVENANCE",
+    "LIST_FSN_PROVENANCE",
     "PREFERRED_VARIANT_PROVENANCE",
     "SYNONYM_PROVENANCE",
     "DesignationType",
@@ -96,6 +99,12 @@ SYNONYM_PROVENANCE = LabelProvenance(
 PREFERRED_VARIANT_PROVENANCE = LabelProvenance(
     designation=DesignationType.PREFERRED_VARIANT,
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
+)
+
+
+LIST_FSN_PROVENANCE = LabelProvenance(
+    designation=DesignationType.FSN,
+    semantic_tag=SemanticTagState.STRIPPED,
 )
 
 

@@ -99,7 +99,7 @@ function EntryView({
                 tone={statusToneFor(entry.status)}
                 label={statusLabelFor(entry.status)}
               />
-              {entry.has_open_finding ? <FindingIndicator open /> : null}
+              {entry.has_open_finding ? <FindingIndicator /> : null}
             </span>
           }
         />

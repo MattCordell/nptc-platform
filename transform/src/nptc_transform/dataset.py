@@ -28,11 +28,19 @@ specimen yields no value. An unmapped value never reaches this module: it is a
 blocking finding (``SPECIMEN_VALUE_UNMAPPED``), so ``build_dataset`` is not called.
 ``'Any'`` is coded as the specimen root like any other string.
 
-**Terminology-served enrichment is not done here.** Without
-``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
-``fsn``/``au_preferred_term`` come from the published cell text or ``None``.
-Filling them from a live sweep's served designations (FR-82) needs the per-code
-``SweepResult`` threaded further than ``RunResult`` carries it.
+**Specimen display.** The AU preferred term the specimen map check resolved for the code
+(``SpecimenMapRun.preferred_terms``), so the list read model shows a SNOMED CT term and not the
+workbook's wording. ``None`` when the run had no sweep; the CLI refuses ``--emit-dataset``
+without ``--check-terminology``, so an emitted dataset always carries it.
+
+**Code binding FSN: served, never the workbook's (FR-82).** The workbook's FSN column is
+the published, tag-stripped label, and stripping it again would be the double-strip hazard
+FR-83 exists to prevent. With a sweep, each binding's ``fsn`` is the FSN the server served for
+its code (``TerminologyRun.served_fsns``), tag intact. A run with no sweep keeps the workbook
+text, and the CLI refuses ``--emit-dataset`` without one.
+
+**Other terminology-served enrichment is not done here.** ``edition_hint`` is always
+``"unknown"`` and ``au_preferred_term`` is ``None``.
 """
 
 from __future__ import annotations
@@ -42,6 +50,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from nptc_shared.terminology import semantic_tag
 from nptc_transform import __version__
 from nptc_transform.cell_defects import (
     resolve_specimen_term,
@@ -56,10 +65,16 @@ from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SNOMED_SYSTEM = "http://snomed.info/sct"
 _LANGUAGE_EN_AU = "en-AU"
+
+
+class ServedFSNError(ValueError):
+    """A sweep ran but served no usable FSN for a code the dataset binds: none at all (every code
+    not found or inactive already blocks the run, so the server answered without designations), or
+    one with no semantic tag, which the list read model would refuse after seeding (FR-83)."""
 
 
 @dataclass(frozen=True)
@@ -89,10 +104,12 @@ class CodeBinding:
 @dataclass(frozen=True)
 class PropertyValue:
     """One property value - a discipline, subgroup or specimen assertion.
-    ``code`` is ``None`` for discipline/subgroup always, and never for a specimen."""
+    ``code`` is ``None`` for discipline/subgroup always, and never for a specimen.
+    ``display`` is the specimen code's AU preferred term, and ``None`` for the others."""
 
     value: str
     code: str | None = None
+    display: str | None = None
 
 
 @dataclass(frozen=True)
@@ -174,16 +191,32 @@ def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designati
     return tuple(designations)
 
 
-def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
+def _build_code_bindings(
+    row_cells: Mapping[ColumnRole, Cell], served_fsns: Mapping[str, str] | None
+) -> tuple[CodeBinding, ...]:
     if not has_code_binding(row_cells):
         return ()
     code_cell = row_cells[ColumnRole.CODE]
-    fsn_cell = row_cells.get(ColumnRole.FSN)
+    code = correct_code_cell(_cell_text(code_cell))
+    if served_fsns is None:
+        fsn = _optional_cell_text(row_cells.get(ColumnRole.FSN))
+    elif code not in served_fsns:
+        raise ServedFSNError(
+            f"the terminology server served no FSN for {code}; check that it returns "
+            "designations (ADR-0005)"
+        )
+    elif semantic_tag(served_fsns[code]) is None:
+        raise ServedFSNError(
+            f"the terminology server served an FSN with no semantic tag for {code}; "
+            "a served FSN always ends in one, so check the server's answer for that code"
+        )
+    else:
+        fsn = served_fsns[code]
     return (
         CodeBinding(
             system=_SNOMED_SYSTEM,
-            code=correct_code_cell(_cell_text(code_cell)),
-            fsn=_optional_cell_text(fsn_cell),
+            code=code,
+            fsn=fsn,
             au_preferred_term=None,
             edition_hint="unknown",
             status="active",
@@ -191,7 +224,9 @@ def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBind
     )
 
 
-def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[PropertyValue, ...]:
+def _build_specimen(
+    row_cells: Mapping[ColumnRole, Cell], preferred_terms: Mapping[str, str]
+) -> tuple[PropertyValue, ...]:
     """Mirrors ``cell_defects._scan_specimen``. A value the reviewed map does not
     cover is a caller error (the run was blocked), so it raises rather than seeding
     a specimen with no code.
@@ -205,7 +240,9 @@ def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[PropertyValue
         if entry is None:
             raise ValueError(f"specimen {value!r} is not in the specimen map; the run was blocked")
         if entry.code is not None:
-            values.append(PropertyValue(value=value, code=entry.code))
+            values.append(
+                PropertyValue(value=value, code=entry.code, display=preferred_terms.get(entry.code))
+            )
     return tuple(values)
 
 
@@ -234,11 +271,13 @@ def build_dataset(
     order. A row skipped for either reason (FR-100) shifts every later business
     key down by one; no gap is left.
     """
+    preferred_terms = dict(result.specimen_map.preferred_terms) if result.specimen_map else {}
+    served_fsns = dict(result.terminology.served_fsns) if result.terminology else None
     entries: list[ImportEntry] = []
     for sequence, source_row in enumerate(seedable_rows(sheets), start=1):
         row_cells = source_row.cells
         preferred_cell = row_cells[ColumnRole.PREFERRED_TERM]
-        specimen = _build_specimen(row_cells)
+        specimen = _build_specimen(row_cells, preferred_terms)
         entries.append(
             ImportEntry(
                 business_key=_business_key(sequence),
@@ -251,7 +290,7 @@ def build_dataset(
                 preferred_term=_cell_text(preferred_cell),
                 status="active",
                 designations=_build_designations(row_cells),
-                code_bindings=_build_code_bindings(row_cells),
+                code_bindings=_build_code_bindings(row_cells, served_fsns),
                 properties=EntryProperties(
                     discipline=_build_compound_property(row_cells, ColumnRole.DISCIPLINE),
                     subgroup=_build_compound_property(row_cells, ColumnRole.SUBGROUP),
@@ -292,7 +331,7 @@ def _code_binding_payload(binding: CodeBinding) -> dict[str, object]:
 
 
 def _property_value_payload(value: PropertyValue) -> dict[str, object]:
-    return {"value": value.value, "code": value.code}
+    return {"value": value.value, "code": value.code, "display": value.display}
 
 
 def _entry_payload(entry: ImportEntry) -> dict[str, object]:

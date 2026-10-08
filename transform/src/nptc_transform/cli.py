@@ -2,7 +2,8 @@
 
 ``run`` (FR-70, FR-73) reads the SPIA workbook and writes a report, or the
 import dataset (FR-76). Report-only is the default mode;
-``--emit-dataset`` opts into the mutating mode, and requires ``--release-name``.
+``--emit-dataset`` opts into the mutating mode, and requires ``--release-name`` and
+``--check-terminology``.
 ``--check-terminology`` opts into the FR-52 batch validation pass, which is
 the only part of the tool that opens a network connection.
 """
@@ -25,7 +26,12 @@ from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
-from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
+from nptc_transform.dataset import (
+    DATASET_JSON_NAME,
+    ServedFSNError,
+    build_dataset,
+    write_dataset,
+)
 from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
@@ -130,7 +136,8 @@ def run(
         bool,
         typer.Option(
             "--emit-dataset",
-            help="Emit the import dataset instead of a report alone. Requires --release-name.",
+            help="Emit the import dataset instead of a report alone. Requires "
+            "--release-name and --check-terminology.",
         ),
     ] = False,
     release_name: Annotated[
@@ -158,7 +165,7 @@ def run(
     file outside --report-dir is ever touched. --emit-dataset opts into the
     mutating mode: it applies FR-71's auto-correctable band's repairs and
     writes import-dataset.json alongside the report, and requires
-    --release-name (FR-76). --check-terminology opts into the batch
+    --release-name (FR-76) and --check-terminology, which opts into the batch
     validation pass, the only part of the run that uses the network.
     """
     typer.echo(f"nptc-transform {__version__}: starting", err=True)
@@ -171,6 +178,13 @@ def run(
         if release_name is None or not _RELEASE_NAME_RE.fullmatch(release_name):
             typer.echo(
                 "--emit-dataset requires --release-name in YYYY-MM form (FR-57), e.g. 2026-06",
+                err=True,
+            )
+            raise typer.Exit(code=ExitCode.USAGE_ERROR)
+        if not check_terminology:
+            typer.echo(
+                "--emit-dataset requires --check-terminology: each specimen's display is "
+                "its SNOMED CT-AU preferred term, which only the terminology server can supply",
                 err=True,
             )
             raise typer.Exit(code=ExitCode.USAGE_ERROR)
@@ -252,6 +266,13 @@ def run(
         try:
             dataset = build_dataset(sheets, result, release_name=release_name)
             write_dataset(dataset, report_dir)
+        except ServedFSNError as exc:
+            typer.echo(
+                f"{exc}. No dataset was written. Run again once that is resolved.",
+                err=True,
+            )
+            _remove_stale_dataset(report_dir)
+            raise typer.Exit(code=ExitCode.TERMINOLOGY_UNAVAILABLE) from exc
         except OSError as exc:
             typer.echo(
                 f"could not write the import dataset into {report_dir}: "

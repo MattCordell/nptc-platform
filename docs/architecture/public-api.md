@@ -50,8 +50,13 @@ exactly what it does and does not expose.
 them without a request per row. `code` is the entry's one active SNOMED CT binding, as a
 string, or `null` when it has none. A retired binding never appears there, only in the
 detail's `bindings`. `disciplines` is the stored display text of each `discipline` value,
-in `ordinal` order, falling back to the code where a value carries no display. One loader,
-`nptc.catalogue.queries.row_facts`, fills these fields and `has_open_finding` in three
+in `ordinal` order, falling back to the code where a value carries no display. On the public list and
+search only, `fsn` and `specimens` (issue #511) sit beside them. `fsn` is the active binding's FSN with its semantic
+tag removed. `specimens` is each `specimen` value's stored display, in `ordinal` order, with a
+trailing "specimen" word removed and repeats dropped, and the code where a value carries no
+display. The seed stores a SNOMED CT-AU preferred term as that display, but the admin write
+path stores whatever the client sends, so a value written there may be another wording. One
+loader, `nptc.catalogue.queries.row_facts`, fills these fields and `has_open_finding` in three
 statements per page, whatever its size. It is keyed on `business_key`, because a search
 hit carries no entry id.
 
@@ -392,16 +397,24 @@ Every status each endpoint can produce is declared in `docs/api/openapi.json`, a
 the ones it can actually produce - so a generated client (#147) has no branch for a
 response that never arrives.
 
-**A published code binding's `fsn` is never re-derived, so it can never fail to render
-(issue #144, FR-98).** An earlier revision of this API computed a `display_term` from the
-stored `fsn` on every read, using FR-83's semantic-tag stripper, and refused with a 500 if
-that strip failed - the one 5xx this document used to describe. That field is gone: `fsn`
-is served exactly as stored (FR-82), and `label_provenance` declares what it is instead of
-a second, derived copy of it - `label_provenance.fsn` is `{"designation": "fsn",
-"semantic_tag": "intact"}` by default (`NPTC_FSN_SEMANTIC_TAG`, see
-`docs/operations/configuration.md`), or `"stripped"` if a future FR-66 export
-configuration ever makes that true. There is nothing left on this read path that can fail
-this way.
+**A published code binding's `fsn` is never re-derived (issue #144, FR-98).** A binding's
+`fsn` is served exactly as stored (FR-82), and `label_provenance` declares what it is:
+`label_provenance.fsn` is `{"designation": "fsn", "semantic_tag": "intact"}` by default
+(`NPTC_FSN_SEMANTIC_TAG`, see `docs/operations/configuration.md`).
+
+**A list row's own `fsn` is stripped, and can fail to render (FR-83, FR-98).** Every public
+list row and search hit carries `fsn`: the active code's FSN with its
+final parenthesised group removed, or `null` when the entry has no active code. Its
+`label_provenance.fsn` is always `{"designation": "fsn", "semantic_tag": "stripped"}`. The
+strip is `nptc.exports.semantic_tag.render_display_term`, the renderer FR-83 names. It
+refuses a stored FSN with no trailing group, because that value may already have been
+stripped. A catalogue seeded before the transform seeded served FSNs holds such values, so
+a refusal means stored data needs repair. It is a server-side fault, not a bad request: the
+request fails with a `500` and a fixed sentence, and the cause is logged at error level. A stored value is never shown unstripped to avoid the failure. The detail and the admin
+listing carry neither `fsn` nor `specimens`, so an entry with such an FSN still opens and can
+be repaired. The same row's
+`specimens` carry each specimen's stored display with a trailing "specimen" word removed and
+repeats dropped, declared as AU preferred terms.
 
 ## Rate limiting and caching
 
