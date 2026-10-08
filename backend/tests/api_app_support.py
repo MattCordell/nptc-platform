@@ -54,6 +54,7 @@ from nptc.api.dependencies import (
     get_api_settings,
     get_auth_settings,
     get_session,
+    get_snomed_synonym_source,
     get_terminology_client,
     get_token_verifier,
 )
@@ -67,6 +68,7 @@ from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.session import discard_after_commit_actions, run_after_commit_actions
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terminology.synonyms import SnomedSynonymSource
 from nptc.terms.acceptance import has_accepted
 from nptc_shared.terminology import StubTerminologyClient
 
@@ -296,6 +298,8 @@ def build_api_test_app(
         app.dependency_overrides[get_token_verifier] = lambda: verifier
         app.dependency_overrides[get_auth_settings] = lambda: settings
         app.dependency_overrides[get_terminology_client] = lambda: terminology_client
+        synonym_source = SnomedSynonymSource(terminology_client)
+        app.dependency_overrides[get_snomed_synonym_source] = lambda: synonym_source
 
         # raise_server_exceptions=False so a handler-mapped error is
         # observed as the HTTP response a real client would see, not

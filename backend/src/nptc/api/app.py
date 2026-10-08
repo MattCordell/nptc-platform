@@ -13,7 +13,12 @@ from collections.abc import Callable
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nptc.api.dependencies import get_api_settings, get_auth_settings, get_terminology_client
+from nptc.api.dependencies import (
+    get_api_settings,
+    get_auth_settings,
+    get_snomed_synonym_source,
+    get_terminology_client,
+)
 from nptc.api.errors import register_exception_handlers
 from nptc.api.prefix import API_PREFIX
 from nptc.api.rate_limit import AnonymousRateLimitMiddleware, declare_rate_limit_refusal
@@ -32,6 +37,7 @@ from nptc.api.routers import (
 from nptc.api.terms_gate import declare_terms_refusal, require_current_terms
 from nptc.api.unhandled import UnhandledErrorMiddleware
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terminology.synonyms import SnomedSynonymSource
 from nptc.terms.documents import load_terms_document
 from nptc_shared.terminology import TerminologyClient
 
@@ -72,8 +78,11 @@ def create_app(
     # environment, so it replaces the build.
     if terminology_client is None:
         get_terminology_client()
+        get_snomed_synonym_source()
     else:
+        synonym_source = SnomedSynonymSource(terminology_client)
         app.dependency_overrides[get_terminology_client] = lambda: terminology_client
+        app.dependency_overrides[get_snomed_synonym_source] = lambda: synonym_source
 
     # A current version with no file would refuse every contribution with nothing to show.
     load_terms_document(api_settings.terms_current_version)

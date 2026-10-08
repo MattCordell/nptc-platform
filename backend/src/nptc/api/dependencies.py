@@ -40,6 +40,7 @@ from nptc.db.session import session_scope
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.terminology.synonyms import SnomedSynonymSource, interactive_config
 from nptc_shared.terminology import OntoserverClient, TerminologyClient, TerminologyConfig
 
 _BEARER_PREFIX = "bearer "
@@ -80,6 +81,21 @@ def get_terminology_client() -> TerminologyClient:
     that bypass the factory (a test app, a dependency override).
     """
     return OntoserverClient(TerminologyConfig.from_env())
+
+
+@lru_cache(maxsize=1)
+def get_snomed_synonym_source() -> SnomedSynonymSource:
+    """The detail page's synonym cache, over its own client with a short failure budget.
+
+    A separate `OntoserverClient` from `get_terminology_client`'s, because the budget is a
+    property of the client's config. Built once per process, so its cache outlives a request.
+    `nptc.api.app.create_app` calls it at start-up for the same reason it calls
+    `get_terminology_client`.
+    """
+    return SnomedSynonymSource(OntoserverClient(interactive_config(TerminologyConfig.from_env())))
+
+
+SnomedSynonymSourceDep = Annotated[SnomedSynonymSource, Depends(get_snomed_synonym_source)]
 
 
 def get_session() -> Iterator[Session]:
