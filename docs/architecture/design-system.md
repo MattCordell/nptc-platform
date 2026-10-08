@@ -63,6 +63,10 @@ Muted supporting neutrals used throughout: `#5A6462` (secondary text), `#8B9391`
 Sizes in use: headings 26–38px, body/UI 13–15px, helper/meta text 12–12.5px, mono code
 12–13px.
 
+Form fields (text inputs and `Select`) use 16px, above that body range, so they share one
+size and iOS Safari does not zoom the page on focus. Buttons use 14px. A restyle of one
+form field changes the others with it.
+
 ## Layout patterns
 
 - **App shell**: 56–60px top nav bar (serif wordmark left, primary nav links center-left,
