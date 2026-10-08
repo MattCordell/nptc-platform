@@ -80,7 +80,7 @@ from __future__ import annotations
 import ast
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +125,9 @@ from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc_shared.terminology.stub import StubTerminologyClient
 
+_FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
+_FuncKey = tuple[str, str]
+
 #: The three files issue #281's two lock-ordering cycles concern - every
 #: function whose body calls `assert_no_error_collisions` (the collision
 #: lock), mutates `row_version`, or calls `bump_entry_row_version`/
@@ -156,7 +159,7 @@ _SCAN_FILES: tuple[Path, ...] = (
 #: scope by construction - the one documented, named exemption this guard
 #: allows, matching `test_sql_parameterisation.py`'s own convention for a
 #: justified carve-out rather than a silent gap.
-_EXEMPT_FUNCTIONS = frozenset({"bump_entry_row_version"})
+_EXEMPT_FUNCTIONS: frozenset[_FuncKey] = frozenset({("entries", "bump_entry_row_version")})
 
 #: A direct call to any of these, anywhere in a function's body, means that
 #: function can take a lock `acquire_append_lock` must precede -
@@ -173,15 +176,22 @@ _DIRECT_TRIGGER_CALL_NAMES = frozenset(
 )
 
 
-def _call_names(func_def: ast.FunctionDef) -> set[str]:
-    return {
-        node.func.id
-        for node in ast.walk(func_def)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
+def _call_names(func_def: _FuncDef) -> set[str]:
+    """The bare name of every call in `func_def`, whether written `check(...)`
+    or `module.check(...)`: a trigger reached through an attribute must not
+    drop its caller from the derived set."""
+    names: set[str] = set()
+    for node in ast.walk(func_def):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            names.add(node.func.attr)
+    return names
 
 
-def _assigns_row_version(func_def: ast.FunctionDef) -> bool:
+def _assigns_row_version(func_def: _FuncDef) -> bool:
     """Whether `func_def`'s body directly sets some `<object>.row_version`
     - `entry.row_version += 1` inside `bump_entry_row_version`, and
     `save_property_values`'s identical inline bump, are what this catches;
@@ -246,7 +256,7 @@ def _is_acquire_append_lock_call(stmt: ast.stmt) -> bool:
     )
 
 
-def _pre_lock_prechecks(func_def: ast.FunctionDef) -> list[str] | None:
+def _pre_lock_prechecks(func_def: _FuncDef) -> list[str] | None:
     """The `_SESSION_FREE_PRECHECKS` `func_def` runs before its bare
     `acquire_append_lock(<something>)` call, after skipping a leading
     docstring; `None` if any other statement precedes the lock, or the lock
@@ -267,11 +277,11 @@ def _pre_lock_prechecks(func_def: ast.FunctionDef) -> list[str] | None:
     return None
 
 
-def _acquires_lock_before_session_use(func_def: ast.FunctionDef) -> bool:
+def _acquires_lock_before_session_use(func_def: _FuncDef) -> bool:
     return _pre_lock_prechecks(func_def) is not None
 
 
-def _validates_reason_before_lock(func_def: ast.FunctionDef) -> bool:
+def _validates_reason_before_lock(func_def: _FuncDef) -> bool:
     """A writer taking a `reason` must validate it ahead of the lock, so a
     rejected note takes no lock. Vacuously true without a `reason`
     parameter."""
@@ -282,12 +292,11 @@ def _validates_reason_before_lock(func_def: ast.FunctionDef) -> bool:
     return prechecks is not None and "validate_changelog_note" in prechecks
 
 
-def _derive_required_functions() -> dict[str, ast.FunctionDef]:
-    """Every function, across `_SCAN_FILES`, that must acquire the append
-    lock before anything else - derived from source rather than hand-
-    listed, so a new writer added to one of these three modules is caught
-    automatically rather than silently sitting outside a maintained
-    allowlist (round-2 review).
+def _derive_from_sources(sources: Mapping[str, str]) -> dict[_FuncKey, _FuncDef]:
+    """Every function, across the given modules (name to source), that must
+    acquire the append lock before anything else - derived from source rather
+    than hand-listed, so a new writer is caught automatically rather than
+    silently sitting outside a maintained allowlist (round-2 review).
 
     Two passes: a function is in the **base** set if `_DIRECT_TRIGGER_
     CALL_NAMES`/`_assigns_row_version` finds it taking a contended lock
@@ -305,29 +314,42 @@ def _derive_required_functions() -> dict[str, ast.FunctionDef]:
     autoflush before it ever reaches its first delegate call - the exact
     class of gap round-2 review found in the narrower "before the row/
     collision lock" placement this issue's fix moved away from.
+
+    Only module-level `def` and `async def` are keyed, by `(module, name)`:
+    a nested `def` is already part of its enclosing function's body, and two
+    modules may reuse a name. The closure matches on the bare called name, so
+    a shared name widens the set rather than narrowing it.
     """
-    func_defs: dict[str, ast.FunctionDef] = {}
-    for path in _SCAN_FILES:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                func_defs[node.name] = node
+    func_defs: dict[_FuncKey, _FuncDef] = {}
+    for module, source in sources.items():
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                func_defs[(module, node.name)] = node
 
     required = {
-        name
-        for name, func_def in func_defs.items()
+        key
+        for key, func_def in func_defs.items()
         if _call_names(func_def) & _DIRECT_TRIGGER_CALL_NAMES or _assigns_row_version(func_def)
     }
 
     changed = True
     while changed:
         changed = False
-        for name, func_def in func_defs.items():
-            if name not in required and _call_names(func_def) & required:
-                required.add(name)
+        required_names = {name for _, name in required}
+        for key, func_def in func_defs.items():
+            if key not in required and _call_names(func_def) & required_names:
+                required.add(key)
                 changed = True
 
-    return {name: func_defs[name] for name in required - _EXEMPT_FUNCTIONS}
+    return {key: func_defs[key] for key in required - _EXEMPT_FUNCTIONS}
+
+
+def _scanned_sources() -> dict[str, str]:
+    return {path.stem: path.read_text(encoding="utf-8") for path in _SCAN_FILES}
+
+
+def _derive_required_functions() -> dict[_FuncKey, _FuncDef]:
+    return _derive_from_sources(_scanned_sources())
 
 
 def test_acquire_append_lock_precedes_every_session_touching_statement() -> None:
@@ -362,9 +384,9 @@ def test_reason_is_validated_before_the_append_lock() -> None:
     assert violations == []
 
 
-def _parse_function(source: str) -> ast.FunctionDef:
+def _parse_function(source: str) -> _FuncDef:
     node = ast.parse(source).body[0]
-    assert isinstance(node, ast.FunctionDef)
+    assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     return node
 
 
@@ -425,6 +447,82 @@ def test_guard_accepts_a_reason_guarded_precheck_before_the_lock() -> None:
 def test_guard_requires_reason_validation_before_the_lock(body: str) -> None:
     func_def = _parse_function(f"def write(session, term, reason):\n{body}")
     assert not _validates_reason_before_lock(func_def)
+
+
+_UNLOCKED_WRITER = "def write(session):\n    assert_no_error_collisions(session)\n"
+_LOCKED_WRITER = (
+    "def write(session):\n"
+    "    acquire_append_lock(session)\n"
+    "    assert_no_error_collisions(session)\n"
+)
+
+
+def _violations(sources: Mapping[str, str]) -> list[_FuncKey]:
+    return sorted(
+        key
+        for key, func_def in _derive_from_sources(sources).items()
+        if not _acquires_lock_before_session_use(func_def)
+    )
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_derives_an_async_writer() -> None:
+    source = "async def write(session):\n    assert_no_error_collisions(session)\n"
+    assert _violations({"mod": source}) == [("mod", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_keeps_same_named_writers_in_different_modules_apart() -> None:
+    assert _violations({"good": _LOCKED_WRITER, "bad": _UNLOCKED_WRITER}) == [("bad", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_is_not_masked_by_a_nested_function_sharing_a_writers_name() -> None:
+    source = (
+        _UNLOCKED_WRITER
+        + "\n\ndef other(session):\n"
+        + "    acquire_append_lock(session)\n"
+        + "    def write():\n"
+        + "        pass\n"
+    )
+    assert _violations({"mod": source}) == [("mod", "write")]
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def write(session):\n    collisions.assert_no_error_collisions(session)\n",
+        "def helper(session):\n    assert_no_error_collisions(session)\n"
+        "\n\ndef write(session):\n    module.helper(session)\n",
+    ],
+    ids=["direct-trigger", "closure-through-a-derived-function"],
+)
+def test_guard_derives_a_writer_that_calls_through_an_attribute(source: str) -> None:
+    assert ("mod", "write") in _derive_from_sources({"mod": source})
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_keeps_the_closure_flowing_through_an_exempt_function() -> None:
+    exempt_module, exempt_name = next(iter(_EXEMPT_FUNCTIONS))
+    source = (
+        f"def {exempt_name}(session):\n    record_change(session)\n"
+        f"\n\ndef caller(session):\n    {exempt_name}(session)\n"
+    )
+    derived = _derive_from_sources({exempt_module: source})
+    assert (exempt_module, exempt_name) not in derived
+    assert (exempt_module, "caller") in derived
+
+
+@pytest.mark.req("NFR-08")
+def test_every_exemption_names_a_function_that_exists() -> None:
+    present = {
+        (path.stem, node.name)
+        for path in _SCAN_FILES
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert sorted(_EXEMPT_FUNCTIONS - present) == []
 
 
 def _inputs(*values: object) -> list[PropertyValueInput]:
