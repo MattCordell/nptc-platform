@@ -173,6 +173,15 @@ describe("a code that an entry binds", () => {
     expect(result).not.toHaveTextContent("Retired");
   });
 
+  it("still shows the entry when its bindings do not list the code", async () => {
+    await renderLookup(LONG_CODE, [lookupRoute(LONG_CODE, { body: entry([]) })]);
+
+    const result = await screen.findByRole("region", { name: "Matching entry" });
+    expect(result).toHaveTextContent("Ferritin");
+    expect(result).toHaveTextContent(LONG_CODE);
+    expect(result).not.toHaveTextContent("Retired");
+  });
+
   it("links back to the lookup form", async () => {
     await renderLookup(LONG_CODE, [lookupRoute(LONG_CODE)]);
 
