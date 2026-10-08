@@ -140,12 +140,15 @@ class AnonymousRateLimitMiddleware:
 
 
 def _header(headers: Sequence[tuple[bytes, bytes]], name: bytes) -> str | None:
-    for key, value in headers:
-        if key == name:
-            return value.decode("latin-1")
-    return None
+    """Every line of the header, joined in order as RFC 9110 defines them to mean: a proxy
+    may append its own `X-Forwarded-For` line rather than extend the caller's."""
+    values = [value.decode("latin-1") for key, value in headers if key == name]
+    return ", ".join(values) if values else None
 
 
+_HTTP_METHODS: Final = frozenset(
+    {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+)
 _REFUSAL_REF: Final = {"$ref": "#/components/schemas/RateLimitedResponse"}
 _REFUSAL_DESCRIPTION: Final = (
     "An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number "
@@ -182,8 +185,10 @@ def _add_rate_limit_refusal(schema: dict[str, Any]) -> None:
     components["RateLimitedResponse"] = RateLimitedResponse.model_json_schema(
         ref_template="#/components/schemas/{model}"
     )
-    for operations in schema.get("paths", {}).values():
-        for operation in operations.values():
+    for path_item in schema.get("paths", {}).values():
+        for method, operation in path_item.items():
+            if method not in _HTTP_METHODS:
+                continue
             operation.setdefault("responses", {}).setdefault(
                 "429",
                 {

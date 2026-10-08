@@ -24,7 +24,11 @@ from starlette.testclient import TestClient
 from nptc.api.app import create_app
 from nptc.api.dependencies import request_audit_context
 from nptc.api.prefix import API_PREFIX
-from nptc.api.rate_limit import RATE_LIMITED_DETAIL, AnonymousRateLimitMiddleware
+from nptc.api.rate_limit import (
+    RATE_LIMITED_DETAIL,
+    AnonymousRateLimitMiddleware,
+    _add_rate_limit_refusal,
+)
 from nptc.auth.permissions import Role
 
 
@@ -228,6 +232,20 @@ def test_an_untrusted_peer_cannot_pick_its_own_budget_with_a_forged_header() -> 
 
 
 @pytest.mark.req("NFR-24")
+def test_a_header_split_over_several_lines_is_read_as_one_list() -> None:
+    """A proxy may append its own `X-Forwarded-For` line instead of extending the caller's.
+    Reading only the first line would believe what the caller wrote."""
+    client = _app_client(_Clock(), limit=1, trusted_proxies="10.0.0.0/8", peer=("10.0.0.5", 4000))
+
+    def call(forged: str) -> int:
+        headers = [("X-Forwarded-For", forged), ("X-Forwarded-For", "203.0.113.7")]
+        return int(client.get(_COUNTED, headers=headers).status_code)
+
+    assert call("192.0.2.1") == 200
+    assert call("192.0.2.2") == 429
+
+
+@pytest.mark.req("NFR-24")
 def test_a_proxy_that_forwards_loopback_does_not_earn_an_exemption_for_a_forger() -> None:
     """Only the address the trusted proxy appended is believed, so `127.0.0.1` written by the
     caller at the left of the header is not an exemption."""
@@ -316,6 +334,24 @@ def test_every_operation_declares_the_429_with_its_retry_after_header() -> None:
         }
     body = schema["components"]["schemas"]["RateLimitedResponse"]
     assert set(body["required"]) == {"detail", "bulk_artefacts"}
+
+
+@pytest.mark.req("FR-22")
+def test_the_429_is_added_to_operations_only_not_to_other_path_item_fields() -> None:
+    """A path item may carry shared `parameters` (a list) beside its operations."""
+    schema: dict[str, Any] = {
+        "paths": {
+            "/things": {
+                "parameters": [{"name": "id", "in": "query"}],
+                "get": {"responses": {"200": {"description": "ok"}}},
+            }
+        }
+    }
+
+    _add_rate_limit_refusal(schema)
+
+    assert "429" in schema["paths"]["/things"]["get"]["responses"]
+    assert schema["paths"]["/things"]["parameters"] == [{"name": "id", "in": "query"}]
 
 
 @pytest.fixture

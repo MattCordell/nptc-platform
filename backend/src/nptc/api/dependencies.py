@@ -173,9 +173,7 @@ def _client_ip(request: Request) -> str | None:
     `AuditContext` models; a placeholder string would be a fabricated fact
     in an append-only log.
 
-    `AnonymousRateLimitMiddleware` has already decided the address, honouring
-    `X-Forwarded-For` from a trusted proxy (`nptc.api.client_ip`). Without it every caller
-    behind Caddy would be recorded as the proxy.
+    The address `AnonymousRateLimitMiddleware` decided, so Caddy is not recorded as the caller.
     """
     if "client_address" in request.scope.get("state", {}):
         decided: str | None = request.state.client_address
