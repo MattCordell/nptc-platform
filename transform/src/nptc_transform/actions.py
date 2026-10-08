@@ -138,6 +138,11 @@ ACTION_BY_CODE: dict[str, str] = {
         "an active concept under 123038009 (Specimen) (FR-88). The import is "
         "blocked until the map is corrected."
     ),
+    FindingCode.SPECIMEN_MAP_NO_PREFERRED_TERM: (
+        "A terminologist must check why SNOMED CT-AU serves no preferred term for this "
+        "code, and correct the target code in the specimen map to a concept that has "
+        "one (FR-88). The import is blocked until it does."
+    ),
     FindingCode.DESIGNATION_COLLISION: (
         "RCPA-QAP must decide which entry changes: reword the term on one of "
         "the named rows, or remove the duplicate row, at source (FR-05, PRD 6.3). "

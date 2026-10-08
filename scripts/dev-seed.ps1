@@ -85,7 +85,8 @@ try {
 
     $code = Invoke-Step 'Run the transform on the sample workbook' 'uv' @(
         'run', 'nptc-transform', 'run', '--workbook', $WorkbookCopy,
-        '--emit-dataset', '--release-name', $ReleaseName, '--report-dir', $RawDir)
+        '--emit-dataset', '--release-name', $ReleaseName, '--check-terminology',
+        '--report-dir', $RawDir)
     if ($code -ne 0) { Write-Host "error: the transform failed (exit $code)"; exit $ExitTransformFailed }
 
     $code = Invoke-Step 'Drop the entries the loader would refuse' 'uv' @(

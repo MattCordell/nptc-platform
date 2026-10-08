@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import socket
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -19,8 +20,12 @@ import openpyxl
 import pytest
 from openpyxl.worksheet.worksheet import Worksheet
 
-from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
-from nptc_shared.terminology.stub import StubConcept
+from nptc_shared.terminology.models import (
+    AU_LANGUAGE_TAG,
+    PROCEDURE_ROOT_CODE,
+    SPECIMEN_ROOT_CODE,
+)
+from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_transform.specimen_map import SPECIMEN_MAP
 
 
@@ -49,11 +54,49 @@ def specimen_map_concepts() -> tuple[StubConcept, ...]:
     root, so a stub-backed run passes the specimen map check (ADR-0044)."""
     return tuple(
         StubConcept(
-            code=code, fsn=f"Fixture specimen {code} (specimen)", parents=(SPECIMEN_ROOT_CODE,)
+            code=code,
+            fsn=f"Fixture specimen {code} (specimen)",
+            preferred_terms={AU_LANGUAGE_TAG: f"Fixture specimen {code}"},
+            parents=() if code == SPECIMEN_ROOT_CODE else (SPECIMEN_ROOT_CODE,),
         )
         for code in SPECIMEN_MAP.codes
-        if code != SPECIMEN_ROOT_CODE
     )
+
+
+AU_VERSION = "http://snomed.info/sct/32506021000036107/version/20260531"
+
+
+class _ServedStub(StubTerminologyClient):
+    """The stub, wearing ``OntoserverClient``'s context-manager shape so it can stand in
+    for it where the CLI builds one."""
+
+    def __enter__(self) -> _ServedStub:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        return None
+
+
+@pytest.fixture()
+def serve(
+    monkeypatch: pytest.MonkeyPatch, specimen_map_concepts: tuple[StubConcept, ...]
+) -> Callable[..., None]:
+    """Installs a server for the CLI that knows ``codes`` as procedures, plus the whole
+    specimen map, so a ``--check-terminology`` run in this process stays offline (NFR-37)."""
+
+    def _serve(*codes: str, fsn: str | None = None) -> None:
+        procedures = [
+            StubConcept(
+                code=code, fsn=fsn or f"Test {code} (procedure)", parents=(PROCEDURE_ROOT_CODE,)
+            )
+            for code in codes
+        ]
+        server = _ServedStub(
+            concepts=[*procedures, *specimen_map_concepts], resolved_version={"au": AU_VERSION}
+        )
+        monkeypatch.setattr("nptc_transform.cli.OntoserverClient", lambda _config: server)
+
+    return _serve
 
 
 # FR-63's documented published header layout.

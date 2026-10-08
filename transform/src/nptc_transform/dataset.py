@@ -28,7 +28,12 @@ specimen yields no value. An unmapped value never reaches this module: it is a
 blocking finding (``SPECIMEN_VALUE_UNMAPPED``), so ``build_dataset`` is not called.
 ``'Any'`` is coded as the specimen root like any other string.
 
-**Terminology-served enrichment is not done here.** Without
+**Specimen display.** The AU preferred term the specimen map check resolved for the code
+(``SpecimenMapRun.preferred_terms``), so the list read model shows a SNOMED CT term and not the
+workbook's wording. ``None`` when the run had no sweep; the CLI refuses ``--emit-dataset``
+without ``--check-terminology``, so an emitted dataset always carries it.
+
+**Other terminology-served enrichment is not done here.** Without
 ``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
 ``fsn``/``au_preferred_term`` come from the published cell text or ``None``.
 Filling them from a live sweep's served designations (FR-82) needs the per-code
@@ -56,7 +61,7 @@ from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SNOMED_SYSTEM = "http://snomed.info/sct"
 _LANGUAGE_EN_AU = "en-AU"
@@ -89,10 +94,12 @@ class CodeBinding:
 @dataclass(frozen=True)
 class PropertyValue:
     """One property value - a discipline, subgroup or specimen assertion.
-    ``code`` is ``None`` for discipline/subgroup always, and never for a specimen."""
+    ``code`` is ``None`` for discipline/subgroup always, and never for a specimen.
+    ``display`` is the specimen code's AU preferred term, and ``None`` for the others."""
 
     value: str
     code: str | None = None
+    display: str | None = None
 
 
 @dataclass(frozen=True)
@@ -191,7 +198,9 @@ def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBind
     )
 
 
-def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[PropertyValue, ...]:
+def _build_specimen(
+    row_cells: Mapping[ColumnRole, Cell], preferred_terms: Mapping[str, str]
+) -> tuple[PropertyValue, ...]:
     """Mirrors ``cell_defects._scan_specimen``. A value the reviewed map does not
     cover is a caller error (the run was blocked), so it raises rather than seeding
     a specimen with no code.
@@ -205,7 +214,9 @@ def _build_specimen(row_cells: Mapping[ColumnRole, Cell]) -> tuple[PropertyValue
         if entry is None:
             raise ValueError(f"specimen {value!r} is not in the specimen map; the run was blocked")
         if entry.code is not None:
-            values.append(PropertyValue(value=value, code=entry.code))
+            values.append(
+                PropertyValue(value=value, code=entry.code, display=preferred_terms.get(entry.code))
+            )
     return tuple(values)
 
 
@@ -234,11 +245,12 @@ def build_dataset(
     order. A row skipped for either reason (FR-100) shifts every later business
     key down by one; no gap is left.
     """
+    preferred_terms = dict(result.specimen_map.preferred_terms) if result.specimen_map else {}
     entries: list[ImportEntry] = []
     for sequence, source_row in enumerate(seedable_rows(sheets), start=1):
         row_cells = source_row.cells
         preferred_cell = row_cells[ColumnRole.PREFERRED_TERM]
-        specimen = _build_specimen(row_cells)
+        specimen = _build_specimen(row_cells, preferred_terms)
         entries.append(
             ImportEntry(
                 business_key=_business_key(sequence),
@@ -292,7 +304,7 @@ def _code_binding_payload(binding: CodeBinding) -> dict[str, object]:
 
 
 def _property_value_payload(value: PropertyValue) -> dict[str, object]:
-    return {"value": value.value, "code": value.code}
+    return {"value": value.value, "code": value.code, "display": value.display}
 
 
 def _entry_payload(entry: ImportEntry) -> dict[str, object]:

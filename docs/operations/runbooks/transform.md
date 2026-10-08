@@ -34,9 +34,9 @@ uv run nptc-transform run --workbook path/to/SPIA-Requesting.xlsx
 | `--workbook` | *(required)* | Path to the source `.xlsx`. Must exist and be readable. |
 | `--report-dir` | `transform-report` | Directory the report files are written into. Created if missing. Must be a directory path, not an existing file. |
 | `--report-only` | on | Write a report and mutate nothing. This is the default; the flag exists so a script can state the mode explicitly. Mutually exclusive with `--emit-dataset`. |
-| `--emit-dataset` | off | Opt into the mutating mode: apply the auto-correctable band's repairs and write `import-dataset.json` alongside the report (FR-70, FR-76, P0-9). Requires `--release-name`. |
+| `--emit-dataset` | off | Opt into the mutating mode: apply the auto-correctable band's repairs and write `import-dataset.json` alongside the report (FR-70, FR-76, P0-9). Requires `--release-name` and `--check-terminology`: each specimen's display is its SNOMED CT-AU preferred term, which only the server can supply. Without `--check-terminology` the run exits `2` and writes nothing. |
 | `--release-name` | *(none)* | The synthetic baseline release's name, `YYYY-MM` (FR-57), e.g. `2026-06`. Required with `--emit-dataset`; refused without it - the name cannot be derived from the workbook or the clock without breaking FR-73's determinism guarantee, so it must be supplied explicitly. |
-| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below), run the FR-75 semantic-drift review of specimen/timing wording (see "Interpreting a semantic-drift finding" below), and check that every code in the specimen map is an active concept under `<<123038009` (see "The specimen map" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
+| `--check-terminology` | off | Validate every code binding against SNOMED CT-AU and International (FR-52, FR-74, FR-84, FR-99), reconcile every published label against its bound concept's designation set (FR-97), give the FR-79 misspelling heuristics an authority whitelist built from the served designations (see "Interpreting a misspelling finding" below), run the FR-75 semantic-drift review of specimen/timing wording (see "Interpreting a semantic-drift finding" below), check that every code in the specimen map is an active concept under `<<123038009`, and collect each one's AU preferred term for the import dataset (see "The specimen map" below). **The only part of the run that uses the network**; reads `NPTC_TX_*` (see [configuration](../configuration.md)). |
 
 Running with no flags at all prints help and exits 0; `--workbook` is required
 to actually run.
@@ -147,6 +147,7 @@ corrected, and each defect is reported under one of two codes chosen by
 | `SPECIMEN_VALUE_NO_EQUIVALENT` | - | A `Specimen` cell value is marked "no map" in the reviewed specimen map (for example `N/A`, or `Breath` until SNOMED CT has a concept for it). No specimen is seeded for it. Informational. |
 | `SPECIMEN_ROOT_WITH_OTHERS` | - | A `Specimen` cell holds a string that maps to `123038009 \|Specimen\|` (the "any specimen" value, such as `Any`) beside another specimen (FR-89). The root must stand alone. |
 | `SPECIMEN_MAP_CODE_OUT_OF_SCOPE` | - | A code in the specimen map is not an active concept under `<<123038009` in SNOMED CT-AU (FR-88). Raised only with `--check-terminology`. The location is the map's own `Target code` cell, for example `specimen_map.tsv!C15`. |
+| `SPECIMEN_MAP_NO_PREFERRED_TERM` | - | A code in the specimen map passed the check above, but SNOMED CT-AU served no AU preferred term for it. The dataset stores that term as the specimen's display, so the run is blocked rather than seed a blank label. Raised only with `--check-terminology`. The location is the map's own `Target code` cell. |
 | `MISSING_PREFERRED_TERM` | - | A row resolves a code binding but carries no `RCPA Preferred term` value (P0-9/#31). Row-level, not cell-level - the defect is the absence of a cell, so nothing can be recovered or coerced; the row would otherwise be silently omitted from the seeded baseline. |
 | `MISSING_CODE_BINDING` | - | A row carries a `RCPA Preferred term` value but resolves no code binding at all (FR-100/#132). Mirror of `MISSING_PREFERRED_TERM` for the opposite column - reported against the preferred-term cell's reference. Unlike that code, the row is never seeded once flagged: a code-less row is judged more likely to be layout (a heading, a continuation line) than a genuine entry, so `build_dataset` omits it entirely rather than seeding an empty `code_bindings` list. |
 | `DESIGNATION_COLLISION` | - | A preferred term or synonym that the seed loader would refuse under FR-05: a preferred term equal to an earlier entry's preferred term or synonym, or a synonym equal to an earlier entry's preferred term, compared with `nptc_shared.similarity.collision_key`. Reported against the later entry's cell and naming the earlier entries by sheet and row. Only rows the loader would seed are compared. A synonym shared by two entries is a warning in the backend and is not reported. |
@@ -201,7 +202,7 @@ class, cite exact cell references, and state the required action. Both
 files satisfy all three from the same grouped data
 (`report_writer._group_findings`); neither is derived from the other.
 
-### `report.json` (`schema_version` 9)
+### `report.json` (`schema_version` 10)
 
 Findings are grouped by `code` into a `defect_classes` array - the flat,
 per-finding `findings` list schema 6 had is gone; nothing outside
@@ -212,6 +213,7 @@ unchanged from schema 7. Schema 9 (ADR-0044) removes
 `SPECIMEN_UNCONSTRAINED_RESOLVED`, adds `SPECIMEN_VALUE_NO_EQUIVALENT`,
 `SPECIMEN_ROOT_WITH_OTHERS` and `SPECIMEN_MAP_CODE_OUT_OF_SCOPE`, adds the
 `specimen_map` provenance block, and drops `drift.specimen_column_values_unmapped`.
+Schema 10 adds `SPECIMEN_MAP_NO_PREFERRED_TERM` and leaves the shape unchanged.
 
 ```json
 "defect_classes": [
@@ -301,6 +303,7 @@ action:
 | `SPECIMEN_VALUE_UNMAPPED` | data-defect | A terminologist must add this specimen string to the specimen map with a verified SNOMED CT code, or RCPA-QAP must correct the cell to a string the map already covers (FR-88). The import is blocked until it is resolved. |
 | `SPECIMEN_ROOT_WITH_OTHERS` | data-defect | RCPA-QAP must keep 'Any' as the only specimen in the cell, or remove it and list the named specimens (FR-89). The import is blocked until the cell is corrected at source. |
 | `SPECIMEN_MAP_CODE_OUT_OF_SCOPE` | data-defect | A terminologist must correct the target code in the specimen map to an active concept under 123038009 (Specimen) (FR-88). The import is blocked until the map is corrected. |
+| `SPECIMEN_MAP_NO_PREFERRED_TERM` | data-defect | A terminologist must check why SNOMED CT-AU serves no preferred term for this code, and correct the target code in the specimen map to a concept that has one (FR-88). The import is blocked until it does. |
 | `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
 | `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
 | `LABEL_DESIGNATION_DRIFT` | informational | No action required. Server-sourced FSN seeding is deferred (ADR-0010); the published label is seeded as-is, and the drift is recorded for editorial review only if unexpected (FR-97). The import is not blocked. |
@@ -321,12 +324,12 @@ so change both in the same PR.
 
 `--emit-dataset --release-name YYYY-MM` writes a third file,
 `import-dataset.json`, into `--report-dir` alongside the report - never
-instead of it. Requires `--release-name`; refuses (exit `2`, nothing
-written) without it or with a malformed one.
+instead of it. Requires `--release-name` and `--check-terminology`; refuses (exit `2`, nothing
+written) without either or with a malformed release name.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.0.0",
   "source": {"filename": "SPIA-Requesting.xlsx", "sha256": "…"},
   "baseline_release": {
@@ -351,9 +354,9 @@ written) without it or with a malformed one.
         }
       ],
       "properties": {
-        "discipline": [{"value": "Chemical", "code": null}],
-        "subgroup": [{"value": "Coagulation", "code": null}],
-        "specimen": [{"value": "Serum", "code": "119364003"}],
+        "discipline": [{"value": "Chemical", "code": null, "display": null}],
+        "subgroup": [{"value": "Coagulation", "code": null, "display": null}],
+        "specimen": [{"value": "Serum", "code": "119364003", "display": "Serum"}],
         "usage_guidance": null
       }
     }
@@ -395,6 +398,11 @@ string the map does not cover blocks the run, so no dataset is written
 (`SPECIMEN_ROOT_WITH_OTHERS`). `schema_version` 2 drops the
 `specimen_unconstrained` entry field that version 1 carried, so the loader
 refuses a version 1 file with a message that names the version.
+`schema_version` 3 adds `display` to every property value. For a specimen it is
+the code's SNOMED CT-AU preferred term, resolved by the `--check-terminology`
+pass (the map's own `Target display` is the FSN with its tag, so it is not used).
+For a discipline or subgroup it is `null`. The loader stores the specimen's
+`display` as given and refuses a version 2 file.
 
 **A blocking finding aborts emission, not the report.** Exit `1`, the report
 is written as usual, and `import-dataset.json` is not written at all - a
@@ -441,6 +449,10 @@ is `SPECIMEN_ROOT_WITH_OTHERS`.
 - **`SPECIMEN_MAP_CODE_OUT_OF_SCOPE`.** The finding names the map row by line.
   A terminologist checks the code in SNOMED CT-AU and corrects the row. The
   code may be inactive, mistyped or outside `<<123038009`.
+- **`SPECIMEN_MAP_NO_PREFERRED_TERM`.** The finding names the map row by line.
+  The code is an active specimen concept, but the server returned no AU
+  preferred term for it. Check the server's answer for that code first; a
+  server fault clears on a re-run. Otherwise a terminologist replaces the code.
 
 ## Terminology validation (`--check-terminology`)
 
@@ -483,7 +495,8 @@ catalogue scale at all:
 6. **The specimen map check costs `ceil(M / NPTC_TX_CHUNK_SIZE)` further
    `$expand` calls**, where `M` is the number of distinct codes in the map (78
    today, so one). Each is `(codes) AND <<123038009` against SNOMED CT-AU
-   (FR-88). A code missing from the answer is reported, whatever the reason.
+   (FR-88). A code missing from the answer is reported, whatever the reason. A
+   second pass of the same size asks for each passing code's AU preferred term.
 
 There is never one request per code per edition. A 429 is retried honouring
 `Retry-After` with exponential backoff, by the shared client (see the

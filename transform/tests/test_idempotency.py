@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import openpyxl
@@ -88,8 +89,9 @@ def test_rerun_replaces_a_stale_report_rather_than_skipping_or_appending(
 @pytest.mark.req("FR-73")
 @pytest.mark.req("FR-76")
 def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
-    tmp_path: Path, sample_workbook: Path
+    tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
+    serve("10000006", fsn="Sample test")
     report_dir = tmp_path / "report"
 
     args = [
@@ -101,6 +103,7 @@ def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
         "--emit-dataset",
         "--release-name",
         "2026-06",
+        "--check-terminology",
     ]
 
     first = runner.invoke(app, args)
@@ -122,8 +125,9 @@ def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
 @pytest.mark.req("FR-73")
 @pytest.mark.req("FR-76")
 def test_rerun_replaces_a_stale_import_dataset_rather_than_skipping_or_appending(
-    tmp_path: Path, sample_workbook: Path
+    tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
+    serve("10000006", fsn="Sample test")
     report_dir = tmp_path / "report"
     report_dir.mkdir(parents=True)
     (report_dir / "import-dataset.json").write_text("not a real dataset", encoding="utf-8")
@@ -139,6 +143,7 @@ def test_rerun_replaces_a_stale_import_dataset_rather_than_skipping_or_appending
             "--emit-dataset",
             "--release-name",
             "2026-06",
+            "--check-terminology",
         ],
     )
 

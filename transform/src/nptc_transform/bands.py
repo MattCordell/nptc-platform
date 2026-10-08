@@ -63,6 +63,7 @@ class FindingCode(StrEnum):
     SPECIMEN_VALUE_NO_EQUIVALENT = "SPECIMEN_VALUE_NO_EQUIVALENT"
     SPECIMEN_ROOT_WITH_OTHERS = "SPECIMEN_ROOT_WITH_OTHERS"
     SPECIMEN_MAP_CODE_OUT_OF_SCOPE = "SPECIMEN_MAP_CODE_OUT_OF_SCOPE"
+    SPECIMEN_MAP_NO_PREFERRED_TERM = "SPECIMEN_MAP_NO_PREFERRED_TERM"
     CODE_CELL_INVALID_TYPE = "CODE_CELL_INVALID_TYPE"
     NUMERIC_PRECISION_RISK = "NUMERIC_PRECISION_RISK"
     UNRECOGNISED_LAYOUT = "UNRECOGNISED_LAYOUT"
@@ -167,6 +168,9 @@ BAND_BY_CODE: dict[str, Band] = {
     FindingCode.SPECIMEN_ROOT_WITH_OTHERS: Band.DATA_DEFECT,
     # FR-88: a map code outside <<123038009 would seed a specimen the binding refuses.
     FindingCode.SPECIMEN_MAP_CODE_OUT_OF_SCOPE: Band.DATA_DEFECT,
+    # FR-88: the dataset's specimen display is the AU preferred term, so a code the server
+    # serves none for would seed a blank label.
+    FindingCode.SPECIMEN_MAP_NO_PREFERRED_TERM: Band.DATA_DEFECT,
     # Informational: the map has no concept for the value; nothing to repair.
     FindingCode.SPECIMEN_VALUE_NO_EQUIVALENT: Band.INFORMATIONAL,
 }
