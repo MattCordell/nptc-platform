@@ -172,7 +172,14 @@ def _client_ip(request: Request) -> str | None:
     `None` (an unknown address) is the honest answer and the one
     `AuditContext` models; a placeholder string would be a fabricated fact
     in an append-only log.
+
+    `AnonymousRateLimitMiddleware` has already decided the address, honouring
+    `X-Forwarded-For` from a trusted proxy (`nptc.api.client_ip`). Without it every caller
+    behind Caddy would be recorded as the proxy.
     """
+    if "client_address" in request.scope.get("state", {}):
+        decided: str | None = request.state.client_address
+        return decided
     if request.client is None:
         return None
     try:

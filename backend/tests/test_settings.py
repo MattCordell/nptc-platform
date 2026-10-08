@@ -4,6 +4,7 @@ No container, no network - pure environment-variable plumbing.
 """
 
 import importlib.util
+import ipaddress
 import sys
 from pathlib import Path
 
@@ -11,6 +12,9 @@ import pytest
 from pydantic import ValidationError
 
 from nptc.settings import (
+    DEFAULT_ANON_RATE_LIMIT_REQUESTS,
+    DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_BULK_ARTEFACTS_URL,
     ApiSettings,
     AuthSettings,
     DatabaseSettings,
@@ -344,3 +348,116 @@ def test_api_settings_rejects_a_non_positive_max_preferred_term_length(value: in
     length against a nonsensical value."""
     with pytest.raises(ValidationError, match="max_preferred_term_length"):
         ApiSettings(max_preferred_term_length=value)
+
+
+@pytest.mark.req("NFR-24")
+def test_api_settings_rate_limit_defaults_leave_room_for_bulk_retrieval() -> None:
+    settings = hermetic_api_settings()
+
+    assert settings.anon_rate_limit_requests == DEFAULT_ANON_RATE_LIMIT_REQUESTS
+    assert settings.anon_rate_limit_window_seconds == DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS
+    assert settings.bulk_artefacts_url == DEFAULT_BULK_ARTEFACTS_URL
+    assert settings.trusted_proxies == ()
+
+
+@pytest.mark.req("NFR-24")
+def test_api_settings_reads_the_rate_limit_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPTC_ANON_RATE_LIMIT_REQUESTS", "5")
+    monkeypatch.setenv("NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS", "2")
+
+    settings = ApiSettings()
+
+    assert (settings.anon_rate_limit_requests, settings.anon_rate_limit_window_seconds) == (5, 2)
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize(
+    "name", ["NPTC_ANON_RATE_LIMIT_REQUESTS", "NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS"]
+)
+def test_api_settings_treats_a_blank_rate_limit_env_as_the_default(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Compose passes an unset `NPTC_*` variable through as the empty string."""
+    monkeypatch.setenv(name, "")
+
+    settings = ApiSettings()
+
+    assert settings.anon_rate_limit_requests == DEFAULT_ANON_RATE_LIMIT_REQUESTS
+    assert settings.anon_rate_limit_window_seconds == DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize("field", ["anon_rate_limit_requests", "anon_rate_limit_window_seconds"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_api_settings_rejects_a_non_positive_rate_limit(field: str, value: int) -> None:
+    """Zero would refuse every anonymous caller, which no operator means by a limit."""
+    with pytest.raises(ValidationError, match=field):
+        ApiSettings(**{field: value})
+
+
+@pytest.mark.req("NFR-24")
+def test_api_settings_reads_trusted_proxies_as_a_comma_separated_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPTC_TRUSTED_PROXIES", "10.0.0.0/8, 192.0.2.7 ,2001:db8::/32")
+
+    settings = ApiSettings()
+
+    assert settings.trusted_proxies == (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("192.0.2.7/32"),
+        ipaddress.ip_network("2001:db8::/32"),
+    )
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize("value", ["", "  "])
+def test_api_settings_blank_trusted_proxies_trusts_nothing(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NPTC_TRUSTED_PROXIES", value)
+
+    assert ApiSettings().trusted_proxies == ()
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize("value", ["not-an-address", "10.0.0.0/8,nope", "10.1.2.3/8"])
+def test_api_settings_rejects_a_malformed_trusted_proxy(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """A typo must not silently leave the header untrusted behind Caddy, where every
+    caller would then share one budget."""
+    monkeypatch.setenv("NPTC_TRUSTED_PROXIES", value)
+
+    with pytest.raises(ValidationError, match="trusted_proxies"):
+        ApiSettings()
+
+
+@pytest.mark.req("FR-22")
+@pytest.mark.parametrize("value", ["https://releases.example.org/nptc", "/releases/"])
+def test_api_settings_accepts_a_url_or_a_local_path_for_the_bulk_artefacts(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NPTC_BULK_ARTEFACTS_URL", value)
+
+    assert ApiSettings().bulk_artefacts_url == value
+
+
+@pytest.mark.req("FR-22")
+def test_api_settings_blank_bulk_artefacts_url_is_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPTC_BULK_ARTEFACTS_URL", "")
+
+    assert ApiSettings().bulk_artefacts_url == DEFAULT_BULK_ARTEFACTS_URL
+
+
+@pytest.mark.req("FR-22")
+@pytest.mark.parametrize("value", ["releases.example.org", "ftp://example.org/x", "//evil.example"])
+def test_api_settings_rejects_a_bulk_artefacts_url_a_browser_cannot_follow(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("NPTC_BULK_ARTEFACTS_URL", value)
+
+    with pytest.raises(ValidationError, match="bulk_artefacts_url"):
+        ApiSettings()

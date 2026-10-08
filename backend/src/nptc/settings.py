@@ -13,6 +13,7 @@ deployment never runs against a placeholder.
 
 from __future__ import annotations
 
+from ipaddress import IPv4Network, IPv6Network
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -22,6 +23,19 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from nptc.terms.documents import DEFAULT_TERMS_VERSION
 
 _URL_DELIMITERS = ("@", ":", "/", "?", "#", "%")
+
+#: NFR-24 layer 1. The SPA makes several calls per page, and a script that walks the
+#: whole catalogue (about 2,000 terms) in pages must not trip the limit.
+DEFAULT_ANON_RATE_LIMIT_REQUESTS = 600
+DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS = 60
+
+#: Where a rate-limited anonymous caller is told to find the bulk release artefacts
+#: (FR-22). No release exists to serve until FR-21 lands, so this names the
+#: documentation on bulk retrieval; an operator replaces it with the release location.
+DEFAULT_BULK_ARTEFACTS_URL = (
+    "https://github.com/MattCordell/nptc-platform/blob/main/docs/architecture/public-api.md"
+    "#bulk-release-artefacts"
+)
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -232,6 +246,61 @@ class ApiSettings(BaseSettings):
         `NPTC_FRONTEND_BASE_URL` must keep failing, not fall back to localhost."""
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    #: A fixed window, so a rejected caller's `Retry-After` is exact.
+    anon_rate_limit_requests: int = Field(default=DEFAULT_ANON_RATE_LIMIT_REQUESTS, ge=1)
+    anon_rate_limit_window_seconds: int = Field(
+        default=DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS, ge=1
+    )
+
+    #: Absolute http(s) URL, or a path on this origin for release artefacts served
+    #: beside the SPA.
+    bulk_artefacts_url: str = DEFAULT_BULK_ARTEFACTS_URL
+
+    #: The addresses allowed to name a caller's real address in `X-Forwarded-For`
+    #: (`nptc.api.client_ip`). Empty trusts no header, the only safe value when the API
+    #: is reachable directly. Comma-separated, so `NoDecode` as for
+    #: `AuthSettings.trusted_issuers`.
+    trusted_proxies: Annotated[tuple[IPv4Network | IPv6Network, ...], NoDecode] = ()
+
+    @field_validator("trusted_proxies", mode="before")
+    @classmethod
+    def _split_trusted_proxies(cls, value: object) -> object:
+        if isinstance(value, str):
+            return tuple(item.strip() for item in value.split(",") if item.strip())
+        return value
+
+    @field_validator("anon_rate_limit_requests", mode="before")
+    @classmethod
+    def _blank_rate_limit_requests_is_the_default(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_ANON_RATE_LIMIT_REQUESTS
+        return value
+
+    @field_validator("anon_rate_limit_window_seconds", mode="before")
+    @classmethod
+    def _blank_rate_limit_window_is_the_default(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_ANON_RATE_LIMIT_WINDOW_SECONDS
+        return value
+
+    @field_validator("bulk_artefacts_url", mode="before")
+    @classmethod
+    def _bulk_artefacts_url_is_usable(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            return DEFAULT_BULK_ARTEFACTS_URL
+        if value.startswith("/") and not value.startswith("//"):
+            return value
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError(
+                f"bulk_artefacts_url must be an http(s) URL or a path starting with '/', "
+                f"got {value!r}"
+            )
         return value
 
     @field_validator("frontend_base_url")

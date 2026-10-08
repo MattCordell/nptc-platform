@@ -2566,6 +2566,19 @@ export interface components {
              */
             code: "terms_acceptance_required";
         };
+        /** RateLimitedResponse */
+        RateLimitedResponse: {
+            /**
+             * Detail
+             * @description One sentence saying what to do next.
+             */
+            detail: string;
+            /**
+             * Bulk Artefacts
+             * @description Where to fetch the bulk release artefacts instead of paging the API.
+             */
+            bulk_artefacts: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -2620,6 +2633,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     read_current_terms_api_v1_auth_terms_get: {
@@ -2665,6 +2689,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -2734,6 +2769,17 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     accept_current_terms_api_v1_auth_terms_acceptance_post: {
@@ -2794,6 +2840,17 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     list_entries_api_v1_catalogue_entries_get: {
@@ -2837,6 +2894,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -2884,6 +2952,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -2934,6 +3013,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3008,6 +3098,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     read_entry_by_code_api_v1_catalogue_code__system_token___code__get: {
@@ -3058,6 +3159,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3112,6 +3224,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     read_designations_api_v1_catalogue_entries__business_key__designations_get: {
@@ -3160,6 +3283,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3234,6 +3368,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     read_bindings_api_v1_catalogue_entries__business_key__bindings_get: {
@@ -3282,6 +3427,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3358,6 +3514,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
             500: {
                 headers: {
@@ -3417,6 +3584,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     read_history_api_v1_catalogue_entries__business_key__history_get: {
@@ -3470,6 +3648,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3543,6 +3732,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
@@ -3627,6 +3827,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description A platform-side invariant failed, not a caller mistake - e.g. re-reading a binding this same request just wrote could not find it. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
             500: {
                 headers: {
@@ -3708,6 +3919,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     retire_designation_route_api_v1_catalogue_entries__business_key__designations_retirement_post: {
@@ -3778,6 +4000,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3852,6 +4085,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     acknowledge_designation_collision_api_v1_catalogue_entries__business_key__designations_acknowledgement_post: {
@@ -3922,6 +4166,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -3997,6 +4252,17 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
                 headers: {
@@ -4068,6 +4334,17 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
                 headers: {
@@ -4133,6 +4410,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     search_any_status_api_v1_catalogue_admin_search_get: {
@@ -4187,6 +4475,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -4248,6 +4547,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     preferred_term_length_distribution_api_v1_catalogue_admin_preferred_term_length_distribution_get: {
@@ -4286,6 +4596,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     list_datatypes_api_v1_registry_datatypes_get: {
@@ -4322,6 +4643,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -4372,6 +4704,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
@@ -4443,6 +4786,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
                 headers: {
@@ -4510,6 +4864,17 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
                 headers: {
@@ -4566,6 +4931,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
@@ -4637,6 +5013,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
@@ -4719,6 +5106,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
             /** @description The definition's own stored `datatype` no longer matches a registered handler - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
             500: {
                 headers: {
@@ -4789,6 +5187,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The property's own stored value_set_uri could not be interpreted - a data integrity fault in the definition, not a caller mistake. Not produced by anything a well-formed request can trigger on its own. */
@@ -4874,6 +5283,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
@@ -4967,6 +5387,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
         };
     };
     export_audit_events_api_v1_audit_events_export_get: {
@@ -5025,6 +5456,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
