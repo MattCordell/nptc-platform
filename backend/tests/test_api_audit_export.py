@@ -158,16 +158,21 @@ def test_export_entry_hash_cannot_be_recomputed_from_the_exported_line_alone(
     assert {"id", "correlation_id", "actor_ip", "user_agent"} <= omitted_from_export
 
 
+_NON_ASCII_LABEL = "caf" + chr(0xE9)
 _SEEDED_BEFORE: dict[str, object] = {
     "status": "active",
     "tags": ["alpha", "beta"],
-    "nested": {"label": "café"},
+    "nested": {"label": _NON_ASCII_LABEL},
 }
 _SEEDED_AFTER: dict[str, object] = {
     "status": "suspended",
     "tags": ["alpha"],
-    "nested": {"label": "café"},
+    "nested": {"label": _NON_ASCII_LABEL},
 }
+_SEEDED_REASON = "Corrected after review"
+
+#: The export keys that carry no digest content: the position and the two hash columns.
+_EXPORT_KEYS_OUTSIDE_THE_DIGEST = frozenset({"sequence", "prev_hash", "entry_hash"})
 
 #: The digest fields the export omits, so a reader supplies them from the stored row.
 _FIELDS_FROM_STORED_ROW = ("id", "correlation_id", "actor_ip", "user_agent")
@@ -213,9 +218,13 @@ def _digest_fields_from_export(line: dict[str, Any], stored: AuditEvent) -> dict
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-@pytest.mark.parametrize("with_actor", [True, False], ids=["human-actor", "system-actor"])
+@pytest.mark.parametrize(
+    ("with_actor", "reason"),
+    [(True, _SEEDED_REASON), (False, None)],
+    ids=["human-actor-with-reason", "system-actor-null-reason"],
+)
 def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
-    api: ApiTestApp, with_actor: bool
+    api: ApiTestApp, with_actor: bool, reason: str | None
 ) -> None:
     """The positive half of the NFR-10 claim in ADR-0039,
     `docs/architecture/audit-log.md` and the user doc, where the sibling test
@@ -232,6 +241,7 @@ def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
         action="test.updated",
         before=_SEEDED_BEFORE,
         after=_SEEDED_AFTER,
+        reason=reason,
     )
     token = api.admin_token(subject="sub-audit-export-hash-match")
 
@@ -245,23 +255,15 @@ def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
 
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    ("field", "tamper"),
-    [
-        ("action", lambda value: f"{value}.tampered"),
-        ("entity_id", lambda value: f"{value}-tampered"),
-        ("occurred_at", lambda value: value + timedelta(microseconds=1)),
-        ("actor_user_id", lambda value: uuid.uuid4()),
-        ("before", lambda value: {**value, "status": "suspended"}),
-        ("after", lambda value: {**value, "status": "active"}),
-    ],
-)
 def test_export_content_altered_alongside_correct_hashes_fails_the_recompute(
-    api: ApiTestApp, field: str, tamper: Callable[[Any], Any]
+    api: ApiTestApp,
 ) -> None:
-    """The recompute must catch what the old column-only comparison could not: an
-    exported content field that differs from what was hashed while `prev_hash` and
-    `entry_hash` still read correctly."""
+    """An exported content field that differs from what was hashed must fail the
+    recompute, even when `prev_hash` and `entry_hash` read correctly. Alters each
+    exported field of one line and rebuilds the digest through
+    `_digest_fields_from_export`, so it proves every field the line supplies feeds
+    the recompute. That the export serves the hashed content is the job of the
+    cross-reference test above."""
     entity_type = f"test-export-hash-tamper-{uuid.uuid4()}"
     actor = _create_active_user(api, "wendy-api-audit-export")
     _seed(
@@ -270,15 +272,32 @@ def test_export_content_altered_alongside_correct_hashes_fails_the_recompute(
         entity_type=entity_type,
         before=_SEEDED_BEFORE,
         after=_SEEDED_AFTER,
+        reason=_SEEDED_REASON,
     )
     token = api.admin_token(subject="sub-audit-export-hash-tamper")
     line, stored = _export_line_and_stored_row(api, token, entity_type)
-    fields = _digest_fields_from_export(line, stored)
-    assert audit_hashing.compute_entry_hash(fields, line["prev_hash"]) == stored.entry_hash
+    alterations: dict[str, Callable[[Any], Any]] = {
+        "occurred_at": lambda v: (
+            datetime.fromisoformat(v) + timedelta(microseconds=1)
+        ).isoformat(),
+        "actor": lambda v: {**v, "id": str(uuid.uuid4())},
+        "action": lambda v: f"{v}-tampered",
+        "entity_type": lambda v: f"{v}-tampered",
+        "entity_id": lambda v: f"{v}-tampered",
+        "before": lambda v: {**v, "status": "tampered"},
+        "after": lambda v: {**v, "status": "tampered"},
+        "reason": lambda v: f"{v}-tampered",
+    }
+    # A field the export gains later must get an alteration here, not slip past untested.
+    assert alterations.keys() == line.keys() - _EXPORT_KEYS_OUTSIDE_THE_DIGEST
+    untampered = _digest_fields_from_export(line, stored)
+    assert audit_hashing.compute_entry_hash(untampered, line["prev_hash"]) == stored.entry_hash
 
-    fields[field] = tamper(fields[field])
+    for key, alter in alterations.items():
+        fields = _digest_fields_from_export({**line, key: alter(line[key])}, stored)
 
-    assert audit_hashing.compute_entry_hash(fields, line["prev_hash"]) != stored.entry_hash
+        recomputed = audit_hashing.compute_entry_hash(fields, line["prev_hash"])
+        assert recomputed != stored.entry_hash, f"altering exported {key!r} went undetected"
 
 
 @pytest.mark.req("NFR-26")
