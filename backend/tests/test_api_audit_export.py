@@ -14,7 +14,8 @@ import importlib.util
 import json
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -157,31 +158,146 @@ def test_export_entry_hash_cannot_be_recomputed_from_the_exported_line_alone(
     assert {"id", "correlation_id", "actor_ip", "user_agent"} <= omitted_from_export
 
 
+_NON_ASCII_LABEL = "caf" + chr(0xE9)
+_SEEDED_BEFORE: dict[str, object] = {
+    "status": "active",
+    "tags": ["alpha", "beta"],
+    "nested": {"label": _NON_ASCII_LABEL},
+}
+_SEEDED_AFTER: dict[str, object] = {
+    "status": "suspended",
+    "tags": ["alpha"],
+    "nested": {"label": _NON_ASCII_LABEL},
+}
+_SEEDED_REASON = "Corrected after review"
+
+#: The export keys that carry no digest content: the position and the two hash columns.
+_EXPORT_KEYS_OUTSIDE_THE_DIGEST = frozenset({"sequence", "prev_hash", "entry_hash"})
+
+#: The digest fields the export omits, so a reader supplies them from the stored row.
+_FIELDS_FROM_STORED_ROW = ("id", "correlation_id", "actor_ip", "user_agent")
+
+
+def _export_line_and_stored_row(
+    api: ApiTestApp, token: str, entity_type: str
+) -> tuple[dict[str, Any], AuditEvent]:
+    response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
+    line = _ndjson_rows(response)[0]
+    stored = api.session.execute(
+        select(AuditEvent).where(AuditEvent.sequence == line["sequence"])
+    ).scalar_one()
+    return line, stored
+
+
+def _digest_fields_from_export(line: dict[str, Any], stored: AuditEvent) -> dict[str, Any]:
+    """The `compute_entry_hash` input a reader rebuilds from an exported line, with
+    the four fields the line omits taken from the stored row.
+
+    Every exported value is mapped back to the type the writer hashed. A mismatch
+    that traces to this mapping is a bug in the test, not a tampered row."""
+    actor = line["actor"]
+    fields: dict[str, Any] = {
+        # Timezone-aware ISO string, microseconds included; `fromisoformat` restores both.
+        "occurred_at": datetime.fromisoformat(line["occurred_at"]),
+        # The digest key is `actor_user_id`; the line nests it as `actor.id`, or null for
+        # a system event.
+        "actor_user_id": uuid.UUID(actor["id"]) if actor is not None else None,
+        # Text and JSON values come back from `json.loads` as the Python types `jsonb` held.
+        "action": line["action"],
+        "entity_type": line["entity_type"],
+        "entity_id": line["entity_id"],
+        "before": line["before"],
+        "after": line["after"],
+        "reason": line["reason"],
+    }
+    fields.update({name: getattr(stored, name) for name in _FIELDS_FROM_STORED_ROW})
+    # A new digest column fails here, instead of silently dropping out of the recompute.
+    assert fields.keys() == audit_hashing.digest_field_names(AuditEvent.__table__) - {"prev_hash"}
+    return fields
+
+
 @pytest.mark.req("NFR-10")
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("with_actor", "reason"),
+    [(True, _SEEDED_REASON), (False, None)],
+    ids=["human-actor-with-reason", "system-actor-null-reason"],
+)
 def test_export_entry_hash_matches_the_stored_row_for_cross_reference(
-    api: ApiTestApp,
+    api: ApiTestApp, with_actor: bool, reason: str | None
 ) -> None:
-    """The positive half of the corrected NFR-10 claim (PR #309 review
-    round 2) - what ADR-0039/`docs/architecture/audit-log.md`/the user doc
-    now promise, not what the sibling test above proves the export cannot
-    do on its own: a reader with database access can cross-reference an
-    exported line's `prev_hash`/`entry_hash` against the stored row.
-    Looked up by `sequence`, not `id` - the export payload carries the
-    former, not the latter (see the sibling test)."""
+    """The positive half of the NFR-10 claim in ADR-0039,
+    `docs/architecture/audit-log.md` and the user doc, where the sibling test
+    above pins what the export cannot do alone: a reader with database access
+    can rebuild `entry_hash` from the exported line plus the four omitted
+    fields, so the exported content is what the stored hash covers. Looked up
+    by `sequence`, not `id` - the payload carries the former."""
     entity_type = f"test-export-hash-match-{uuid.uuid4()}"
-    actor = _create_active_user(api, "vera-api-audit-export")
-    _seed(api, actor_user_id=actor.id, entity_type=entity_type)
+    actor_id = _create_active_user(api, "vera-api-audit-export").id if with_actor else None
+    _seed(
+        api,
+        actor_user_id=actor_id,
+        entity_type=entity_type,
+        action="test.updated",
+        before=_SEEDED_BEFORE,
+        after=_SEEDED_AFTER,
+        reason=reason,
+    )
     token = api.admin_token(subject="sub-audit-export-hash-match")
 
-    response = api.get("/audit/events/export", token=token, params={"entity_type": entity_type})
+    line, stored = _export_line_and_stored_row(api, token, entity_type)
 
-    row = _ndjson_rows(response)[0]
-    stored = api.session.execute(
-        select(AuditEvent).where(AuditEvent.sequence == row["sequence"])
-    ).scalar_one()
-    assert stored.prev_hash == row["prev_hash"]
-    assert stored.entry_hash == row["entry_hash"]
+    assert stored.prev_hash == line["prev_hash"]
+    assert stored.entry_hash == line["entry_hash"]
+    fields = _digest_fields_from_export(line, stored)
+    assert audit_hashing.compute_entry_hash(fields, line["prev_hash"]) == stored.entry_hash
+
+
+@pytest.mark.req("NFR-10")
+@pytest.mark.integration
+def test_export_content_altered_alongside_correct_hashes_fails_the_recompute(
+    api: ApiTestApp,
+) -> None:
+    """An exported content field that differs from what was hashed must fail the
+    recompute, even when `prev_hash` and `entry_hash` read correctly. Alters each
+    exported field of one line and rebuilds the digest through
+    `_digest_fields_from_export`, so it proves every field the line supplies feeds
+    the recompute. That the export serves the hashed content is the job of the
+    cross-reference test above."""
+    entity_type = f"test-export-hash-tamper-{uuid.uuid4()}"
+    actor = _create_active_user(api, "wendy-api-audit-export")
+    _seed(
+        api,
+        actor_user_id=actor.id,
+        entity_type=entity_type,
+        before=_SEEDED_BEFORE,
+        after=_SEEDED_AFTER,
+        reason=_SEEDED_REASON,
+    )
+    token = api.admin_token(subject="sub-audit-export-hash-tamper")
+    line, stored = _export_line_and_stored_row(api, token, entity_type)
+    alterations: dict[str, Callable[[Any], Any]] = {
+        "occurred_at": lambda v: (
+            datetime.fromisoformat(v) + timedelta(microseconds=1)
+        ).isoformat(),
+        "actor": lambda v: {**v, "id": str(uuid.uuid4())},
+        "action": lambda v: f"{v}-tampered",
+        "entity_type": lambda v: f"{v}-tampered",
+        "entity_id": lambda v: f"{v}-tampered",
+        "before": lambda v: {**v, "status": "tampered"},
+        "after": lambda v: {**v, "status": "tampered"},
+        "reason": lambda v: f"{v}-tampered",
+    }
+    # A field the export gains later must get an alteration here, not slip past untested.
+    assert alterations.keys() == line.keys() - _EXPORT_KEYS_OUTSIDE_THE_DIGEST
+    untampered = _digest_fields_from_export(line, stored)
+    assert audit_hashing.compute_entry_hash(untampered, line["prev_hash"]) == stored.entry_hash
+
+    for key, alter in alterations.items():
+        fields = _digest_fields_from_export({**line, key: alter(line[key])}, stored)
+
+        recomputed = audit_hashing.compute_entry_hash(fields, line["prev_hash"])
+        assert recomputed != stored.entry_hash, f"altering exported {key!r} went undetected"
 
 
 @pytest.mark.req("NFR-26")

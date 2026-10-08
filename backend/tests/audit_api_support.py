@@ -39,6 +39,7 @@ def seed_event(
     action: str = "test.action",
     before: dict[str, object] | None = None,
     after: dict[str, object] | None = None,
+    reason: str | None = None,
 ) -> AuditEvent:
     event = append_audit_event(
         api.session,
@@ -55,6 +56,7 @@ def seed_event(
         entity_id=entity_id,
         before=before,
         after=after,
+        reason=reason,
     )
     api.session.flush()
     return event
