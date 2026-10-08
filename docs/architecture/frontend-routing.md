@@ -28,8 +28,8 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #439) | FR-14, FR-15, FR-16, FR-18 |
 | `/catalogue/$businessKey` (issue #440) | FR-17, FR-18, FR-19 |
 | `/catalogue/$businessKey/history` (+ `before` search param, issue #441, a real screen: `pages/entry-history.tsx`) | FR-19, FR-35 |
-| `/catalogue/code/$systemToken/$code` | FR-17 |
-| `/catalogue/lookup?system=&code=` | FR-17 |
+| `/catalogue/code/$systemToken/$code` (issue #442, a real screen: `pages/code-by-token.tsx`) | FR-17 |
+| `/catalogue/lookup?system=&code=` (issue #442, a real screen: `pages/code-lookup.tsx`) | FR-17 |
 | `/releases`, `/releases/compare?from=&to=`, `/releases/$releaseId` | FR-56–FR-61 |
 | `/exports`, `/about` | FR-62–FR-69, FR-78 |
 | `/terms` (issue #435, a real screen: `pages/terms.tsx`) | NFR-45, NFR-47 |
@@ -103,9 +103,24 @@ The API half of this contract - `GET /catalogue/entries/{business_key}`,
 `GET /catalogue/code/{system_token}/{code}` and `GET /catalogue/lookup`, all serving the
 identical `EntryDetail` body - is documented in
 [public-api.md](public-api.md#exact-code-lookup-fr-17). `/catalogue/{business_key}` is a
-real screen (`pages/catalogue-entry.tsx`, issue #440). The two code lookup routes still
-mount `createPlaceholderPage`; those screens will call the same API and swap their
-placeholders for real screens.
+real screen (`pages/catalogue-entry.tsx`, issue #440).
+
+The two code lookup routes are real screens too (issue #442). Neither redirects to the
+entry. Each shows a result with a link to it, because the API resolves a retired code and a
+redirect would hide that the code is retired on the entry.
+
+- `/catalogue/code/$systemToken/$code` (`pages/code-by-token.tsx`) calls `useEntryByCode`.
+- `/catalogue/lookup` (`pages/code-lookup.tsx`) shows a form. Submitting it navigates to
+  the route above with the code system's token and the trimmed code. When the address
+  already holds both `system` and `code`, the page calls `useEntryBySystemCode` and shows
+  the result under the form.
+- Both render `CodeLookupResult` (`catalogue/code-lookup-result.tsx`): the matching entry, a
+  404 as "No matching entry" using the server's sentence, a 422 as "Code not accepted", and
+  any other failure with **Try again**. The server answers an unregistered system and an
+  unknown code with the same 404, so the page never says which was wrong.
+- The API has no endpoint that lists code systems. `catalogue/code-systems.ts` holds the
+  list the form's select reads, and it must change in the same change that registers a
+  system server-side.
 
 ## Codes are strings, always
 
