@@ -145,3 +145,45 @@ term actually says, contradicting `nptc_shared.text`'s own established doctrine 
 - A term typed directly into the platform is held to the same normalisation contract as
   one ingested from the spreadsheet (FR-63), with no second, looser path for
   operator-entered data.
+
+## Amendment (2026-10-09, FR-04): `designation` has no `use` or `language`
+
+The catalogue is Australian English only, so `designation.language` always held `en-AU`. With
+`ck_designation_no_en_au_preferred` forbidding an en-AU preferred row, the only `use =
+'preferred'` rows the schema allowed were in a second language that does not exist. Migration
+`0026` therefore drops `designation.use`, `designation.language`, `ck_designation_use`,
+`ck_designation_language`, `ck_designation_no_en_au_preferred` and
+`ix_designation_one_active_preferred_per_entry_language`. It also drops
+`designation_collision_acknowledgement.language`, which carried the same tag.
+
+What this changes in the decision above:
+
+- **`designation` holds synonyms only.** The "single home" table is unchanged: the catalogue's
+  preferred term is still `catalogue_entry.preferred_term`. A `designation` row can no longer
+  be a preferred term at all, so the `ck_designation_no_en_au_preferred` paragraph and the
+  "non-en-AU preferred variant is still permitted" sentence are superseded. The structural
+  guard is now the absence of the column, not a constraint.
+- **The rejected-mirror option can no longer be built.** It inserts a `use='preferred',
+  language='en-AU'` row beside `catalogue_entry.preferred_term`, and neither column exists. It
+  stays rejected for the reason given above.
+- **No-duplicate index.** `ix_designation_no_duplicate_active_term` is now `UNIQUE (entry_id,
+  term_key) WHERE status = 'active'`. With every row in en-AU, no group can newly collide.
+- **The upgrade refuses rather than deletes.** If any designation is not an en-AU synonym, or
+  any acknowledgement is not en-AU, `0026` raises `DesignationLanguageInUseError` naming each
+  such row and changes nothing. A deployment re-tags or retires those rows, then upgrades.
+- **A second language is a column and a backfill.** If the catalogue ever publishes another
+  language, it returns as a nullable column. Nothing in this change prevents that.
+
+The API changes with it. `Designation` and the acknowledgement response lose `language`,
+`Designation` loses `use`, and the add, retire, reinstate and acknowledge requests lose
+`language` and `use`. The amendment request replaces `use` with an optional
+`target` (`preferred_term` or `synonym`), which still reaches an entry's own preferred term when
+a synonym on the same entry shadows it. The request models ignore a field they do not name, so
+an old client that sends `language` or `use` is not refused, and `use` no longer has any effect.
+**This breaks old clients that read `language` or `use`.** The OpenAPI breaking-change gate flags
+the removed response fields, and the maintainer approves it, as ADR-0044 did for its own break.
+The `preferred_variant` label provenance goes too: nothing can produce it. The import dataset
+moves to `schema_version` 4 (ADR-0010).
+
+Past audit events are unchanged. Hash-chained and immutable, they still name `use` and `language`
+in `changed_fields`, and the history screen keeps a label for `use` so those events still read.

@@ -288,15 +288,15 @@ The central entity. Deliberately split into **core columns** (first-class, index
 
 ### 6.3 Designation
 
-A term attached to an entry, replacing the semicolon-delimited `RCPA Synonyms` cell.
+A synonym attached to an entry, replacing the semicolon-delimited `RCPA Synonyms` cell. The entry's own preferred term is `catalogue_entry.preferred_term`, not a designation (ADR-0022).
 
 | Field | Notes |
 |---|---|
 | `entry_id` | FK |
 | `term` | text, not null |
-| `use` | enum: `preferred`, `synonym` |
-| `language` | BCP-47, default `en-AU` |
 | `status` | `active`, `retired` |
+
+**Removed after v0.2:** `use` (`preferred` / `synonym`) and `language` (BCP-47, default `en-AU`) on this entity, and `language` on the collision acknowledgement. The catalogue is Australian English only, so `language` always held `en-AU`, and the only `preferred` rows it allowed were in a second language that does not exist. Every designation is now a synonym. A second language, if one is ever needed, is a nullable column and a backfill.
 
 **FR-04 (MUST):** Synonyms MUST be modelled as separate rows, not as a delimited string. The sample demonstrates why: one entry uses a comma delimiter where every other entry uses a semicolon (`'ADA RBC, ADA red cells'`), one contains an empty synonym produced by a doubled delimiter (`'Zovirax;;Cyclir'`), and several have inconsistent whitespace after the delimiter. These defects are unrepresentable once the delimiter is gone.
 

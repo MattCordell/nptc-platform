@@ -15,7 +15,7 @@ ADR is about. This ADR is about the database layer FR-06 separately requires.
 
 A Postgres `CHECK` constraint's expression permits no subquery and no CTE. The
 regex half (`code ~ '^[0-9]{6,18}$'`) is a plain inline expression, exactly like
-`ck_designation_language` or `ck_catalogue_entry_business_key`. The Verhoeff half is
+`ck_catalogue_entry_business_key`. The Verhoeff half is
 not: it is a fold over the SNOMED-standard Verhoeff D5 dihedral-group tables, one
 table lookup per digit, carrying a running checksum from one digit to the next. There
 is no way to spell "look up `_D[checksum][_P[position % 8][digit]]` eighteen times,

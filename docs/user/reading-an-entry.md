@@ -27,11 +27,9 @@ The rows come in this order:
 
 1. **RCPA Preferred** is the test's requesting term, the same as the page heading.
 2. **RCPA Synonym** rows follow, one for each synonym.
-3. **RCPA Preferred (fr)**, or another language code, appears only if the test has a
-   preferred term in another language.
-4. **SNOMED CT FSN** is the fully specified name of the code the test is bound to now. It
+3. **SNOMED CT FSN** is the fully specified name of the code the test is bound to now. It
    appears exactly as SNOMED CT gives it, with its bracketed tag, such as "(procedure)".
-5. **SNOMED CT Preferred** is the Australian preferred term for that code. The row is
+4. **SNOMED CT Preferred** is the Australian preferred term for that code. The row is
    absent if none is recorded.
 
 A test with no active SNOMED CT code shows the RCPA rows only.

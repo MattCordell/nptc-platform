@@ -69,6 +69,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0023_specimen_binding_includes_root.py`](../../backend/migrations/versions/0023_specimen_binding_includes_root.py) | The `specimen` binding `<<123038009` (see [`data-model.md`](../architecture/data-model.md)) | See [below](#0023_specimen_binding_includes_rootpy) - re-emit any dataset made before this release |
 | [`0024_retire_specimen_unconstrained.py`](../../backend/migrations/versions/0024_retire_specimen_unconstrained.py) | Drops `catalogue_entry.specimen_unconstrained` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | See [below](#0024_retire_specimen_unconstrainedpy) - converts the flag to the specimen root first |
 | [`0025_property_index_owner_role.py`](../../backend/migrations/versions/0025_property_index_owner_role.py) | The `nptc_property_index_owner` role, which takes over ownership of `property_value` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0025_property_index_owner_rolepy) - a non-superuser migration role needs membership of the new role |
+| [`0026_drop_designation_language.py`](../../backend/migrations/versions/0026_drop_designation_language.py) | Drops `designation.use`, `designation.language` and `designation_collision_acknowledgement.language` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | See [below](#0026_drop_designation_languagepy) - refuses to run if any row is not an en-AU synonym; re-emit any dataset made before this release |
 
 ## Provisioning the app role's login
 
@@ -533,6 +534,55 @@ instead. It does not drop the role, for the reason given under
 Migration 0024 now calls the guard described under
 [the accepted risk](#provisioning-the-index-reconcilers-login-issues-54-and-274-fr-13) before
 it writes `property_value`, in both directions.
+
+## `0026_drop_designation_language.py`
+
+Drops `designation.use`, `designation.language` and `designation_collision_acknowledgement.language`
+(FR-04, ADR-0022). The catalogue is Australian English only, so every designation is a synonym in
+`en-AU`. The migration also drops `ck_designation_use`, `ck_designation_language`,
+`ck_designation_no_en_au_preferred` and `ix_designation_one_active_preferred_per_entry_language`,
+and narrows `ix_designation_no_duplicate_active_term` and
+`ix_designation_collision_ack_entry_term` to drop `language` from their keys.
+
+**The upgrade refuses rather than deletes.** If any designation has a language other than `en-AU`
+or a `use` other than `synonym`, or any acknowledgement has a language other than `en-AU`, the
+migration raises `DesignationLanguageInUseError`, names each such row (the first 50) and changes
+nothing. Check first on a deployment that may hold such rows:
+
+```sql
+SELECT e.business_key, d.term, d.use, d.language
+FROM designation d JOIN catalogue_entry e ON e.id = d.entry_id
+WHERE d.language <> 'en-AU' OR d.use <> 'synonym';
+
+SELECT e.business_key, a.term_key, a.language
+FROM designation_collision_acknowledgement a JOIN catalogue_entry e ON e.id = a.entry_id
+WHERE a.language <> 'en-AU';
+```
+
+If either query returns a row, decide what each row is. No API route edits `use` or
+`language`, so correcting a row is a direct SQL update by an operator. A row that is really an
+en-AU synonym needs `use = 'synonym'` and `language = 'en-AU'`. A row that must not survive as an
+en-AU synonym should be retired through the API first, so it stays only as retired history, and
+then have its columns corrected the same way. The migration checks every row, retired ones
+included. Run it again once both queries return nothing.
+
+**No data is lost on an en-AU database.** Every row, retired ones included, keeps its term,
+`status` and history. The audit events already written still name `use` and `language` in their
+`changed_fields`, because they are immutable.
+
+**The API changes with it.** `Designation` and the acknowledgement response lose `language`,
+`Designation` loses `use`, and the requests lose `language` and `use`. The amendment request
+takes an optional `target` (`preferred_term` or `synonym`) in place of `use`. A client that reads
+`language` or `use` must change. A client that still sends them is not refused, and they have no
+effect.
+
+**Re-emit any import dataset made before this release.** The dataset moves to `schema_version` 4,
+and the loader refuses a version 3 file with a message that names the version. See the
+[transform runbook](runbooks/transform.md).
+
+The downgrade re-adds `designation.use` (default `synonym`), `designation.language` and the
+acknowledgement's `language` (default `en-AU`), the CHECKs and indexes, and the `UPDATE` grant on
+`use` and `language`. Every row comes back as an en-AU synonym.
 
 ## Testcontainers and Docker
 
