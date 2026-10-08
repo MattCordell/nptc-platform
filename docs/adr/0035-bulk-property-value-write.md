@@ -273,6 +273,26 @@ expected to be a measurable contention source in practice, and was not separatel
 load-tested; a future catalogue an order of magnitude larger, or a much higher write
 concurrency, would be the trigger to revisit it, not this issue's own scope.
 
+**Issue #321 widens the guard from three hand-listed modules to the whole `nptc.catalogue` package.**
+The guard now globs every module there, keys functions by `(module, name)`, collects `async def`
+and matches attribute calls such as `collisions.assert_no_error_collisions(...)`, so none of
+those shapes can drop a writer from the derived set. The wider scan found thirteen functions
+that did not take the lock first:
+
+- **Hoisted:** `create_binding`, `retire_binding`, `link_replacement` and `seed_baseline`. The
+  three binding writers validate the note first, then take the lock, then read the binding, so an
+  empty note on an already-retired binding raises `ChangelogNoteError`, where it raised
+  `CodeBindingAlreadyRetiredError`. The binding routes cannot reach that case, because they
+  resolve only active bindings. `seed_baseline` builds its `AuditContext` after the lock.
+- **Exempt by name:** the two private seed helpers (`_resolve_classification`, `_write_entry`),
+  reached only from `seed_baseline` once it holds the lock, and the six `local_codes` writers
+  and `acknowledge_collision`, which take neither a `catalogue_entry` row lock nor the collision
+  lock, so the cycle cannot form there. Hoisting them would add contention without closing
+  anything. A future bulk local-code load that runs outside `seed_baseline` would need this
+  exemption revisited.
+
+The closure still flows through an exempt function, so a caller of an exempt writer is still checked.
+
 ## Consequences
 
 - A generated client (or a future frontend) must read `outcomes[]`/`applied`/
